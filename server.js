@@ -37,6 +37,10 @@ const upload = multer({ storage: storage });
 
 
 
+app.get("/wajih", (req,res) =>{
+  res.send("test completed successfully...");
+});
+
 
 
 app.get("/", (req,res) =>{
