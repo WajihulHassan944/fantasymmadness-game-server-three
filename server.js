@@ -107,6 +107,19 @@ app.post('/addMatch', upload.fields([{ name: 'fighterAImage' }, { name: 'fighter
 
 
 
+app.delete('/matchtodelete/:id', async (req, res) => {
+  const { id } = req.params;
+  console.log('Received DELETE request for Match ID:', id);
+  try {
+    const match = await Match.findByIdAndDelete(id);
+    
+    res.status(200).json({ message: 'Match deleted successfully' });
+  } catch (error) {
+    res.status(500).json({ message: 'Internal server error' });
+  }
+});
+
+
 
 app.get('/match', async (req, res) => {
   const match = await Match.find();
