@@ -145,6 +145,7 @@ const userSchema = new mongoose.Schema({
   isAgreed: Boolean,
   verificationToken: String,
   verified: { type: Boolean, default: false },
+  profileUrl: String, // Add profileUrl field
 });
 
 const User = mongoose.model('User', userSchema);
@@ -262,6 +263,34 @@ app.get('/user/:email', async (req, res) => {
     res.status(500).send('Internal server error');
   }
 });
+
+
+
+
+app.post('/upload-avatar', upload.single('image'), async (req, res) => {
+  const formData = new FormData();
+  const { default: fetch } = await import('node-fetch');
+  
+  // Upload Avatar image
+  formData.append('image', req.file.buffer.toString('base64'));
+  const response = await fetch('https://api.imgbb.com/1/upload?key=368cbdb895c5bed277d50d216adbfa52', {
+    method: 'POST',
+    body: formData,
+  });
+  
+  const data = await response.json();
+  const avatarUrl = data.data.url;
+
+  // Update user profile with avatar URL
+  const { email } = req.body;
+  await User.findOneAndUpdate({ email }, { profileUrl: avatarUrl });
+
+  res.status(200).send('Avatar uploaded and saved successfully');
+});
+
+
+
+
 
 // Start server
 const server = app.listen(PORT, () => {
