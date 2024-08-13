@@ -133,11 +133,27 @@ app.get('/match', async (req, res) => {
   res.send(match);
 });
 
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 // Get Matches API
 app.get('/users', async (req, res) => {
   const match = await User.find();
   res.send(match);
 });
+
 
 // Create reusable transporter object using the default SMTP transport
 const transporter = nodemailer.createTransport({
@@ -204,6 +220,22 @@ app.get('/verify-email', async (req, res) => {
 app.get("/", (req, res) =>{
   res.send("Backend server has started running successfully...");
 });
+
+
+
+// Delete Match API
+app.delete('/usertodelete/:id', async (req, res) => {
+  const { id } = req.params;
+  console.log('Received DELETE request for User ID:', id);
+  try {
+    const user = await User.findByIdAndDelete(id);
+    
+    res.status(200).json({ message: 'User deleted successfully' });
+  } catch (error) {
+    res.status(500).json({ message: 'Internal server error' });
+  }
+});
+
 
 // Start server
 const server = app.listen(PORT, () => {
