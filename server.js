@@ -5,16 +5,18 @@ const app = express();
 const { ObjectId } = require('mongodb');
 const cors = require("cors");
 const FormData = require('form-data');
+const multer = require('multer');
+const bcrypt = require('bcrypt');
+const crypto = require('crypto'); // For generating the verification token
+const nodemailer = require('nodemailer'); // For sending emails
 
 app.use(express.json());
 app.use(cors());
 
-
-
+// MongoDB connection
 const MONGODB_URI = process.env.MONGODB_URI;
 const PORT = process.env.PORT || 3000;
 
-// MongoDB connection
 mongoose.connect(MONGODB_URI, {
   useNewUrlParser: true,
   useUnifiedTopology: true,
@@ -24,21 +26,11 @@ mongoose.connect(MONGODB_URI, {
 app.use(bodyParser.urlencoded({ extended: false }));
 app.use(bodyParser.json());
 
-const bcrypt = require('bcrypt');
-
-
-
-
-
-const multer = require('multer');
-
+// File upload configuration
 const storage = multer.memoryStorage();
 const upload = multer({ storage: storage });
 
-
-
-
-
+// Match Schema
 const matchSchema = new mongoose.Schema({
   matchCategory: String,
   matchName: String,
@@ -58,6 +50,23 @@ const matchSchema = new mongoose.Schema({
 
 const Match = mongoose.model('Match', matchSchema);
 
+const userSchema = new mongoose.Schema({
+  firstName: String,
+  lastName: String,
+  email: String,
+  phone: String,
+  password: String,
+  isChecked: Boolean,
+  isSubscribed: Boolean,
+  isUSCitizen: Boolean,
+  isAgreed: Boolean,
+  verificationToken: String,
+  verified: { type: Boolean, default: false },
+});
+
+const User = mongoose.model('User', userSchema);
+
+// Add Match API
 app.post('/addMatch', upload.fields([{ name: 'fighterAImage' }, { name: 'fighterBImage' }]), async (req, res) => {
   const formDataA = new FormData();
   const formDataB = new FormData();
@@ -105,8 +114,7 @@ app.post('/addMatch', upload.fields([{ name: 'fighterAImage' }, { name: 'fighter
   res.status(200).send('Match Added Successfully');
 });
 
-
-
+// Delete Match API
 app.delete('/matchtodelete/:id', async (req, res) => {
   const { id } = req.params;
   console.log('Received DELETE request for Match ID:', id);
@@ -119,26 +127,85 @@ app.delete('/matchtodelete/:id', async (req, res) => {
   }
 });
 
-
-
+// Get Matches API
 app.get('/match', async (req, res) => {
   const match = await Match.find();
   res.send(match);
 });
 
-
-
-app.get("/wajih", (req,res) =>{
-  res.send("test completed successfully...");
+// Get Matches API
+app.get('/users', async (req, res) => {
+  const match = await User.find();
+  res.send(match);
 });
 
+// Create reusable transporter object using the default SMTP transport
+const transporter = nodemailer.createTransport({
+  service: 'Gmail',
+  auth: {
+    user: 'vascularbundle43@gmail.com',
+    pass: 'gxauudkzvdvhdzbg',
+  },
+});
 
+app.post('/register', async (req, res) => {
+  const { firstName, lastName, email, phone, password } = req.body;
 
-app.get("/", (req,res) =>{
+  // Generate a verification token
+  const verificationToken = crypto.randomBytes(20).toString('hex');
+
+  const newUser = new User({
+    firstName,
+    lastName,
+    email,
+    phone,
+    password: await bcrypt.hash(password, 10),
+    verificationToken,
+    verified: false,
+  });
+
+  await newUser.save();
+
+  // Send verification email
+  const verificationLink = `https://fantasymmadness-game-server-three.vercel.app/verify-email?token=${verificationToken}`;
+  const mailOptions = {
+    from: 'vascularbundle43@gmail.com',
+    to: email,
+    subject: 'Email Verification',
+    html: `<p>Thank you for registering with us. Please click the link below to verify your email address:</p>
+           <a href="${verificationLink}">Verify Email</a>`
+  };
+
+  transporter.sendMail(mailOptions, (error, info) => {
+    if (error) {
+      return res.status(500).send('Error sending verification email');
+    } else {
+      res.status(200).send('Registration successful! Please check your email to verify your account.');
+    }
+  });
+});
+
+app.get('/verify-email', async (req, res) => {
+  const { token } = req.query;
+
+  const user = await User.findOne({ verificationToken: token });
+
+  if (!user) {
+    return res.status(400).send('Invalid or expired token');
+  }
+
+  user.verified = true;
+  user.verificationToken = null; // Clear the token after verification
+  await user.save();
+
+  res.status(200).send('Email verified successfully!');
+});
+// Default route
+app.get("/", (req, res) =>{
   res.send("Backend server has started running successfully...");
 });
 
+// Start server
 const server = app.listen(PORT, () => {
-    console.log(`Server started on port ${PORT}`);
-  });
-  
+  console.log(`Server started on port ${PORT}`);
+});
