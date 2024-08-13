@@ -249,6 +249,19 @@ app.delete('/usertodelete/:id', async (req, res) => {
   }
 });
 
+// Get user details by email (for checking verification status)
+app.get('/user/:email', async (req, res) => {
+  const { email } = req.params;
+  try {
+    const user = await User.findOne({ email });
+    if (!user) {
+      return res.status(404).send('User not found');
+    }
+    res.json({ verified: user.verified });
+  } catch (error) {
+    res.status(500).send('Internal server error');
+  }
+});
 
 // Start server
 const server = app.listen(PORT, () => {
