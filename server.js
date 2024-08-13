@@ -50,22 +50,6 @@ const matchSchema = new mongoose.Schema({
 
 const Match = mongoose.model('Match', matchSchema);
 
-const userSchema = new mongoose.Schema({
-  firstName: String,
-  lastName: String,
-  email: String,
-  phone: String,
-  password: String,
-  isChecked: Boolean,
-  isSubscribed: Boolean,
-  isUSCitizen: Boolean,
-  isAgreed: Boolean,
-  verificationToken: String,
-  verified: { type: Boolean, default: false },
-});
-
-const User = mongoose.model('User', userSchema);
-
 // Add Match API
 app.post('/addMatch', upload.fields([{ name: 'fighterAImage' }, { name: 'fighterBImage' }]), async (req, res) => {
   const formDataA = new FormData();
@@ -147,6 +131,24 @@ app.get('/match', async (req, res) => {
 
 
 
+const userSchema = new mongoose.Schema({
+  firstName: String,
+  lastName: String,
+  playerName: String,
+  zipCode: String,
+  email: String,
+  phone: String,
+  password: String,
+  isNotificationsEnabled: Boolean,
+  isSubscribed: Boolean,
+  isUSCitizen: Boolean,
+  isAgreed: Boolean,
+  verificationToken: String,
+  verified: { type: Boolean, default: false },
+});
+
+const User = mongoose.model('User', userSchema);
+
 
 // Get Matches API
 app.get('/users', async (req, res) => {
@@ -165,7 +167,11 @@ const transporter = nodemailer.createTransport({
 });
 
 app.post('/register', async (req, res) => {
-  const { firstName, lastName, email, phone, password } = req.body;
+  const { firstName, lastName,playerName, email, phone, password , zipCode,
+    isNotificationsEnabled,
+    isSubscribed,
+    isUSCitizen,
+    isAgreed} = req.body;
 
   // Generate a verification token
   const verificationToken = crypto.randomBytes(20).toString('hex');
@@ -173,11 +179,18 @@ app.post('/register', async (req, res) => {
   const newUser = new User({
     firstName,
     lastName,
+    playerName,
     email,
     phone,
-    password: await bcrypt.hash(password, 10),
-    verificationToken,
+    zipCode,
+    isNotificationsEnabled,
+    isSubscribed,
+    isUSCitizen,
+    isAgreed,
     verified: false,
+    verificationToken,
+    password: await bcrypt.hash(password, 10),
+    
   });
 
   await newUser.save();
