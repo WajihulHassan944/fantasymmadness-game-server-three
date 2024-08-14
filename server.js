@@ -334,7 +334,7 @@ app.post('/login', async (req, res) => {
     const token = jwt.sign({ id: user._id }, JWT_SECRET, { expiresIn: '1h' });
 
     // Set the JWT as a cookie
-    res.cookie('token', token, {  maxAge: 3600000 }); // 1 hour
+    res.cookie('token', token, { maxAge: 3600000 }); // 1 hour
 
     res.status(200).json({ message: 'Login successful' });
   } catch (error) {
