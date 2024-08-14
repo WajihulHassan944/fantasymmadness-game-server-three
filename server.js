@@ -11,7 +11,24 @@ const crypto = require('crypto'); // For generating the verification token
 const nodemailer = require('nodemailer'); // For sending emails
 const jwt = require('jsonwebtoken');
 app.use(express.json());
-app.use(cors());
+
+
+// CORS configuration
+const allowedOrigins = [
+  'https://fantasymmadness-version2.vercel.app', // Production
+  'http://localhost:3000' // Development
+];
+
+app.use(cors({
+  origin: function (origin, callback) {
+    if (allowedOrigins.includes(origin) || !origin) {
+      callback(null, true);
+    } else {
+      callback(new Error('Not allowed by CORS'));
+    }
+  },
+  credentials: true, // Allow credentials (cookies, headers, etc.)
+}));
 
 // MongoDB connection
 const MONGODB_URI = process.env.MONGODB_URI;
