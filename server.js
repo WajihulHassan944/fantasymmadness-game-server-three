@@ -353,7 +353,18 @@ app.post('/login', async (req, res) => {
     // Set the JWT as a cookie
     res.cookie('token', token, { httpOnly: true, maxAge: 3600000 }); // 1 hour
 
-    res.status(200).json({ message: 'Login successful' });
+    // Send user details along with success message
+    res.status(200).json({
+      message: 'Login successful',
+      user: {
+        id: user._id,
+       firstName: user.firstName,
+      lastName: user.lastName,
+      playerName: user.playerName,
+      email: user.email,
+        // Add any other user details you need here
+      },
+    });
   } catch (error) {
     res.status(500).json({ message: 'Internal server error' });
   }
