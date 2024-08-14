@@ -359,6 +359,36 @@ app.post('/login', async (req, res) => {
   }
 });
 
+// Get user details by ID
+app.get('/user/:id', async (req, res) => {
+  const { id } = req.params;
+  
+  try {
+    // Find user by ID
+    const user = await User.findById(id);
+    
+    if (!user) {
+      return res.status(404).send('User not found');
+    }
+    
+    res.json({
+      firstName: user.firstName,
+      lastName: user.lastName,
+      playerName: user.playerName,
+      zipCode: user.zipCode,
+      email: user.email,
+      phone: user.phone,
+      isNotificationsEnabled: user.isNotificationsEnabled,
+      isSubscribed: user.isSubscribed,
+      isUSCitizen: user.isUSCitizen,
+      isAgreed: user.isAgreed,
+      profileUrl: user.profileUrl,
+      verified: user.verified,
+    });
+  } catch (error) {
+    res.status(500).send('Internal server error');
+  }
+});
 
 
 
