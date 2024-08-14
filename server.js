@@ -363,10 +363,14 @@ app.post('/login', async (req, res) => {
 app.get('/user/:id', async (req, res) => {
   const { id } = req.params;
   
+  console.log('Received ID:', id); // Log the received ID
+
   try {
     // Find user by ID
     const user = await User.findById(id);
     
+    console.log('User found:', user); // Log the user object
+
     if (!user) {
       return res.status(404).send('User not found');
     }
@@ -386,10 +390,10 @@ app.get('/user/:id', async (req, res) => {
       verified: user.verified,
     });
   } catch (error) {
+    console.error('Error fetching user:', error); // Log the error
     res.status(500).send('Internal server error');
   }
 });
-
 
 
 
