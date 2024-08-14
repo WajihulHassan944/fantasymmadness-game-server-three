@@ -379,14 +379,14 @@ app.post('/login', async (req, res) => {
 const verifyToken = (req, res, next) => {
   console.log('Request headers:', req.headers); // Debugging line
   const authHeader = req.headers['authorization'];
-  const token = authHeader && authHeader.split(' ')[1];
+  const token = authHeader && authHeader.split(' ')[1]; // Extract token from Bearer scheme
 
-  if (token == null) return res.sendStatus(401);
+  if (token == null) return res.sendStatus(401); // No token, unauthorized
 
-  jwt.verify(token, process.env.ACCESS_TOKEN_SECRET, (err, user) => {
-    if (err) return res.sendStatus(403);
+  jwt.verify(token, JWT_SECRET, (err, user) => {
+    if (err) return res.sendStatus(403); // Token invalid, forbidden
 
-    req.user = user;
+    req.user = user; // Attach user info to request object
     next();
   });
 };
