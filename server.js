@@ -9,7 +9,7 @@ const multer = require('multer');
 const bcrypt = require('bcrypt');
 const crypto = require('crypto'); // For generating the verification token
 const nodemailer = require('nodemailer'); // For sending emails
-
+const jwt = require('jsonwebtoken');
 app.use(express.json());
 app.use(cors());
 
@@ -286,6 +286,60 @@ app.post('/upload-avatar', upload.single('image'), async (req, res) => {
   await User.findOneAndUpdate({ email }, { profileUrl: avatarUrl });
 
   res.status(200).send('Avatar uploaded and saved successfully');
+});
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+const JWT_SECRET = 'asdfghjklmnbvcdewsdfgbnvcfdx'; 
+
+// Login API
+app.post('/login', async (req, res) => {
+  const { email, password } = req.body;
+
+  try {
+    // Find user by email
+    const user = await User.findOne({ email });
+
+    if (!user) {
+      return res.status(400).json({ message: 'Invalid email or password' });
+    }
+
+    // Check if the user is verified
+    if (!user.verified) {
+      return res.status(403).json({ message: 'Please verify your email before logging in' });
+    }
+
+    // Compare the provided password with the stored hashed password
+    const isPasswordValid = await bcrypt.compare(password, user.password);
+
+    if (!isPasswordValid) {
+      return res.status(400).json({ message: 'Invalid email or password' });
+    }
+
+    // Create a JWT token valid for 1 hour
+    const token = jwt.sign({ id: user._id }, JWT_SECRET, { expiresIn: '1h' });
+
+    // Set the JWT as a cookie
+    res.cookie('token', token, { httpOnly: true, maxAge: 3600000 }); // 1 hour
+
+    res.status(200).json({ message: 'Login successful' });
+  } catch (error) {
+    res.status(500).json({ message: 'Internal server error' });
+  }
 });
 
 
