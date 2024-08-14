@@ -10,6 +10,8 @@ const bcrypt = require('bcrypt');
 const crypto = require('crypto'); // For generating the verification token
 const nodemailer = require('nodemailer'); // For sending emails
 const jwt = require('jsonwebtoken');
+const fetch = require('node-fetch'); // Ensure you have node-fetch installed
+
 app.use(express.json());
 
 
@@ -328,49 +330,78 @@ app.post('/login', async (req, res) => {
   const { email, password } = req.body;
 
   try {
-    // Find user by email
     const user = await User.findOne({ email });
 
     if (!user) {
       return res.status(400).json({ message: 'Invalid email or password' });
     }
 
-    // Check if the user is verified
     if (!user.verified) {
       return res.status(403).json({ message: 'Please verify your email before logging in' });
     }
 
-    // Compare the provided password with the stored hashed password
     const isPasswordValid = await bcrypt.compare(password, user.password);
 
     if (!isPasswordValid) {
       return res.status(400).json({ message: 'Invalid email or password' });
     }
 
-    // Create a JWT token valid for 1 hour
     const token = jwt.sign({ id: user._id }, JWT_SECRET, { expiresIn: '1h' });
 
-    // Set the JWT as a cookie
     res.cookie('token', token, { httpOnly: true, maxAge: 3600000 }); // 1 hour
 
-    // Send user details along with success message
     res.status(200).json({
       message: 'Login successful',
       user: {
         id: user._id,
-      firstName: user.firstName,
-      lastName: user.lastName,
-      playerName: user.playerName,
-      zipCode: user.zipCode,
-      email: user.email,
-      phone: user.phone,
-      isNotificationsEnabled: user.isNotificationsEnabled,
-      isSubscribed: user.isSubscribed,
-      isUSCitizen: user.isUSCitizen,
-      isAgreed: user.isAgreed,
-      profileUrl: user.profileUrl,
-      verified: user.verified,},
+        firstName: user.firstName,
+        lastName: user.lastName,
+        playerName: user.playerName,
+        zipCode: user.zipCode,
+        email: user.email,
+        phone: user.phone,
+        isNotificationsEnabled: user.isNotificationsEnabled,
+        isSubscribed: user.isSubscribed,
+        isUSCitizen: user.isUSCitizen,
+        isAgreed: user.isAgreed,
+        profileUrl: user.profileUrl,
+        verified: user.verified,
+      },
     });
+  } catch (error) {
+    res.status(500).json({ message: 'Internal server error' });
+  }
+});
+
+
+
+// Middleware to verify JWT token
+function verifyToken(req, res, next) {
+  const token = req.cookies.token || req.headers.authorization?.split(' ')[1];
+  
+  if (!token) {
+    return res.status(401).json({ message: 'No token provided' });
+  }
+
+  jwt.verify(token, JWT_SECRET, (err, decoded) => {
+    if (err) {
+      return res.status(403).json({ message: 'Invalid or expired token' });
+    }
+    req.user = decoded;
+    next();
+  });
+}
+
+// Profile API
+app.get('/profile', verifyToken, async (req, res) => {
+  try {
+    const user = await User.findById(req.user.id);
+
+    if (!user) {
+      return res.status(404).json({ message: 'User not found' });
+    }
+
+    res.status(200).json({ user });
   } catch (error) {
     res.status(500).json({ message: 'Internal server error' });
   }
