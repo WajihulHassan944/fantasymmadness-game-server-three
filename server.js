@@ -358,35 +358,6 @@ app.post('/login', async (req, res) => {
       message: 'Login successful',
       user: {
         id: user._id,
-       firstName: user.firstName,
-      lastName: user.lastName,
-      playerName: user.playerName,
-      email: user.email,
-        // Add any other user details you need here
-      },
-    });
-  } catch (error) {
-    res.status(500).json({ message: 'Internal server error' });
-  }
-});
-
-// Get user details by ID
-app.get('/user/:id', async (req, res) => {
-  const { id } = req.params;
-  
-  console.log('Received ID:', id); // Log the received ID
-
-  try {
-    // Find user by ID
-    const user = await User.findById(id);
-    
-    console.log('User found:', user); // Log the user object
-
-    if (!user) {
-      return res.status(404).send('User not found');
-    }
-    
-    res.json({
       firstName: user.firstName,
       lastName: user.lastName,
       playerName: user.playerName,
@@ -398,11 +369,10 @@ app.get('/user/:id', async (req, res) => {
       isUSCitizen: user.isUSCitizen,
       isAgreed: user.isAgreed,
       profileUrl: user.profileUrl,
-      verified: user.verified,
+      verified: user.verified,},
     });
   } catch (error) {
-    console.error('Error fetching user:', error); // Log the error
-    res.status(500).send('Internal server error');
+    res.status(500).json({ message: 'Internal server error' });
   }
 });
 
