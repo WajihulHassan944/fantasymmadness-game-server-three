@@ -10,7 +10,9 @@ const bcrypt = require('bcrypt');
 const crypto = require('crypto'); // For generating the verification token
 const nodemailer = require('nodemailer'); // For sending emails
 const jwt = require('jsonwebtoken');
-const fetch = require('node-fetch'); // Ensure you have node-fetch installed
+
+const fetch = require('node-fetch');
+
 
 app.use(express.json());
 
