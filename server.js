@@ -376,23 +376,21 @@ app.post('/login', async (req, res) => {
 });
 
 
+const verifyToken = (req, res, next) => {
+  console.log('Request headers:', req.headers); // Debugging line
+  const authHeader = req.headers['authorization'];
+  const token = authHeader && authHeader.split(' ')[1];
 
-// Middleware to verify JWT token
-function verifyToken(req, res, next) {
-  const token = req.cookies.token || req.headers.authorization?.split(' ')[1];
-  
-  if (!token) {
-    return res.status(401).json({ message: 'No token provided' });
-  }
+  if (token == null) return res.sendStatus(401);
 
-  jwt.verify(token, JWT_SECRET, (err, decoded) => {
-    if (err) {
-      return res.status(403).json({ message: 'Invalid or expired token' });
-    }
-    req.user = decoded;
+  jwt.verify(token, process.env.ACCESS_TOKEN_SECRET, (err, user) => {
+    if (err) return res.sendStatus(403);
+
+    req.user = user;
     next();
   });
-}
+};
+
 
 // Profile API
 app.get('/profile', verifyToken, async (req, res) => {
