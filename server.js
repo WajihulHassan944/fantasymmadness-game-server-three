@@ -326,7 +326,6 @@ app.post('/upload-avatar', upload.single('image'), async (req, res) => {
 
 
 const JWT_SECRET = 'asdfghjklmnbvcdewsdfgbnvcfdx'; 
-
 // Login API
 app.post('/login', async (req, res) => {
   const { email, password } = req.body;
@@ -354,6 +353,7 @@ app.post('/login', async (req, res) => {
 
     res.status(200).json({
       message: 'Login successful',
+      token,  // Return token in response body
       user: {
         id: user._id,
         firstName: user.firstName,
