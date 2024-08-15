@@ -452,82 +452,41 @@ app.get('/profile', verifyToken, async (req, res) => {
 
 
 
-
-// Define Schema
 const scoreSchema = new mongoose.Schema({
   playerId: String,
-  matchId:String,
-  playerRound: Number,
-  hpPrediction1: Number,
-  hpPrediction2: Number,
-  bpPrediction1: Number,
-  bpPrediction2: Number,
-  tpPrediction1: Number,
-  tpPrediction2: Number,
-  rwPrediction1: Number,
-  rwPrediction2: Number,
-  koPrediction1: Number,
-  koPrediction2: Number,
+  matchId: String,
+  predictions: [{ 
+    round: Number, 
+    hpPrediction1: Number, 
+    bpPrediction1: Number, 
+    hpPrediction2: Number, 
+    bpPrediction2: Number, 
+    tpPrediction1: Number, 
+    tpPrediction2: Number, 
+    rwPrediction1: Number, 
+    rwPrediction2: Number, 
+    koPrediction1: Number, 
+    koPrediction2: Number 
+  }],
 });
 
 const Score = mongoose.model('Score', scoreSchema);
 
 app.post('/api/scores', async (req, res) => {
   try {
-    const {
-      playerId,
-      matchId,
-      playerRound,
-      hpPrediction1,
-      bpPrediction1,
-      hpPrediction2,
-      bpPrediction2,
-      tpPrediction1,
-      tpPrediction2,
-      rwPrediction1,
-      rwPrediction2,
-      koPrediction1,
-      koPrediction2,
-    } = req.body;
+    const { playerId, matchId, predictions } = req.body;
 
-    // Check if there's an existing record with the same playerName, matchId, and playerRound
-    let existingScore = await Score.findOne({ playerId, matchId, playerRound });
+    // Check if there's an existing record with the same playerId and matchId
+    let existingScore = await Score.findOne({ playerId, matchId });
 
     if (existingScore) {
       // If a record exists, update its values
-      existingScore.hpPrediction1 = hpPrediction1;
-      existingScore.bpPrediction1 = bpPrediction1;
-      existingScore.hpPrediction2 = hpPrediction2;
-      existingScore.bpPrediction2 = bpPrediction2;
-      existingScore.tpPrediction1 = tpPrediction1;
-      existingScore.tpPrediction2 = tpPrediction2;
-      existingScore.rwPrediction1 = rwPrediction1;
-      existingScore.rwPrediction2 = rwPrediction2;
-      existingScore.koPrediction1 = koPrediction1;
-      existingScore.koPrediction2 = koPrediction2;
-
-      // Save the updated record
+      existingScore.predictions = predictions;
       await existingScore.save();
       res.status(200).send(existingScore);
     } else {
       // If no record exists, create a new one
-      const score = new Score({
-        playerId,
-        matchId,
-        playerRound,
-        hpPrediction1,
-        bpPrediction1,
-        hpPrediction2,
-        bpPrediction2,
-        tpPrediction1,
-        tpPrediction2,
-        rwPrediction1,
-        rwPrediction2,
-        koPrediction1,
-        koPrediction2,
-      });
-
-      // Save the new record
+      const score = new Score({ playerId, matchId, predictions });
       await score.save();
       res.status(201).send(score);
     }
@@ -535,7 +494,6 @@ app.post('/api/scores', async (req, res) => {
     res.status(400).send(error);
   }
 });
-
 
 // API endpoint to retrieve scores
 app.get('/api/scores', async (req, res) => {
