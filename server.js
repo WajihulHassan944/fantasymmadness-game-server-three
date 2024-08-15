@@ -505,7 +505,14 @@ app.get('/api/scores', async (req, res) => {
   }
 });
 
-
+app.delete('/api/scores', async (req, res) => {
+  try {
+    await Score.deleteMany({}); // This will delete all records in the Score collection
+    res.status(200).send({ message: 'All records deleted successfully' });
+  } catch (error) {
+    res.status(500).send({ error: 'Failed to delete records' });
+  }
+});
 
 // Start server
 const server = app.listen(PORT, () => {
