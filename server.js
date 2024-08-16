@@ -50,8 +50,6 @@ app.use(bodyParser.json());
 // File upload configuration
 const storage = multer.memoryStorage();
 const upload = multer({ storage: storage });
-
-// Match Schema
 const matchSchema = new mongoose.Schema({
   matchCategory: String,
   matchName: String,
@@ -76,7 +74,7 @@ const matchSchema = new mongoose.Schema({
       RW: Number,
       RL: Number,
       KO: Number,
-      SP: Number
+      SP: Number,
     }],
     fighterTwoStats: [{
       roundNumber: Number,
@@ -86,9 +84,14 @@ const matchSchema = new mongoose.Schema({
       RW: Number,
       RL: Number,
       KO: Number,
-      SP: Number
-    }]
+      SP: Number,
+    }],
   },
+  userPredictions: [{
+    userId: { type: mongoose.Schema.Types.ObjectId, ref: 'User' }, // Reference to the user
+    predictionStatus: { type: String, enum: ['submitted', 'notSubmitted'], default: 'notSubmitted' }
+  }],
+  __v: Number
 });
 
 const Match = mongoose.model('Match', matchSchema);
