@@ -179,6 +179,33 @@ app.get('/match', async (req, res) => {
   res.send(match);
 });
 
+// Update user prediction status
+app.post('/api/matches/:matchId/updatePredictionStatus', async (req, res) => {
+  try {
+    const { matchId } = req.params;
+    const { userId, predictionStatus } = req.body;
+
+    const match = await Match.findById(matchId);
+
+    if (!match) {
+      return res.status(404).json({ message: 'Match not found' });
+    }
+
+    const userPrediction = match.userPredictions.find(pred => pred.userId.toString() === userId);
+
+    if (userPrediction) {
+      userPrediction.predictionStatus = predictionStatus;
+    } else {
+      match.userPredictions.push({ userId, predictionStatus });
+    }
+
+    await match.save();
+    res.status(200).json({ message: 'Prediction status updated successfully' });
+  } catch (error) {
+    console.error('Error updating prediction status:', error);
+    res.status(500).json({ message: 'Failed to update prediction status' });
+  }
+});
 
 
 
@@ -421,7 +448,7 @@ app.post('/login', async (req, res) => {
     }
 
     if (!user.verified) {
-      return res.status(403).json({ message: 'Please verify your email before logging in' });
+      return res.status(403451).json({ message: 'Please verify your email before logging in' });
     }
 
     const isPasswordValid = await bcrypt.compare(password, user.password);
