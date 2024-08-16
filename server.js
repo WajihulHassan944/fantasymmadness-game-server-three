@@ -93,6 +93,22 @@ const matchSchema = new mongoose.Schema({
 
 const Match = mongoose.model('Match', matchSchema);
 
+// DELETE API to delete a match by ID
+app.delete('/api/matches/:id', async (req, res) => {
+  try {
+    const { id } = req.params;
+    const deletedMatch = await Match.findByIdAndDelete(id);
+
+    if (!deletedMatch) {
+      return res.status(404).json({ message: 'Match not found' });
+    }
+
+    res.status(200).json({ message: 'Match deleted successfully' });
+  } catch (error) {
+    res.status(500).json({ message: 'Server error', error });
+  }
+});
+
 // Add Match API
 app.post('/addMatch', upload.fields([{ name: 'fighterAImage' }, { name: 'fighterBImage' }]), async (req, res) => {
   const formDataA = new FormData();
@@ -159,6 +175,8 @@ app.get('/match', async (req, res) => {
   const match = await Match.find();
   res.send(match);
 });
+
+
 
 
 app.post('/match/addRoundResults/:id', async (req, res) => {
