@@ -67,6 +67,28 @@ const matchSchema = new mongoose.Schema({
   fighterAImage: String,  // URL of Fighter A's image
   fighterBImage: String,  // URL of Fighter B's image
   matchType: String,      // LIVE or SHADOW
+  BoxingMatch: {
+    fighterOneStats: [{
+      roundNumber: Number,
+      HP: Number,
+      BP: Number,
+      TP: Number,
+      RW: Number,
+      RL: Number,
+      KO: Number,
+      SP: Number
+    }],
+    fighterTwoStats: [{
+      roundNumber: Number,
+      HP: Number,
+      BP: Number,
+      TP: Number,
+      RW: Number,
+      RL: Number,
+      KO: Number,
+      SP: Number
+    }]
+  },
 });
 
 const Match = mongoose.model('Match', matchSchema);
@@ -138,6 +160,44 @@ app.get('/match', async (req, res) => {
   res.send(match);
 });
 
+
+app.post('/match/addRoundResults/:id', async (req, res) => {
+  const { id } = req.params;
+  const { fighterOneStats, fighterTwoStats } = req.body;
+
+  try {
+    // Find the match document
+    const match = await Match.findById(id);
+
+    if (!match) {
+      return res.status(404).json({ message: 'Match not found' });
+    }
+
+    // Update round results for Fighter One
+    const existingFighterOneRoundIndex = match.BoxingMatch.fighterOneStats.findIndex(stat => stat.roundNumber === fighterOneStats.roundNumber);
+    if (existingFighterOneRoundIndex !== -1) {
+      match.BoxingMatch.fighterOneStats[existingFighterOneRoundIndex] = fighterOneStats;
+    } else {
+      match.BoxingMatch.fighterOneStats.push(fighterOneStats);
+    }
+
+    // Update round results for Fighter Two
+    const existingFighterTwoRoundIndex = match.BoxingMatch.fighterTwoStats.findIndex(stat => stat.roundNumber === fighterTwoStats.roundNumber);
+    if (existingFighterTwoRoundIndex !== -1) {
+      match.BoxingMatch.fighterTwoStats[existingFighterTwoRoundIndex] = fighterTwoStats;
+    } else {
+      match.BoxingMatch.fighterTwoStats.push(fighterTwoStats);
+    }
+
+    // Save the updated match document
+    await match.save();
+
+    res.status(200).json({ message: 'Round results added successfully', match });
+  } catch (error) {
+    console.error('Error adding round results:', error);
+    res.status(500).json({ message: 'Internal server error' });
+  }
+});
 
 
 
