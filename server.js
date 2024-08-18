@@ -303,6 +303,14 @@ app.post('/register', async (req, res) => {
     isUSCitizen,
     isAgreed} = req.body;
 
+
+  // Check if email already exists
+  const existingUser = await User.findOne({ email });
+  if (existingUser) {
+    return res.status(400).send('Email already registered');
+  }
+
+
   // Generate a verification token
   const verificationToken = crypto.randomBytes(20).toString('hex');
 
