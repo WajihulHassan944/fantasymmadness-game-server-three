@@ -297,30 +297,19 @@ const transporter = nodemailer.createTransport({
 });
 
 app.post('/register', async (req, res) => {
-  const { firstName, lastName,playerName, email, phone, password , zipCode,
-    isNotificationsEnabled,
-    isSubscribed,
-    isUSCitizen,
-    isAgreed} = req.body;
+  const {
+    firstName, lastName, playerName, email, phone, password, zipCode,
+    isNotificationsEnabled, isSubscribed, isUSCitizen, isAgreed
+  } = req.body;
 
   // Generate a verification token
   const verificationToken = crypto.randomBytes(20).toString('hex');
 
   const newUser = new User({
-    firstName,
-    lastName,
-    playerName,
-    email,
-    phone,
-    zipCode,
-    isNotificationsEnabled,
-    isSubscribed,
-    isUSCitizen,
-    isAgreed,
-    verified: false,
-    verificationToken,
+    firstName, lastName, playerName, email, phone, zipCode,
+    isNotificationsEnabled, isSubscribed, isUSCitizen, isAgreed,
+    verified: false, verificationToken,
     password: await bcrypt.hash(password, 10),
-    
   });
 
   await newUser.save();
@@ -331,8 +320,35 @@ app.post('/register', async (req, res) => {
     from: 'vascularbundle43@gmail.com',
     to: email,
     subject: 'Email Verification',
-    html: `<p>Thank you for registering with us. Please click the link below to verify your email address:</p>
-           <a href="${verificationLink}">Verify Email</a>`
+    html: `
+      <p>Thank you for registering with us. Please click the button below to verify your email address:</p>
+      <a href="${verificationLink}" 
+         style="background-color: #720e0c;
+                margin-top: 10px;
+                padding: 15px 30px;
+                text-align: center;
+                text-transform: uppercase;
+                transition: 0.5s;
+                color: white;
+                font-size: 25px;
+                border-radius: 10px;
+                text-decoration: none;"
+         id="verifyButton">
+         Verify Email
+      </a>
+      <script>
+        document.getElementById('verifyButton').addEventListener('click', function(event) {
+          event.preventDefault(); // Prevent the default link behavior
+          fetch('${verificationLink}')
+            .then(response => response.text())
+            .then(data => {
+              this.innerText = 'Verified';
+              this.style.backgroundColor = '#38b90c'; // Change button color to green
+            })
+            .catch(error => console.error('Error:', error));
+        });
+      </script>
+    `
   };
 
   transporter.sendMail(mailOptions, (error, info) => {
@@ -359,6 +375,8 @@ app.get('/verify-email', async (req, res) => {
 
   res.status(200).send('Email verified successfully!');
 });
+
+
 // Default route
 app.get("/", (req, res) =>{
   res.send("Backend server has started running successfully...");
