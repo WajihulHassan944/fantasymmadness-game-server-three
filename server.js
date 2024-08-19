@@ -341,6 +341,24 @@ app.post('/register', async (req, res) => {
     if (user && !user.verified) {
       await User.deleteOne({ email });
       console.log(`User with email ${email} deleted due to unverified account.`);
+
+      // Send failure notification email
+      const failureMailOptions = {
+        from: 'vascularbundle43@gmail.com',
+        to: email,
+        subject: 'Verification Failed',
+        html: `<p>Dear ${user.firstName},</p>
+               <p>You have failed to verify your email within the required time. Your registration has been canceled.</p>
+               <p>If this was a mistake, please register again.</p>`
+      };
+
+      transporter.sendMail(failureMailOptions, (error, info) => {
+        if (error) {
+          console.error('Error sending failure email:', error);
+        } else {
+          console.log('Failure email sent successfully:', info.response);
+        }
+      });
     }
   }, 120000);
 
