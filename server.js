@@ -301,19 +301,17 @@ const transporter = nodemailer.createTransport({
 });
 
 app.post('/register', async (req, res) => {
-  const { firstName, lastName,playerName, email, phone, password , zipCode,
+  const { firstName, lastName, playerName, email, phone, password, zipCode,
     isNotificationsEnabled,
     isSubscribed,
     isUSCitizen,
-    isAgreed} = req.body;
-
+    isAgreed } = req.body;
 
   // Check if email already exists
   const existingUser = await User.findOne({ email });
   if (existingUser) {
     return res.status(400).send('Email already registered');
   }
-
 
   // Generate a verification token
   const verificationToken = crypto.randomBytes(20).toString('hex');
@@ -332,10 +330,19 @@ app.post('/register', async (req, res) => {
     verified: false,
     verificationToken,
     password: await bcrypt.hash(password, 10),
-    
   });
 
   await newUser.save();
+
+  // Set a timeout to delete the user if not verified within 2 minutes (120000 ms)
+  setTimeout(async () => {
+    const user = await User.findOne({ email });
+
+    if (user && !user.verified) {
+      await User.deleteOne({ email });
+      console.log(`User with email ${email} deleted due to unverified account.`);
+    }
+  }, 120000);
 
   // Send verification email
   const verificationLink = `https://fantasymmadness-game-server-three.vercel.app/verify-email?token=${verificationToken}`;
