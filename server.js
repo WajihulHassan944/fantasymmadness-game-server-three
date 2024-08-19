@@ -334,15 +334,13 @@ app.post('/register', async (req, res) => {
 
   await newUser.save();
 
-  // Set a timeout to delete the user if not verified within 2 minutes (120000 ms)
   setTimeout(async () => {
+    // Find the user again to ensure the data is still available
     const user = await User.findOne({ email });
-
+  
     if (user && !user.verified) {
-      await User.deleteOne({ email });
-      console.log(`User with email ${email} deleted due to unverified account.`);
-
       // Send failure notification email
+      console.log('Attempting to send failure email...');
       const failureMailOptions = {
         from: 'vascularbundle43@gmail.com',
         to: email,
@@ -351,7 +349,7 @@ app.post('/register', async (req, res) => {
                <p>You have failed to verify your email within the required time. Your registration has been canceled.</p>
                <p>If this was a mistake, please register again.</p>`
       };
-
+  
       transporter.sendMail(failureMailOptions, (error, info) => {
         if (error) {
           console.error('Error sending failure email:', error);
@@ -359,9 +357,13 @@ app.post('/register', async (req, res) => {
           console.log('Failure email sent successfully:', info.response);
         }
       });
+  
+      // Delete the user after sending the email
+      await User.deleteOne({ email });
+      console.log(`User with email ${email} deleted due to unverified account.`);
     }
   }, 120000);
-
+  
   // Send verification email
   const verificationLink = `https://fantasymmadness-game-server-three.vercel.app/verify-email?token=${verificationToken}`;
   const mailOptions = {
