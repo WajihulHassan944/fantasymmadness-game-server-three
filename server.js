@@ -756,7 +756,7 @@ app.post('/admin/register', async (req, res) => {
 
 const JWT_SECRET_ADMIN = 'zhxcvjbmkjuytfvcxsdfgugbvcx';
 
-router.post('/admin/login', async (req, res) => {
+app.post('/admin/login', async (req, res) => {
   try {
     const { email, password } = req.body;
 
