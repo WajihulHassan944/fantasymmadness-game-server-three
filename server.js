@@ -115,8 +115,6 @@ app.delete('/api/matches/:id', async (req, res) => {
     res.status(500).json({ message: 'Server error', error });
   }
 });
-
-// Add Match API
 app.post('/addMatch', upload.fields([{ name: 'fighterAImage' }, { name: 'fighterBImage' }]), async (req, res) => {
   const formDataA = new FormData();
   const formDataB = new FormData();
@@ -161,20 +159,40 @@ app.post('/addMatch', upload.fields([{ name: 'fighterAImage' }, { name: 'fighter
   });
 
   await newMatch.save();
-  res.status(200).send('Match Added Successfully');
-});
 
-// Delete Match API
-app.delete('/matchtodelete/:id', async (req, res) => {
-  const { id } = req.params;
-  console.log('Received DELETE request for Match ID:', id);
+  // Retrieve all users to notify
+  const users = await User.find();
+
+  // Send email to each user
+  const mailPromises = users.map(user => {
+    const mailOptions = {
+      from: 'vascularbundle43@gmail.com',
+      to: user.email,
+      subject: 'New Match Added',
+      html: `<p>Dear ${user.firstName},</p>
+             <p>We are excited to announce a new match has been added:</p>
+             <p><strong>Match Name:</strong> ${matchName}</p>
+             <p><strong>Fighter A:</strong> ${matchFighterA}</p>
+             <p><strong>Fighter B:</strong> ${matchFighterB}</p>
+             <p><strong>Description:</strong> ${matchDescription}</p>
+             <p><strong>Video URL:</strong> <a href="${matchVideoUrl}">${matchVideoUrl}</a></p>
+             <p><strong>Date:</strong> ${matchDate}</p>
+             <p><strong>Time:</strong> ${matchTime}</p>
+             <p>Stay tuned for more updates!</p>`
+    };
+
+    return transporter.sendMail(mailOptions);
+  });
+
+  // Wait for all emails to be sent
   try {
-    const match = await Match.findByIdAndDelete(id);
-    
-    res.status(200).json({ message: 'Match deleted successfully' });
+    await Promise.all(mailPromises);
+    console.log('Emails sent successfully');
   } catch (error) {
-    res.status(500).json({ message: 'Internal server error' });
+    console.error('Error sending emails:', error);
   }
+
+  res.status(200).send('Match Added Successfully and Notifications Sent');
 });
 
 // Get Matches API
