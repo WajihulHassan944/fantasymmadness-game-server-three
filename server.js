@@ -95,18 +95,22 @@ const matchSchema = new mongoose.Schema({
 });
 
 const Match = mongoose.model('Match', matchSchema);
-
-// DELETE API to delete a match by ID
+// DELETE API to delete a match by ID and associated predictions
 app.delete('/api/matches/:id', async (req, res) => {
   try {
     const { id } = req.params;
+
+    // Delete the match by ID
     const deletedMatch = await Match.findByIdAndDelete(id);
 
     if (!deletedMatch) {
       return res.status(404).json({ message: 'Match not found' });
     }
 
-    res.status(200).json({ message: 'Match deleted successfully' });
+    // Delete the associated predictions
+    await Score.deleteMany({ matchId: id });
+
+    res.status(200).json({ message: 'Match and associated predictions deleted successfully' });
   } catch (error) {
     res.status(500).json({ message: 'Server error', error });
   }
