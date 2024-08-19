@@ -169,17 +169,31 @@ app.post('/addMatch', upload.fields([{ name: 'fighterAImage' }, { name: 'fighter
       from: 'vascularbundle43@gmail.com',
       to: user.email,
       subject: 'New Match Added',
-      html: `<p>Dear ${user.firstName},</p>
-             <p>We are excited to announce a new match has been added:</p>
-             <p><strong>Match Name:</strong> ${matchName}</p>
-             <p><strong>Fighter A:</strong> ${matchFighterA}</p>
-             <p><strong>Fighter B:</strong> ${matchFighterB}</p>
-             <p><strong>Description:</strong> ${matchDescription}</p>
-             <p><strong>Video URL:</strong> <a href="${matchVideoUrl}">${matchVideoUrl}</a></p>
-             <p><strong>Date:</strong> ${matchDate}</p>
-             <p><strong>Time:</strong> ${matchTime}</p>
-             <p>Stay tuned for more updates!</p>`
-    };
+      html: `<p>Dear ${user.firstName} ${user.lastName},</p>
+       <p>We are excited to announce a new match has been added:</p>
+       <p><strong>Match Name:</strong> ${matchName}</p>
+       
+       <div style="display:flex; gap:20px;"> 
+         <div style="display:flex; justify-content:center; flex-direction:column; align-items:center;"> 
+           <div style="width:60px; height:60px; border-radius:50%; display:flex; justify-content:center; align-items:center; overflow:hidden; border:3px solid red; background-color:#fff;">
+             <img src="${fighterAImageUrl}" style="width:100%; object-fit:cover; border-radius:50%; height:100%;">
+             <h5>${matchFighterA}</h5>
+           </div>
+         </div>
+         <h1>Vs</h1>
+         <div style="display:flex; justify-content:center; flex-direction:column; align-items:center;"> 
+           <div style="width:60px; height:60px; border-radius:50%; display:flex; justify-content:center; align-items:center; overflow:hidden; border:3px solid blue; background-color:#fff;">
+             <img src="${fighterBImageUrl}" style="width:100%; object-fit:cover; border-radius:50%; height:100%;">
+             <h5>${matchFighterB}</h5>
+           </div>
+         </div>
+       </div>
+       
+       <p><strong>Date:</strong> ${matchDate}</p>
+       <p><strong>Time:</strong> ${matchTime}</p>
+       <p>Stay tuned for more updates!</p>
+       <a href="https://fantasymmadness-version2.vercel.app/upcomingfights">Click here</a> to get more details`
+};
 
     return transporter.sendMail(mailOptions);
   });
