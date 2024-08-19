@@ -756,7 +756,7 @@ app.post('/admin/register', async (req, res) => {
 
 
 // Login Admin
-app.post('/login', async (req, res) => {
+app.post('/admin/login', async (req, res) => {
   const { email, password } = req.body;
 
   try {
