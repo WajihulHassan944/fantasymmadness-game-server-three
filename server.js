@@ -697,6 +697,88 @@ app.delete('/api/scores', async (req, res) => {
   }
 });
 
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+const adminSchema = new mongoose.Schema({
+  firstName: String,
+  lastName: String,
+  email: String,
+  password: String,
+  profileUrl: String, // Add profileUrl field
+});
+
+const Admin = mongoose.model('Admin', adminSchema);
+
+app.post('/admin/register', async (req, res) => {
+  const { firstName, lastName, email, password, profileUrl } = req.body;
+
+  try {
+    // Check if the email already exists
+    const existingAdmin = await Admin.findOne({ email });
+    if (existingAdmin) {
+      return res.status(400).json({ message: 'Admin already exists' });
+    }
+
+    // Hash the password
+    const hashedPassword = await bcrypt.hash(password, 10);
+
+    // Create a new admin
+    const newAdmin = new Admin({
+      firstName,
+      lastName,
+      email,
+      password: hashedPassword,
+      profileUrl,
+    });
+
+    // Save the admin to the database
+    await newAdmin.save();
+
+    res.status(201).json({ message: 'Admin registered successfully' });
+  } catch (error) {
+    res.status(500).json({ message: 'Server error' });
+  }
+});
+
+
+// Login Admin
+app.post('/login', async (req, res) => {
+  const { email, password } = req.body;
+
+  try {
+    // Check if the admin exists
+    const admin = await Admin.findOne({ email });
+    if (!admin) {
+      return res.status(400).json({ message: 'Invalid credentials' });
+    }
+
+    // Compare the password with the hashed password in the database
+    const isMatch = await bcrypt.compare(password, admin.password);
+    if (!isMatch) {
+      return res.status(400).json({ message: 'Invalid credentials' });
+    }
+
+    res.status(200).json({ adminId: admin._id, message: 'Login successful' });
+  } catch (error) {
+    res.status(500).json({ message: 'Server error' });
+  }
+});
+
+
 // Start server
 const server = app.listen(PORT, () => {
   console.log(`Server started on port ${PORT}`);
