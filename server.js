@@ -754,30 +754,37 @@ app.post('/admin/register', async (req, res) => {
   }
 });
 
+const JWT_SECRET_ADMIN = 'zhxcvjbmkjuytfvcxsdfgugbvcx';
 
-// Login Admin
-app.post('/admin/login', async (req, res) => {
-  const { email, password } = req.body;
-
+router.post('/admin/login', async (req, res) => {
   try {
-    // Check if the admin exists
+    const { email, password } = req.body;
+
+    // Find the admin by email
     const admin = await Admin.findOne({ email });
     if (!admin) {
-      return res.status(400).json({ message: 'Invalid credentials' });
+      return res.status(400).json({ message: 'Invalid email or password.' });
     }
 
-    // Compare the password with the hashed password in the database
+    // Compare the provided password with the stored hashed password
     const isMatch = await bcrypt.compare(password, admin.password);
     if (!isMatch) {
-      return res.status(400).json({ message: 'Invalid credentials' });
+      return res.status(400).json({ message: 'Invalid email or password.' });
     }
 
-    res.status(200).json({ adminId: admin._id, message: 'Login successful' });
+    // Generate a JWT token
+    const token = jwt.sign(
+      { id: admin._id, email: admin.email },
+      JWT_SECRET_ADMIN,
+      { expiresIn: '1h' }
+    );
+
+    res.status(200).json({ token, message: 'Login successful.' });
   } catch (error) {
-    res.status(500).json({ message: 'Server error' });
+    console.error(error);
+    res.status(500).json({ message: 'Server error. Please try again later.' });
   }
 });
-
 
 // Start server
 const server = app.listen(PORT, () => {
