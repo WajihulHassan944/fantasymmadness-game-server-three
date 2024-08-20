@@ -454,7 +454,8 @@ app.delete('/usertodelete/:id', async (req, res) => {
   }
 });
 
-// Get user details by email (for checking verification status)
+
+// Get user details by email (for checking verification status and returning additional user info)
 app.get('/user/:email', async (req, res) => {
   const { email } = req.params;
   try {
@@ -462,7 +463,19 @@ app.get('/user/:email', async (req, res) => {
     if (!user) {
       return res.status(404).send('User not found');
     }
-    res.json({ verified: user.verified });
+
+    // Destructure necessary fields from the user object
+    const { verified, firstName, lastName, playerName, phone, zipCode } = user;
+
+    // Return the user information along with the verification status
+    res.json({ 
+      verified, 
+      firstName, 
+      lastName, 
+      playerName, 
+      phone, 
+      zipCode 
+    });
   } catch (error) {
     res.status(500).send('Internal server error');
   }
@@ -778,6 +791,8 @@ app.post('/admin/login', async (req, res) => {
       JWT_SECRET_ADMIN,
       { expiresIn: '1h' }
     );
+
+    
 
     res.status(200).json({ token, message: 'Login successful.' });
   } catch (error) {
