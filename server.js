@@ -294,7 +294,6 @@ app.post('/match/addRoundResults/:id', async (req, res) => {
 
 
 
-
 const userSchema = new mongoose.Schema({
   firstName: String,
   lastName: String,
@@ -309,8 +308,10 @@ const userSchema = new mongoose.Schema({
   isAgreed: Boolean,
   verificationToken: String,
   verified: { type: Boolean, default: false },
-  profileUrl: String, // For storing profile picture URL
-  currentPlan: { type: String, default: 'None' }, // Add this field
+  profileUrl: String,
+  currentPlan: { type: String, default: 'None' }, // Current subscription plan
+  freePlanExpiryDate: Date, // Date when the free plan expires
+  hasAvailedFreePlan: { type: Boolean, default: false }, // Indicates if the user has availed the free plan
 });
 
 const User = mongoose.model('User', userSchema);
@@ -507,37 +508,55 @@ app.post('/upload-avatar', upload.single('image'), async (req, res) => {
 });
 
 
-// API to handle user subscription to a membership plan
 app.post('/user/:email/subscribe', async (req, res) => {
   const { email } = req.params;
-  const { plan } = req.body; // Expecting "plan" to be either "free" or "standard"
+  const { plan } = req.body;
 
   try {
-    // Find the user by email
     const user = await User.findOne({ email });
 
     if (!user) {
       return res.status(404).send('User not found');
     }
 
-    // Update the user's subscription plan
-    if (plan === 'free') {
-      user.isSubscribed = false; // Assuming 'isSubscribed' indicates paid membership
-      user.currentPlan = 'Free'; // Add a field for tracking the current plan if it doesn't exist
-    } else if (plan === 'standard') {
-      user.isSubscribed = true;
+    // Check if the user has already availed the free plan
+    if (plan === 'Free') {
+      if (user.hasAvailedFreePlan) {
+        return res.status(400).json({ message: 'User has already availed the free plan' });
+      }
+
+      // Set the current plan to "Free" and set the expiry date to one month from now
+      user.currentPlan = 'Free';
+      user.freePlanExpiryDate = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000); // 1 month from now
+      user.hasAvailedFreePlan = true;
+    } else if (plan === 'Standard') {
       user.currentPlan = 'Standard';
-    } else {
-      return res.status(400).send('Invalid membership plan selected');
     }
 
-    await user.save(); // Save the updated user data
-
+    await user.save();
     res.status(200).json({ message: 'Subscription updated successfully' });
+
   } catch (error) {
     console.error('Error updating subscription:', error);
     res.status(500).send('Internal server error');
   }
+});
+
+// Job to reset the current plan to "None" after the free plan expires
+const cron = require('node-cron');
+
+cron.schedule('0 0 * * *', async () => { // Runs daily at midnight
+  const users = await User.find({
+    currentPlan: 'Free',
+    freePlanExpiryDate: { $lte: new Date() }
+  });
+
+  for (const user of users) {
+    user.currentPlan = 'None';
+    await user.save();
+  }
+
+  console.log('Expired free plans have been reset to "None"');
 });
 
 
