@@ -295,7 +295,6 @@ app.post('/match/addRoundResults/:id', async (req, res) => {
 
 
 
-
 const userSchema = new mongoose.Schema({
   firstName: String,
   lastName: String,
@@ -310,7 +309,8 @@ const userSchema = new mongoose.Schema({
   isAgreed: Boolean,
   verificationToken: String,
   verified: { type: Boolean, default: false },
-  profileUrl: String, // Add profileUrl field
+  profileUrl: String, // For storing profile picture URL
+  currentPlan: { type: String, default: 'None' }, // Add this field
 });
 
 const User = mongoose.model('User', userSchema);
@@ -506,6 +506,39 @@ app.post('/upload-avatar', upload.single('image'), async (req, res) => {
   res.status(200).send('Avatar uploaded and saved successfully');
 });
 
+
+// API to handle user subscription to a membership plan
+app.post('/user/:email/subscribe', async (req, res) => {
+  const { email } = req.params;
+  const { plan } = req.body; // Expecting "plan" to be either "free" or "standard"
+
+  try {
+    // Find the user by email
+    const user = await User.findOne({ email });
+
+    if (!user) {
+      return res.status(404).send('User not found');
+    }
+
+    // Update the user's subscription plan
+    if (plan === 'free') {
+      user.isSubscribed = false; // Assuming 'isSubscribed' indicates paid membership
+      user.currentPlan = 'Free'; // Add a field for tracking the current plan if it doesn't exist
+    } else if (plan === 'standard') {
+      user.isSubscribed = true;
+      user.currentPlan = 'Standard';
+    } else {
+      return res.status(400).send('Invalid membership plan selected');
+    }
+
+    await user.save(); // Save the updated user data
+
+    res.status(200).json({ message: 'Subscription updated successfully' });
+  } catch (error) {
+    console.error('Error updating subscription:', error);
+    res.status(500).send('Internal server error');
+  }
+});
 
 
 
