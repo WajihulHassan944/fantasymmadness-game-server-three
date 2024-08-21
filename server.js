@@ -333,6 +333,7 @@ const userSchema = new mongoose.Schema({
   lastName: String,
   playerName: String,
   zipCode: String,
+  tokens: String,
   email: String,
   phone: String,
   password: String,
@@ -564,7 +565,7 @@ app.post('/upload-avatar', upload.single('image'), async (req, res) => {
 
 app.post('/user/:email/subscribe', async (req, res) => {
   const { email } = req.params;
-  const { plan} = req.body;
+  const { plan } = req.body;
 
   try {
     const user = await User.findOne({ email });
@@ -579,12 +580,15 @@ app.post('/user/:email/subscribe', async (req, res) => {
         return res.status(400).json({ message: 'User has already availed the free plan' });
       }
 
-      // Set the current plan to "Free" and set the expiry date to one month from now
+      // Set the current plan to "Free", set the expiry date to one month from now, and allot 20 free tokens
       user.currentPlan = 'Free';
       user.freePlanExpiryDate = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000); // 1 month from now
       user.hasAvailedFreePlan = true;
+      user.tokens = '20'; // Allot 20 free tokens for the Free plan
+
     } else if (plan === 'Standard') {
       user.currentPlan = 'Standard';
+      user.tokens = '100'; // Allot 100 free tokens for the Standard plan
     }
 
     await user.save();
