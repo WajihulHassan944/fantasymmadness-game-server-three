@@ -562,10 +562,6 @@ app.post('/upload-avatar', upload.single('image'), async (req, res) => {
   res.status(200).send('Avatar uploaded and saved successfully');
 });
 
-
-
-
-
 app.post('/user/:email/subscribe', async (req, res) => {
   const { email } = req.params;
   const { plan} = req.body;
@@ -600,9 +596,12 @@ app.post('/user/:email/subscribe', async (req, res) => {
   }
 });
 
+
 // Job to reset the current plan to "None" after the free plan expires
 const cron = require('node-cron');
 
+
+// Job to reset the current plan to "None" after the free plan expires
 cron.schedule('0 0 * * *', async () => { // Runs daily at midnight
   const users = await User.find({
     currentPlan: 'Free',
@@ -616,8 +615,6 @@ cron.schedule('0 0 * * *', async () => { // Runs daily at midnight
 
   console.log('Expired free plans have been reset to "None"');
 });
-
-
 
 
 
