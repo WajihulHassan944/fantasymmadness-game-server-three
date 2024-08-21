@@ -11,6 +11,11 @@ const crypto = require('crypto'); // For generating the verification token
 const nodemailer = require('nodemailer'); // For sending emails
 const jwt = require('jsonwebtoken');
 
+const stripe = require('stripe')(process.env.STRIPE_SECRET_KEY);
+
+const { promisify } = require('util');
+
+
 const fetch = require('node-fetch');
 
 
@@ -291,6 +296,35 @@ app.post('/match/addRoundResults/:id', async (req, res) => {
 
 
 
+// Encryption function
+const encrypt = async (text) => {
+  const iv = crypto.randomBytes(16);
+  const key = crypto.scryptSync('encryption-password', 'salt', 32);
+  const cipher = crypto.createCipheriv('aes-256-gcm', key, iv);
+  const encrypted = Buffer.concat([cipher.update(text, 'utf8'), cipher.final()]);
+  const tag = cipher.getAuthTag();
+  return {
+    iv: iv.toString('hex'),
+    content: encrypted.toString('hex'),
+    tag: tag.toString('hex'),
+  };
+};
+
+// Decryption function
+const decrypt = async (hash) => {
+  const key = crypto.scryptSync('encryption-password', 'salt', 32);
+  const decipher = crypto.createDecipheriv(
+    'aes-256-gcm',
+    key,
+    Buffer.from(hash.iv, 'hex')
+  );
+  decipher.setAuthTag(Buffer.from(hash.tag, 'hex'));
+  const decrypted = Buffer.concat([
+    decipher.update(Buffer.from(hash.content, 'hex')),
+    decipher.final(),
+  ]);
+  return decrypted.toString();
+};
 
 
 
@@ -312,6 +346,27 @@ const userSchema = new mongoose.Schema({
   currentPlan: { type: String, default: 'None' }, // Current subscription plan
   freePlanExpiryDate: Date, // Date when the free plan expires
   hasAvailedFreePlan: { type: Boolean, default: false }, // Indicates if the user has availed the free plan
+  billing: {
+    cardNumber: {
+      iv: String,
+      content: String,
+      tag: String,
+    },
+    expMonth: String,
+    expYear: String,
+    cvc: {
+      iv: String,
+      content: String,
+      tag: String,
+    },
+    billingAddress: {
+      line1: String,
+      city: String,
+      state: String,
+      postalCode: String,
+    },
+    stripeCustomerId: String, // Stripe customer ID reference
+  },
 });
 
 const User = mongoose.model('User', userSchema);
@@ -510,7 +565,7 @@ app.post('/upload-avatar', upload.single('image'), async (req, res) => {
 
 app.post('/user/:email/subscribe', async (req, res) => {
   const { email } = req.params;
-  const { plan } = req.body;
+  const { plan, billingInfo } = req.body;
 
   try {
     const user = await User.findOne({ email });
@@ -519,23 +574,84 @@ app.post('/user/:email/subscribe', async (req, res) => {
       return res.status(404).send('User not found');
     }
 
-    // Check if the user has already availed the free plan
     if (plan === 'Free') {
       if (user.hasAvailedFreePlan) {
         return res.status(400).json({ message: 'User has already availed the free plan' });
       }
 
-      // Set the current plan to "Free" and set the expiry date to one month from now
       user.currentPlan = 'Free';
       user.freePlanExpiryDate = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000); // 1 month from now
       user.hasAvailedFreePlan = true;
     } else if (plan === 'Standard') {
+      const { stripeCustomerId } = user.billing;
+
+      if (!stripeCustomerId) {
+        const customer = await stripe.customers.create({
+          email: user.email,
+          name: `${user.firstName} ${user.lastName}`,
+          address: {
+            line1: billingInfo.address,
+            city: billingInfo.city,
+            state: billingInfo.state,
+            postal_code: billingInfo.zipCode,
+          },
+        });
+
+        user.billing.stripeCustomerId = customer.id;
+      }
+
+      const paymentMethod = await stripe.paymentMethods.create({
+        type: 'card',
+        card: {
+          number: billingInfo.creditCardNumber,
+          exp_month: billingInfo.expMonth,
+          exp_year: billingInfo.expYear,
+          cvc: billingInfo.securityCode,
+        },
+        billing_details: {
+          name: `${billingInfo.firstName} ${billingInfo.lastName}`,
+          address: {
+            line1: billingInfo.address,
+            city: billingInfo.city,
+            state: billingInfo.state,
+            postal_code: billingInfo.zipCode,
+          },
+          email: email,
+          phone: billingInfo.phone,
+        },
+      });
+
+      await stripe.paymentMethods.attach(paymentMethod.id, {
+        customer: user.billing.stripeCustomerId,
+      });
+
+      await stripe.customers.update(user.billing.stripeCustomerId, {
+        invoice_settings: { default_payment_method: paymentMethod.id },
+      });
+
+      await stripe.subscriptions.create({
+        customer: user.billing.stripeCustomerId,
+        items: [{ plan: 'your-stripe-plan-id' }],
+        expand: ['latest_invoice.payment_intent'],
+      });
+
       user.currentPlan = 'Standard';
+      user.billing = {
+        cardNumber: await encrypt(billingInfo.creditCardNumber),
+        expMonth: billingInfo.expMonth,
+        expYear: billingInfo.expYear,
+        cvc: await encrypt(billingInfo.securityCode),
+        billingAddress: {
+          line1: billingInfo.address,
+          city: billingInfo.city,
+          state: billingInfo.state,
+          postalCode: billingInfo.zipCode,
+        },
+      };
     }
 
     await user.save();
     res.status(200).json({ message: 'Subscription updated successfully' });
-
   } catch (error) {
     console.error('Error updating subscription:', error);
     res.status(500).send('Internal server error');
@@ -543,8 +659,6 @@ app.post('/user/:email/subscribe', async (req, res) => {
 });
 
 // Job to reset the current plan to "None" after the free plan expires
-const cron = require('node-cron');
-
 cron.schedule('0 0 * * *', async () => { // Runs daily at midnight
   const users = await User.find({
     currentPlan: 'Free',
@@ -573,10 +687,6 @@ cron.schedule('0 0 * * *', async () => { // Runs daily at midnight
 
 
 
-
-const JWT_SECRET = 'asdfghjklmnbvcdewsdfgbnvcfdx'; 
-
-
 // Login API
 app.post('/login', async (req, res) => {
   const { email, password } = req.body;
@@ -598,7 +708,7 @@ app.post('/login', async (req, res) => {
       return res.status(400).json({ message: 'Invalid email or password' });
     }
 
-    const token = jwt.sign({ id: user._id }, JWT_SECRET, { expiresIn: '1h' });
+    const token = jwt.sign({ id: user._id }, process.env.JWT_SECRET, { expiresIn: '1h' });
 
     res.cookie('token', token, { httpOnly: true, maxAge: 3600000 }); // 1 hour
 
@@ -634,7 +744,7 @@ const verifyToken = (req, res, next) => {
 
   if (token == null) return res.sendStatus(401); // No token, unauthorized
 
-  jwt.verify(token, JWT_SECRET, (err, user) => {
+  jwt.verify(token, process.env.JWT_SECRET, (err, user) => {
     if (err) return res.sendStatus(403); // Token invalid, forbidden
 
     req.user = user; // Attach user info to request object
@@ -820,8 +930,6 @@ app.post('/admin/register', async (req, res) => {
   }
 });
 
-const JWT_SECRET_ADMIN = 'zhxcvjbmkjuytfvcxsdfgugbvcx';
-
 app.post('/admin/login', async (req, res) => {
   try {
     const { email, password } = req.body;
@@ -841,7 +949,7 @@ app.post('/admin/login', async (req, res) => {
     // Generate a JWT token
     const token = jwt.sign(
       { id: admin._id, email: admin.email },
-      JWT_SECRET_ADMIN,
+      process.env.JWT_SECRET_ADMIN,
       { expiresIn: '1h' }
     );
 
