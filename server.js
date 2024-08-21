@@ -631,7 +631,7 @@ app.post('/user/:email/subscribe', async (req, res) => {
 
       await stripe.subscriptions.create({
         customer: user.billing.stripeCustomerId,
-        items: [{ plan: 'your-stripe-plan-id' }],
+        items: [{  plan: 'plan_12345' }],
         expand: ['latest_invoice.payment_intent'],
       });
 
