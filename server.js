@@ -61,11 +61,11 @@ const matchSchema = new mongoose.Schema({
   matchFighterA: String,
   matchFighterB: String,
   matchDescription: String,
+  matchStatus: { type: String, enum: ['Finished', 'Ongoing'], default: 'Ongoing' },
   matchVideoUrl: String,
   matchDate: Date,
   matchTime: String,  // Store the match time as a string in 'HH:MM' format
   matchTokens: Number,
-  matchStatus: String,
   pot: Number,
   fighterAImage: String,  // URL of Fighter A's image
   fighterBImage: String,  // URL of Fighter B's image
@@ -100,6 +100,30 @@ const matchSchema = new mongoose.Schema({
 });
 
 const Match = mongoose.model('Match', matchSchema);
+
+
+app.post('/finishMatch/:matchId', async (req, res) => {
+  try {
+    const { matchId } = req.params;
+
+    // Find the match by ID and update the status to 'Finished'
+    const match = await Match.findByIdAndUpdate(
+      matchId, 
+      { matchStatus: 'Finished' }, 
+      { new: true } // This option returns the updated document
+    );
+
+    if (!match) {
+      return res.status(404).json({ message: 'Match not found' });
+    }
+
+    res.json({ message: 'Match status updated to Finished', match });
+  } catch (error) {
+    console.error('Error finishing match:', error);
+    res.status(500).json({ message: 'Internal server error' });
+  }
+});
+
 // DELETE API to delete a match by ID and associated predictions
 app.delete('/api/matches/:id', async (req, res) => {
   try {
