@@ -396,7 +396,7 @@ const userSchema = new mongoose.Schema({
 
 const User = mongoose.model('User', userSchema);
 
-app.post('/deduct-tokens', async (req, res) => {
+app.post('/api/deduct-tokens', async (req, res) => {
   try {
     const { userId, matchTokens } = req.body;
 
