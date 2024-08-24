@@ -396,6 +396,33 @@ const userSchema = new mongoose.Schema({
 
 const User = mongoose.model('User', userSchema);
 
+app.post('/deduct-tokens', async (req, res) => {
+  try {
+    const { userId, matchTokens } = req.body;
+
+    // Find the user by ID
+    const user = await User.findById(userId);
+
+    if (!user) {
+      return res.status(404).json({ message: 'User not found' });
+    }
+
+    // Check if the user has enough tokens
+    if (user.tokens < matchTokens) {
+      return res.status(400).json({ message: 'Insufficient tokens' });
+    }
+
+    // Deduct the tokens
+    user.tokens -= matchTokens;
+    await user.save();
+
+    return res.status(200).json({ message: 'Tokens deducted successfully', tokensRemaining: user.tokens });
+  } catch (error) {
+    console.error('Error deducting tokens:', error);
+    return res.status(500).json({ message: 'Server error' });
+  }
+});
+
 
 // Get Matches API
 app.get('/users', async (req, res) => {
