@@ -146,6 +146,23 @@ app.post('/finishMatch/:matchId', async (req, res) => {
     res.status(500).json({ message: 'Internal server error' });
   }
 });
+// GET API to retrieve a match by ID
+app.get('/api/matches/:id', async (req, res) => {
+  try {
+    const { id } = req.params;
+
+    // Find the match by ID
+    const match = await Match.findById(id);
+
+    if (!match) {
+      return res.status(404).json({ message: 'Match not found' });
+    }
+
+    res.status(200).json(match);
+  } catch (error) {
+    res.status(500).json({ message: 'Server error', error });
+  }
+});
 
 // DELETE API to delete a match by ID and associated predictions
 app.delete('/api/matches/:id', async (req, res) => {
