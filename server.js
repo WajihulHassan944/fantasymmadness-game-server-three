@@ -102,27 +102,6 @@ const matchSchema = new mongoose.Schema({
 
 const Match = mongoose.model('Match', matchSchema);
 
-app.post('/rewardMatch/:matchId', async (req, res) => {
-  try {
-    const { matchId } = req.params;
-
-    // Find the match by ID and update the status to 'Finished'
-    const match = await Match.findByIdAndUpdate(
-      matchId, 
-      { matchReward: 'Rewarded' }, 
-      { new: true } // This option returns the updated document
-    );
-
-    if (!match) {
-      return res.status(404).json({ message: 'Match not found' });
-    }
-
-    res.json({ message: 'Match status updated to Rewarded', match });
-  } catch (error) {
-    console.error('Error finishing match:', error);
-    res.status(500).json({ message: 'Internal server error' });
-  }
-});
 
 
 app.post('/finishMatch/:matchId', async (req, res) => {
@@ -435,11 +414,11 @@ const userSchema = new mongoose.Schema({
 });
 
 const User = mongoose.model('User', userSchema);
-// POST API to reward tokens to the user
+// POST API to reward tokens to the user and update matchReward status
 app.post('/api/reward-tokens/:userId', async (req, res) => {
   try {
     const { userId } = req.params;
-    const { tokens } = req.body;
+    const { tokens, matchId } = req.body;
 
     // Find the user by ID
     const user = await User.findById(userId);
@@ -454,12 +433,23 @@ app.post('/api/reward-tokens/:userId', async (req, res) => {
     // Save the updated user
     await user.save();
 
-    res.status(200).json({ success: true, message: 'Tokens rewarded successfully', user });
+    // Update the match's reward status to "Rewarded"
+    const match = await Match.findById(matchId);
+
+    if (!match) {
+      return res.status(404).json({ message: 'Match not found' });
+    }
+
+    match.matchReward = 'Rewarded';
+
+    // Save the updated match
+    await match.save();
+
+    res.status(200).json({ success: true, message: 'Tokens rewarded and match updated successfully', user, match });
   } catch (error) {
     res.status(500).json({ success: false, message: 'Server error', error });
   }
 });
-
 
 
 app.post('/api/deduct-tokens', async (req, res) => {
