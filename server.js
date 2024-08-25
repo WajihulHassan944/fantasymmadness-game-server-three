@@ -62,6 +62,7 @@ const matchSchema = new mongoose.Schema({
   matchFighterB: String,
   matchDescription: String,
   matchStatus: { type: String, enum: ['Finished', 'Ongoing'], default: 'Ongoing' },
+  matchReward: { type: String, enum: ['Rewarded', 'NotRewarded'], default: 'NotRewarded' },
   matchVideoUrl: String,
   matchDate: Date,
   matchTime: String,  // Store the match time as a string in 'HH:MM' format
@@ -100,6 +101,28 @@ const matchSchema = new mongoose.Schema({
 });
 
 const Match = mongoose.model('Match', matchSchema);
+
+app.post('/rewardMatch/:matchId', async (req, res) => {
+  try {
+    const { matchId } = req.params;
+
+    // Find the match by ID and update the status to 'Finished'
+    const match = await Match.findByIdAndUpdate(
+      matchId, 
+      { matchReward: 'Rewarded' }, 
+      { new: true } // This option returns the updated document
+    );
+
+    if (!match) {
+      return res.status(404).json({ message: 'Match not found' });
+    }
+
+    res.json({ message: 'Match status updated to Rewarded', match });
+  } catch (error) {
+    console.error('Error finishing match:', error);
+    res.status(500).json({ message: 'Internal server error' });
+  }
+});
 
 
 app.post('/finishMatch/:matchId', async (req, res) => {
