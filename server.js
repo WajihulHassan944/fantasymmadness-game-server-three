@@ -379,6 +379,7 @@ const userSchema = new mongoose.Schema({
   tokens: String,
   email: String,
   phone: String,
+  shortBio: String,
   password: String,
   isNotificationsEnabled: Boolean,
   isSubscribed: Boolean,
@@ -411,9 +412,42 @@ const userSchema = new mongoose.Schema({
     },
     stripeCustomerId: String, // Stripe customer ID reference
   },
-});
+}, { timestamps: true }); 
 
 const User = mongoose.model('User', userSchema);
+
+app.put('/update-profile/:userId', async (req, res) => {
+  const { userId } = req.params;
+  const { firstName, lastName, playerName, phone, zipCode, shortBio } = req.body;
+
+  try {
+      // Create an object to hold the fields that should be updated
+      const updateFields = {};
+
+      if (firstName) updateFields.firstName = firstName;
+      if (lastName) updateFields.lastName = lastName;
+      if (playerName) updateFields.playerName = playerName;
+      if (phone) updateFields.phone = phone;
+      if (zipCode) updateFields.zipCode = zipCode;
+      if (shortBio) updateFields.shortBio = shortBio;
+
+      // Update the user document with the specified fields
+      const updatedUser = await User.findByIdAndUpdate(userId, updateFields, { new: true });
+
+      if (!updatedUser) {
+          return res.status(404).send('User not found');
+      }
+
+      res.status(200).json({
+          message: 'Profile updated successfully',
+          user: updatedUser
+      });
+  } catch (error) {
+      console.error('Error updating profile:', error);
+      res.status(500).send('Server error');
+  }
+});
+
 // POST API to reward tokens to the user and update matchReward status
 app.post('/api/reward-tokens/:userId', async (req, res) => {
   try {
