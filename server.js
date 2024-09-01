@@ -946,6 +946,55 @@ app.get('/affiliates', async (req, res) => {
   res.send(match);
 });
 
+app.post('/send-email-affiliate', async (req, res) => {
+  const { email, subject, message } = req.body;
+
+  // Check if email, subject, and message are provided
+  if (!email || !subject || !message) {
+      return res.status(400).json({ message: 'Email, subject, and message are required' });
+  }
+
+  try {
+      // Send mail with the defined transport object
+      await transporter.sendMail({
+          from: '"Fantasy mmadnress Team" <vascularbundle43@gmail.com>', // sender address
+          to: email, // list of receivers
+          subject: subject, // Subject line
+          text: message, // plain text body
+      });
+
+      res.status(200).json({ message: 'Email sent successfully' });
+  } catch (error) {
+      console.error('Error sending email:', error);
+      res.status(500).json({ message: 'Internal server error' });
+  }
+});
+
+
+
+
+app.post('/affiliates/:id/verify', async (req, res) => {
+  try {
+      const { id } = req.params;
+      const affiliate = await Affiliate.findById(id);
+
+      if (!affiliate) {
+          return res.status(404).json({ message: 'Affiliate not found' });
+      }
+
+      affiliate.verified = true;
+      await affiliate.save();
+
+      res.status(200).json({ message: 'Affiliate verified successfully', affiliate });
+  } catch (error) {
+      console.error('Error verifying affiliate:', error);
+      res.status(500).json({ message: 'Internal server error' });
+  }
+});
+
+
+
+
 
 app.post('/registerAffiliate', upload.single('image'), async (req, res) => {
   try {
