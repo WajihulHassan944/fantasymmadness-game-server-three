@@ -339,6 +339,47 @@ app.post('/match/addRoundResults/:id', async (req, res) => {
 
 
 
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 // Encryption function
 const encrypt = async (text) => {
   const iv = crypto.randomBytes(16);
@@ -796,17 +837,6 @@ app.post('/login', async (req, res) => {
       token,  // Return token in response body
       user: {
         id: user._id,
-        firstName: user.firstName,
-        lastName: user.lastName,
-        playerName: user.playerName,
-        zipCode: user.zipCode,
-        email: user.email,
-        phone: user.phone,
-        isNotificationsEnabled: user.isNotificationsEnabled,
-        isSubscribed: user.isSubscribed,
-        isUSCitizen: user.isUSCitizen,
-        isAgreed: user.isAgreed,
-        profileUrl: user.profileUrl,
         verified: user.verified,
       },
     });
@@ -867,6 +897,162 @@ app.get('/profile', verifyToken, async (req, res) => {
 
 
 
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+const affiliateSchema = new mongoose.Schema({
+  firstName: String,
+  lastName: String,
+  playerName: String,
+  zipCode: String,
+  email: String,
+  phone: String,
+  hearing: String,
+  password: String,
+  isNotificationsEnabled: Boolean,
+  isSubscribed: Boolean,
+  isUSCitizen: Boolean,
+  isAgreed: Boolean,
+  verified: { type: Boolean, default: false },
+  profileUrl: String,
+  
+}, { timestamps: true }); 
+
+const Affiliate = mongoose.model('Affiliate', affiliateSchema);
+
+
+
+// Get Matches API
+app.get('/affiliates', async (req, res) => {
+  const match = await Affiliate.find();
+  res.send(match);
+});
+
+
+app.post('/registerAffiliate', upload.single('image'), async (req, res) => {
+  try {
+    const {
+      firstName,
+      lastName,
+      playerName,
+      email,
+      phone,
+      password,
+      zipCode,
+      isNotificationsEnabled,
+      isSubscribed,
+      isUSCitizen,
+      isAgreed,
+      hearing
+    } = req.body;
+
+    // Check if email already exists
+    const existingUser = await Affiliate.findOne({ email });
+    if (existingUser) {
+      return res.status(400).send('Email already registered');
+    }
+
+    // Handle image upload if an image is provided
+    let profileUrl = '';
+    if (req.file) {
+      const formData = new FormData();
+      formData.append('image', req.file.buffer.toString('base64'));
+
+      const response = await fetch('https://api.imgbb.com/1/upload?key=368cbdb895c5bed277d50d216adbfa52', {
+        method: 'POST',
+        body: formData,
+      });
+
+      const data = await response.json();
+      profileUrl = data.data.url;
+    }
+
+    // Create new user with hashed password
+    const newUser = new Affiliate({
+      firstName,
+      lastName,
+      playerName,
+      email,
+      phone,
+      zipCode,
+      hearing,
+      isNotificationsEnabled,
+      isSubscribed,
+      isUSCitizen,
+      isAgreed,
+      verified: false,
+      password: await bcrypt.hash(password, 10),
+      profileUrl, // Save the profile image URL
+    });
+
+    // Save the new user to the database
+    await newUser.save();
+
+    res.status(201).send('User registered successfully');
+  } catch (error) {
+    console.error('Error registering user:', error);
+    res.status(500).send('Server error');
+  }
+});
+
+
+
+
+// Login API
+app.post('/loginAffiliate', async (req, res) => {
+  const { email, password } = req.body;
+
+  try {
+    const user = await Affiliate.findOne({ email });
+
+    if (!user) {
+      return res.status(400).json({ message: 'Invalid email or password' });
+    }
+
+    if (!user.verified) {
+      return res.status(403451).json({ message: 'Please verify your email before logging in' });
+    }
+
+    const isPasswordValid = await bcrypt.compare(password, user.password);
+
+    if (!isPasswordValid) {
+      return res.status(400).json({ message: 'Invalid email or password' });
+    }
+
+    const token = jwt.sign({ id: user._id }, process.env.JWT_SECRET, { expiresIn: '1h' });
+
+    res.cookie('token', token, { httpOnly: true, maxAge: 3600000 }); // 1 hour
+
+    res.status(200).json({
+      message: 'Login successful',
+      token,  // Return token in response body
+      user: {
+        id: user._id,
+        verified: user.verified,
+      },
+    });
+  } catch (error) {
+    res.status(500).json({ message: 'Internal server error' });
+  }
+});
 
 
 
