@@ -939,6 +939,19 @@ const affiliateSchema = new mongoose.Schema({
 const Affiliate = mongoose.model('Affiliate', affiliateSchema);
 
 
+// Delete API
+app.delete('/affiliatetodelete/:id', async (req, res) => {
+  const { id } = req.params;
+  console.log('Received DELETE request for User ID:', id);
+  try {
+    const user = await Affiliate.findByIdAndDelete(id);
+    
+    res.status(200).json({ message: 'User deleted successfully' });
+  } catch (error) {
+    res.status(500).json({ message: 'Internal server error' });
+  }
+});
+
 
 // Get Matches API
 app.get('/affiliates', async (req, res) => {
