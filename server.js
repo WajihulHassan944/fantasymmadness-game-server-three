@@ -878,6 +878,21 @@ app.get('/profile', verifyToken, async (req, res) => {
 });
 
 
+// Profile API
+app.get('/profileAffiliate', verifyToken, async (req, res) => {
+  try {
+    const user = await Affiliate.findById(req.user.id);
+
+    if (!user) {
+      return res.status(404).json({ message: 'User not found' });
+    }
+
+    res.status(200).json({ user });
+  } catch (error) {
+    res.status(500).json({ message: 'Internal server error' });
+  }
+});
+
 
 
 
@@ -1087,10 +1102,6 @@ app.post('/loginAffiliate', async (req, res) => {
 
     if (!user) {
       return res.status(400).json({ message: 'Invalid email or password' });
-    }
-
-    if (!user.verified) {
-      return res.status(403451).json({ message: 'Please verify your email before logging in' });
     }
 
     const isPasswordValid = await bcrypt.compare(password, user.password);
