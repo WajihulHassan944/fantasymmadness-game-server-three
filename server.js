@@ -57,10 +57,12 @@ const storage = multer.memoryStorage();
 const upload = multer({ storage: storage });
 const matchSchema = new mongoose.Schema({
   matchCategory: String,
+  affiliateId: String,
   matchName: String,
   matchFighterA: String,
   matchFighterB: String,
   matchDescription: String,
+  matchBy: { type: String, enum: ['admin', 'affiliate'], default: 'admin' },
   matchStatus: { type: String, enum: ['Finished', 'Ongoing'], default: 'Ongoing' },
   matchReward: { type: String, enum: ['Rewarded', 'NotRewarded'], default: 'NotRewarded' },
   matchVideoUrl: String,
@@ -68,6 +70,8 @@ const matchSchema = new mongoose.Schema({
   matchTime: String,  // Store the match time as a string in 'HH:MM' format
   matchTokens: Number,
   pot: Number,
+  profit: Number,
+  amountOverPotBudget: Number,
   fighterAImage: String,  // URL of Fighter A's image
   fighterBImage: String,  // URL of Fighter B's image
   matchType: String,      // LIVE or SHADOW
@@ -186,7 +190,7 @@ app.post('/addMatch', upload.fields([{ name: 'fighterAImage' }, { name: 'fighter
   const dataB = await responseB.json();
   const fighterBImageUrl = dataB.data.url;
 
-  const { matchCategory, matchName, matchFighterA, matchFighterB, matchDescription, matchVideoUrl, matchDate, matchTime, matchTokens, matchStatus, pot, matchType } = req.body;
+  const {affiliateId, matchBy, profit, amountOverPotBudget, matchCategory, matchName, matchFighterA, matchFighterB, matchDescription, matchVideoUrl, matchDate, matchTime, matchTokens, matchStatus, pot, matchType } = req.body;
 
   // Save the match details to the database
   const newMatch = new Match({
@@ -204,6 +208,7 @@ app.post('/addMatch', upload.fields([{ name: 'fighterAImage' }, { name: 'fighter
     fighterAImage: fighterAImageUrl,
     fighterBImage: fighterBImageUrl,
     matchType,
+    affiliateId, matchBy, profit, amountOverPotBudget,
   });
 
   await newMatch.save();
