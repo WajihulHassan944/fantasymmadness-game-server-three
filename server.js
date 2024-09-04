@@ -65,7 +65,6 @@ const matchSchema = new mongoose.Schema({
   matchBy: { type: String, enum: ['admin', 'affiliate'], default: 'admin' },
   matchStatus: { type: String, enum: ['Finished', 'Ongoing'], default: 'Ongoing' },
   matchReward: { type: String, enum: ['Rewarded', 'NotRewarded'], default: 'NotRewarded' },
-  approvalOfMatch:  { type: String, enum: ['pending', 'approved'], default: 'pending' },
   matchVideoUrl: String,
   matchDate: Date,
   matchTime: String,  // Store the match time as a string in 'HH:MM' format
@@ -191,7 +190,7 @@ app.post('/addMatch', upload.fields([{ name: 'fighterAImage' }, { name: 'fighter
   const dataB = await responseB.json();
   const fighterBImageUrl = dataB.data.url;
 
-  const {approvalOfMatch, affiliateId, matchBy, profit, amountOverPotBudget, matchCategory, matchName, matchFighterA, matchFighterB, matchDescription, matchVideoUrl, matchDate, matchTime, matchTokens, matchStatus, pot, matchType } = req.body;
+  const {affiliateId, matchBy, profit, amountOverPotBudget, matchCategory, matchName, matchFighterA, matchFighterB, matchDescription, matchVideoUrl, matchDate, matchTime, matchTokens, matchStatus, pot, matchType } = req.body;
 
   // Save the match details to the database
   const newMatch = new Match({
@@ -210,7 +209,6 @@ app.post('/addMatch', upload.fields([{ name: 'fighterAImage' }, { name: 'fighter
     fighterBImage: fighterBImageUrl,
     matchType,
     affiliateId, matchBy, profit, amountOverPotBudget,
-    approvalOfMatch,
   });
 
   await newMatch.save();
