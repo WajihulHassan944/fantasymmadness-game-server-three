@@ -55,8 +55,11 @@ app.use(bodyParser.json());
 // File upload configuration
 const storage = multer.memoryStorage();
 const upload = multer({ storage: storage });
+
+
+
 const matchSchema = new mongoose.Schema({
-  matchCategory: String,
+  matchCategory: String, // 'boxing' or 'mma'
   affiliateId: String,
   matchName: String,
   matchFighterA: String,
@@ -75,6 +78,8 @@ const matchSchema = new mongoose.Schema({
   fighterAImage: String,  // URL of Fighter A's image
   fighterBImage: String,  // URL of Fighter B's image
   matchType: String,      // LIVE or SHADOW
+
+  // Boxing-specific stats
   BoxingMatch: {
     fighterOneStats: [{
       roundNumber: Number,
@@ -97,12 +102,43 @@ const matchSchema = new mongoose.Schema({
       SP: Number,
     }],
   },
+
+  // MMA-specific stats
+  MMAMatch: {
+    fighterOneStats: [{
+      roundNumber: Number,
+      ST: Number,
+      KI: Number,
+      KN: Number,
+      EL: Number,
+      RW: Number,
+      RL: Number,
+      KO: Number,
+      SP: Number,
+   }],
+    fighterTwoStats: [{
+      roundNumber: Number,
+      ST: Number,
+      KI: Number,
+      KN: Number,
+      EL: Number,
+      RW: Number,
+      RL: Number,
+      KO: Number,
+      SP: Number,
+   }],
+  },
+
   userPredictions: [{
     userId: { type: mongoose.Schema.Types.ObjectId, ref: 'User' }, // Reference to the user
     predictionStatus: { type: String, enum: ['submitted', 'notSubmitted'], default: 'notSubmitted' }
   }],
+  
   __v: Number
 });
+
+
+
 
 const Match = mongoose.model('Match', matchSchema);
 
@@ -297,7 +333,6 @@ app.post('/api/matches/:matchId/updatePredictionStatus', async (req, res) => {
 });
 
 
-
 app.post('/match/addRoundResults/:id', async (req, res) => {
   const { id } = req.params;
   const { fighterOneStats, fighterTwoStats } = req.body;
@@ -310,20 +345,41 @@ app.post('/match/addRoundResults/:id', async (req, res) => {
       return res.status(404).json({ message: 'Match not found' });
     }
 
-    // Update round results for Fighter One
-    const existingFighterOneRoundIndex = match.BoxingMatch.fighterOneStats.findIndex(stat => stat.roundNumber === fighterOneStats.roundNumber);
-    if (existingFighterOneRoundIndex !== -1) {
-      match.BoxingMatch.fighterOneStats[existingFighterOneRoundIndex] = fighterOneStats;
-    } else {
-      match.BoxingMatch.fighterOneStats.push(fighterOneStats);
-    }
+    // Determine the category of the match
+    if (match.matchCategory === 'boxing') {
+      // Update round results for Fighter One (Boxing)
+      const existingFighterOneRoundIndex = match.BoxingMatch.fighterOneStats.findIndex(stat => stat.roundNumber === fighterOneStats.roundNumber);
+      if (existingFighterOneRoundIndex !== -1) {
+        match.BoxingMatch.fighterOneStats[existingFighterOneRoundIndex] = fighterOneStats;
+      } else {
+        match.BoxingMatch.fighterOneStats.push(fighterOneStats);
+      }
 
-    // Update round results for Fighter Two
-    const existingFighterTwoRoundIndex = match.BoxingMatch.fighterTwoStats.findIndex(stat => stat.roundNumber === fighterTwoStats.roundNumber);
-    if (existingFighterTwoRoundIndex !== -1) {
-      match.BoxingMatch.fighterTwoStats[existingFighterTwoRoundIndex] = fighterTwoStats;
+      // Update round results for Fighter Two (Boxing)
+      const existingFighterTwoRoundIndex = match.BoxingMatch.fighterTwoStats.findIndex(stat => stat.roundNumber === fighterTwoStats.roundNumber);
+      if (existingFighterTwoRoundIndex !== -1) {
+        match.BoxingMatch.fighterTwoStats[existingFighterTwoRoundIndex] = fighterTwoStats;
+      } else {
+        match.BoxingMatch.fighterTwoStats.push(fighterTwoStats);
+      }
+    } else if (match.matchCategory === 'mma') {
+      // Update round results for Fighter One (MMA)
+      const existingFighterOneRoundIndex = match.MMAMatch.fighterOneStats.findIndex(stat => stat.roundNumber === fighterOneStats.roundNumber);
+      if (existingFighterOneRoundIndex !== -1) {
+        match.MMAMatch.fighterOneStats[existingFighterOneRoundIndex] = fighterOneStats;
+      } else {
+        match.MMAMatch.fighterOneStats.push(fighterOneStats);
+      }
+
+      // Update round results for Fighter Two (MMA)
+      const existingFighterTwoRoundIndex = match.MMAMatch.fighterTwoStats.findIndex(stat => stat.roundNumber === fighterTwoStats.roundNumber);
+      if (existingFighterTwoRoundIndex !== -1) {
+        match.MMAMatch.fighterTwoStats[existingFighterTwoRoundIndex] = fighterTwoStats;
+      } else {
+        match.MMAMatch.fighterTwoStats.push(fighterTwoStats);
+      }
     } else {
-      match.BoxingMatch.fighterTwoStats.push(fighterTwoStats);
+      return res.status(400).json({ message: 'Invalid match category' });
     }
 
     // Save the updated match document
@@ -335,7 +391,6 @@ app.post('/match/addRoundResults/:id', async (req, res) => {
     res.status(500).json({ message: 'Internal server error' });
   }
 });
-
 
 
 
