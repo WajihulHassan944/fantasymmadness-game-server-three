@@ -1208,27 +1208,27 @@ app.post('/loginAffiliate', async (req, res) => {
 
 
 
-
 const scoreSchema = new mongoose.Schema({
   playerId: String,
   matchId: String,
   predictions: [{ 
     round: Number, 
-    hpPrediction1: Number, 
-    bpPrediction1: Number, 
-    hpPrediction2: Number, 
-    bpPrediction2: Number, 
-    tpPrediction1: Number, 
-    tpPrediction2: Number, 
+    hpPrediction1: Number,  // For Boxing or MMA (HP or ST)
+    bpPrediction1: Number,  // For Boxing or MMA (BP or KI)
+    hpPrediction2: Number,  // For Boxing or MMA (HP or ST)
+    bpPrediction2: Number,  // For Boxing or MMA (BP or KI)
+    tpPrediction1: Number,  // For Boxing or MMA (TP or KN)
+    tpPrediction2: Number,  // For Boxing or MMA (TP or KN)
     rwPrediction1: Number, 
     rwPrediction2: Number, 
     koPrediction1: Number, 
-    koPrediction2: Number 
+    koPrediction2: Number,
+    elPrediction1: Number,  // For MMA only (EL)
+    elPrediction2: Number   // For MMA only (EL)
   }],
 });
 
 const Score = mongoose.model('Score', scoreSchema);
-
 app.post('/api/scores', async (req, res) => {
   try {
     const { playerId, matchId, predictions } = req.body;
