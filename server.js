@@ -1013,6 +1013,38 @@ const affiliateSchema = new mongoose.Schema({
 
 const Affiliate = mongoose.model('Affiliate', affiliateSchema);
 
+app.put('/update-profile-affiliate/:userId', async (req, res) => {
+  const { userId } = req.params;
+  const { firstName, lastName, playerName, phone, zipCode, shortBio } = req.body;
+
+  try {
+      // Create an object to hold the fields that should be updated
+      const updateFields = {};
+
+      if (firstName) updateFields.firstName = firstName;
+      if (lastName) updateFields.lastName = lastName;
+      if (playerName) updateFields.playerName = playerName;
+      if (phone) updateFields.phone = phone;
+      if (zipCode) updateFields.zipCode = zipCode;
+      if (shortBio) updateFields.shortBio = shortBio;
+
+      // Update the user document with the specified fields
+      const updatedUser = await Affiliate.findByIdAndUpdate(userId, updateFields, { new: true });
+
+      if (!updatedUser) {
+          return res.status(404).send('User not found');
+      }
+
+      res.status(200).json({
+          message: 'Profile updated successfully',
+          user: updatedUser
+      });
+  } catch (error) {
+      console.error('Error updating profile:', error);
+      res.status(500).send('Server error');
+  }
+});
+
 
 // Delete API
 app.delete('/affiliatetodelete/:id', async (req, res) => {
