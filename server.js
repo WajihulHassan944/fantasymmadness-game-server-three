@@ -1235,6 +1235,21 @@ const promoMatchSchema = new mongoose.Schema({
 
 const PromoMatch = mongoose.model('PromoMatch', promoMatchSchema);
 
+
+// Delete API
+app.delete('/promofighttodelete/:id', async (req, res) => {
+  const { id } = req.params;
+  console.log('Received DELETE request for match promo affiliate ID:', id);
+  try {
+    const user = await PromoMatch.findByIdAndDelete(id);
+    
+    res.status(200).json({ message: 'Match deleted successfully' });
+  } catch (error) {
+    res.status(500).json({ message: 'Internal server error' });
+  }
+});
+
+
 // POST /addPromoMatch
 app.post('/addPromoMatch', async (req, res) => {
   const { matchId, matchTokens, affiliateId, pot, profit, amountOverPotBudget } = req.body;
