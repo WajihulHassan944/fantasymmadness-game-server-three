@@ -1219,35 +1219,14 @@ app.post('/loginAffiliate', async (req, res) => {
   }
 });
 
-const { Schema } = mongoose;
 
-const promoMatchSchema = new Schema({
-  affiliateId: { 
-    type: mongoose.Schema.Types.ObjectId, 
-    ref: 'Affiliate', 
-    required: true 
-  },
-  matchId: { 
-    type: mongoose.Schema.Types.ObjectId, 
-    ref: 'Match', 
-    required: true 
-  },
-  matchTokens: { 
-    type: Number, 
-    required: true 
-  },
-  pot: { 
-    type: Number, 
-    required: true 
-  },
-  profit: { 
-    type: Number, 
-    required: true 
-  },
-  amountOverPotBudget: { 
-    type: Number, 
-    required: true 
-  },
+const promoMatchSchema = new mongoose.Schema({
+  affiliateId: String,
+  matchId: String,
+  matchTokens: Number,
+  pot: Number,
+  profit:Number,
+  amountOverPotBudget:Number,
   createdAt: { 
     type: Date, 
     default: Date.now 
