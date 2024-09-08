@@ -1219,6 +1219,76 @@ app.post('/loginAffiliate', async (req, res) => {
   }
 });
 
+const { Schema } = mongoose;
+
+const promoMatchSchema = new Schema({
+  affiliateId: { 
+    type: mongoose.Schema.Types.ObjectId, 
+    ref: 'Affiliate', 
+    required: true 
+  },
+  matchId: { 
+    type: mongoose.Schema.Types.ObjectId, 
+    ref: 'Match', 
+    required: true 
+  },
+  matchTokens: { 
+    type: Number, 
+    required: true 
+  },
+  pot: { 
+    type: Number, 
+    required: true 
+  },
+  profit: { 
+    type: Number, 
+    required: true 
+  },
+  amountOverPotBudget: { 
+    type: Number, 
+    required: true 
+  },
+  createdAt: { 
+    type: Date, 
+    default: Date.now 
+  }
+});
+
+const PromoMatch = mongoose.model('PromoMatch', promoMatchSchema);
+
+// POST /addPromoMatch
+app.post('/addPromoMatch', async (req, res) => {
+  const { matchId, matchTokens, affiliateId, pot, profit, amountOverPotBudget } = req.body;
+
+  try {
+    const newPromoMatch = new PromoMatch({
+      matchId,
+      matchTokens,
+      affiliateId,
+      pot,
+      profit,
+      amountOverPotBudget
+    });
+
+    await newPromoMatch.save();
+    res.status(201).json({ message: 'Promo match created successfully', data: newPromoMatch });
+  } catch (error) {
+    res.status(500).json({ message: 'Error creating promo match', error });
+  }
+});
+
+
+
+
+// GET /promoMatches
+app.get('/promoMatches', async (req, res) => {
+  try {
+    const promoMatches = await PromoMatch.find().populate('matchId affiliateId');
+    res.status(200).json(promoMatches);
+  } catch (error) {
+    res.status(500).json({ message: 'Error fetching promo matches', error });
+  }
+});
 
 
 
