@@ -78,6 +78,7 @@ const matchSchema = new mongoose.Schema({
   fighterAImage: String,  // URL of Fighter A's image
   fighterBImage: String,  // URL of Fighter B's image
   matchType: String,      // LIVE or SHADOW
+  maxRounds: Number,
 
   // Boxing-specific stats
   BoxingMatch: {
@@ -226,7 +227,7 @@ app.post('/addMatch', upload.fields([{ name: 'fighterAImage' }, { name: 'fighter
   const dataB = await responseB.json();
   const fighterBImageUrl = dataB.data.url;
 
-  const {affiliateId, matchBy, profit, amountOverPotBudget, matchCategory, matchName, matchFighterA, matchFighterB, matchDescription, matchVideoUrl, matchDate, matchTime, matchTokens, matchStatus, pot, matchType } = req.body;
+  const {maxRounds , affiliateId, matchBy, profit, amountOverPotBudget, matchCategory, matchName, matchFighterA, matchFighterB, matchDescription, matchVideoUrl, matchDate, matchTime, matchTokens, matchStatus, pot, matchType } = req.body;
 
   // Save the match details to the database
   const newMatch = new Match({
@@ -245,6 +246,8 @@ app.post('/addMatch', upload.fields([{ name: 'fighterAImage' }, { name: 'fighter
     fighterBImage: fighterBImageUrl,
     matchType,
     affiliateId, matchBy, profit, amountOverPotBudget,
+    maxRounds,
+
   });
 
   await newMatch.save();
@@ -280,6 +283,8 @@ app.post('/addMatch', upload.fields([{ name: 'fighterAImage' }, { name: 'fighter
        
        <p><strong>Date:</strong> ${matchDate}</p>
        <p><strong>Time:</strong> ${matchTime}</p>
+       
+       <p><strong>Max Rounds:</strong> ${maxRounds}</p>
        <p>Stay tuned for more updates!</p>
        <a href="https://fantasymmadness-version2.vercel.app/upcomingfights">Click here</a> to get more details`
 };
