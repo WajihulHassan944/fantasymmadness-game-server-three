@@ -636,6 +636,34 @@ const transporter = nodemailer.createTransport({
   },
 });
 
+
+app.post('/send-emails-to-all-users', async (req, res) => {
+  const { emails, subject, message } = req.body;
+
+  if (!emails || emails.length === 0) {
+    return res.status(400).json({ error: 'No email addresses provided.' });
+  }
+
+  try {
+    // Loop through each email and send the message
+    for (let email of emails) {
+      await transporter.sendMail({
+        from: '"Fantasy MMAdness" <vascularbundle43@gmail.com>', // sender address
+        to: email, // receiver email
+        subject: subject, // subject line
+        text: message, // plain text body
+      });
+    }
+
+    res.status(200).json({ success: true, message: 'Emails sent successfully!' });
+  } catch (error) {
+    console.error('Error sending emails:', error);
+    res.status(500).json({ error: 'Failed to send emails.' });
+  }
+});
+
+
+
 app.post('/register', async (req, res) => {
   const { firstName, lastName, playerName, email, phone, password, zipCode,
     isNotificationsEnabled,
