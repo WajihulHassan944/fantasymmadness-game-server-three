@@ -1172,9 +1172,9 @@ const affiliateSchema = new mongoose.Schema({
 }, { timestamps: true });
 const Affiliate = mongoose.model('Affiliate', affiliateSchema);
 
-app.post('/affiliate/:affiliateId/join', authenticate, async (req, res) => {
+app.post('/affiliate/:affiliateId/join',  async (req, res) => {
   const { affiliateId } = req.params;
-  const userId = req.user._id; // From the auth middleware
+  const userId = req.user.id; // From the auth middleware
   const userEmail = req.user.email; // Assuming email is part of the user
 
   try {
