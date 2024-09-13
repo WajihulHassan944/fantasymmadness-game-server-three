@@ -83,19 +83,6 @@ const shadowSchema = new mongoose.Schema({
 const Shadow = mongoose.model('Shadow', shadowSchema);
 
 
-// Delete Match API
-app.delete('/shadowtodelete/:id', async (req, res) => {
-  const { id } = req.params;
-  console.log('Received DELETE request for shadow ID:', id);
-  try {
-    const user = await Shadow.findByIdAndDelete(id);
-    
-    res.status(200).json({ message: 'Shadow deleted successfully' });
-  } catch (error) {
-    res.status(500).json({ message: 'Internal server error' });
-  }
-});
-
 
 
 app.post('/addShadow', upload.fields([{ name: 'fighterAImage' }, { name: 'fighterBImage' }]), async (req, res) => {
@@ -279,11 +266,10 @@ app.get('/api/matches/:id', async (req, res) => {
     res.status(500).json({ message: 'Server error', error });
   }
 });
-
-// DELETE API to delete a match by ID and associated predictions
 app.delete('/api/matches/:id', async (req, res) => {
   try {
     const { id } = req.params;
+    const { affiliateId } = req.query; // Get affiliateId from query parameters
 
     // Delete the match by ID
     const deletedMatch = await Match.findByIdAndDelete(id);
@@ -295,12 +281,19 @@ app.delete('/api/matches/:id', async (req, res) => {
     // Delete the associated predictions
     await Score.deleteMany({ matchId: id });
 
+    // Remove affiliateId from AffiliateIds if provided
+    if (affiliateId) {
+      await Shadow.updateMany(
+        { AffiliateIds: affiliateId },
+        { $pull: { AffiliateIds: affiliateId } }
+      );
+    }
+
     res.status(200).json({ message: 'Match and associated predictions deleted successfully' });
   } catch (error) {
     res.status(500).json({ message: 'Server error', error });
   }
 });
-
 
 
 app.post('/addMatch', upload.fields([{ name: 'fighterAImage' }, { name: 'fighterBImage' }]), async (req, res) => {
