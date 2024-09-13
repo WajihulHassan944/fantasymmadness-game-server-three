@@ -289,13 +289,12 @@ app.post('/addMatch', upload.fields([{ name: 'fighterAImage' }, { name: 'fighter
 
   let fighterAImage, fighterBImage;
 
-  // Check if image URLs are provided
+  // Use the image URLs directly if they are provided
   if (fighterAImageUrl && fighterBImageUrl) {
-    // Use the direct image URLs
     fighterAImage = fighterAImageUrl;
     fighterBImage = fighterBImageUrl;
   } else {
-    // Upload Fighter A image if no URL provided
+    // Handle image uploads if URLs are not provided
     if (req.files.fighterAImage) {
       const formDataA = new FormData();
       formDataA.append('image', req.files.fighterAImage[0].buffer.toString('base64'));
@@ -307,7 +306,6 @@ app.post('/addMatch', upload.fields([{ name: 'fighterAImage' }, { name: 'fighter
       fighterAImage = dataA.data.url;
     }
 
-    // Upload Fighter B image if no URL provided
     if (req.files.fighterBImage) {
       const formDataB = new FormData();
       formDataB.append('image', req.files.fighterBImage[0].buffer.toString('base64'));
@@ -345,7 +343,6 @@ app.post('/addMatch', upload.fields([{ name: 'fighterAImage' }, { name: 'fighter
   });
 
   await newMatch.save();
-
 
   res.status(200).send('Match Added Successfully and Notifications Sent');
 });
