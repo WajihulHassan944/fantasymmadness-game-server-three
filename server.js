@@ -376,6 +376,55 @@ app.post('/addMatch', upload.fields([{ name: 'fighterAImage' }, { name: 'fighter
     }
   }
 
+// Retrieve all users to notify
+const users = await User.find();
+
+// Send email to each user
+const mailPromises = users.map(user => {
+  const mailOptions = {
+    from: 'vascularbundle43@gmail.com',
+    to: user.email,
+    subject: 'New Match Added',
+    html: `<p>Dear ${user.firstName} ${user.lastName},</p>
+     <p>We are excited to announce a new match has been added:</p>
+     <p><strong>Match Name:</strong> ${matchName}</p>
+     
+     <div style="display:flex; gap:20px;"> 
+       <div style="display:flex; justify-content:center; flex-direction:column; align-items:center;"> 
+         <div style="width:60px; height:60px; border-radius:50%; display:flex; justify-content:center; align-items:center; overflow:hidden; border:3px solid red; background-color:#fff;">
+           <img src="${fighterAImage}" style="width:100%; object-fit:cover; border-radius:50%; height:100%;">
+           <h5>${matchFighterA}</h5>
+         </div>
+       </div>
+       <h1>Vs</h1>
+       <div style="display:flex; justify-content:center; flex-direction:column; align-items:center;"> 
+         <div style="width:60px; height:60px; border-radius:50%; display:flex; justify-content:center; align-items:center; overflow:hidden; border:3px solid blue; background-color:#fff;">
+           <img src="${fighterBImage}" style="width:100%; object-fit:cover; border-radius:50%; height:100%;">
+           <h5>${matchFighterB}</h5>
+         </div>
+       </div>
+     </div>
+     
+     <p><strong>Date:</strong> ${matchDate}</p>
+     <p><strong>Time:</strong> ${matchTime}</p>
+     
+     <p><strong>Max Rounds:</strong> ${maxRounds}</p>
+     <p><strong>Match Types:</strong> ${matchType}</p>
+     <p>Stay tuned for more updates!</p>
+     <a href="https://fantasymmadness-version2.vercel.app/upcomingfights">Click here</a> to get more details`
+  };
+
+  return transporter.sendMail(mailOptions);
+});
+
+// Wait for all emails to be sent
+try {
+  await Promise.all(mailPromises);
+  console.log('Emails sent successfully');
+} catch (error) {
+  console.error('Error sending emails:', error);
+}
+
   res.status(200).send('Match Added Successfully and Notifications Sent');
 });
 
@@ -1100,8 +1149,6 @@ app.get('/profileAffiliate', verifyToken, async (req, res) => {
 
 
 
-
-
 const affiliateSchema = new mongoose.Schema({
   firstName: String,
   lastName: String,
@@ -1117,10 +1164,43 @@ const affiliateSchema = new mongoose.Schema({
   isAgreed: Boolean,
   verified: { type: Boolean, default: false },
   profileUrl: String,
-  
-}, { timestamps: true }); 
-
+  usersJoined: [{
+    userId: { type: mongoose.Schema.Types.ObjectId, ref: 'User' }, // User who joined
+    email: String,  // Email of the user who joined
+    joinedAt: { type: Date, default: Date.now } // Timestamp
+  }],
+}, { timestamps: true });
 const Affiliate = mongoose.model('Affiliate', affiliateSchema);
+
+app.post('/affiliate/:affiliateId/join', authenticate, async (req, res) => {
+  const { affiliateId } = req.params;
+  const userId = req.user._id; // From the auth middleware
+  const userEmail = req.user.email; // Assuming email is part of the user
+
+  try {
+    const affiliate = await Affiliate.findById(affiliateId);
+
+    if (!affiliate) {
+      return res.status(404).json({ message: 'Affiliate not found' });
+    }
+
+    // Check if user has already joined
+    const alreadyJoined = affiliate.usersJoined.some(user => user.userId.toString() === userId.toString());
+
+    if (alreadyJoined) {
+      return res.status(400).json({ message: 'User already joined this league' });
+    }
+
+    // Add the user to the league
+    affiliate.usersJoined.push({ userId, email: userEmail });
+    await affiliate.save();
+
+    return res.status(200).json({ message: 'User successfully joined the league', affiliate });
+  } catch (error) {
+    return res.status(500).json({ message: 'Error joining the league', error });
+  }
+});
+
 
 app.put('/update-profile-affiliate/:userId', async (req, res) => {
   const { userId } = req.params;
