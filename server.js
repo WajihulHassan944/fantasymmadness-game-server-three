@@ -205,29 +205,41 @@ app.delete('/api/matches/:id', async (req, res) => {
   }
 });
 app.post('/addMatch', upload.fields([{ name: 'fighterAImage' }, { name: 'fighterBImage' }]), async (req, res) => {
-  const formDataA = new FormData();
-  const formDataB = new FormData();
   const { default: fetch } = await import('node-fetch');
+  const { maxRounds, affiliateId, matchBy, profit, amountOverPotBudget, matchCategory, matchName, matchFighterA, matchFighterB, matchDescription, matchVideoUrl, matchDate, matchTime, matchTokens, matchStatus, pot, matchType, fighterAImageUrl, fighterBImageUrl } = req.body;
 
-  // Upload Fighter A image
-  formDataA.append('image', req.files.fighterAImage[0].buffer.toString('base64'));
-  const responseA = await fetch('https://api.imgbb.com/1/upload?key=368cbdb895c5bed277d50d216adbfa52', {
-    method: 'POST',
-    body: formDataA,
-  });
-  const dataA = await responseA.json();
-  const fighterAImageUrl = dataA.data.url;
+  let fighterAImage, fighterBImage;
 
-  // Upload Fighter B image
-  formDataB.append('image', req.files.fighterBImage[0].buffer.toString('base64'));
-  const responseB = await fetch('https://api.imgbb.com/1/upload?key=368cbdb895c5bed277d50d216adbfa52', {
-    method: 'POST',
-    body: formDataB,
-  });
-  const dataB = await responseB.json();
-  const fighterBImageUrl = dataB.data.url;
+  // Check if image URLs are provided
+  if (fighterAImageUrl && fighterBImageUrl) {
+    // Use the direct image URLs
+    fighterAImage = fighterAImageUrl;
+    fighterBImage = fighterBImageUrl;
+  } else {
+    // Upload Fighter A image if no URL provided
+    if (req.files.fighterAImage) {
+      const formDataA = new FormData();
+      formDataA.append('image', req.files.fighterAImage[0].buffer.toString('base64'));
+      const responseA = await fetch('https://api.imgbb.com/1/upload?key=YOUR_IMGBB_API_KEY', {
+        method: 'POST',
+        body: formDataA,
+      });
+      const dataA = await responseA.json();
+      fighterAImage = dataA.data.url;
+    }
 
-  const {maxRounds , affiliateId, matchBy, profit, amountOverPotBudget, matchCategory, matchName, matchFighterA, matchFighterB, matchDescription, matchVideoUrl, matchDate, matchTime, matchTokens, matchStatus, pot, matchType } = req.body;
+    // Upload Fighter B image if no URL provided
+    if (req.files.fighterBImage) {
+      const formDataB = new FormData();
+      formDataB.append('image', req.files.fighterBImage[0].buffer.toString('base64'));
+      const responseB = await fetch('https://api.imgbb.com/1/upload?key=YOUR_IMGBB_API_KEY', {
+        method: 'POST',
+        body: formDataB,
+      });
+      const dataB = await responseB.json();
+      fighterBImage = dataB.data.url;
+    }
+  }
 
   // Save the match details to the database
   const newMatch = new Match({
@@ -242,12 +254,14 @@ app.post('/addMatch', upload.fields([{ name: 'fighterAImage' }, { name: 'fighter
     matchTokens,
     matchStatus,
     pot,
-    fighterAImage: fighterAImageUrl,
-    fighterBImage: fighterBImageUrl,
+    fighterAImage,  // Final image URL for Fighter A (from URL or upload)
+    fighterBImage,  // Final image URL for Fighter B (from URL or upload)
     matchType,
-    affiliateId, matchBy, profit, amountOverPotBudget,
+    affiliateId,
+    matchBy,
+    profit,
+    amountOverPotBudget,
     maxRounds,
-
   });
 
   await newMatch.save();
@@ -268,14 +282,14 @@ app.post('/addMatch', upload.fields([{ name: 'fighterAImage' }, { name: 'fighter
        <div style="display:flex; gap:20px;"> 
          <div style="display:flex; justify-content:center; flex-direction:column; align-items:center;"> 
            <div style="width:60px; height:60px; border-radius:50%; display:flex; justify-content:center; align-items:center; overflow:hidden; border:3px solid red; background-color:#fff;">
-             <img src="${fighterAImageUrl}" style="width:100%; object-fit:cover; border-radius:50%; height:100%;">
+             <img src="${fighterAImage}" style="width:100%; object-fit:cover; border-radius:50%; height:100%;">
              <h5>${matchFighterA}</h5>
            </div>
          </div>
          <h1>Vs</h1>
          <div style="display:flex; justify-content:center; flex-direction:column; align-items:center;"> 
            <div style="width:60px; height:60px; border-radius:50%; display:flex; justify-content:center; align-items:center; overflow:hidden; border:3px solid blue; background-color:#fff;">
-             <img src="${fighterBImageUrl}" style="width:100%; object-fit:cover; border-radius:50%; height:100%;">
+             <img src="${fighterBImage}" style="width:100%; object-fit:cover; border-radius:50%; height:100%;">
              <h5>${matchFighterB}</h5>
            </div>
          </div>
@@ -287,7 +301,7 @@ app.post('/addMatch', upload.fields([{ name: 'fighterAImage' }, { name: 'fighter
        <p><strong>Max Rounds:</strong> ${maxRounds}</p>
        <p>Stay tuned for more updates!</p>
        <a href="https://fantasymmadness-version2.vercel.app/upcomingfights">Click here</a> to get more details`
-};
+    };
 
     return transporter.sendMail(mailOptions);
   });
@@ -1251,73 +1265,6 @@ app.post('/loginAffiliate', async (req, res) => {
     res.status(500).json({ message: 'Internal server error' });
   }
 });
-
-
-const promoMatchSchema = new mongoose.Schema({
-  affiliateId: String,
-  matchId: String,
-  matchTokens: Number,
-  pot: Number,
-  profit:Number,
-  amountOverPotBudget:Number,
-  createdAt: { 
-    type: Date, 
-    default: Date.now 
-  }
-});
-
-const PromoMatch = mongoose.model('PromoMatch', promoMatchSchema);
-
-
-// Delete API
-app.delete('/promofighttodelete/:id', async (req, res) => {
-  const { id } = req.params;
-  console.log('Received DELETE request for match promo affiliate ID:', id);
-  try {
-    const user = await PromoMatch.findByIdAndDelete(id);
-    
-    res.status(200).json({ message: 'Match deleted successfully' });
-  } catch (error) {
-    res.status(500).json({ message: 'Internal server error' });
-  }
-});
-
-
-// POST /addPromoMatch
-app.post('/addPromoMatch', async (req, res) => {
-  const { matchId, matchTokens, affiliateId, pot, profit, amountOverPotBudget } = req.body;
-
-  try {
-    const newPromoMatch = new PromoMatch({
-      matchId,
-      matchTokens,
-      affiliateId,
-      pot,
-      profit,
-      amountOverPotBudget
-    });
-
-    await newPromoMatch.save();
-    res.status(201).json({ message: 'Promo match created successfully', data: newPromoMatch });
-  } catch (error) {
-    res.status(500).json({ message: 'Error creating promo match', error });
-  }
-});
-
-
-
-
-// GET /promoMatches
-app.get('/promoMatches', async (req, res) => {
-  try {
-    const promoMatches = await PromoMatch.find().populate('matchId affiliateId');
-    res.status(200).json(promoMatches);
-  } catch (error) {
-    res.status(500).json({ message: 'Error fetching promo matches', error });
-  }
-});
-
-
 
 
 
