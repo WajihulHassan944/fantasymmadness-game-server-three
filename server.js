@@ -55,7 +55,6 @@ app.use(bodyParser.json());
 // File upload configuration
 const storage = multer.memoryStorage();
 const upload = multer({ storage: storage });
-
 const shadowSchema = new mongoose.Schema({
   matchCategory: String, // 'boxing' or 'mma'
   matchName: String,
@@ -67,16 +66,21 @@ const shadowSchema = new mongoose.Schema({
   fighterBImage: String,  // URL of Fighter B's image
   matchType: String,      // LIVE or SHADOW
   maxRounds: Number,
-  
+
   // Add AffiliateIds as an array of objects
   AffiliateIds: [
     {
-      type: mongoose.Schema.Types.ObjectId,
-      ref: 'Affiliate', // Reference to the Affiliate schema
+      AffiliateId: {
+        type: mongoose.Schema.Types.ObjectId,
+        ref: 'Affiliate', // Reference to the Affiliate schema
+      },
+      matchId: {
+        type: mongoose.Schema.Types.ObjectId,
+        ref: 'Match', // Reference to the Match schema (or appropriate schema for matches)
+      }
     }
   ]
 });
-
 
 
 
@@ -268,7 +272,7 @@ app.get('/api/matches/:id', async (req, res) => {
 });
 app.delete('/api/matches/:id', async (req, res) => {
   try {
-    const { id } = req.params;
+    const { id } = req.params; // matchId
     const { affiliateId } = req.query; // Get affiliateId from query parameters
 
     // Delete the match by ID
@@ -281,20 +285,19 @@ app.delete('/api/matches/:id', async (req, res) => {
     // Delete the associated predictions
     await Score.deleteMany({ matchId: id });
 
-    // Remove affiliateId from AffiliateIds if provided
+    // Remove affiliateId and matchId combination from AffiliateIds
     if (affiliateId) {
       await Shadow.updateMany(
-        { AffiliateIds: affiliateId },
-        { $pull: { AffiliateIds: affiliateId } }
+        { 'AffiliateIds.AffiliateId': affiliateId, 'AffiliateIds.matchId': id }, // Match both affiliateId and matchId
+        { $pull: { AffiliateIds: { AffiliateId: affiliateId, matchId: id } } }   // Pull the object with matching affiliateId and matchId
       );
     }
 
-    res.status(200).json({ message: 'Match and associated predictions deleted successfully' });
+    res.status(200).json({ message: 'Match, associated predictions, and affiliate data deleted successfully' });
   } catch (error) {
     res.status(500).json({ message: 'Server error', error });
   }
 });
-
 
 app.post('/addMatch', upload.fields([{ name: 'fighterAImage' }, { name: 'fighterBImage' }]), async (req, res) => {
   const { default: fetch } = await import('node-fetch');
@@ -355,65 +358,24 @@ app.post('/addMatch', upload.fields([{ name: 'fighterAImage' }, { name: 'fighter
     shadowFightId,
   });
 
-  await newMatch.save();
+  const savedMatch = await newMatch.save(); // Save the match and get the saved match
 
+  // Now that match is saved, store affiliateId and matchId in the Shadow schema
   const shadowFight = await Shadow.findById(shadowFightId);
   if (shadowFight) {
-    // Add affiliateId to the array if it's not already there
-    if (!shadowFight.AffiliateIds.includes(affiliateId)) {
-      shadowFight.AffiliateIds.push(affiliateId);
-      await shadowFight.save();
+    // Check if affiliateId is already stored with the same matchId
+    const affiliateExists = shadowFight.AffiliateIds.some(item => item.AffiliateId.toString() === affiliateId && item.matchId.toString() === savedMatch._id.toString());
+
+    if (!affiliateExists) {
+      // Add a new object with both affiliateId and matchId
+      shadowFight.AffiliateIds.push({
+        AffiliateId: affiliateId,
+        matchId: savedMatch._id, // Store the matchId here
+      });
+      await shadowFight.save(); // Save the shadow fight with the updated AffiliateIds array
     }
   }
 
-// Retrieve all users to notify
-const users = await User.find();
-
-// Send email to each user
-const mailPromises = users.map(user => {
-  const mailOptions = {
-    from: 'vascularbundle43@gmail.com',
-    to: user.email,
-    subject: 'New Match Added',
-    html: `<p>Dear ${user.firstName} ${user.lastName},</p>
-     <p>We are excited to announce a new match has been added:</p>
-     <p><strong>Match Name:</strong> ${matchName}</p>
-     
-     <div style="display:flex; gap:20px;"> 
-       <div style="display:flex; justify-content:center; flex-direction:column; align-items:center;"> 
-         <div style="width:60px; height:60px; border-radius:50%; display:flex; justify-content:center; align-items:center; overflow:hidden; border:3px solid red; background-color:#fff;">
-           <img src="${fighterAImage}" style="width:100%; object-fit:cover; border-radius:50%; height:100%;">
-           <h5>${matchFighterA}</h5>
-         </div>
-       </div>
-       <h1>Vs</h1>
-       <div style="display:flex; justify-content:center; flex-direction:column; align-items:center;"> 
-         <div style="width:60px; height:60px; border-radius:50%; display:flex; justify-content:center; align-items:center; overflow:hidden; border:3px solid blue; background-color:#fff;">
-           <img src="${fighterBImage}" style="width:100%; object-fit:cover; border-radius:50%; height:100%;">
-           <h5>${matchFighterB}</h5>
-         </div>
-       </div>
-     </div>
-     
-     <p><strong>Date:</strong> ${matchDate}</p>
-     <p><strong>Time:</strong> ${matchTime}</p>
-     
-     <p><strong>Max Rounds:</strong> ${maxRounds}</p>
-     <p><strong>Match Types:</strong> ${matchType}</p>
-     <p>Stay tuned for more updates!</p>
-     <a href="https://fantasymmadness-version2.vercel.app/upcomingfights">Click here</a> to get more details`
-  };
-
-  return transporter.sendMail(mailOptions);
-});
-
-// Wait for all emails to be sent
-try {
-  await Promise.all(mailPromises);
-  console.log('Emails sent successfully');
-} catch (error) {
-  console.error('Error sending emails:', error);
-}
   res.status(200).send('Match Added Successfully and Notifications Sent');
 });
 
