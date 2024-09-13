@@ -68,7 +68,6 @@ const shadowSchema = new mongoose.Schema({
   fighterBImage: String,  // URL of Fighter B's image
   matchType: String,      // LIVE or SHADOW
   maxRounds: Number,
-  pot: Number,
   
 });
 
@@ -102,7 +101,7 @@ app.post('/addShadow', upload.fields([{ name: 'fighterAImage' }, { name: 'fighte
   const dataB = await responseB.json();
   const fighterBImageUrl = dataB.data.url;
 
-  const {pot, maxRounds , profit, amountOverPotBudget, matchCategory, matchName, matchFighterA, matchFighterB, matchDescription, matchVideoUrl,  matchType } = req.body;
+  const { maxRounds , profit, amountOverPotBudget, matchCategory, matchName, matchFighterA, matchFighterB, matchDescription, matchVideoUrl,  matchType } = req.body;
 
   // Save the match details to the database
   const newMatch = new Shadow({
@@ -112,7 +111,6 @@ app.post('/addShadow', upload.fields([{ name: 'fighterAImage' }, { name: 'fighte
     matchFighterB,
     matchDescription,
     matchVideoUrl,
-    pot,
     fighterAImage: fighterAImageUrl,
     fighterBImage: fighterBImageUrl,
     matchType, profit, amountOverPotBudget,
@@ -138,6 +136,7 @@ app.get('/shadow', async (req, res) => {
 const matchSchema = new mongoose.Schema({
   matchCategory: String, // 'boxing' or 'mma'
   affiliateId: String,
+  shadowFightId: String,
   matchName: String,
   matchFighterA: String,
   matchFighterB: String,
@@ -286,7 +285,7 @@ app.delete('/api/matches/:id', async (req, res) => {
 
 app.post('/addMatch', upload.fields([{ name: 'fighterAImage' }, { name: 'fighterBImage' }]), async (req, res) => {
   const { default: fetch } = await import('node-fetch');
-  const { maxRounds, affiliateId, matchBy, profit, amountOverPotBudget, matchCategory, matchName, matchFighterA, matchFighterB, matchDescription, matchVideoUrl, matchDate, matchTime, matchTokens, matchStatus, pot, matchType, fighterAImageUrl, fighterBImageUrl } = req.body;
+  const { shadowFightId, maxRounds, affiliateId, matchBy, profit, amountOverPotBudget, matchCategory, matchName, matchFighterA, matchFighterB, matchDescription, matchVideoUrl, matchDate, matchTime, matchTokens, matchStatus, pot, matchType, fighterAImageUrl, fighterBImageUrl } = req.body;
 
   let fighterAImage, fighterBImage;
 
@@ -342,6 +341,7 @@ app.post('/addMatch', upload.fields([{ name: 'fighterAImage' }, { name: 'fighter
     profit,
     amountOverPotBudget,
     maxRounds,
+    shadowFightId,
   });
 
   await newMatch.save();
