@@ -57,6 +57,84 @@ const storage = multer.memoryStorage();
 const upload = multer({ storage: storage });
 
 
+const shadowSchema = new mongoose.Schema({
+  matchCategory: String, // 'boxing' or 'mma'
+  matchName: String,
+  matchFighterA: String,
+  matchFighterB: String,
+  matchDescription: String,
+  matchVideoUrl: String,
+  fighterAImage: String,  // URL of Fighter A's image
+  fighterBImage: String,  // URL of Fighter B's image
+  matchType: String,      // LIVE or SHADOW
+  maxRounds: Number,
+
+  
+  __v: Number
+});
+
+
+
+
+const Shadow = mongoose.model('Shadow', shadowSchema);
+
+
+
+app.post('/addShadow', upload.fields([{ name: 'fighterAImage' }, { name: 'fighterBImage' }]), async (req, res) => {
+  const formDataA = new FormData();
+  const formDataB = new FormData();
+  const { default: fetch } = await import('node-fetch');
+
+  // Upload Fighter A image
+  formDataA.append('image', req.files.fighterAImage[0].buffer.toString('base64'));
+  const responseA = await fetch('https://api.imgbb.com/1/upload?key=368cbdb895c5bed277d50d216adbfa52', {
+    method: 'POST',
+    body: formDataA,
+  });
+  const dataA = await responseA.json();
+  const fighterAImageUrl = dataA.data.url;
+
+  // Upload Fighter B image
+  formDataB.append('image', req.files.fighterBImage[0].buffer.toString('base64'));
+  const responseB = await fetch('https://api.imgbb.com/1/upload?key=368cbdb895c5bed277d50d216adbfa52', {
+    method: 'POST',
+    body: formDataB,
+  });
+  const dataB = await responseB.json();
+  const fighterBImageUrl = dataB.data.url;
+
+  const {maxRounds , profit, amountOverPotBudget, matchCategory, matchName, matchFighterA, matchFighterB, matchDescription, matchVideoUrl,  matchType } = req.body;
+
+  // Save the match details to the database
+  const newMatch = new Shadow({
+    matchCategory,
+    matchName,
+    matchFighterA,
+    matchFighterB,
+    matchDescription,
+    matchVideoUrl,
+    pot,
+    fighterAImage: fighterAImageUrl,
+    fighterBImage: fighterBImageUrl,
+    matchType, profit, amountOverPotBudget,
+    maxRounds,
+
+  });
+
+  await newMatch.save();
+  res.status(200).send('Shadow Added Successfully');
+});
+
+
+
+// Get Matches API
+app.get('/shadow', async (req, res) => {
+  const match = await Shadow.find();
+  res.send(match);
+});
+
+
+
 
 const matchSchema = new mongoose.Schema({
   matchCategory: String, // 'boxing' or 'mma'
@@ -204,6 +282,9 @@ app.delete('/api/matches/:id', async (req, res) => {
     res.status(500).json({ message: 'Server error', error });
   }
 });
+
+
+
 app.post('/addMatch', upload.fields([{ name: 'fighterAImage' }, { name: 'fighterBImage' }]), async (req, res) => {
   const { default: fetch } = await import('node-fetch');
   const { maxRounds, affiliateId, matchBy, profit, amountOverPotBudget, matchCategory, matchName, matchFighterA, matchFighterB, matchDescription, matchVideoUrl, matchDate, matchTime, matchTokens, matchStatus, pot, matchType, fighterAImageUrl, fighterBImageUrl } = req.body;
@@ -265,6 +346,7 @@ app.post('/addMatch', upload.fields([{ name: 'fighterAImage' }, { name: 'fighter
   });
 
   await newMatch.save();
+
 
   res.status(200).send('Match Added Successfully and Notifications Sent');
 });
@@ -1217,6 +1299,73 @@ app.post('/loginAffiliate', async (req, res) => {
     res.status(500).json({ message: 'Internal server error' });
   }
 });
+
+
+const promoMatchSchema = new mongoose.Schema({
+  affiliateId: String,
+  matchId: String,
+  matchTokens: Number,
+  pot: Number,
+  profit:Number,
+  amountOverPotBudget:Number,
+  createdAt: { 
+    type: Date, 
+    default: Date.now 
+  }
+});
+
+const PromoMatch = mongoose.model('PromoMatch', promoMatchSchema);
+
+
+// Delete API
+app.delete('/promofighttodelete/:id', async (req, res) => {
+  const { id } = req.params;
+  console.log('Received DELETE request for match promo affiliate ID:', id);
+  try {
+    const user = await PromoMatch.findByIdAndDelete(id);
+    
+    res.status(200).json({ message: 'Match deleted successfully' });
+  } catch (error) {
+    res.status(500).json({ message: 'Internal server error' });
+  }
+});
+
+
+// POST /addPromoMatch
+app.post('/addPromoMatch', async (req, res) => {
+  const { matchId, matchTokens, affiliateId, pot, profit, amountOverPotBudget } = req.body;
+
+  try {
+    const newPromoMatch = new PromoMatch({
+      matchId,
+      matchTokens,
+      affiliateId,
+      pot,
+      profit,
+      amountOverPotBudget
+    });
+
+    await newPromoMatch.save();
+    res.status(201).json({ message: 'Promo match created successfully', data: newPromoMatch });
+  } catch (error) {
+    res.status(500).json({ message: 'Error creating promo match', error });
+  }
+});
+
+
+
+
+// GET /promoMatches
+app.get('/promoMatches', async (req, res) => {
+  try {
+    const promoMatches = await PromoMatch.find().populate('matchId affiliateId');
+    res.status(200).json(promoMatches);
+  } catch (error) {
+    res.status(500).json({ message: 'Error fetching promo matches', error });
+  }
+});
+
+
 
 
 
