@@ -88,6 +88,20 @@ const Shadow = mongoose.model('Shadow', shadowSchema);
 
 
 
+// Delete Match API
+app.delete('/shadowfighttodelete/:id', async (req, res) => {
+  const { id } = req.params;
+  console.log('Received DELETE request for User ID:', id);
+  try {
+    const user = await Shadow.findByIdAndDelete(id);
+    
+    res.status(200).json({ message: 'Shadow deleted successfully' });
+  } catch (error) {
+    res.status(500).json({ message: 'Internal server error' });
+  }
+});
+
+
 
 app.post('/addShadow', upload.fields([{ name: 'fighterAImage' }, { name: 'fighterBImage' }]), async (req, res) => {
   const formDataA = new FormData();
