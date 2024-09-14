@@ -230,6 +230,37 @@ const matchSchema = new mongoose.Schema({
 
 const Match = mongoose.model('Match', matchSchema);
 
+const express = require('express');
+const router = express.Router();
+const Match = require('../models/Match'); // Adjust the path as needed
+
+// POST API to receive matchId and matchVideoUrl
+app.post('/updateMatchVideo', async (req, res) => {
+  const { matchId, matchVideoUrl } = req.body;
+
+  // Basic validation
+  if (!matchId || !matchVideoUrl) {
+    return res.status(400).json({ message: 'matchId and matchVideoUrl are required' });
+  }
+
+  try {
+    // Find the match by matchId and update the matchVideoUrl if it exists, otherwise create a new one
+    const updatedMatch = await Match.findOneAndUpdate(
+      { _id: matchId }, 
+      { matchVideoUrl }, // Update the matchVideoUrl
+      { new: true, upsert: true } // new: return the updated document, upsert: create if not found
+    );
+
+    res.status(200).json({
+      message: 'Match video URL updated successfully',
+      updatedMatch,
+    });
+  } catch (error) {
+    console.error('Error updating match:', error);
+    res.status(500).json({ message: 'An error occurred while updating the match' });
+  }
+});
+
 
 
 app.post('/finishMatch/:matchId', async (req, res) => {
