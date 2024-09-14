@@ -230,10 +230,6 @@ const matchSchema = new mongoose.Schema({
 
 const Match = mongoose.model('Match', matchSchema);
 
-const express = require('express');
-const router = express.Router();
-const Match = require('../models/Match'); // Adjust the path as needed
-
 // POST API to receive matchId and matchVideoUrl
 app.post('/updateMatchVideo', async (req, res) => {
   const { matchId, matchVideoUrl } = req.body;
