@@ -57,6 +57,7 @@ const storage = multer.memoryStorage();
 const upload = multer({ storage: storage });
 const shadowSchema = new mongoose.Schema({
   matchCategory: String, // 'boxing' or 'mma'
+  matchCategoryTwo: String,
   matchName: String,
   matchFighterA: String,
   matchFighterB: String,
@@ -126,11 +127,12 @@ app.post('/addShadow', upload.fields([{ name: 'fighterAImage' }, { name: 'fighte
   const dataB = await responseB.json();
   const fighterBImageUrl = dataB.data.url;
 
-  const { maxRounds , profit, amountOverPotBudget, matchCategory, matchName, matchFighterA, matchFighterB, matchDescription, matchVideoUrl,  matchType } = req.body;
+  const {matchCategoryTwo, maxRounds , profit, amountOverPotBudget, matchCategory, matchName, matchFighterA, matchFighterB, matchDescription, matchVideoUrl,  matchType } = req.body;
 
   // Save the match details to the database
   const newMatch = new Shadow({
     matchCategory,
+    matchCategoryTwo,
     matchName,
     matchFighterA,
     matchFighterB,
