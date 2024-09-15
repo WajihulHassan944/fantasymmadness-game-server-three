@@ -127,7 +127,7 @@ app.post('/addShadow', upload.fields([{ name: 'fighterAImage' }, { name: 'fighte
   const dataB = await responseB.json();
   const fighterBImageUrl = dataB.data.url;
 
-  const {matchCategoryTwo, maxRounds , profit, amountOverPotBudget, matchCategory, matchName, matchFighterA, matchFighterB, matchDescription, matchVideoUrl,  matchType } = req.body;
+  const {matchCategoryTwo, maxRounds ,  matchCategory, matchName, matchFighterA, matchFighterB, matchDescription, matchVideoUrl,  matchType } = req.body;
 
   // Save the match details to the database
   const newMatch = new Shadow({
@@ -140,7 +140,7 @@ app.post('/addShadow', upload.fields([{ name: 'fighterAImage' }, { name: 'fighte
     matchVideoUrl,
     fighterAImage: fighterAImageUrl,
     fighterBImage: fighterBImageUrl,
-    matchType, profit, amountOverPotBudget,
+    matchType, 
     maxRounds,
 
   });
