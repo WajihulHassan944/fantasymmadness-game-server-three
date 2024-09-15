@@ -418,55 +418,6 @@ app.post('/addMatch', upload.fields([{ name: 'fighterAImage' }, { name: 'fighter
   }
 
 
-// Retrieve all users to notify
-const users = await User.find();
-
-// Send email to each user
-const mailPromises = users.map(user => {
-  const mailOptions = {
-    from: 'vascularbundle43@gmail.com',
-    to: user.email,
-    subject: 'New Match Added',
-    html: `<p>Dear ${user.firstName} ${user.lastName},</p>
-     <p>We are excited to announce a new match has been added:</p>
-     <p><strong>Match Name:</strong> ${matchName}</p>
-     
-     <div style="display:flex; gap:20px;"> 
-       <div style="display:flex; justify-content:center; flex-direction:column; align-items:center;"> 
-         <div style="width:60px; height:60px; border-radius:50%; display:flex; justify-content:center; align-items:center; overflow:hidden; border:3px solid red; background-color:#fff;">
-           <img src="${fighterAImage}" style="width:100%; object-fit:cover; border-radius:50%; height:100%;">
-           <h5>${matchFighterA}</h5>
-         </div>
-       </div>
-       <h1>Vs</h1>
-       <div style="display:flex; justify-content:center; flex-direction:column; align-items:center;"> 
-         <div style="width:60px; height:60px; border-radius:50%; display:flex; justify-content:center; align-items:center; overflow:hidden; border:3px solid blue; background-color:#fff;">
-           <img src="${fighterBImage}" style="width:100%; object-fit:cover; border-radius:50%; height:100%;">
-           <h5>${matchFighterB}</h5>
-         </div>
-       </div>
-     </div>
-     
-     <p><strong>Date:</strong> ${matchDate}</p>
-     <p><strong>Time:</strong> ${matchTime}</p>
-     
-     <p><strong>Max Rounds:</strong> ${maxRounds}</p>
-     <p><strong>Match Types:</strong> ${matchType}</p>
-     <p>Stay tuned for more updates!</p>
-     <a href="https://fantasymmadness-version2.vercel.app/upcomingfights">Click here</a> to get more details`
-  };
-
-  return transporter.sendMail(mailOptions);
-});
-
-// Wait for all emails to be sent
-try {
-  await Promise.all(mailPromises);
-  console.log('Emails sent successfully');
-} catch (error) {
-  console.error('Error sending emails:', error);
-}
-
 
   res.status(200).send('Match Added Successfully and Notifications Sent');
 });
