@@ -160,6 +160,7 @@ app.get('/shadow', async (req, res) => {
 
 const matchSchema = new mongoose.Schema({
   matchCategory: String, // 'boxing' or 'mma'
+  matchCategoryTwo: String,
   affiliateId: String,
   shadowFightId: String,
   matchName: String,
@@ -342,7 +343,7 @@ app.delete('/api/matches/:id', async (req, res) => {
 
 app.post('/addMatch', upload.fields([{ name: 'fighterAImage' }, { name: 'fighterBImage' }]), async (req, res) => {
   const { default: fetch } = await import('node-fetch');
-  const { shadowFightId, maxRounds, affiliateId, matchBy, profit, amountOverPotBudget, matchCategory, matchName, matchFighterA, matchFighterB, matchDescription, matchVideoUrl, matchDate, matchTime, matchTokens, matchStatus, pot, matchType, fighterAImageUrl, fighterBImageUrl } = req.body;
+  const { matchCategoryTwo, shadowFightId, maxRounds, affiliateId, matchBy, profit, amountOverPotBudget, matchCategory, matchName, matchFighterA, matchFighterB, matchDescription, matchVideoUrl, matchDate, matchTime, matchTokens, matchStatus, pot, matchType, fighterAImageUrl, fighterBImageUrl } = req.body;
 
   let fighterAImage, fighterBImage;
 
@@ -397,6 +398,7 @@ app.post('/addMatch', upload.fields([{ name: 'fighterAImage' }, { name: 'fighter
     amountOverPotBudget,
     maxRounds,
     shadowFightId,
+    matchCategoryTwo,
   });
 
   const savedMatch = await newMatch.save(); // Save the match and get the saved match
