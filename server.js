@@ -1722,7 +1722,6 @@ app.delete('/youtubevideotodelete/:id', async (req, res) => {
   }
 });
 
-
 app.post('/youtubeVideos', async (req, res) => {
   const { videoUrl } = req.body;
 
@@ -1731,6 +1730,14 @@ app.post('/youtubeVideos', async (req, res) => {
   }
 
   try {
+    // Check if the video URL already exists in the database
+    const existingVideo = await YoutubeVideos.findOne({ videoUrl });
+
+    if (existingVideo) {
+      return res.status(409).json({ message: 'This video already exists in the library' });
+    }
+
+    // If not, create a new video entry
     const newVideo = new YoutubeVideos({ videoUrl });
     await newVideo.save();
 
@@ -1739,7 +1746,6 @@ app.post('/youtubeVideos', async (req, res) => {
     res.status(500).json({ message: 'Internal server error' });
   }
 });
-
 
 // Get Matches API
 app.get('/youtubeVideos', async (req, res) => {
