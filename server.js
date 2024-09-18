@@ -1683,6 +1683,76 @@ app.post('/admin/login', async (req, res) => {
   }
 });
 
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+const youtubeVideosSchema = new mongoose.Schema({
+  videoUrl: String, 
+});
+
+
+
+const YoutubeVideos = mongoose.model('YoutubeVideos', youtubeVideosSchema);
+
+
+
+// Delete Match API
+app.delete('/youtubevideotodelete/:id', async (req, res) => {
+  const { id } = req.params;
+  
+  try {
+    const user = await YoutubeVideos.findByIdAndDelete(id);
+    
+    res.status(200).json({ message: 'YoutubeVideos deleted successfully' });
+  } catch (error) {
+    res.status(500).json({ message: 'Internal server error' });
+  }
+});
+
+
+app.post('/youtubeVideos', async (req, res) => {
+  const { videoUrl } = req.body;
+
+  if (!videoUrl) {
+    return res.status(400).json({ message: 'Video URL is required' });
+  }
+
+  try {
+    const newVideo = new YoutubeVideos({ videoUrl });
+    await newVideo.save();
+
+    res.status(201).json({ message: 'YouTube video added successfully', video: newVideo });
+  } catch (error) {
+    res.status(500).json({ message: 'Internal server error' });
+  }
+});
+
+
+// Get Matches API
+app.get('/youtubeVideos', async (req, res) => {
+  const match = await YoutubeVideos.find();
+  res.send(match);
+});
+
+
+
+
+
+
+
 // Start server
 const server = app.listen(PORT, () => {
   console.log(`Server started on port ${PORT}`);
