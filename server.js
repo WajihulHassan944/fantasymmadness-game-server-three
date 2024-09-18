@@ -248,6 +248,30 @@ const matchSchema = new mongoose.Schema({
 
 const Match = mongoose.model('Match', matchSchema);
 
+app.get('/matchByName', async (req, res) => {
+  const { matchName } = req.query;
+
+  if (!matchName) {
+      return res.status(400).json({ error: 'Match name is required.' });
+  }
+
+  try {
+      const match = await Match.findOne({ matchName });
+
+      if (!match) {
+          return res.status(404).json({ message: 'Match not found' });
+      }
+
+      res.status(200).json(match);
+  } catch (error) {
+      console.error('Error fetching match details:', error);
+      res.status(500).json({ message: 'Server error' });
+  }
+});
+
+
+
+
 // POST API to receive matchId and matchVideoUrl
 app.post('/updateMatchVideo', async (req, res) => {
   const { matchId, matchVideoUrl } = req.body;
@@ -1200,6 +1224,28 @@ const affiliateSchema = new mongoose.Schema({
 }, { timestamps: true });
 const Affiliate = mongoose.model('Affiliate', affiliateSchema);
 
+app.get('/affiliateByName', async (req, res) => {
+  const { firstName, lastName } = req.query;
+
+  if (!firstName || !lastName) {
+      return res.status(400).json({ error: 'First name and last name are required.' });
+  }
+
+  try {
+      const affiliate = await Affiliate.findOne({ firstName, lastName });
+
+      if (!affiliate) {
+          return res.status(404).json({ message: 'Affiliate not found' });
+      }
+
+      res.status(200).json(affiliate);
+  } catch (error) {
+      console.error('Error fetching affiliate details:', error);
+      res.status(500).json({ message: 'Server error' });
+  }
+});
+
+
 app.post('/affiliate/updatePayment/:id', async (req, res) => {
   const { id } = req.params; // Get the affiliate ID from URL params
   const { preferredPaymentMethod, preferredPaymentMethodValue } = req.body; // Get data from request body
@@ -1464,70 +1510,6 @@ app.post('/loginAffiliate', async (req, res) => {
   }
 });
 
-
-const promoMatchSchema = new mongoose.Schema({
-  affiliateId: String,
-  matchId: String,
-  matchTokens: Number,
-  pot: Number,
-  profit:Number,
-  amountOverPotBudget:Number,
-  createdAt: { 
-    type: Date, 
-    default: Date.now 
-  }
-});
-
-const PromoMatch = mongoose.model('PromoMatch', promoMatchSchema);
-
-
-// Delete API
-app.delete('/promofighttodelete/:id', async (req, res) => {
-  const { id } = req.params;
-  console.log('Received DELETE request for match promo affiliate ID:', id);
-  try {
-    const user = await PromoMatch.findByIdAndDelete(id);
-    
-    res.status(200).json({ message: 'Match deleted successfully' });
-  } catch (error) {
-    res.status(500).json({ message: 'Internal server error' });
-  }
-});
-
-
-// POST /addPromoMatch
-app.post('/addPromoMatch', async (req, res) => {
-  const { matchId, matchTokens, affiliateId, pot, profit, amountOverPotBudget } = req.body;
-
-  try {
-    const newPromoMatch = new PromoMatch({
-      matchId,
-      matchTokens,
-      affiliateId,
-      pot,
-      profit,
-      amountOverPotBudget
-    });
-
-    await newPromoMatch.save();
-    res.status(201).json({ message: 'Promo match created successfully', data: newPromoMatch });
-  } catch (error) {
-    res.status(500).json({ message: 'Error creating promo match', error });
-  }
-});
-
-
-
-
-// GET /promoMatches
-app.get('/promoMatches', async (req, res) => {
-  try {
-    const promoMatches = await PromoMatch.find().populate('matchId affiliateId');
-    res.status(200).json(promoMatches);
-  } catch (error) {
-    res.status(500).json({ message: 'Error fetching promo matches', error });
-  }
-});
 
 
 
