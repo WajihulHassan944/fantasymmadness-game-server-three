@@ -1223,25 +1223,16 @@ const affiliateSchema = new mongoose.Schema({
   }],
 }, { timestamps: true });
 const Affiliate = mongoose.model('Affiliate', affiliateSchema);
+
 app.get('/affiliateByName', async (req, res) => {
-  const { fullName } = req.query;
+  const { firstName } = req.query;
 
-  if (!fullName) {
-      return res.status(400).json({ error: 'Full name is required.' });
+  if (!firstName) {
+      return res.status(400).json({ error: 'First name is required.' });
   }
-
-  // Split the full name into first and last names
-  const nameParts = fullName.split(' ');
-  
-  if (nameParts.length < 2) {
-      return res.status(400).json({ error: 'Full name must include at least a first name and a last name.' });
-  }
-  
-  const firstName = nameParts[0];
-  const lastName = nameParts.slice(1).join(' '); // Join the rest of the parts as the last name
 
   try {
-      const affiliate = await Affiliate.findOne({ firstName, lastName });
+      const affiliate = await Affiliate.findOne({ firstName });
 
       if (!affiliate) {
           return res.status(404).json({ message: 'Affiliate not found' });
