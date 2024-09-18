@@ -1190,6 +1190,8 @@ const affiliateSchema = new mongoose.Schema({
   isAgreed: Boolean,
   verified: { type: Boolean, default: false },
   profileUrl: String,
+  preferredPaymentMethod: String, 
+  preferredPaymentMethodValue: String, 
   usersJoined: [{
     userId: { type: mongoose.Schema.Types.ObjectId, ref: 'User' }, // User who joined
     email: String,  // Email of the user who joined
@@ -1197,6 +1199,35 @@ const affiliateSchema = new mongoose.Schema({
   }],
 }, { timestamps: true });
 const Affiliate = mongoose.model('Affiliate', affiliateSchema);
+
+app.post('/affiliate/updatePayment/:id', async (req, res) => {
+  const { id } = req.params; // Get the affiliate ID from URL params
+  const { preferredPaymentMethod, preferredPaymentMethodValue } = req.body; // Get data from request body
+
+  try {
+    // Find the affiliate by ID and update the payment method and value
+    const updatedAffiliate = await Affiliate.findByIdAndUpdate(
+      id, 
+      {
+        preferredPaymentMethod,
+        preferredPaymentMethodValue
+      }, 
+      { new: true } // Return the updated document
+    );
+
+    if (!updatedAffiliate) {
+      return res.status(404).json({ message: 'Affiliate not found' });
+    }
+
+    res.status(200).json({ message: 'Affiliate updated successfully', data: updatedAffiliate });
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ message: 'Server error', error });
+  }
+});
+
+
+
 app.post('/affiliate/:affiliateId/join', async (req, res) => {
   const { affiliateId } = req.params;
   const { userId, userEmail } = req.body; // Receive userId and userEmail from the request body
