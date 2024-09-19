@@ -1222,17 +1222,25 @@ const affiliateSchema = new mongoose.Schema({
     joinedAt: { type: Date, default: Date.now } // Timestamp
   }],
 }, { timestamps: true });
+
+
 const Affiliate = mongoose.model('Affiliate', affiliateSchema);
 
-app.get('/affiliateByName', async (req, res) => {
-  const { firstName } = req.query;
 
-  if (!firstName) {
-      return res.status(400).json({ error: 'First name is required.' });
+app.get('/affiliateByName', async (req, res) => {
+  const { fullName } = req.query;
+
+  if (!fullName) {
+      return res.status(400).json({ error: 'FullName is required.' });
   }
 
   try {
-      const affiliate = await Affiliate.findOne({ firstName });
+      // Assuming you have a model called Affiliate
+      const affiliate = await Affiliate.findOne({
+          $expr: { 
+              $eq: [{ $concat: ["$firstName", " ", "$lastName"] }, fullName] 
+          }
+      });
 
       if (!affiliate) {
           return res.status(404).json({ message: 'Affiliate not found' });
@@ -1244,6 +1252,7 @@ app.get('/affiliateByName', async (req, res) => {
       res.status(500).json({ message: 'Server error' });
   }
 });
+
 
 
 app.post('/affiliate/updatePayment/:id', async (req, res) => {
