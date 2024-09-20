@@ -694,6 +694,8 @@ const userSchema = new mongoose.Schema({
   currentPlan: { type: String, default: 'None' }, // Current subscription plan
   freePlanExpiryDate: Date, // Date when the free plan expires
   hasAvailedFreePlan: { type: Boolean, default: false }, // Indicates if the user has availed the free plan
+  preferredPaymentMethod: String, 
+  preferredPaymentMethodValue: String, 
   billing: {
     cardNumber: {
       iv: String,
@@ -718,6 +720,35 @@ const userSchema = new mongoose.Schema({
 }, { timestamps: true }); 
 
 const User = mongoose.model('User', userSchema);
+
+
+app.post('/user/updatePayment/:id', async (req, res) => {
+  const { id } = req.params; // Get the affiliate ID from URL params
+  const { preferredPaymentMethod, preferredPaymentMethodValue } = req.body; // Get data from request body
+
+  try {
+    // Find the affiliate by ID and update the payment method and value
+    const updatedUser = await User.findByIdAndUpdate(
+      id, 
+      {
+        preferredPaymentMethod,
+        preferredPaymentMethodValue
+      }, 
+      { new: true } // Return the updated document
+    );
+
+    if (!updatedUser) {
+      return res.status(404).json({ message: 'User not found' });
+    }
+
+    res.status(200).json({ message: 'Affiliate updated successfully', data: updatedUser });
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ message: 'Server error', error });
+  }
+});
+
+
 
 app.put('/update-profile/:userId', async (req, res) => {
   const { userId } = req.params;
