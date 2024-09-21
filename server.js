@@ -533,7 +533,8 @@ app.delete('/api/matches/:id', async (req, res) => {
 
 app.post('/addMatch', upload.fields([{ name: 'fighterAImage' }, { name: 'fighterBImage' }]), async (req, res) => {
   const { default: fetch } = await import('node-fetch');
-  const { matchCategoryTwo, shadowFightId, maxRounds, affiliateId, matchBy, profit, amountOverPotBudget, matchCategory, matchName, matchFighterA, matchFighterB, matchDescription, matchVideoUrl, matchDate, matchTime, matchTokens, matchStatus, pot, matchType, fighterAImageUrl, fighterBImageUrl } = req.body;
+  const {   BoxingMatch,
+    MMAMatch, matchCategoryTwo, shadowFightId, maxRounds, affiliateId, matchBy, profit, amountOverPotBudget, matchCategory, matchName, matchFighterA, matchFighterB, matchDescription, matchVideoUrl, matchDate, matchTime, matchTokens, matchStatus, pot, matchType, fighterAImageUrl, fighterBImageUrl } = req.body;
 
   let fighterAImage, fighterBImage;
 
@@ -589,6 +590,9 @@ app.post('/addMatch', upload.fields([{ name: 'fighterAImage' }, { name: 'fighter
     maxRounds,
     shadowFightId,
     matchCategoryTwo,
+    BoxingMatch: JSON.parse(BoxingMatch), // Save BoxingMatch stats
+    MMAMatch: JSON.parse(MMAMatch), // Save MMAMatch stats
+    
   });
 
   const savedMatch = await newMatch.save(); // Save the match and get the saved match
