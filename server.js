@@ -68,6 +68,55 @@ const shadowSchema = new mongoose.Schema({
   fighterBImage: String,  // URL of Fighter B's image
   matchType: String,      // LIVE or SHADOW
   maxRounds: Number,
+  // Boxing-specific stats
+  BoxingMatch: {
+    fighterOneStats: [{
+      roundNumber: Number,
+      HP: Number,
+      BP: Number,
+      TP: Number,
+      RW: Number,
+      RL: Number,
+      KO: Number,
+      SP: Number,
+    }],
+    fighterTwoStats: [{
+      roundNumber: Number,
+      HP: Number,
+      BP: Number,
+      TP: Number,
+      RW: Number,
+      RL: Number,
+      KO: Number,
+      SP: Number,
+    }],
+  },
+
+  // MMA-specific stats
+  MMAMatch: {
+    fighterOneStats: [{
+      roundNumber: Number,
+      ST: Number,
+      KI: Number,
+      KN: Number,
+      EL: Number,
+      RW: Number,
+      RL: Number,
+      KO: Number,
+      SP: Number,
+   }],
+    fighterTwoStats: [{
+      roundNumber: Number,
+      ST: Number,
+      KI: Number,
+      KN: Number,
+      EL: Number,
+      RW: Number,
+      RL: Number,
+      KO: Number,
+      SP: Number,
+   }],
+  },
 
   // Add AffiliateIds as an array of objects
   AffiliateIds: [
@@ -88,6 +137,96 @@ const shadowSchema = new mongoose.Schema({
 
 const Shadow = mongoose.model('Shadow', shadowSchema);
 
+
+
+app.post('/shadow/addShadowRoundResults/:id', async (req, res) => {
+  const { id } = req.params;
+  const { fighterOneStats, fighterTwoStats } = req.body;
+
+  try {
+    // Find the match document
+    const match = await Shadow.findById(id);
+
+    if (!match) {
+      return res.status(404).json({ message: 'Match not found' });
+    }
+
+    // Determine the category of the match
+    if (match.matchCategory === 'boxing') {
+      // Update round results for Fighter One (Boxing)
+      const existingFighterOneRoundIndex = match.BoxingMatch.fighterOneStats.findIndex(stat => stat.roundNumber === fighterOneStats.roundNumber);
+      if (existingFighterOneRoundIndex !== -1) {
+        match.BoxingMatch.fighterOneStats[existingFighterOneRoundIndex] = fighterOneStats;
+      } else {
+        match.BoxingMatch.fighterOneStats.push(fighterOneStats);
+      }
+
+      // Update round results for Fighter Two (Boxing)
+      const existingFighterTwoRoundIndex = match.BoxingMatch.fighterTwoStats.findIndex(stat => stat.roundNumber === fighterTwoStats.roundNumber);
+      if (existingFighterTwoRoundIndex !== -1) {
+        match.BoxingMatch.fighterTwoStats[existingFighterTwoRoundIndex] = fighterTwoStats;
+      } else {
+        match.BoxingMatch.fighterTwoStats.push(fighterTwoStats);
+      }
+    } else if (match.matchCategory === 'mma') {
+      // Update round results for Fighter One (MMA)
+      const existingFighterOneRoundIndex = match.MMAMatch.fighterOneStats.findIndex(stat => stat.roundNumber === fighterOneStats.roundNumber);
+      if (existingFighterOneRoundIndex !== -1) {
+        match.MMAMatch.fighterOneStats[existingFighterOneRoundIndex] = fighterOneStats;
+      } else {
+        match.MMAMatch.fighterOneStats.push(fighterOneStats);
+      }
+
+      // Update round results for Fighter Two (MMA)
+      const existingFighterTwoRoundIndex = match.MMAMatch.fighterTwoStats.findIndex(stat => stat.roundNumber === fighterTwoStats.roundNumber);
+      if (existingFighterTwoRoundIndex !== -1) {
+        match.MMAMatch.fighterTwoStats[existingFighterTwoRoundIndex] = fighterTwoStats;
+      } else {
+        match.MMAMatch.fighterTwoStats.push(fighterTwoStats);
+      }
+    } else {
+      return res.status(400).json({ message: 'Invalid match category' });
+    }
+
+    // Save the updated match document
+    await match.save();
+
+    res.status(200).json({ message: 'Round results added successfully', match });
+  } catch (error) {
+    console.error('Error adding round results:', error);
+    res.status(500).json({ message: 'Internal server error' });
+  }
+});
+
+
+
+
+
+app.post('/updateShadowVideo', async (req, res) => {
+  const { matchId, matchVideoUrl } = req.body;
+
+  // Basic validation
+  if (!matchId || !matchVideoUrl) {
+    return res.status(400).json({ message: 'matchId and matchVideoUrl are required' });
+  }
+
+  try {
+    // Find the match by matchId and update the matchVideoUrl if it exists, otherwise create a new one
+    const updatedMatch = await Shadow.findOneAndUpdate(
+      { _id: matchId }, 
+      { matchVideoUrl }, // Update the matchVideoUrl
+      { new: true, upsert: true } // new: return the updated document, upsert: create if not found
+    );
+
+    res.status(200).json({
+      message: 'Match video URL updated successfully',
+      updatedMatch,
+    });
+  } catch (error) {
+    console.error('Error updating match:', error);
+    res.status(500).json({ message: 'An error occurred while updating the match' });
+  }
+});
 
 
 // Delete Match API
