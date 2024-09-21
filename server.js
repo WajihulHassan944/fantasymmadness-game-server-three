@@ -68,6 +68,8 @@ const shadowSchema = new mongoose.Schema({
   fighterBImage: String,  // URL of Fighter B's image
   matchType: String,      // LIVE or SHADOW
   maxRounds: Number,
+  matchStatus: { type: String, enum: ['Finished', 'Ongoing'], default: 'Ongoing' },
+  
   // Boxing-specific stats
   BoxingMatch: {
     fighterOneStats: [{
@@ -137,6 +139,28 @@ const shadowSchema = new mongoose.Schema({
 
 const Shadow = mongoose.model('Shadow', shadowSchema);
 
+
+app.post('/finishShadow/:matchId', async (req, res) => {
+  try {
+    const { matchId } = req.params;
+
+    // Find the match by ID and update the status to 'Finished'
+    const match = await Shadow.findByIdAndUpdate(
+      matchId, 
+      { matchStatus: 'Finished' }, 
+      { new: true } // This option returns the updated document
+    );
+
+    if (!match) {
+      return res.status(404).json({ message: 'Match not found' });
+    }
+
+    res.json({ message: 'Match status updated to Finished', match });
+  } catch (error) {
+    console.error('Error finishing match:', error);
+    res.status(500).json({ message: 'Internal server error' });
+  }
+});
 
 
 app.post('/shadow/addShadowRoundResults/:id', async (req, res) => {
