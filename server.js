@@ -310,7 +310,8 @@ app.post('/addShadow', upload.fields([{ name: 'fighterAImage' }, { name: 'fighte
   });
 
   await newMatch.save();
-  res.status(200).send('Shadow Added Successfully');
+  res.status(200).json({ message: 'Match Added Successfully and Notifications Sent', matchId: newMatch._id });
+
 });
 
 
