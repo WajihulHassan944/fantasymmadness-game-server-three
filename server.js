@@ -68,6 +68,8 @@ const shadowSchema = new mongoose.Schema({
   fighterBImage: String,  // URL of Fighter B's image
   matchType: String,      // LIVE or SHADOW
   maxRounds: Number,
+  fighterAImageDeleteUrl: String, // ImgBB delete URL for Fighter A's image
+  fighterBImageDeleteUrl: String, 
   matchStatus: { type: String, enum: ['Finished', 'Ongoing'], default: 'Ongoing' },
   
   // Boxing-specific stats
@@ -252,20 +254,39 @@ app.post('/updateShadowVideo', async (req, res) => {
   }
 });
 
-
-// Delete Match API
 app.delete('/shadowfighttodelete/:id', async (req, res) => {
   const { id } = req.params;
-  console.log('Received DELETE request for User ID:', id);
+  console.log('Received DELETE request for Shadow ID:', id);
+
   try {
-    const user = await Shadow.findByIdAndDelete(id);
+    // Fetch the shadow fight by ID
+    const shadowFight = await Shadow.findById(id);
     
-    res.status(200).json({ message: 'Shadow deleted successfully' });
+    if (!shadowFight) {
+      return res.status(404).json({ message: 'Shadow fight not found' });
+    }
+
+    const { fighterAImageDeleteUrl, fighterBImageDeleteUrl } = shadowFight;
+
+    // Delete Fighter A image from ImgBB
+    if (fighterAImageDeleteUrl) {
+      await fetch(fighterAImageDeleteUrl, { method: 'DELETE' });
+    }
+
+    // Delete Fighter B image from ImgBB
+    if (fighterBImageDeleteUrl) {
+      await fetch(fighterBImageDeleteUrl, { method: 'DELETE' });
+    }
+
+    // Delete the shadow fight from the database
+    await Shadow.findByIdAndDelete(id);
+
+    res.status(200).json({ message: 'Shadow fight and associated images deleted successfully' });
   } catch (error) {
+    console.error('Error deleting shadow fight:', error);
     res.status(500).json({ message: 'Internal server error' });
   }
 });
-
 
 
 app.post('/addShadow', upload.fields([{ name: 'fighterAImage' }, { name: 'fighterBImage' }]), async (req, res) => {
@@ -273,25 +294,33 @@ app.post('/addShadow', upload.fields([{ name: 'fighterAImage' }, { name: 'fighte
   const formDataB = new FormData();
   const { default: fetch } = await import('node-fetch');
 
+  let fighterAImageUrl, fighterBImageUrl, fighterAImageDeleteUrl, fighterBImageDeleteUrl;
+
   // Upload Fighter A image
-  formDataA.append('image', req.files.fighterAImage[0].buffer.toString('base64'));
-  const responseA = await fetch('https://api.imgbb.com/1/upload?key=368cbdb895c5bed277d50d216adbfa52', {
-    method: 'POST',
-    body: formDataA,
-  });
-  const dataA = await responseA.json();
-  const fighterAImageUrl = dataA.data.url;
+  if (req.files.fighterAImage) {
+    formDataA.append('image', req.files.fighterAImage[0].buffer.toString('base64'));
+    const responseA = await fetch('https://api.imgbb.com/1/upload?key=368cbdb895c5bed277d50d216adbfa52', {
+      method: 'POST',
+      body: formDataA,
+    });
+    const dataA = await responseA.json();
+    fighterAImageUrl = dataA.data.url;            // Store Fighter A image URL
+    fighterAImageDeleteUrl = dataA.data.delete_url; // Store Fighter A delete URL
+  }
 
   // Upload Fighter B image
-  formDataB.append('image', req.files.fighterBImage[0].buffer.toString('base64'));
-  const responseB = await fetch('https://api.imgbb.com/1/upload?key=368cbdb895c5bed277d50d216adbfa52', {
-    method: 'POST',
-    body: formDataB,
-  });
-  const dataB = await responseB.json();
-  const fighterBImageUrl = dataB.data.url;
+  if (req.files.fighterBImage) {
+    formDataB.append('image', req.files.fighterBImage[0].buffer.toString('base64'));
+    const responseB = await fetch('https://api.imgbb.com/1/upload?key=368cbdb895c5bed277d50d216adbfa52', {
+      method: 'POST',
+      body: formDataB,
+    });
+    const dataB = await responseB.json();
+    fighterBImageUrl = dataB.data.url;            // Store Fighter B image URL
+    fighterBImageDeleteUrl = dataB.data.delete_url; // Store Fighter B delete URL
+  }
 
-  const {matchCategoryTwo, maxRounds ,  matchCategory, matchName, matchFighterA, matchFighterB, matchDescription, matchVideoUrl,  matchType } = req.body;
+  const { matchCategoryTwo, maxRounds, matchCategory, matchName, matchFighterA, matchFighterB, matchDescription, matchVideoUrl, matchType } = req.body;
 
   // Save the match details to the database
   const newMatch = new Shadow({
@@ -304,14 +333,14 @@ app.post('/addShadow', upload.fields([{ name: 'fighterAImage' }, { name: 'fighte
     matchVideoUrl,
     fighterAImage: fighterAImageUrl,
     fighterBImage: fighterBImageUrl,
-    matchType, 
+    fighterAImageDeleteUrl, // Store Fighter A delete URL in the database
+    fighterBImageDeleteUrl, // Store Fighter B delete URL in the database
+    matchType,
     maxRounds,
-
   });
 
   await newMatch.save();
   res.status(200).json({ message: 'Match Added Successfully and Notifications Sent', matchId: newMatch._id });
-
 });
 
 
@@ -348,6 +377,8 @@ const matchSchema = new mongoose.Schema({
   fighterBImage: String,  // URL of Fighter B's image
   matchType: String,      // LIVE or SHADOW
   maxRounds: Number,
+  fighterAImageDeleteUrl: String,
+  fighterBImageDeleteUrl: String,
 
   // Boxing-specific stats
   BoxingMatch: {
@@ -503,14 +534,28 @@ app.get('/api/matches/:id', async (req, res) => {
     res.status(500).json({ message: 'Server error', error });
   }
 });
+
 app.delete('/api/matches/:id', async (req, res) => {
   try {
     const { id } = req.params; // matchId
     const { affiliateId } = req.query; // Get affiliateId from query parameters
 
+    // Find the match to get image delete URLs
+    const match = await Match.findById(id);
+    if (!match) {
+      return res.status(404).json({ message: 'Match not found' });
+    }
+
+    // Delete fighter images from ImgBB
+    if (match.fighterAImageDeleteUrl) {
+      await fetch(match.fighterAImageDeleteUrl, { method: 'DELETE' });
+    }
+    if (match.fighterBImageDeleteUrl) {
+      await fetch(match.fighterBImageDeleteUrl, { method: 'DELETE' });
+    }
+
     // Delete the match by ID
     const deletedMatch = await Match.findByIdAndDelete(id);
-
     if (!deletedMatch) {
       return res.status(404).json({ message: 'Match not found' });
     }
@@ -521,21 +566,22 @@ app.delete('/api/matches/:id', async (req, res) => {
     // Remove affiliateId and matchId combination from AffiliateIds
     if (affiliateId) {
       await Shadow.updateMany(
-        { 'AffiliateIds.AffiliateId': affiliateId, 'AffiliateIds.matchId': id }, // Match both affiliateId and matchId
-        { $pull: { AffiliateIds: { AffiliateId: affiliateId, matchId: id } } }   // Pull the object with matching affiliateId and matchId
+        { 'AffiliateIds.AffiliateId': affiliateId, 'AffiliateIds.matchId': id },
+        { $pull: { AffiliateIds: { AffiliateId: affiliateId, matchId: id } } }
       );
     }
 
-    res.status(200).json({ message: 'Match, associated predictions, and affiliate data deleted successfully' });
+    res.status(200).json({ message: 'Match, associated predictions, and images deleted successfully' });
   } catch (error) {
     res.status(500).json({ message: 'Server error', error });
   }
 });
+
 app.post('/addMatch', upload.fields([{ name: 'fighterAImage' }, { name: 'fighterBImage' }]), async (req, res) => {
   const { default: fetch } = await import('node-fetch');
   const { BoxingMatch, MMAMatch, matchCategoryTwo, shadowFightId, maxRounds, affiliateId, matchBy, profit, amountOverPotBudget, matchCategory, matchName, matchFighterA, matchFighterB, matchDescription, matchVideoUrl, matchDate, matchTime, matchTokens, matchStatus, pot, matchType, fighterAImageUrl, fighterBImageUrl } = req.body;
 
-  let fighterAImage, fighterBImage;
+  let fighterAImage, fighterBImage, fighterAImageDeleteUrl, fighterBImageDeleteUrl;
 
   // Use the image URLs directly if they are provided
   if (fighterAImageUrl && fighterBImageUrl) {
@@ -552,6 +598,7 @@ app.post('/addMatch', upload.fields([{ name: 'fighterAImage' }, { name: 'fighter
       });
       const dataA = await responseA.json();
       fighterAImage = dataA.data.url;
+      fighterAImageDeleteUrl = dataA.data.delete_url;
     }
 
     if (req.files.fighterBImage) {
@@ -563,6 +610,7 @@ app.post('/addMatch', upload.fields([{ name: 'fighterAImage' }, { name: 'fighter
       });
       const dataB = await responseB.json();
       fighterBImage = dataB.data.url;
+      fighterBImageDeleteUrl = dataB.data.delete_url;
     }
   }
 
@@ -589,6 +637,8 @@ app.post('/addMatch', upload.fields([{ name: 'fighterAImage' }, { name: 'fighter
     maxRounds,
     shadowFightId,
     matchCategoryTwo,
+    fighterAImageDeleteUrl, // Save the delete URL for Fighter A
+    fighterBImageDeleteUrl,
     BoxingMatch: JSON.parse(BoxingMatch),
     MMAMatch: JSON.parse(MMAMatch),
   });
