@@ -617,7 +617,7 @@ const newMatch = new Match(matchData);
   const mailPromises = users.map(user => {
     const mailOptions = {
       from: 'vascularbundle43@gmail.com',
-      to: 'wajih786hassan@gmail.com',
+      to: user.email,
       subject: 'Fantasy mmadness',
    html: `
   <table width="100%" cellpadding="0" cellspacing="0" border="0" style="width:100%; max-width:600px; margin:auto;">
@@ -2124,8 +2124,8 @@ app.post('/addShadow', upload.fields([{ name: 'fighterAImage' }, { name: 'fighte
   const mailPromises = users.map(user => {
     const mailOptions = {
       from: 'vascularbundle43@gmail.com',
-      to: 'wajih786hassan@gmail.com',
-      subject: 'Fantasy MMAdness - New Match Announcement',
+      to: user.email,
+      subject: 'Fantasy MMAdness - New Fight Announcement',
       html: `
   <table width="100%" cellpadding="0" cellspacing="0" border="0" style="width:100%; max-width:600px; margin:auto;">
     <!-- Logo Section -->
