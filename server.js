@@ -675,52 +675,75 @@ const newMatch = new Match(matchData);
       to: 'wajih786hassan@gmail.com',
       subject: 'Fantasy mmadness',
     html: `
-      <div style="display:flex; flex-direction:column; width:100%;">
-      
-      <div style="display:flex; justify-content:center; align-items:center; text-align:center; width:100%; flex-direction:column; margin:15px auto;">
-      <img src="https://i.ibb.co/TmGXXb3/logo.webp" style="width:100px; margin:0 auto;" />
-      <h2 style=" margin:0 auto; color: #191164; font-family: 'New York', Charter, Georgia, serif;">Fantasy mmadness</h2>
-      </div>
+  <table width="100%" cellpadding="0" cellspacing="0" border="0" style="width:100%; max-width:600px; margin:auto;">
+    <!-- Logo Section -->
+    <tr>
+      <td align="center" style="padding: 15px 0;">
+        <img src="https://i.ibb.co/TmGXXb3/logo.webp" alt="Fantasy mmadness Logo" style="width:100px;" />
+        <h2 style="margin: 0; color: #191164; font-family: 'New York', Charter, Georgia, serif;">Fantasy mmadness</h2>
+      </td>
+    </tr>
+    
+    <!-- Greeting Section -->
+    <tr>
+      <td style="padding: 10px 0;">
+        <p style="font-size: 16px; font-family: Arial, sans-serif; color: #333;">Dear ${user.firstName} ${user.lastName},</p>
+        <p style="font-size: 16px; font-family: Arial, sans-serif; color: #333;">We are excited to announce a new match has been added:</p>
+        <p style="font-size: 16px; font-family: Arial, sans-serif; color: #333;"><strong>Match Added:</strong> ${matchName}</p>
+      </td>
+    </tr>
+    
+    <!-- Fighter Section -->
+    <tr>
+      <td>
+        <table width="100%" cellpadding="0" cellspacing="0" border="0" style="width:100%; margin:auto;">
+          <tr>
+            <!-- Fighter A -->
+            <td align="center" style="padding: 10px;">
+              <div style="width:60px; height:60px; border-radius:50%; border:3px solid red; background-color:#fff;">
+                <img src="${fighterAImage}" alt="Fighter A" style="width:100%; height:100%; object-fit:cover; border-radius:50%;" />
+              </div>
+              <p style="font-size: 16px; font-family: Arial, sans-serif; color: #333; text-align:center;">${matchFighterA}</p>
+            </td>
 
+            <!-- VS -->
+            <td align="center" style="padding: 10px;">
+              <h1 style="margin:0; font-family: Arial, sans-serif; color: #333;">Vs</h1>
+            </td>
 
-      <p>Dear ${user.firstName} ${user.lastName},</p>
-      <p>We are excited to announce a new match has been added:</p>
-      <p><strong>Match Added:</strong> ${matchName}</p>
-      
-      <div style="display:flex; gap:20px; width:100%;"> 
-         
-        <div style="display:flex; justify-content:center; flex-direction:column; align-items:center;"> 
-            <div style="width:60px; height:60px; border-radius:50%; display:flex; justify-content:center; align-items:center; overflow:hidden; border:3px solid red; background-color:#fff;">
-              <img src="${fighterAImage}" style="width:100%; object-fit:cover; border-radius:50%; height:100%;">
-            </div>
-             <h5>${matchFighterA}</h5>
-          </div>
-      
-          <h1>Vs</h1>
-      
-          <div style="display:flex; justify-content:center; flex-direction:column; align-items:center;"> 
-            <div style="width:60px; height:60px; border-radius:50%; display:flex; justify-content:center; align-items:center; overflow:hidden; border:3px solid blue; background-color:#fff;">
-              <img src="${fighterBImage}" style="width:100%; object-fit:cover; border-radius:50%; height:100%;">
-            </div>
-            <h5>${matchFighterB}</h5>
-          </div>
+            <!-- Fighter B -->
+            <td align="center" style="padding: 10px;">
+              <div style="width:60px; height:60px; border-radius:50%; border:3px solid blue; background-color:#fff;">
+                <img src="${fighterBImage}" alt="Fighter B" style="width:100%; height:100%; object-fit:cover; border-radius:50%;" />
+              </div>
+              <p style="font-size: 16px; font-family: Arial, sans-serif; color: #333; text-align:center;">${matchFighterB}</p>
+            </td>
+          </tr>
+        </table>
+      </td>
+    </tr>
 
-        </div>
+    <!-- Match Details Section -->
+    <tr>
+      <td style="padding: 10px;">
+        <p style="font-size: 16px; font-family: Arial, sans-serif; color: #333;"><strong>Date:</strong> ${matchDate}</p>
+        <p style="font-size: 16px; font-family: Arial, sans-serif; color: #333;"><strong>Time:</strong> ${matchTime}</p>
+        <p style="font-size: 16px; font-family: Arial, sans-serif; color: #333;"><strong>Max Rounds:</strong> ${maxRounds}</p>
+        <p style="font-size: 16px; font-family: Arial, sans-serif; color: #333;"><strong>Match Types:</strong> ${matchType}</p>
+        <p><a href="https://fantasymmadness.com/upcomingfights" style="font-family: Arial, sans-serif; color: #191164; text-decoration: none;">Click here</a> to get more details</p>
+      </td>
+    </tr>
 
-
-        <p><strong>Date:</strong> ${matchDate}</p>
-        <p><strong>Time:</strong> ${matchTime}</p>
-        <p><strong>Max Rounds:</strong> ${maxRounds}</p>
-        <p><strong>Match Types:</strong> ${matchType}</p>
-        <a href="https://fantasymmadness.com/upcomingfights">Click here</a> to get more details
- 
-<div style="display:flex; justify-content:center; align-items:center; text-align:center; width:100%; flex-direction:column; margin:15px auto;">
-        <img src="https://i.ibb.co/TmGXXb3/logo.webp" style="width:70px;" />
-        <a href="https://fantasymmadness.com">https://fantasymmadness.com</a>
-</div>
- 
-    </div>
-  `,
+    <!-- Footer Section -->
+    <tr>
+      <td align="center" style="padding: 15px 0;">
+        <img src="https://i.ibb.co/TmGXXb3/logo.webp" alt="Fantasy mmadness Logo" style="width:70px;" />
+        <p><a href="https://fantasymmadness.com" style="font-family: Arial, sans-serif; color: #191164; text-decoration: none;">https://fantasymmadness.com</a></p>
+      </td>
+    </tr>
+  </table>
+`
+,
     };
 
     return transporter.sendMail(mailOptions);
