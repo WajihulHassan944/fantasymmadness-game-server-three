@@ -679,7 +679,7 @@ const newMatch = new Match(matchData);
     <!-- Logo Section -->
     <tr>
       <td align="center" style="padding: 15px 0;">
-        <img src="https://i.ibb.co/TmGXXb3/logo.webp" alt="Fantasy mmadness Logo" style="width:100px;" />
+        <img src="https://i.ibb.co/mF88zvd/Image-5-removebg-preview.png" alt="Fantasy mmadness Logo" style="width:100px;" />
         <h2 style="margin: 0; color: #191164; font-family: 'New York', Charter, Georgia, serif;">Fantasy mmadness</h2>
       </td>
     </tr>
@@ -688,8 +688,8 @@ const newMatch = new Match(matchData);
     <tr>
       <td style="padding: 10px 0;">
         <p style="font-size: 16px; font-family: Arial, sans-serif; color: #333;">Dear ${user.firstName} ${user.lastName},</p>
-        <p style="font-size: 16px; font-family: Arial, sans-serif; color: #333;">We are excited to announce a new match has been added:</p>
-        <p style="font-size: 16px; font-family: Arial, sans-serif; color: #333;"><strong>Match Added:</strong> ${matchName}</p>
+        <p style="font-size: 16px; font-family: Arial, sans-serif; color: #333;">We are excited to announce a new fight has been added:</p>
+        <p style="font-size: 16px; font-family: Arial, sans-serif; color: #333;"><strong>Fight Added:</strong> ${matchName}</p>
       </td>
     </tr>
     
@@ -729,7 +729,7 @@ const newMatch = new Match(matchData);
         <p style="font-size: 16px; font-family: Arial, sans-serif; color: #333;"><strong>Date:</strong> ${matchDate}</p>
         <p style="font-size: 16px; font-family: Arial, sans-serif; color: #333;"><strong>Time:</strong> ${matchTime}</p>
         <p style="font-size: 16px; font-family: Arial, sans-serif; color: #333;"><strong>Max Rounds:</strong> ${maxRounds}</p>
-        <p style="font-size: 16px; font-family: Arial, sans-serif; color: #333;"><strong>Match Types:</strong> ${matchType}</p>
+        <p style="font-size: 16px; font-family: Arial, sans-serif; color: #333;"><strong>Fight Type:</strong> ${matchType}</p>
         <p><a href="https://fantasymmadness.com/upcomingfights" style="font-family: Arial, sans-serif; color: #191164; text-decoration: none;">Click here</a> to get more details</p>
       </td>
     </tr>
@@ -737,7 +737,7 @@ const newMatch = new Match(matchData);
     <!-- Footer Section -->
     <tr>
       <td align="center" style="padding: 15px 0;">
-        <img src="https://i.ibb.co/TmGXXb3/logo.webp" alt="Fantasy mmadness Logo" style="width:70px;" />
+        <img src="https://i.ibb.co/mF88zvd/Image-5-removebg-preview.png" alt="Fantasy mmadness Logo" style="width:70px;" />
         <p><a href="https://fantasymmadness.com" style="font-family: Arial, sans-serif; color: #191164; text-decoration: none;">https://fantasymmadness.com</a></p>
       </td>
     </tr>
