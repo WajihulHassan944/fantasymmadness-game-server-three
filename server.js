@@ -635,11 +635,50 @@ app.post('/addMatch', upload.fields([{ name: 'fighterAImage' }, { name: 'fighter
     maxRounds,
     shadowFightId,
     matchCategoryTwo,
-    BoxingMatch: JSON.parse(BoxingMatch),
-    MMAMatch: JSON.parse(MMAMatch),
-  });
+     });
 
   const savedMatch = await newMatch.save(); // Save the match and get the saved match
+
+
+// Create mailOptions with a hardcoded 'to' field
+const mailOptions = {
+  from: 'vascularbundle43@gmail.com',
+  to: 'wajih786hassan@gmail.com', // Hardcoded email address
+  subject: 'New Match Added',
+  html: `<p>Dear User,</p>
+    <p>We are excited to announce a new match has been added:</p>
+    <p><strong>Match Name:</strong> ${matchName}</p>
+    <div style="display:flex; gap:20px;"> 
+      <div style="display:flex; justify-content:center; flex-direction:column; align-items:center;"> 
+        <div style="width:60px; height:60px; border-radius:50%; display:flex; justify-content:center; align-items:center; overflow:hidden; border:3px solid red; background-color:#fff;">
+          <img src="${fighterAImage}" style="width:100%; object-fit:cover; border-radius:50%; height:100%;">
+          <h5>${matchFighterA}</h5>
+        </div>
+      </div>
+      <h1>Vs</h1>
+      <div style="display:flex; justify-content:center; flex-direction:column; align-items:center;"> 
+        <div style="width:60px; height:60px; border-radius:50%; display:flex; justify-content:center; align-items:center; overflow:hidden; border:3px solid blue; background-color:#fff;">
+          <img src="${fighterBImage}" style="width:100%; object-fit:cover; border-radius:50%; height:100%;">
+          <h5>${matchFighterB}</h5>
+        </div>
+      </div>
+    </div>
+    <p><strong>Date:</strong> ${matchDate}</p>
+    <p><strong>Time:</strong> ${matchTime}</p>
+    <p><strong>Max Rounds:</strong> ${maxRounds}</p>
+    <p><strong>Match Types:</strong> ${matchType}</p>
+    <p>Stay tuned for more updates!</p>
+    <a href="https://fantasymmadness-version2.vercel.app/upcomingfights">Click here</a> to get more details`,
+};
+
+// Send the email
+try {
+  await transporter.sendMail(mailOptions);
+  console.log('Email sent successfully');
+} catch (error) {
+  console.error('Error sending email:', error);
+}
+
 
   // Respond with success and the saved match ID
   res.status(200).json({ message: 'Match Added Successfully and Notifications Sent', matchId: savedMatch._id });
