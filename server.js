@@ -598,7 +598,6 @@ app.post('/addMatch', upload.fields([{ name: 'fighterAImage' }, { name: 'fighter
       });
       const dataA = await responseA.json();
       fighterAImage = dataA.data.url;
-      fighterAImageDeleteUrl = dataA.data.delete_url;
     }
 
     if (req.files.fighterBImage) {
@@ -610,7 +609,6 @@ app.post('/addMatch', upload.fields([{ name: 'fighterAImage' }, { name: 'fighter
       });
       const dataB = await responseB.json();
       fighterBImage = dataB.data.url;
-      fighterBImageDeleteUrl = dataB.data.delete_url;
     }
   }
 
@@ -637,8 +635,6 @@ app.post('/addMatch', upload.fields([{ name: 'fighterAImage' }, { name: 'fighter
     maxRounds,
     shadowFightId,
     matchCategoryTwo,
-    fighterAImageDeleteUrl, // Save the delete URL for Fighter A
-    fighterBImageDeleteUrl,
     BoxingMatch: JSON.parse(BoxingMatch),
     MMAMatch: JSON.parse(MMAMatch),
   });
