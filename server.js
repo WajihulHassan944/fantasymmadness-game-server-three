@@ -673,36 +673,53 @@ const newMatch = new Match(matchData);
     const mailOptions = {
       from: 'vascularbundle43@gmail.com',
       to: 'wajih786hassan@gmail.com',
-      subject: 'New Match Added',
-      html: `
-      <img src="https://www.fantasymmadness.com/static/media/logo.c2aa609dbe0ed6c1af42.png" style="width:100px; margin:auto;" />
-  
+      subject: 'Fantasy mmadness',
+    html: `
+      <div style="display:flex; flex-direction:column; width:100%;">
+      
+      <div style="display:flex; justify-content:center; align-items:center; text-align:center; width:100%; flex-direction:column; margin:15px auto;">
+      <img src="https://i.ibb.co/TmGXXb3/logo.webp" style="width:100px; margin:0 auto;" />
+      <h2 style=" margin:0 auto; color: #191164; font-family: 'New York', Charter, Georgia, serif;">Fantasy mmadness</h2>
+      </div>
+
+
       <p>Dear ${user.firstName} ${user.lastName},</p>
-        <p>We are excited to announce a new match has been added:</p>
-        <p><strong>Match Name:</strong> ${matchName}</p>
-        <div style="display:flex; gap:20px;"> 
-          <div style="display:flex; justify-content:center; flex-direction:column; align-items:center;"> 
+      <p>We are excited to announce a new match has been added:</p>
+      <p><strong>Match Added:</strong> ${matchName}</p>
+      
+      <div style="display:flex; gap:20px; width:100%;"> 
+         
+        <div style="display:flex; justify-content:center; flex-direction:column; align-items:center;"> 
             <div style="width:60px; height:60px; border-radius:50%; display:flex; justify-content:center; align-items:center; overflow:hidden; border:3px solid red; background-color:#fff;">
               <img src="${fighterAImage}" style="width:100%; object-fit:cover; border-radius:50%; height:100%;">
-              <h5>${matchFighterA}</h5>
             </div>
+             <h5>${matchFighterA}</h5>
           </div>
+      
           <h1>Vs</h1>
+      
           <div style="display:flex; justify-content:center; flex-direction:column; align-items:center;"> 
             <div style="width:60px; height:60px; border-radius:50%; display:flex; justify-content:center; align-items:center; overflow:hidden; border:3px solid blue; background-color:#fff;">
               <img src="${fighterBImage}" style="width:100%; object-fit:cover; border-radius:50%; height:100%;">
-              <h5>${matchFighterB}</h5>
             </div>
+            <h5>${matchFighterB}</h5>
           </div>
+
         </div>
+
+
         <p><strong>Date:</strong> ${matchDate}</p>
         <p><strong>Time:</strong> ${matchTime}</p>
         <p><strong>Max Rounds:</strong> ${maxRounds}</p>
         <p><strong>Match Types:</strong> ${matchType}</p>
-        <p>Stay tuned for more updates!</p>
         <a href="https://fantasymmadness.com/upcomingfights">Click here</a> to get more details
-    <img src="https://www.fantasymmadness.com/static/media/logo.c2aa609dbe0ed6c1af42.png" style="width:100px; margin:auto;" />
-     <a href="https://fantasymmadness.com">https://fantasymmadness.com</a>
+ 
+<div style="display:flex; justify-content:center; align-items:center; text-align:center; width:100%; flex-direction:column; margin:15px auto;">
+        <img src="https://i.ibb.co/TmGXXb3/logo.webp" style="width:70px;" />
+        <a href="https://fantasymmadness.com">https://fantasymmadness.com</a>
+</div>
+ 
+    </div>
   `,
     };
 
