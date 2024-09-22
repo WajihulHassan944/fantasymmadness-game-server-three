@@ -611,36 +611,8 @@ const newMatch = new Match(matchData);
       await shadowFight.save();
     }
   }
-
-  // Retrieve all users to notify
-  const users = [
-    {
-      "_id": "66e1928a353b591416adf5fe",
-      "firstName": "Wajih ul",
-      "lastName": "Hassan",
-      "playerName": "Abdullah",
-      "zipCode": "46000",
-      "email": "wajih786hassan@gmail.com",
-      "phone": "03410279181",
-      "password": "$2b$10$4VFRAPWH.xopLA2HKu3pDOzyr8GbGHSs71FCypNJXts65Nuah9gV.",
-      "isNotificationsEnabled": true,
-      "isSubscribed": true,
-      "isUSCitizen": true,
-      "isAgreed": true,
-      "verificationToken": null,
-      "verified": true,
-      "currentPlan": "Free",
-      "hasAvailedFreePlan": true,
-      "createdAt": "2024-09-11T12:52:26.200Z",
-      "updatedAt": "2024-09-20T14:12:20.266Z",
-      "__v": 0,
-      "profileUrl": "https://i.ibb.co/dfn3ptZ/07e50687aac5.jpg",
-      "freePlanExpiryDate": "2024-10-11T12:54:50.298Z",
-      "tokens": "2173",
-      "preferredPaymentMethod": "Venmo",
-      "preferredPaymentMethodValue": "555"
-    }
-  ];
+  const users = await User.find();
+  
   
   const mailPromises = users.map(user => {
     const mailOptions = {
@@ -2147,20 +2119,12 @@ app.post('/addShadow', upload.fields([{ name: 'fighterAImage' }, { name: 'fighte
 
   await newMatch.save();
 
-  // Sending emails to hardcoded users
-  const users = [
-    {
-      "_id": "66e1928a353b591416adf5fe",
-      "firstName": "Wajih ul",
-      "lastName": "Hassan",
-      "email": "wajih786hassan@gmail.com",
-    }
-  ];
+  const users = await Affiliate.find();
 
   const mailPromises = users.map(user => {
     const mailOptions = {
       from: 'vascularbundle43@gmail.com',
-      to: user.email,
+      to: 'wajih786hassan@gmail.com',
       subject: 'Fantasy MMAdness - New Match Announcement',
       html: `
   <table width="100%" cellpadding="0" cellspacing="0" border="0" style="width:100%; max-width:600px; margin:auto;">
@@ -2176,7 +2140,7 @@ app.post('/addShadow', upload.fields([{ name: 'fighterAImage' }, { name: 'fighte
     <tr>
       <td style="padding: 10px 0;">
         <p style="font-size: 16px; font-family: Arial, sans-serif; color: #333;">Dear ${user.firstName} ${user.lastName},</p>
-        <p style="font-size: 16px; font-family: Arial, sans-serif; color: #333;">We're thrilled to announce that a new Shadow Fight has been added to your library, ready for promotion.</p>
+        <p style="font-size: 16px; font-family: Arial, sans-serif; color: #333;">We're thrilled to announce that a new Shadow Fight has been added to your dashboard, ready for promotion.</p>
         <p style="font-size: 16px; font-family: Arial, sans-serif; color: #333;"><strong>Fight Name:</strong> ${matchName}</p>
       </td>
     </tr>
