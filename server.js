@@ -2161,57 +2161,8 @@ app.post('/addShadow', upload.fields([{ name: 'fighterAImage' }, { name: 'fighte
     const mailOptions = {
       from: 'vascularbundle43@gmail.com',
       to: user.email,
-    subject: 'Fantasy MMAdness - New Match Announcement',
-      html: `
-        <table width="100%" cellpadding="0" cellspacing="0" border="0" style="width:100%; max-width:600px; margin:auto;">
-          <!-- Logo Section -->
-          <tr>
-            <td align="center" style="padding: 15px 0;">
-              <img src="https://i.ibb.co/mF88zvd/Image-5-removebg-preview.png" alt="Fantasy mmadness Logo" style="width:100px;" />
-              <h2 style="margin: 0; color: #191164; font-family: 'New York', Charter, Georgia, serif;">Fantasy mmadness</h2>
-            </td>
-          </tr>
-          
-          <!-- Greeting Section -->
-          <tr>
-            <td style="padding: 10px 0;">
-              <p style="font-size: 16px; font-family: Arial, sans-serif; color: #333;">Dear ${user.firstName} ${user.lastName},</p>
-              <p style="font-size: 16px; font-family: Arial, sans-serif; color: #333;">We are excited to announce a new match has been added to the platform:</p>
-              <p style="font-size: 16px; font-family: Arial, sans-serif; color: #333;"><strong>Match Name:</strong> ${matchName}</p>
-            </td>
-          </tr>
-          
-          <!-- New Captivating Section -->
-          <tr>
-            <td align="center" style="padding: 20px; background-color:#f8f8f8;">
-              <h2 style="color: #191164; font-family: 'Impact', fantasy, sans-serif;">Join the Excitement!</h2>
-              <p style="font-size: 17px; font-family: 'Comic Sans MS', fantasy, sans-serif; color: #555;">
-                A new match has been added, and your audience is waiting for your predictions. Get ready to engage and keep your fans excited with your next move!
-              </p>
-            </td>
-          </tr>
-
-          <!-- Match Details Section -->
-          <tr>
-            <td style="padding: 10px;">
-              <p style="font-size: 16px; font-family: Arial, sans-serif; color: #333;"><strong>Date:</strong> ${matchDate}</p>
-              <p style="font-size: 16px; font-family: Arial, sans-serif; color: #333;"><strong>Time:</strong> ${matchTime}</p>
-              <p style="font-size: 16px; font-family: Arial, sans-serif; color: #333;"><strong>Max Rounds:</strong> ${maxRounds}</p>
-              <p style="font-size: 16px; font-family: Arial, sans-serif; color: #333;"><strong>Match Type:</strong> ${matchType}</p>
-              <p><a href="https://fantasymmadness.com/upcomingfights" style="font-family: Arial, sans-serif; color: #191164; text-decoration: none;">Click here</a> to get more details.</p>
-            </td>
-          </tr>
-
-          <!-- Footer Section -->
-          <tr>
-            <td align="center" style="padding: 15px 0;">
-              <img src="https://i.ibb.co/mF88zvd/Image-5-removebg-preview.png" alt="Fantasy mmadness Logo" style="width:70px;" />
-              <p><a href="https://fantasymmadness.com" style="font-family: Arial, sans-serif; color: #191164; text-decoration: none;">https://fantasymmadness.com</a></p>
-            </td>
-          </tr>
-        </table>
-      `,
-    
+      subject: 'Fantasy mmadness',
+      html: `Your email content with dynamic values like ${matchName}, ${matchFighterA}, etc.`,
     };
 
     return transporter.sendMail(mailOptions);
