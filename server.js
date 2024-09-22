@@ -289,156 +289,6 @@ app.delete('/shadowfighttodelete/:id', async (req, res) => {
 });
 
 
-app.post('/addShadow', upload.fields([{ name: 'fighterAImage' }, { name: 'fighterBImage' }]), async (req, res) => {
-  const formDataA = new FormData();
-  const formDataB = new FormData();
-  const { default: fetch } = await import('node-fetch');
-
-  let fighterAImageUrl, fighterBImageUrl, fighterAImageDeleteUrl, fighterBImageDeleteUrl;
-
-  // Upload Fighter A image
-  if (req.files.fighterAImage) {
-    formDataA.append('image', req.files.fighterAImage[0].buffer.toString('base64'));
-    const responseA = await fetch('https://api.imgbb.com/1/upload?key=368cbdb895c5bed277d50d216adbfa52', {
-      method: 'POST',
-      body: formDataA,
-    });
-    const dataA = await responseA.json();
-    fighterAImageUrl = dataA.data.url;            // Store Fighter A image URL
-    fighterAImageDeleteUrl = dataA.data.delete_url; // Store Fighter A delete URL
-  }
-
-  // Upload Fighter B image
-  if (req.files.fighterBImage) {
-    formDataB.append('image', req.files.fighterBImage[0].buffer.toString('base64'));
-    const responseB = await fetch('https://api.imgbb.com/1/upload?key=368cbdb895c5bed277d50d216adbfa52', {
-      method: 'POST',
-      body: formDataB,
-    });
-    const dataB = await responseB.json();
-    fighterBImageUrl = dataB.data.url;            // Store Fighter B image URL
-    fighterBImageDeleteUrl = dataB.data.delete_url; // Store Fighter B delete URL
-  }
-
-  const { matchCategoryTwo, maxRounds, matchCategory, matchName, matchFighterA, matchFighterB, matchDescription, matchVideoUrl, matchType } = req.body;
-
-  // Save the match details to the database
-  const newMatch = new Shadow({
-    matchCategory,
-    matchCategoryTwo,
-    matchName,
-    matchFighterA,
-    matchFighterB,
-    matchDescription,
-    matchVideoUrl,
-    fighterAImage: fighterAImageUrl,
-    fighterBImage: fighterBImageUrl,
-    fighterAImageDeleteUrl, // Store Fighter A delete URL in the database
-    fighterBImageDeleteUrl, // Store Fighter B delete URL in the database
-    matchType,
-    maxRounds,
-  });
-
-  await newMatch.save();
-
-
-
-
-
-    // Retrieve all users to notify
-    const users = await Affiliate.find();
-    const mailPromises = users.map(user => {
-      const mailOptions = {
-        from: 'vascularbundle43@gmail.com',
-        to: 'wajih786hassan@gmail.com',
-        subject: 'Fantasy mmadness',
-      html: `
-    <table width="100%" cellpadding="0" cellspacing="0" border="0" style="width:100%; max-width:600px; margin:auto;">
-      <!-- Logo Section -->
-      <tr>
-        <td align="center" style="padding: 15px 0;">
-          <img src="https://i.ibb.co/mF88zvd/Image-5-removebg-preview.png" alt="Fantasy mmadness Logo" style="width:100px;" />
-          <h2 style="margin: 0; color: #191164; font-family: 'New York', Charter, Georgia, serif;">Fantasy mmadness</h2>
-        </td>
-      </tr>
-      
-      <!-- Greeting Section -->
-      <tr>
-        <td style="padding: 10px 0;">
-          <p style="font-size: 16px; font-family: Arial, sans-serif; color: #333;">Dear ${user.firstName} ${user.lastName},</p>
-          <p style="font-size: 16px; font-family: Arial, sans-serif; color: #333;">We are excited to announce a new Shadow has been added:</p>
-          <p style="font-size: 16px; font-family: Arial, sans-serif; color: #333;"><strong>Fight Added:</strong> ${matchName}</p>
-        </td>
-      </tr>
-      
-      <!-- Fighter Section -->
-      <tr>
-        <td>
-          <table width="100%" cellpadding="0" cellspacing="0" border="0" style="width:100%; margin:auto;">
-            <tr>
-              <!-- Fighter A -->
-              <td align="center" style="padding: 10px;">
-                <div style="width:60px; height:60px; border-radius:50%; border:3px solid red; background-color:#fff;">
-                  <img src="${fighterAImage}" alt="Fighter A" style="width:100%; height:100%; object-fit:cover; border-radius:50%;" />
-                </div>
-                <p style="font-size: 16px; font-family: Arial, sans-serif; color: #333; text-align:center;">${matchFighterA}</p>
-              </td>
-  
-              <!-- VS -->
-              <td align="center" style="padding: 10px;">
-                <h1 style="margin:0; font-family: Arial, sans-serif; color: #333;">Vs</h1>
-              </td>
-  
-              <!-- Fighter B -->
-              <td align="center" style="padding: 10px;">
-                <div style="width:60px; height:60px; border-radius:50%; border:3px solid blue; background-color:#fff;">
-                  <img src="${fighterBImage}" alt="Fighter B" style="width:100%; height:100%; object-fit:cover; border-radius:50%;" />
-                </div>
-                <p style="font-size: 16px; font-family: Arial, sans-serif; color: #333; text-align:center;">${matchFighterB}</p>
-              </td>
-            </tr>
-          </table>
-        </td>
-      </tr>
-  
-      <!-- Match Details Section -->
-      <tr>
-        <td style="padding: 10px;">
-          <p style="font-size: 16px; font-family: Arial, sans-serif; color: #333;"><strong>Date:</strong> ${matchDate}</p>
-          <p style="font-size: 16px; font-family: Arial, sans-serif; color: #333;"><strong>Time:</strong> ${matchTime}</p>
-          <p style="font-size: 16px; font-family: Arial, sans-serif; color: #333;"><strong>Max Rounds:</strong> ${maxRounds}</p>
-          <p style="font-size: 16px; font-family: Arial, sans-serif; color: #333;"><strong>Fight Type:</strong> ${matchType}</p>
-          <p><a href="https://fantasymmadness.com/upcomingfights" style="font-family: Arial, sans-serif; color: #191164; text-decoration: none;">Click here</a> to get more details</p>
-        </td>
-      </tr>
-  
-      <!-- Footer Section -->
-      <tr>
-        <td align="center" style="padding: 15px 0;">
-          <img src="https://i.ibb.co/mF88zvd/Image-5-removebg-preview.png" alt="Fantasy mmadness Logo" style="width:70px;" />
-          <p><a href="https://fantasymmadness.com" style="font-family: Arial, sans-serif; color: #191164; text-decoration: none;">https://fantasymmadness.com</a></p>
-        </td>
-      </tr>
-    </table>
-  `
-  ,
-      };
-  
-      return transporter.sendMail(mailOptions);
-    });
-  
-    // Wait for all emails to be sent
-    try {
-      await Promise.all(mailPromises);
-      console.log('Emails sent successfully');
-    } catch (error) {
-      console.error('Error sending emails:', error);
-    }
-  
-  
-
-  res.status(200).json({ message: 'Match Added Successfully and Notifications Sent', matchId: newMatch._id });
-});
 
 
 
@@ -822,7 +672,7 @@ const newMatch = new Match(matchData);
     <tr>
       <td align="center" style="padding: 20px; background-color:#f8f8f8;">
         <h2 style="color: #191164; font-family: 'Impact', fantasy, sans-serif;">Gear Up for Battle!</h2>
-        <p style="font-size: 18px; font-family: 'Comic Sans MS', fantasy, sans-serif; color: #555;">
+        <p style="font-size: 15px; font-family: 'Comic Sans MS', fantasy, sans-serif; color: #555;">
           Your next adrenaline-pumping challenge awaits. Enter the arena and put your prediction skills to the test.
           Every punch, kick, and knockout is a step closer to victory!
         </p>
@@ -2242,6 +2092,156 @@ app.get('/youtubeVideos', async (req, res) => {
 
 
 
+app.post('/addShadow', upload.fields([{ name: 'fighterAImage' }, { name: 'fighterBImage' }]), async (req, res) => {
+  const formDataA = new FormData();
+  const formDataB = new FormData();
+  const { default: fetch } = await import('node-fetch');
+
+  let fighterAImageUrl, fighterBImageUrl, fighterAImageDeleteUrl, fighterBImageDeleteUrl;
+
+  // Upload Fighter A image
+  if (req.files.fighterAImage) {
+    formDataA.append('image', req.files.fighterAImage[0].buffer.toString('base64'));
+    const responseA = await fetch('https://api.imgbb.com/1/upload?key=368cbdb895c5bed277d50d216adbfa52', {
+      method: 'POST',
+      body: formDataA,
+    });
+    const dataA = await responseA.json();
+    fighterAImageUrl = dataA.data.url;            // Store Fighter A image URL
+    fighterAImageDeleteUrl = dataA.data.delete_url; // Store Fighter A delete URL
+  }
+
+  // Upload Fighter B image
+  if (req.files.fighterBImage) {
+    formDataB.append('image', req.files.fighterBImage[0].buffer.toString('base64'));
+    const responseB = await fetch('https://api.imgbb.com/1/upload?key=368cbdb895c5bed277d50d216adbfa52', {
+      method: 'POST',
+      body: formDataB,
+    });
+    const dataB = await responseB.json();
+    fighterBImageUrl = dataB.data.url;            // Store Fighter B image URL
+    fighterBImageDeleteUrl = dataB.data.delete_url; // Store Fighter B delete URL
+  }
+
+  const { matchCategoryTwo, maxRounds, matchCategory, matchName, matchFighterA, matchFighterB, matchDescription, matchVideoUrl, matchType } = req.body;
+
+  // Save the match details to the database
+  const newMatch = new Shadow({
+    matchCategory,
+    matchCategoryTwo,
+    matchName,
+    matchFighterA,
+    matchFighterB,
+    matchDescription,
+    matchVideoUrl,
+    fighterAImage: fighterAImageUrl,
+    fighterBImage: fighterBImageUrl,
+    fighterAImageDeleteUrl, // Store Fighter A delete URL in the database
+    fighterBImageDeleteUrl, // Store Fighter B delete URL in the database
+    matchType,
+    maxRounds,
+  });
+
+  await newMatch.save();
+
+
+
+
+
+    // Retrieve all users to notify
+    const users = await Affiliate.find();
+    const mailPromises = users.map(user => {
+      const mailOptions = {
+        from: 'vascularbundle43@gmail.com',
+        to: 'wajih786hassan@gmail.com',
+        subject: 'Fantasy mmadness',
+      html: `
+    <table width="100%" cellpadding="0" cellspacing="0" border="0" style="width:100%; max-width:600px; margin:auto;">
+      <!-- Logo Section -->
+      <tr>
+        <td align="center" style="padding: 15px 0;">
+          <img src="https://i.ibb.co/mF88zvd/Image-5-removebg-preview.png" alt="Fantasy mmadness Logo" style="width:100px;" />
+          <h2 style="margin: 0; color: #191164; font-family: 'New York', Charter, Georgia, serif;">Fantasy mmadness</h2>
+        </td>
+      </tr>
+      
+      <!-- Greeting Section -->
+      <tr>
+        <td style="padding: 10px 0;">
+          <p style="font-size: 16px; font-family: Arial, sans-serif; color: #333;">Dear ${user.firstName} ${user.lastName},</p>
+          <p style="font-size: 16px; font-family: Arial, sans-serif; color: #333;">We are excited to announce a new Shadow has been added:</p>
+          <p style="font-size: 16px; font-family: Arial, sans-serif; color: #333;"><strong>Fight Added:</strong> ${matchName}</p>
+        </td>
+      </tr>
+      
+      <!-- Fighter Section -->
+      <tr>
+        <td>
+          <table width="100%" cellpadding="0" cellspacing="0" border="0" style="width:100%; margin:auto;">
+            <tr>
+              <!-- Fighter A -->
+              <td align="center" style="padding: 10px;">
+                <div style="width:60px; height:60px; border-radius:50%; border:3px solid red; background-color:#fff;">
+                  <img src="${fighterAImage}" alt="Fighter A" style="width:100%; height:100%; object-fit:cover; border-radius:50%;" />
+                </div>
+                <p style="font-size: 16px; font-family: Arial, sans-serif; color: #333; text-align:center;">${matchFighterA}</p>
+              </td>
+  
+              <!-- VS -->
+              <td align="center" style="padding: 10px;">
+                <h1 style="margin:0; font-family: Arial, sans-serif; color: #333;">Vs</h1>
+              </td>
+  
+              <!-- Fighter B -->
+              <td align="center" style="padding: 10px;">
+                <div style="width:60px; height:60px; border-radius:50%; border:3px solid blue; background-color:#fff;">
+                  <img src="${fighterBImage}" alt="Fighter B" style="width:100%; height:100%; object-fit:cover; border-radius:50%;" />
+                </div>
+                <p style="font-size: 16px; font-family: Arial, sans-serif; color: #333; text-align:center;">${matchFighterB}</p>
+              </td>
+            </tr>
+          </table>
+        </td>
+      </tr>
+  
+      <!-- Match Details Section -->
+      <tr>
+        <td style="padding: 10px;">
+          <p style="font-size: 16px; font-family: Arial, sans-serif; color: #333;"><strong>Date:</strong> ${matchDate}</p>
+          <p style="font-size: 16px; font-family: Arial, sans-serif; color: #333;"><strong>Time:</strong> ${matchTime}</p>
+          <p style="font-size: 16px; font-family: Arial, sans-serif; color: #333;"><strong>Max Rounds:</strong> ${maxRounds}</p>
+          <p style="font-size: 16px; font-family: Arial, sans-serif; color: #333;"><strong>Fight Type:</strong> ${matchType}</p>
+          <p><a href="https://fantasymmadness.com/upcomingfights" style="font-family: Arial, sans-serif; color: #191164; text-decoration: none;">Click here</a> to get more details</p>
+        </td>
+      </tr>
+  
+      <!-- Footer Section -->
+      <tr>
+        <td align="center" style="padding: 15px 0;">
+          <img src="https://i.ibb.co/mF88zvd/Image-5-removebg-preview.png" alt="Fantasy mmadness Logo" style="width:70px;" />
+          <p><a href="https://fantasymmadness.com" style="font-family: Arial, sans-serif; color: #191164; text-decoration: none;">https://fantasymmadness.com</a></p>
+        </td>
+      </tr>
+    </table>
+  `
+  ,
+      };
+  
+      return transporter.sendMail(mailOptions);
+    });
+  
+    // Wait for all emails to be sent
+    try {
+      await Promise.all(mailPromises);
+      console.log('Emails sent successfully');
+    } catch (error) {
+      console.error('Error sending emails:', error);
+    }
+  
+  
+
+  res.status(200).json({ message: 'Match Added Successfully and Notifications Sent', matchId: newMatch._id });
+});
 
 
 
