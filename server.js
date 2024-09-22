@@ -581,7 +581,7 @@ app.post('/addMatch', upload.fields([{ name: 'fighterAImage' }, { name: 'fighter
   const { default: fetch } = await import('node-fetch');
   const { BoxingMatch, MMAMatch, matchCategoryTwo, shadowFightId, maxRounds, affiliateId, matchBy, profit, amountOverPotBudget, matchCategory, matchName, matchFighterA, matchFighterB, matchDescription, matchVideoUrl, matchDate, matchTime, matchTokens, matchStatus, pot, matchType, fighterAImageUrl, fighterBImageUrl } = req.body;
 
-  let fighterAImage, fighterBImage;
+  let fighterAImage, fighterBImage, fighterAImageDeleteUrl, fighterBImageDeleteUrl;
 
   // Use the image URLs directly if they are provided
   if (fighterAImageUrl && fighterBImageUrl) {
@@ -598,6 +598,7 @@ app.post('/addMatch', upload.fields([{ name: 'fighterAImage' }, { name: 'fighter
       });
       const dataA = await responseA.json();
       fighterAImage = dataA.data.url;
+      fighterAImageDeleteUrl = dataA.data.delete_url;
     }
 
     if (req.files.fighterBImage) {
@@ -609,80 +610,117 @@ app.post('/addMatch', upload.fields([{ name: 'fighterAImage' }, { name: 'fighter
       });
       const dataB = await responseB.json();
       fighterBImage = dataB.data.url;
+      fighterBImageDeleteUrl = dataB.data.delete_url;
+    }
+  }
+// Create a new match object
+const matchData = {
+  matchCategory,
+  matchName,
+  matchFighterA,
+  matchFighterB,
+  matchDescription,
+  matchVideoUrl,
+  matchDate,
+  matchTime,
+  matchTokens,
+  matchStatus,
+  pot,
+  fighterAImage,
+  fighterBImage,
+  matchType,
+  affiliateId,
+  matchBy,
+  profit,
+  amountOverPotBudget,
+  maxRounds,
+  shadowFightId,
+  matchCategoryTwo,
+  fighterAImageDeleteUrl, // Save the delete URL for Fighter A
+  fighterBImageDeleteUrl,
+};
+
+// Conditionally append BoxingMatch and MMAMatch only if they have values
+if (BoxingMatch) {
+  matchData.BoxingMatch = JSON.parse(BoxingMatch);
+}
+
+if (MMAMatch) {
+  matchData.MMAMatch = JSON.parse(MMAMatch);
+}
+
+// Save the match details to the database
+const newMatch = new Match(matchData);
+  const savedMatch = await newMatch.save(); // Save the match and get the saved match
+
+  // Now that match is saved, store affiliateId and matchId in the Shadow schema
+  const shadowFight = await Shadow.findById(shadowFightId);
+  if (shadowFight) {
+    const affiliateExists = shadowFight.AffiliateIds.some(item => item.AffiliateId.toString() === affiliateId && item.matchId.toString() === savedMatch._id.toString());
+
+    if (!affiliateExists) {
+      shadowFight.AffiliateIds.push({
+        AffiliateId: affiliateId,
+        matchId: savedMatch._id,
+      });
+      await shadowFight.save();
     }
   }
 
-  // Save the match details to the database
-  const newMatch = new Match({
-    matchCategory,
-    matchName,
-    matchFighterA,
-    matchFighterB,
-    matchDescription,
-    matchVideoUrl,
-    matchDate,
-    matchTime,
-    matchTokens,
-    matchStatus,
-    pot,
-    fighterAImage,
-    fighterBImage,
-    matchType,
-    affiliateId,
-    matchBy,
-    profit,
-    amountOverPotBudget,
-    maxRounds,
-    shadowFightId,
-    matchCategoryTwo,
-     });
-
-  const savedMatch = await newMatch.save(); // Save the match and get the saved match
-
-
-// Create mailOptions with a hardcoded 'to' field
-const mailOptions = {
-  from: 'vascularbundle43@gmail.com',
-  to: 'wajih786hassan@gmail.com', // Hardcoded email address
-  subject: 'New Match Added',
-  html: `<p>Dear User,</p>
-    <p>We are excited to announce a new match has been added:</p>
-    <p><strong>Match Name:</strong> ${matchName}</p>
-    <div style="display:flex; gap:20px;"> 
-      <div style="display:flex; justify-content:center; flex-direction:column; align-items:center;"> 
-        <div style="width:60px; height:60px; border-radius:50%; display:flex; justify-content:center; align-items:center; overflow:hidden; border:3px solid red; background-color:#fff;">
-          <img src="${fighterAImage}" style="width:100%; object-fit:cover; border-radius:50%; height:100%;">
-          <h5>${matchFighterA}</h5>
+  // Retrieve all users to notify
+  const users = await User.find();
+  const mailPromises = users.map(user => {
+    const mailOptions = {
+      from: 'vascularbundle43@gmail.com',
+      to: 'wajih786hassan@gmail.com',
+      subject: 'New Match Added',
+      html: `
+      <img src="https://www.fantasymmadness.com/static/media/logo.c2aa609dbe0ed6c1af42.png" style="width:100px; margin:auto;" />
+  
+      <p>Dear ${user.firstName} ${user.lastName},</p>
+        <p>We are excited to announce a new match has been added:</p>
+        <p><strong>Match Name:</strong> ${matchName}</p>
+        <div style="display:flex; gap:20px;"> 
+          <div style="display:flex; justify-content:center; flex-direction:column; align-items:center;"> 
+            <div style="width:60px; height:60px; border-radius:50%; display:flex; justify-content:center; align-items:center; overflow:hidden; border:3px solid red; background-color:#fff;">
+              <img src="${fighterAImage}" style="width:100%; object-fit:cover; border-radius:50%; height:100%;">
+              <h5>${matchFighterA}</h5>
+            </div>
+          </div>
+          <h1>Vs</h1>
+          <div style="display:flex; justify-content:center; flex-direction:column; align-items:center;"> 
+            <div style="width:60px; height:60px; border-radius:50%; display:flex; justify-content:center; align-items:center; overflow:hidden; border:3px solid blue; background-color:#fff;">
+              <img src="${fighterBImage}" style="width:100%; object-fit:cover; border-radius:50%; height:100%;">
+              <h5>${matchFighterB}</h5>
+            </div>
+          </div>
         </div>
-      </div>
-      <h1>Vs</h1>
-      <div style="display:flex; justify-content:center; flex-direction:column; align-items:center;"> 
-        <div style="width:60px; height:60px; border-radius:50%; display:flex; justify-content:center; align-items:center; overflow:hidden; border:3px solid blue; background-color:#fff;">
-          <img src="${fighterBImage}" style="width:100%; object-fit:cover; border-radius:50%; height:100%;">
-          <h5>${matchFighterB}</h5>
-        </div>
-      </div>
-    </div>
-    <p><strong>Date:</strong> ${matchDate}</p>
-    <p><strong>Time:</strong> ${matchTime}</p>
-    <p><strong>Max Rounds:</strong> ${maxRounds}</p>
-    <p><strong>Match Types:</strong> ${matchType}</p>
-    <p>Stay tuned for more updates!</p>
-    <a href="https://fantasymmadness-version2.vercel.app/upcomingfights">Click here</a> to get more details`,
-};
+        <p><strong>Date:</strong> ${matchDate}</p>
+        <p><strong>Time:</strong> ${matchTime}</p>
+        <p><strong>Max Rounds:</strong> ${maxRounds}</p>
+        <p><strong>Match Types:</strong> ${matchType}</p>
+        <p>Stay tuned for more updates!</p>
+        <a href="https://fantasymmadness.com/upcomingfights">Click here</a> to get more details
+    <img src="https://www.fantasymmadness.com/static/media/logo.c2aa609dbe0ed6c1af42.png" style="width:100px; margin:auto;" />
+     <a href="https://fantasymmadness.com">https://fantasymmadness.com</a>
+  `,
+    };
 
-// Send the email
-try {
-  await transporter.sendMail(mailOptions);
-  console.log('Email sent successfully');
-} catch (error) {
-  console.error('Error sending email:', error);
-}
+    return transporter.sendMail(mailOptions);
+  });
 
+  // Wait for all emails to be sent
+  try {
+    await Promise.all(mailPromises);
+    console.log('Emails sent successfully');
+  } catch (error) {
+    console.error('Error sending emails:', error);
+  }
 
   // Respond with success and the saved match ID
   res.status(200).json({ message: 'Match Added Successfully and Notifications Sent', matchId: savedMatch._id });
 });
+
 // Get Matches API
 app.get('/match', async (req, res) => {
   const match = await Match.find();
