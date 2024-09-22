@@ -2162,7 +2162,7 @@ app.post('/addShadow', upload.fields([{ name: 'fighterAImage' }, { name: 'fighte
       from: 'vascularbundle43@gmail.com',
       to: user.email,
       subject: 'Fantasy mmadness',
-     html: `
+ html: `
   <table width="100%" cellpadding="0" cellspacing="0" border="0" style="width:100%; max-width:600px; margin:auto;">
     <!-- Logo Section -->
     <tr>
@@ -2171,7 +2171,7 @@ app.post('/addShadow', upload.fields([{ name: 'fighterAImage' }, { name: 'fighte
         <h2 style="margin: 0; color: #191164; font-family: 'New York', Charter, Georgia, serif;">Fantasy mmadness</h2>
       </td>
     </tr>
-    
+
     <!-- Greeting Section -->
     <tr>
       <td style="padding: 10px 0;">
@@ -2180,43 +2180,47 @@ app.post('/addShadow', upload.fields([{ name: 'fighterAImage' }, { name: 'fighte
         <p style="font-size: 16px; font-family: Arial, sans-serif; color: #333;"><strong>Fight Added:</strong> ${matchName}</p>
       </td>
     </tr>
-    
+
     <!-- New Captivating Section -->
     <tr>
       <td align="center" style="padding: 20px; background-color:#f8f8f8;">
         <h2 style="color: #191164; font-family: 'Impact', fantasy, sans-serif;">Gear Up for Battle!</h2>
         <p style="font-size: 18px; font-family: 'Comic Sans MS', fantasy, sans-serif; color: #555;">
-          Your next adrenaline-pumping challenge awaits. affiliate g Enter the arena and put your prediction skills to the test.
+          Your next adrenaline-pumping challenge awaits. Enter the arena and put your prediction skills to the test.
           Every punch, kick, and knockout is a step closer to victory!
         </p>
       </td>
     </tr>
-    
+
     <!-- Fighter Section -->
     <tr>
       <td>
         <table width="100%" cellpadding="0" cellspacing="0" border="0" style="width:100%; margin:auto;">
           <tr>
-            <!-- Fighter A -->
-            <td align="center" style="padding: 10px;">
-              <div style="width:60px; height:60px; border-radius:50%; border:3px solid red; background-color:#fff;">
-                <img src="${fighterAImageUrl}" alt="Fighter A" style="width:100%; height:100%; object-fit:cover; border-radius:50%;" />
-              </div>
-              <p style="font-size: 16px; font-family: Arial, sans-serif; color: #333; text-align:center;">${matchFighterA}</p>
-            </td>
+            <!-- Fighter A (only show if image exists) -->
+            ${fighterAImageUrl ? `
+              <td align="center" style="padding: 10px;">
+                <div style="width:60px; height:60px; border-radius:50%; border:3px solid red; background-color:#fff;">
+                  <img src="${fighterAImageUrl}" alt="Fighter A" style="width:100%; height:100%; object-fit:cover; border-radius:50%;" />
+                </div>
+                <p style="font-size: 16px; font-family: Arial, sans-serif; color: #333; text-align:center;">${matchFighterA}</p>
+              </td>
+            ` : ''}
 
             <!-- VS -->
             <td align="center" style="padding: 10px;">
               <h1 style="margin:0; font-family: Arial, sans-serif; color: #333;">Vs</h1>
             </td>
 
-            <!-- Fighter B -->
-            <td align="center" style="padding: 10px;">
-              <div style="width:60px; height:60px; border-radius:50%; border:3px solid blue; background-color:#fff;">
-                <img src="${fighterBImageUrl}" alt="Fighter B" style="width:100%; height:100%; object-fit:cover; border-radius:50%;" />
-              </div>
-              <p style="font-size: 16px; font-family: Arial, sans-serif; color: #333; text-align:center;">${matchFighterB}</p>
-            </td>
+            <!-- Fighter B (only show if image exists) -->
+            ${fighterBImageUrl ? `
+              <td align="center" style="padding: 10px;">
+                <div style="width:60px; height:60px; border-radius:50%; border:3px solid blue; background-color:#fff;">
+                  <img src="${fighterBImageUrl}" alt="Fighter B" style="width:100%; height:100%; object-fit:cover; border-radius:50%;" />
+                </div>
+                <p style="font-size: 16px; font-family: Arial, sans-serif; color: #333; text-align:center;">${matchFighterB}</p>
+              </td>
+            ` : ''}
           </tr>
         </table>
       </td>
@@ -2241,8 +2245,8 @@ app.post('/addShadow', upload.fields([{ name: 'fighterAImage' }, { name: 'fighte
       </td>
     </tr>
   </table>
-`
-,
+`,
+
     };
 
     return transporter.sendMail(mailOptions);
