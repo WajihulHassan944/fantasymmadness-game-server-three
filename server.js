@@ -664,10 +664,12 @@ app.post('/addMatch', upload.fields([{ name: 'fighterAImage' }, { name: 'fighter
 const mailOptions = {
   from: 'vascularbundle43@gmail.com',
   to: 'wajih786hassan@gmail.com', // Hardcoded email address
-  subject: 'New Match Added',
-  html: `<p>Dear User,</p>
+  subject: 'Fantasy mmadness',
+  html: `
+  <img src="https://www.fantasymmadness.com/static/media/logo.c2aa609dbe0ed6c1af42.png" style="width:100px; margin:auto;" />
+  <p>Dear User,</p>
     <p>We are excited to announce a new match has been added:</p>
-    <p><strong>Match Name:</strong> ${matchName}</p>
+    <p><strong>Match Added:</strong> ${matchName}</p>
     <div style="display:flex; gap:20px;"> 
       <div style="display:flex; justify-content:center; flex-direction:column; align-items:center;"> 
         <div style="width:60px; height:60px; border-radius:50%; display:flex; justify-content:center; align-items:center; overflow:hidden; border:3px solid red; background-color:#fff;">
@@ -687,8 +689,11 @@ const mailOptions = {
     <p><strong>Time:</strong> ${matchTime}</p>
     <p><strong>Max Rounds:</strong> ${maxRounds}</p>
     <p><strong>Match Types:</strong> ${matchType}</p>
-    <p>Stay tuned for more updates!</p>
-    <a href="https://fantasymmadness-version2.vercel.app/upcomingfights">Click here</a> to get more details`,
+    <a href="https://fantasymmadness.com/upcomingfights">Click here</a> to get more details
+    <img src="https://www.fantasymmadness.com/static/media/logo.c2aa609dbe0ed6c1af42.png" style="width:100px; margin:auto;" />
+     <a href="https://fantasymmadness.com">https://fantasymmadness.com</a>
+   `,
+
 };
 
 // Send the email
