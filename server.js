@@ -718,6 +718,90 @@ const newMatch = new Match(matchData);
   res.status(200).json({ message: 'Match Added Successfully and Notifications Sent', matchId: savedMatch._id });
 });
 
+
+app.post('/editMatch', upload.fields([{ name: 'fighterAImage' }, { name: 'fighterBImage' }]), async (req, res) => {
+  const { default: fetch } = await import('node-fetch');
+  const { matchId, matchCategoryTwo, maxRounds, profit, matchCategory, matchName, matchFighterA, matchFighterB, matchDescription, matchDate, matchTime, matchTokens, pot, matchType, fighterAImageUrl, fighterBImageUrl } = req.body;
+
+  let fighterAImage, fighterBImage, fighterAImageDeleteUrl, fighterBImageDeleteUrl;
+
+  try {
+    // Check if matchId is provided and valid
+    if (!matchId) {
+      return res.status(400).json({ error: 'matchId is required' });
+    }
+
+    // Fetch the existing match by matchId
+    const existingMatch = await Match.findById(matchId);
+    if (!existingMatch) {
+      return res.status(404).json({ error: 'Match not found' });
+    }
+
+    // Use the image URLs directly if they are provided
+    if (fighterAImageUrl && fighterBImageUrl) {
+      fighterAImage = fighterAImageUrl;
+      fighterBImage = fighterBImageUrl;
+    } else {
+      // Handle image uploads if URLs are not provided
+      if (req.files.fighterAImage) {
+        const formDataA = new FormData();
+        formDataA.append('image', req.files.fighterAImage[0].buffer.toString('base64'));
+        const responseA = await fetch('https://api.imgbb.com/1/upload?key=368cbdb895c5bed277d50d216adbfa52', {
+          method: 'POST',
+          body: formDataA,
+        });
+        const dataA = await responseA.json();
+        fighterAImage = dataA.data.url;
+        fighterAImageDeleteUrl = dataA.data.delete_url;
+      }
+
+      if (req.files.fighterBImage) {
+        const formDataB = new FormData();
+        formDataB.append('image', req.files.fighterBImage[0].buffer.toString('base64'));
+        const responseB = await fetch('https://api.imgbb.com/1/upload?key=368cbdb895c5bed277d50d216adbfa52', {
+          method: 'POST',
+          body: formDataB,
+        });
+        const dataB = await responseB.json();
+        fighterBImage = dataB.data.url;
+        fighterBImageDeleteUrl = dataB.data.delete_url;
+      }
+    }
+
+    // Update the match object
+    existingMatch.matchCategory = matchCategory || existingMatch.matchCategory;
+    existingMatch.matchName = matchName || existingMatch.matchName;
+    existingMatch.matchFighterA = matchFighterA || existingMatch.matchFighterA;
+    existingMatch.matchFighterB = matchFighterB || existingMatch.matchFighterB;
+    existingMatch.matchDescription = matchDescription || existingMatch.matchDescription;
+    existingMatch.matchDate = matchDate || existingMatch.matchDate;
+    existingMatch.matchTime = matchTime || existingMatch.matchTime;
+    existingMatch.matchTokens = matchTokens || existingMatch.matchTokens;
+    existingMatch.pot = pot || existingMatch.pot;
+    existingMatch.matchType = matchType || existingMatch.matchType;
+    existingMatch.profit = profit || existingMatch.profit;
+    existingMatch.maxRounds = maxRounds || existingMatch.maxRounds;
+    existingMatch.matchCategoryTwo = matchCategoryTwo || existingMatch.matchCategoryTwo;
+
+    if (fighterAImage) existingMatch.fighterAImage = fighterAImage;
+    if (fighterBImage) existingMatch.fighterBImage = fighterBImage;
+    if (fighterAImageDeleteUrl) existingMatch.fighterAImageDeleteUrl = fighterAImageDeleteUrl;
+    if (fighterBImageDeleteUrl) existingMatch.fighterBImageDeleteUrl = fighterBImageDeleteUrl;
+
+    // Save the updated match to the database
+    const updatedMatch = await existingMatch.save();
+
+    // Respond with success and the updated match ID
+    res.status(200).json({ message: 'Match updated successfully', matchId: updatedMatch._id });
+  } catch (error) {
+    console.error('Error updating match:', error);
+    res.status(500).json({ error: 'An error occurred while updating the match' });
+  }
+});
+
+
+
+
 // Get Matches API
 app.get('/match', async (req, res) => {
   const match = await Match.find();
