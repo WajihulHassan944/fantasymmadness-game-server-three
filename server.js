@@ -1099,6 +1099,22 @@ const userSchema = new mongoose.Schema({
 
 const User = mongoose.model('User', userSchema);
 
+// Update User API
+app.put('/update-user', async (req, res) => {
+  const { userId, isagreed } = req.body;
+
+  try {
+    const user = await User.findByIdAndUpdate(userId, { isagreed }, { new: true });
+
+    if (!user) {
+      return res.status(404).json({ message: 'User not found' });
+    }
+
+    res.status(200).json({ message: 'User updated', user });
+  } catch (error) {
+    res.status(500).json({ message: 'Internal server error' });
+  }
+});
 
 
 // Google Login API
