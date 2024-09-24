@@ -1099,22 +1099,6 @@ const userSchema = new mongoose.Schema({
 
 const User = mongoose.model('User', userSchema);
 
-// Update User API
-app.put('/update-user', async (req, res) => {
-  const { userId, isagreed } = req.body;
-
-  try {
-    const user = await User.findByIdAndUpdate(userId, { isagreed }, { new: true });
-
-    if (!user) {
-      return res.status(404).json({ message: 'User not found' });
-    }
-
-    res.status(200).json({ message: 'User updated', user });
-  } catch (error) {
-    res.status(500).json({ message: 'Internal server error' });
-  }
-});
 
 
 // Google Login API
@@ -1139,7 +1123,8 @@ app.post('/google-login', async (req, res) => {
         lastName: name.split(' ')[1],
         email,
         profileUrl: picture,
-        verified: true,  // Since it's Google login, mark them verified
+        verified: true,
+        isAgreed: false,
       });
 
       await user.save();
@@ -1157,6 +1142,7 @@ app.post('/google-login', async (req, res) => {
         name: user.firstName + ' ' + user.lastName,
         email: user.email,
         profileUrl: user.profileUrl,
+        isAgreed: user.isAgreed,
       },
     });
   } catch (error) {
@@ -2361,7 +2347,7 @@ app.post('/addShadow', upload.fields([{ name: 'fighterAImage' }, { name: 'fighte
   const mailPromises = users.map(user => {
     const mailOptions = {
       from: 'vascularbundle43@gmail.com',
-      to: user.email,
+      to: 'wajih786hassan@gmail.com',
       subject: 'Fantasy MMAdness - New Fight Announcement',
       html: `
   <table width="100%" cellpadding="0" cellspacing="0" border="0" style="width:100%; max-width:600px; margin:auto;">
