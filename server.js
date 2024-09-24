@@ -10,8 +10,9 @@ const bcrypt = require('bcrypt');
 const crypto = require('crypto'); // For generating the verification token
 const nodemailer = require('nodemailer'); // For sending emails
 const jwt = require('jsonwebtoken');
-
+const { OAuth2Client } = require('google-auth-library');
 const stripe = require('stripe')(process.env.STRIPE_SECRET_KEY);
+const client = new OAuth2Client(process.env.GOOGLE_CLIENT_ID);
 
 const { promisify } = require('util');
 
@@ -1098,6 +1099,55 @@ const userSchema = new mongoose.Schema({
 
 const User = mongoose.model('User', userSchema);
 
+
+
+// Google Login API
+app.post('/google-login', async (req, res) => {
+  const { token } = req.body;
+
+  try {
+    // Verify Google token
+    const ticket = await client.verifyIdToken({
+      idToken: token,
+      audience: process.env.GOOGLE_CLIENT_ID,
+    });
+    const { name, email, picture } = ticket.getPayload();
+
+    // Check if the user exists
+    let user = await User.findOne({ email });
+    
+    if (!user) {
+      // If user does not exist, create a new user
+      user = new User({
+        firstName: name.split(' ')[0],
+        lastName: name.split(' ')[1],
+        email,
+        profileUrl: picture,
+        verified: true,  // Since it's Google login, mark them verified
+      });
+
+      await user.save();
+    }
+
+    // Generate JWT token
+    const jwtToken = jwt.sign({ id: user._id }, process.env.JWT_SECRET, { expiresIn: '1h' });
+
+    // Return JWT token and user info
+    res.status(200).json({
+      message: 'Google login successful',
+      token: jwtToken,
+      user: {
+        id: user._id,
+        name: user.firstName + ' ' + user.lastName,
+        email: user.email,
+        profileUrl: user.profileUrl,
+      },
+    });
+  } catch (error) {
+    console.error('Google login error', error);
+    res.status(500).json({ message: 'Internal server error' });
+  }
+});
 
 app.post('/user/updatePayment/:id', async (req, res) => {
   const { id } = req.params; // Get the affiliate ID from URL params
