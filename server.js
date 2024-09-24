@@ -1098,6 +1098,17 @@ const userSchema = new mongoose.Schema({
 }, { timestamps: true }); 
 
 const User = mongoose.model('User', userSchema);
+app.post('/agree-terms', async (req, res) => {
+  const { userId } = req.body; // Ideally, get userId from JWT token
+
+  try {
+    await User.findByIdAndUpdate(userId, { isAgreed: true });
+    res.status(200).json({ message: 'User has agreed to terms' });
+  } catch (error) {
+    console.error('Error updating isAgreed', error);
+    res.status(500).json({ message: 'Internal server error' });
+  }
+});
 
 
 
