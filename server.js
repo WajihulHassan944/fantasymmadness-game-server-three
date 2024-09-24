@@ -1176,10 +1176,19 @@ app.post('/user/updatePayment/:id', async (req, res) => {
 });
 
 
-
 app.put('/update-profile/:userId', async (req, res) => {
   const { userId } = req.params;
-  const { firstName, lastName, playerName, phone, zipCode, shortBio } = req.body;
+  const { 
+      firstName, 
+      lastName, 
+      playerName, 
+      phone, 
+      zipCode, 
+      shortBio, 
+      isNotificationsEnabled,  // Include the new field
+      isSubscribed,            // Include the new field
+      isUSCitizen              // Include the new field
+  } = req.body;
 
   try {
       // Create an object to hold the fields that should be updated
@@ -1191,6 +1200,9 @@ app.put('/update-profile/:userId', async (req, res) => {
       if (phone) updateFields.phone = phone;
       if (zipCode) updateFields.zipCode = zipCode;
       if (shortBio) updateFields.shortBio = shortBio;
+      if (isNotificationsEnabled !== undefined) updateFields.isNotificationsEnabled = isNotificationsEnabled; // Add notifications preference
+      if (isSubscribed !== undefined) updateFields.isSubscribed = isSubscribed;                                 // Add subscription status
+      if (isUSCitizen !== undefined) updateFields.isUSCitizen = isUSCitizen;                                   // Add citizenship status
 
       // Update the user document with the specified fields
       const updatedUser = await User.findByIdAndUpdate(userId, updateFields, { new: true });
