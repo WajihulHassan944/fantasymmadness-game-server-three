@@ -1099,6 +1099,9 @@ const userSchema = new mongoose.Schema({
 
 const User = mongoose.model('User', userSchema);
 
+
+
+// Google Login API
 app.post('/google-login', async (req, res) => {
   const { token } = req.body;
 
@@ -1121,26 +1124,12 @@ app.post('/google-login', async (req, res) => {
         email,
         profileUrl: picture,
         verified: true,  // Since it's Google login, mark them verified
-        isAgreed: false, // New user should not have agreed to TOS by default
       });
 
       await user.save();
     }
 
-    // Check if the user has agreed to the Terms of Service
-    if (!user.isAgreed) {
-      // If the user has not agreed, send a special response indicating this
-      return res.status(403).json({
-        message: 'User has not agreed to Terms of Service',
-        requiresAgreement: true,
-        user: {
-          id: user._id,
-          email: user.email,
-        },
-      });
-    }
-
-    // If user has agreed, proceed with generating the JWT token
+    // Generate JWT token
     const jwtToken = jwt.sign({ id: user._id }, process.env.JWT_SECRET, { expiresIn: '1h' });
 
     // Return JWT token and user info
@@ -1156,21 +1145,6 @@ app.post('/google-login', async (req, res) => {
     });
   } catch (error) {
     console.error('Google login error', error);
-    res.status(500).json({ message: 'Internal server error' });
-  }
-});
-
-// API to update isAgreed field once user agrees to TOS
-app.post('/agree-tos', async (req, res) => {
-  const { userId } = req.body;
-
-  try {
-    // Find the user and update isAgreed to true
-    await User.findByIdAndUpdate(userId, { isAgreed: true });
-
-    res.status(200).json({ message: 'User agreed to TOS successfully' });
-  } catch (error) {
-    console.error('Error updating user agreement', error);
     res.status(500).json({ message: 'Internal server error' });
   }
 });
