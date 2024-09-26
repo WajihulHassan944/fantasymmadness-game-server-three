@@ -1108,6 +1108,26 @@ app.post('/api/tokenize-card', async (req, res) => {
   }
 });
 
+app.get('/api/list-transactions', async (req, res) => {
+  try {
+    const response = await fetch('https://gateway.zendashboard.com/payments', {
+      method: 'GET',
+      headers: {
+        Authorization: `Bearer ${process.env.ZENPAYMENTS_ACCESS_TOKEN}` // Replace with your actual access token
+      }
+    });
+
+    if (!response.ok) {
+      throw new Error(`Error fetching transactions: ${response.statusText}`);
+    }
+
+    const data = await response.json();
+    res.status(200).json(data);
+  } catch (error) {
+    console.error('Error fetching transactions:', error);
+    res.status(500).json({ message: 'Error fetching transactions' });
+  }
+});
 
 app.post('/api/make-payment', async (req, res) => {
   const { amount } = req.body;
