@@ -1060,7 +1060,6 @@ const userSchema = new mongoose.Schema({
 }, { timestamps: true });
 
 const User = mongoose.model('User', userSchema);
-
 app.post('/api/tokenize-card', async (req, res) => {
   const { card, billingAddress, contactEmail } = req.body;
   try {
@@ -1087,7 +1086,9 @@ app.post('/api/tokenize-card', async (req, res) => {
     });
 
     if (!response.ok) {
-      throw new Error(`Error: ${response.statusText}`);
+      const errorData = await response.json(); // Get error details from the response
+      console.error(`Error tokenizing card: ${response.status} ${response.statusText}`, errorData);
+      return res.status(response.status).json({ message: 'Error tokenizing card', error: errorData });
     }
 
     const data = await response.json();
@@ -1102,8 +1103,8 @@ app.post('/api/tokenize-card', async (req, res) => {
 
     res.status(200).json({ message: 'Card tokenized and saved successfully' });
   } catch (error) {
-    console.error(error);
-    res.status(500).json({ message: 'Error tokenizing card' });
+    console.error('Server error during card tokenization:', error); // More detailed logging
+    res.status(500).json({ message: 'Error tokenizing card', error: error.message });
   }
 });
 
