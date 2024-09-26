@@ -11,9 +11,9 @@ const crypto = require('crypto'); // For generating the verification token
 const nodemailer = require('nodemailer'); // For sending emails
 const jwt = require('jsonwebtoken');
 const { OAuth2Client } = require('google-auth-library');
-const stripe = require('stripe')(process.env.STRIPE_SECRET_KEY);
 const client = new OAuth2Client(process.env.GOOGLE_CLIENT_ID);
-
+const accessToken = process.env.ZENPAYMENTS_ACCESS_TOKEN;
+const terminalId = process.env.ZENPAYMENTS_TERMINAL_ID;
 const { promisify } = require('util');
 
 
@@ -1020,38 +1020,6 @@ app.post('/match/addRoundResults/:id', async (req, res) => {
 
 
 
-// Encryption function
-const encrypt = async (text) => {
-  const iv = crypto.randomBytes(16);
-  const key = crypto.scryptSync('encryption-password', 'salt', 32);
-  const cipher = crypto.createCipheriv('aes-256-gcm', key, iv);
-  const encrypted = Buffer.concat([cipher.update(text, 'utf8'), cipher.final()]);
-  const tag = cipher.getAuthTag();
-  return {
-    iv: iv.toString('hex'),
-    content: encrypted.toString('hex'),
-    tag: tag.toString('hex'),
-  };
-};
-
-// Decryption function
-const decrypt = async (hash) => {
-  const key = crypto.scryptSync('encryption-password', 'salt', 32);
-  const decipher = crypto.createDecipheriv(
-    'aes-256-gcm',
-    key,
-    Buffer.from(hash.iv, 'hex')
-  );
-  decipher.setAuthTag(Buffer.from(hash.tag, 'hex'));
-  const decrypted = Buffer.concat([
-    decipher.update(Buffer.from(hash.content, 'hex')),
-    decipher.final(),
-  ]);
-  return decrypted.toString();
-};
-
-
-
 const userSchema = new mongoose.Schema({
   firstName: String,
   lastName: String,
@@ -1072,33 +1040,112 @@ const userSchema = new mongoose.Schema({
   currentPlan: { type: String, default: 'None' }, // Current subscription plan
   freePlanExpiryDate: Date, // Date when the free plan expires
   hasAvailedFreePlan: { type: Boolean, default: false }, // Indicates if the user has availed the free plan
-  preferredPaymentMethod: String, 
-  preferredPaymentMethodValue: String, 
+  preferredPaymentMethod: String,
+  preferredPaymentMethodValue: String,
   billing: {
-    cardNumber: {
-      iv: String,
-      content: String,
-      tag: String,
-    },
-    expMonth: String,
-    expYear: String,
-    cvc: {
-      iv: String,
-      content: String,
-      tag: String,
-    },
-    billingAddress: {
-      line1: String,
-      city: String,
-      state: String,
-      postalCode: String,
-    },
-    stripeCustomerId: String, // Stripe customer ID reference
+  cardToken: String, // Token returned by Zen Payments for future payments
+  zenPaymentCustomerId: String, // Zen Payments Customer Vault ID, used for storing and retrieving customer info
+  contactEmail: String, // Required if sending receipts via Zen Payments
+  billingAddress: {
+    line1: String,
+    city: String,
+    state: String,
+    postalCode: String,
+    country: String, // Required by Zen Payments
   },
-}, { timestamps: true }); 
+  isRecurring: { type: Boolean, default: false }, // Flag for recurring billing, used for subscription payments
+  ipAddress: String, // IP address of the user during the transaction (used for fraud prevention)
+},
+
+}, { timestamps: true });
 
 const User = mongoose.model('User', userSchema);
 
+app.post('/api/tokenize-card', async (req, res) => {
+  const { card, billingAddress, contactEmail } = req.body;
+  try {
+    const response = await fetch('https://gateway.zendashboard.com/payment/generate-token', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${process.env.ZENPAYMENTS_ACCESS_TOKEN}`
+      },
+      body: JSON.stringify({
+        terminal: {
+          id: process.env.ZENPAYMENTS_TERMINAL_ID
+        },
+        card: {
+          name: card.name,
+          number: card.number,
+          exp: card.exp,
+          cvv: card.cvv
+        },
+        contact: {
+          email: contactEmail
+        }
+      })
+    });
+
+    if (!response.ok) {
+      throw new Error(`Error: ${response.statusText}`);
+    }
+
+    const data = await response.json();
+
+    // Store the card token and customer details in your user schema
+    const user = await User.findByIdAndUpdate(req.userId, {
+      'billing.cardToken': data.card.token,
+      'billing.zenPaymentCustomerId': data.customerId,
+      'billing.contactEmail': contactEmail,
+      'billing.billingAddress': billingAddress,
+    });
+
+    res.status(200).json({ message: 'Card tokenized and saved successfully' });
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ message: 'Error tokenizing card' });
+  }
+});
+
+
+app.post('/api/make-payment', async (req, res) => {
+  const { amount } = req.body;
+  try {
+    // Fetch user billing info
+    const user = await User.findById(req.userId);
+    const cardToken = user.billing.cardToken;
+
+    const response = await axios.post('https://gateway.zendashboard.com/payment/sale', {
+      terminal: {
+        id: process.env.ZENPAYMENTS_TERMINAL_ID
+      },
+      amount,
+      card: {
+        token: cardToken
+      },
+      contact: {
+        email: user.billing.contactEmail
+      }
+    }, {
+      headers: {
+        Authorization: `Bearer ${process.env.ZENPAYMENTS_ACCESS_TOKEN}`
+      }
+    });
+
+    // Handle success
+    res.status(200).json({ message: 'Payment successful', transaction: response.data });
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ message: 'Payment failed' });
+  }
+});
+
+app.post('/api/zenpayments-webhook', (req, res) => {
+  const event = req.body;
+  // Process event (e.g., update payment status in the database)
+  console.log('Webhook received:', event);
+  res.status(200).send('Webhook received');
+});
 
 
 // Google Login API
