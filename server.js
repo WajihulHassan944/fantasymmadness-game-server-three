@@ -363,13 +363,16 @@ app.delete('/shadowfighttodelete/:id', async (req, res) => {
   }
 });
 
-
-
 // Get Matches API
 app.get('/shadow', async (req, res) => {
-  const match = await Shadow.find();
-  res.send(match);
+  try {
+    const matches = await Shadow.find().sort({ _id: -1 }); // Sort by _id in descending order
+    res.send(matches);
+  } catch (err) {
+    res.status(500).send({ message: 'Error fetching matches' });
+  }
 });
+
 
 
 
