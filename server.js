@@ -1129,6 +1129,7 @@ app.get('/api/list-transactions', async (req, res) => {
   }
 });
 
+
 app.post('/api/make-payment', async (req, res) => {
   const { amount } = req.body;
   try {
@@ -1136,37 +1137,47 @@ app.post('/api/make-payment', async (req, res) => {
     const user = await User.findById(req.userId);
     const cardToken = user.billing.cardToken;
 
-    const response = await axios.post('https://gateway.zendashboard.com/payment/sale', {
-      terminal: {
-        id: process.env.ZENPAYMENTS_TERMINAL_ID
-      },
-      amount,
-      card: {
-        token: cardToken
-      },
-      contact: {
-        email: user.billing.contactEmail
-      }
-    }, {
+    // Make payment request to Zen Payments
+    const response = await fetch('https://gateway.zendashboard.com/payment/sale', {
+      method: 'POST',
       headers: {
-        Authorization: `Bearer ${process.env.ZENPAYMENTS_ACCESS_TOKEN}`
-      }
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${process.env.ZENPAYMENTS_ACCESS_TOKEN}`
+      },
+      body: JSON.stringify({
+        terminal: {
+          id: process.env.ZENPAYMENTS_TERMINAL_ID
+        },
+        amount,
+        card: {
+          token: cardToken
+        },
+        contact: {
+          email: user.billing.contactEmail
+        }
+      })
     });
 
+    if (!response.ok) {
+      throw new Error('Payment request failed');
+    }
+
+    const data = await response.json();
+
+    // Add tokens to the user's account (keep tokens as a string)
+    user.tokens = (parseInt(user.tokens, 10) || 0) + parseInt(amount, 10);
+    user.tokens = user.tokens.toString(); // Convert back to string after adding
+
+    await user.save();
+
     // Handle success
-    res.status(200).json({ message: 'Payment successful', transaction: response.data });
+    res.status(200).json({ message: 'Payment successful', transaction: data });
   } catch (error) {
     console.error(error);
     res.status(500).json({ message: 'Payment failed' });
   }
 });
 
-app.post('/api/zenpayments-webhook', (req, res) => {
-  const event = req.body;
-  // Process event (e.g., update payment status in the database)
-  console.log('Webhook received:', event);
-  res.status(200).send('Webhook received');
-});
 
 
 // Google Login API
@@ -1189,7 +1200,7 @@ app.post('/google-login', async (req, res) => {
       user = new User({
         firstName: name.split(' ')[0],
         lastName: name.split(' ')[1],
-        email,
+        email, 
         profileUrl: picture,
         verified: true,  // Since it's Google login, mark them verified
       });
