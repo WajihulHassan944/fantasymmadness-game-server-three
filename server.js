@@ -15,7 +15,7 @@ const client = new OAuth2Client(process.env.GOOGLE_CLIENT_ID);
 const accessToken = process.env.ZENPAYMENTS_ACCESS_TOKEN;
 const terminalId = process.env.ZENPAYMENTS_TERMINAL_ID;
 const { promisify } = require('util');
-
+const { APIContracts, APIControllers } = require('authorizenet');
 
 const fetch = require('node-fetch');
 
@@ -1063,51 +1063,140 @@ const userSchema = new mongoose.Schema({
 }, { timestamps: true });
 
 const User = mongoose.model('User', userSchema);
+
 app.post('/api/tokenize-card', async (req, res) => {
   const { card, billingAddress, contactEmail } = req.body;
   try {
-    const response = await fetch('https://gateway.zendashboard.com/payment/generate-token', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        Authorization: `Bearer ${process.env.ZENPAYMENTS_ACCESS_TOKEN}`
-      },
-      body: JSON.stringify({
-        terminal: {
-          id: process.env.ZENPAYMENTS_TERMINAL_ID
-        },
-        card: {
-          name: card.name,
-          number: card.number,
-          exp: card.exp,
-          cvv: card.cvv
-        },
-        contact: {
-          email: contactEmail
+    const merchantAuthenticationType = new APIContracts.MerchantAuthenticationType();
+    merchantAuthenticationType.setName(process.env.AUTHORIZE_NET_API_LOGIN_ID);
+    merchantAuthenticationType.setTransactionKey(process.env.AUTHORIZE_NET_TRANSACTION_KEY);
+
+    const creditCard = new APIContracts.CreditCardType();
+    creditCard.setCardNumber(card.number);
+    creditCard.setExpirationDate(card.exp);
+    creditCard.setCardCode(card.cvv);
+
+    const paymentType = new APIContracts.PaymentType();
+    paymentType.setCreditCard(creditCard);
+
+    const customerAddress = new APIContracts.CustomerAddressType();
+    customerAddress.setFirstName(card.name);
+    customerAddress.setAddress(billingAddress.line1);
+    customerAddress.setCity(billingAddress.city);
+    customerAddress.setState(billingAddress.state);
+    customerAddress.setZip(billingAddress.postalCode);
+    customerAddress.setCountry(billingAddress.country);
+
+    const customerData = new APIContracts.CustomerDataType();
+    customerData.setEmail(contactEmail);
+
+    const transactionRequest = new APIContracts.TransactionRequestType();
+    transactionRequest.setTransactionType(APIContracts.TransactionTypeEnum.AUTHCAPTURETRANSACTION);
+    transactionRequest.setPayment(paymentType);
+    transactionRequest.setCustomer(customerData);
+
+    const createRequest = new APIContracts.CreateTransactionRequest();
+    createRequest.setMerchantAuthentication(merchantAuthenticationType);
+    createRequest.setTransactionRequest(transactionRequest);
+
+    const controller = new APIControllers.CreateTransactionController(createRequest.getJSON());
+
+    // Use a Promise to handle the execution
+    const promise = new Promise((resolve, reject) => {
+      controller.execute(() => {
+        const apiResponse = controller.getResponse();
+        const response = new APIContracts.CreateTransactionResponse(apiResponse);
+
+        if (response != null) {
+          const resultCode = response.getMessages().getResultCode();
+          if (resultCode === APIContracts.MessageTypeEnum.OK) {
+            resolve(response);
+          } else {
+            reject(new Error('Transaction failed'));
+          }
+        } else {
+          reject(new Error('Error in Authorize.net response'));
         }
-      })
+      });
     });
 
-    if (!response.ok) {
-      const errorData = await response.json(); // Get error details from the response
-      console.error(`Error tokenizing card: ${response.status} ${response.statusText}`, errorData);
-      return res.status(response.status).json({ message: 'Error tokenizing card', error: errorData });
-    }
+    // Wait for the transaction processing to finish
+    const response = await promise;
 
-    const data = await response.json();
+    // Extract card token from the response
+    const cardToken = response.getTransactionResponse().getTransId();
 
-    // Store the card token and customer details in your user schema
-    const user = await User.findByIdAndUpdate(req.userId, {
-      'billing.cardToken': data.card.token,
-      'billing.zenPaymentCustomerId': data.customerId,
+    // Store the card token and customer details in the database
+    await User.findByIdAndUpdate(req.userId, {
+      'billing.cardToken': cardToken,
       'billing.contactEmail': contactEmail,
       'billing.billingAddress': billingAddress,
     });
 
     res.status(200).json({ message: 'Card tokenized and saved successfully' });
+    
   } catch (error) {
-    console.error('Server error during card tokenization:', error); // More detailed logging
+    console.error('Server error during card tokenization:', error);
     res.status(500).json({ message: 'Error tokenizing card', error: error.message });
+  }
+});
+
+
+
+app.post('/api/make-payment', async (req, res) => {
+  const { amount } = req.body;
+  try {
+    const user = await User.findById(req.userId);
+    const cardToken = user.billing.cardToken;
+
+    const merchantAuthenticationType = new APIContracts.MerchantAuthenticationType();
+    merchantAuthenticationType.setName(process.env.AUTHORIZE_NET_API_LOGIN_ID);
+    merchantAuthenticationType.setTransactionKey(process.env.AUTHORIZE_NET_TRANSACTION_KEY);
+
+    const paymentType = new APIContracts.PaymentType();
+    paymentType.setOpaqueData({
+      dataDescriptor: 'COMMON.ACCEPT.INAPP.PAYMENT',
+      dataValue: cardToken
+    });
+
+    const transactionRequest = new APIContracts.TransactionRequestType();
+    transactionRequest.setTransactionType(APIContracts.TransactionTypeEnum.AUTHCAPTURETRANSACTION);
+    transactionRequest.setAmount(amount);
+    transactionRequest.setPayment(paymentType);
+
+    const createRequest = new APIContracts.CreateTransactionRequest();
+    createRequest.setMerchantAuthentication(merchantAuthenticationType);
+    createRequest.setTransactionRequest(transactionRequest);
+
+    const controller = new APIControllers.CreateTransactionController(createRequest.getJSON());
+    
+    // Use a Promise to handle the execution
+    const promise = new Promise((resolve, reject) => {
+      controller.execute(() => {
+        const apiResponse = controller.getResponse();
+        const response = new APIContracts.CreateTransactionResponse(apiResponse);
+
+        if (response != null && response.getMessages().getResultCode() === APIContracts.MessageTypeEnum.OK) {
+          resolve(response);
+        } else {
+          reject(new Error('Payment failed'));
+        }
+      });
+    });
+
+    // Wait for the payment processing to finish
+    const response = await promise;
+
+    // Process payment success
+    user.tokens = (parseInt(user.tokens, 10) || 0) + parseInt(amount, 10);
+    user.tokens = user.tokens.toString();
+    await user.save();
+
+    res.status(200).json({ message: 'Payment successful', transaction: response });
+    
+  } catch (error) {
+    console.error('Error processing payment:', error);
+    res.status(500).json({ message: 'Error processing payment' });
   }
 });
 
@@ -1121,65 +1210,29 @@ app.get('/api/list-transactions', async (req, res) => {
     });
 
     if (!response.ok) {
-      throw new Error(`Error fetching transactions: ${response.statusText}`);
+      const errorData = await response.json(); // Capture detailed error information
+      console.error(`Error fetching transactions: ${response.status} ${response.statusText}`, errorData);
+      return res.status(response.status).json({ message: 'Error fetching transactions', error: errorData });
     }
 
     const data = await response.json();
-    res.status(200).json(data);
+
+    // Optional: Format or filter the data if necessary before sending to the client
+    const formattedData = data.transactions.map(transaction => ({
+      id: transaction.id,
+      amount: transaction.amount,
+      date: transaction.date,
+      status: transaction.status,
+      // Include any other relevant fields
+    }));
+
+    res.status(200).json(formattedData);
   } catch (error) {
     console.error('Error fetching transactions:', error);
-    res.status(500).json({ message: 'Error fetching transactions' });
+    res.status(500).json({ message: 'Error fetching transactions', error: error.message });
   }
 });
 
-
-app.post('/api/make-payment', async (req, res) => {
-  const { amount } = req.body;
-  try {
-    // Fetch user billing info
-    const user = await User.findById(req.userId);
-    const cardToken = user.billing.cardToken;
-
-    // Make payment request to Zen Payments
-    const response = await fetch('https://gateway.zendashboard.com/payment/sale', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': `Bearer ${process.env.ZENPAYMENTS_ACCESS_TOKEN}`
-      },
-      body: JSON.stringify({
-        terminal: {
-          id: process.env.ZENPAYMENTS_TERMINAL_ID
-        },
-        amount,
-        card: {
-          token: cardToken
-        },
-        contact: {
-          email: user.billing.contactEmail
-        }
-      })
-    });
-
-    if (!response.ok) {
-      throw new Error('Payment request failed');
-    }
-
-    const data = await response.json();
-
-    // Add tokens to the user's account (keep tokens as a string)
-    user.tokens = (parseInt(user.tokens, 10) || 0) + parseInt(amount, 10);
-    user.tokens = user.tokens.toString(); // Convert back to string after adding
-
-    await user.save();
-
-    // Handle success
-    res.status(200).json({ message: 'Payment successful', transaction: data });
-  } catch (error) {
-    console.error(error);
-    res.status(500).json({ message: 'Payment failed' });
-  }
-});
 
 
 
