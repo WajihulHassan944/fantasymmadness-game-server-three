@@ -1113,7 +1113,7 @@ app.get('/api/list-transactions', async (req, res) => {
     const response = await fetch('https://gateway.zendashboard.com/payments', {
       method: 'GET',
       headers: {
-        Authorization: `Bearer ${process.env.ZENPAYMENTS_ACCESS_TOKEN}` // Replace with your actual access token
+        Authorization: `Bearer ${process.env.ZENPAYMENTS_ACCESS_TOKEN}` 
       }
     });
 
