@@ -1559,7 +1559,7 @@ app.get('/user/:email', async (req, res) => {
     }
 
     // Destructure necessary fields from the user object
-    const { verified, firstName, lastName, playerName, phone, zipCode, profileUrl } = user;
+    const { verified, firstName, lastName, playerName, phone, zipCode, profileUrl , _id } = user;
 
     // Return the user information along with the verification status
     res.json({ 
@@ -1569,7 +1569,8 @@ app.get('/user/:email', async (req, res) => {
       playerName, 
       phone, 
       zipCode,
-      profileUrl 
+      profileUrl ,
+      _id
     });
   } catch (error) {
     res.status(500).send('Internal server error');
