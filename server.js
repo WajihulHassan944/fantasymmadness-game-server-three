@@ -27,7 +27,8 @@ app.use(express.json());
 const allowedOrigins = [
   'https://fantasymmadness-version2.vercel.app', // Production
   'http://localhost:3000',
-  'https://www.fantasymmadness.com'
+  'https://www.fantasymmadness.com',
+  'http://18.212.65.201:3000/'
 ];
 
 app.use(cors({
