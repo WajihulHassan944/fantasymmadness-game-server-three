@@ -1113,8 +1113,21 @@ app.post('/api/tokenize-card', async (req, res) => {
           if (resultCode === APIContracts.MessageTypeEnum.OK) {
             resolve(response);
           } else {
-            reject(new Error('Transaction failed'));
+            const transactionResponse = response.getTransactionResponse();
+            
+            if (transactionResponse && transactionResponse.getErrors()) {
+              // Extract error details from the transaction response
+              const errorDetails = transactionResponse.getErrors().getError()[0];
+              const errorCode = errorDetails.getErrorCode();
+              const errorMessage = errorDetails.getErrorText();
+          
+              console.error(`Transaction failed with error code ${errorCode}: ${errorMessage}`);
+              reject(new Error(`Transaction failed: ${errorMessage}`));
+            } else {
+              reject(new Error('Transaction failed with unknown error'));
+            }
           }
+          
         } else {
           reject(new Error('Error in Authorize.net response'));
         }
@@ -1201,38 +1214,6 @@ app.post('/api/make-payment', async (req, res) => {
   }
 });
 
-app.get('/api/list-transactions', async (req, res) => {
-  try {
-    const response = await fetch('https://gateway.zendashboard.com/payments', {
-      method: 'GET',
-      headers: {
-        Authorization: `Bearer ${process.env.ZENPAYMENTS_ACCESS_TOKEN}` 
-      }
-    });
-
-    if (!response.ok) {
-      const errorData = await response.json(); // Capture detailed error information
-      console.error(`Error fetching transactions: ${response.status} ${response.statusText}`, errorData);
-      return res.status(response.status).json({ message: 'Error fetching transactions', error: errorData });
-    }
-
-    const data = await response.json();
-
-    // Optional: Format or filter the data if necessary before sending to the client
-    const formattedData = data.transactions.map(transaction => ({
-      id: transaction.id,
-      amount: transaction.amount,
-      date: transaction.date,
-      status: transaction.status,
-      // Include any other relevant fields
-    }));
-
-    res.status(200).json(formattedData);
-  } catch (error) {
-    console.error('Error fetching transactions:', error);
-    res.status(500).json({ message: 'Error fetching transactions', error: error.message });
-  }
-});
 
 
 
