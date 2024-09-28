@@ -15,7 +15,8 @@ const client = new OAuth2Client(process.env.GOOGLE_CLIENT_ID);
 const accessToken = process.env.ZENPAYMENTS_ACCESS_TOKEN;
 const terminalId = process.env.ZENPAYMENTS_TERMINAL_ID;
 const { promisify } = require('util');
-const { ApiContracts, ApiControllers } = require('authorizenet');
+const authorizenet = require('authorizenet');
+const { ApiContracts, ApiControllers } = authorizenet;
 
 const fetch = require('node-fetch');
 
@@ -1156,9 +1157,9 @@ app.post('/api/tokenize-card', async (req, res) => {
     res.status(500).json({ message: 'Error tokenizing card', error: error.message });
   }
 });
+
 // GET request to verify the SDK imports
 app.get('/api/sdk-info', (req, res) => {
-  // Check if the SDK objects are correctly initialized
   const sdkInfo = {
     ApiContracts: ApiContracts ? 'Loaded' : 'Not Loaded',
     ApiControllers: ApiControllers ? 'Loaded' : 'Not Loaded'
@@ -1169,7 +1170,6 @@ app.get('/api/sdk-info', (req, res) => {
     sdkInfo
   });
 });
-
 app.post('/api/make-payment', async (req, res) => {
   const { amount } = req.body;
 
