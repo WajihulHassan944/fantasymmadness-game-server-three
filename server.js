@@ -1104,34 +1104,41 @@ app.post('/api/tokenize-card', async (req, res) => {
 
       const controller = new ApiControllers.CreateTransactionController(createRequest.getJSON());
 
-      // Use a Promise to handle the execution
-      controller.execute(async () => {
-          const apiResponse = controller.getResponse();
-          const response = new ApiContracts.CreateTransactionResponse(apiResponse);
-
-          // Log the entire response for debugging
-          console.log('API Response:', JSON.stringify(response, null, 2));
-
-          if (response != null && response.getMessages().getResultCode() === ApiContracts.MessageTypeEnum.OK) {
-              const cardToken = response.getTransactionResponse().getTransId();
-
-              // Store the card token and customer details in the database
-              await User.findByIdAndUpdate(req.userId, {
-                  'billing.cardToken': cardToken,
-                  'billing.contactEmail': contactEmail,
-                  'billing.billingAddress': billingAddress,
-              });
-
-              res.status(200).json({ message: 'Card tokenized successfully', cardToken });
-          } else {
-              res.status(400).json({ message: 'Transaction failed', details: response.getMessages() });
-          }
+      // Wrap the execution in a Promise for better async handling
+      const executeController = () => new Promise((resolve, reject) => {
+          controller.execute(() => {
+              const apiResponse = controller.getResponse();
+              const response = new ApiContracts.CreateTransactionResponse(apiResponse);
+              if (response) {
+                  resolve(response);
+              } else {
+                  reject(new Error('No response received from Authorize.Net'));
+              }
+          });
       });
+      
+      // Execute the controller
+      const response = await executeController();
+      console.log('API Response:', JSON.stringify(response, null, 2));
+
+      if (response.getMessages().getResultCode() === ApiContracts.MessageTypeEnum.OK) {
+          const cardToken = response.getTransactionResponse().getTransId();
+          await User.findByIdAndUpdate(req.userId, {
+              'billing.cardToken': cardToken,
+              'billing.contactEmail': contactEmail,
+              'billing.billingAddress': billingAddress,
+          });
+
+          res.status(200).json({ message: 'Card tokenized successfully', cardToken });
+      } else {
+          res.status(400).json({ message: 'Transaction failed', details: response.getMessages() });
+      }
   } catch (error) {
       console.error('Error tokenizing card:', error);
       res.status(500).json({ message: 'Error tokenizing card', error: error.message });
   }
 });
+
 
 
 // GET request to verify the SDK imports
