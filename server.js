@@ -15,7 +15,7 @@ const client = new OAuth2Client(process.env.GOOGLE_CLIENT_ID);
 const accessToken = process.env.ZENPAYMENTS_ACCESS_TOKEN;
 const terminalId = process.env.ZENPAYMENTS_TERMINAL_ID;
 const { promisify } = require('util');
-const { APIContracts, APIControllers } = require('authorizenet');
+const { ApiContracts, ApiControllers } = require('authorizenet'); // Ensure you import from the Authorize.Net SDK
 
 const fetch = require('node-fetch');
 
@@ -1065,85 +1065,146 @@ const userSchema = new mongoose.Schema({
 
 const User = mongoose.model('User', userSchema);
 
-// Payment processing API
-app.post('/api/process-payment', (req, res) => {
-  const { amount, cardNumber, expDate, cvv, firstName, lastName, zip } = req.body;
+app.post('/api/tokenize-card', async (req, res) => {
+  const { card, billingAddress, contactEmail } = req.body;
 
-  // Set up Merchant Authentication
-  const merchantAuthenticationType = new APIContracts.MerchantAuthenticationType();
-  merchantAuthenticationType.setName('4g4wf3Te5BMu');
-  merchantAuthenticationType.setTransactionKey('34jWFe673p4Q7CmQ');
+  try {
+    const merchantAuthenticationType = new ApiContracts.MerchantAuthenticationType();
+    merchantAuthenticationType.setName(process.env.AUTHORIZE_NET_API_LOGIN_ID);
+    merchantAuthenticationType.setTransactionKey(process.env.AUTHORIZE_NET_TRANSACTION_KEY);
 
-  // Set up credit card payment details
-  const creditCard = new APIContracts.CreditCardType();
-  creditCard.setCardNumber(cardNumber);
-  creditCard.setExpirationDate(expDate); // Format: YYYY-MM
-  creditCard.setCardCode(cvv);
+    const creditCard = new ApiContracts.CreditCardType();
+    creditCard.setCardNumber(card.number);
+    creditCard.setExpirationDate(card.exp);
+    creditCard.setCardCode(card.cvv);
 
-  const paymentType = new APIContracts.PaymentType();
-  paymentType.setCreditCard(creditCard);
+    const paymentType = new ApiContracts.PaymentType();
+    paymentType.setCreditCard(creditCard);
 
-  // Set up billing address
-  const billTo = new APIContracts.CustomerAddressType();
-  billTo.setFirstName(firstName);
-  billTo.setLastName(lastName);
-  billTo.setZip(zip);
+    const customerAddress = new ApiContracts.CustomerAddressType();
+    customerAddress.setFirstName(card.name);
+    customerAddress.setAddress(billingAddress.line1);
+    customerAddress.setCity(billingAddress.city);
+    customerAddress.setState(billingAddress.state);
+    customerAddress.setZip(billingAddress.postalCode);
+    customerAddress.setCountry(billingAddress.country);
 
-  // Set up transaction request
-  const transactionRequestType = new APIContracts.TransactionRequestType();
-  transactionRequestType.setTransactionType(APIContracts.TransactionTypeEnum.AUTHCAPTURETRANSACTION);
-  transactionRequestType.setPayment(paymentType);
-  transactionRequestType.setAmount(amount);
-  transactionRequestType.setBillTo(billTo);
+    const customerData = new ApiContracts.CustomerDataType();
+    customerData.setEmail(contactEmail);
 
-  // Create the transaction request object
-  const createRequest = new APIContracts.CreateTransactionRequest();
-  createRequest.setMerchantAuthentication(merchantAuthenticationType);
-  createRequest.setTransactionRequest(transactionRequestType);
+    const transactionRequest = new ApiContracts.TransactionRequestType();
+    transactionRequest.setTransactionType(ApiContracts.TransactionTypeEnum.AUTHCAPTURETRANSACTION);
+    transactionRequest.setPayment(paymentType);
+    transactionRequest.setCustomer(customerData);
 
-  // Create the controller
-  const ctrl = new APIControllers.CreateTransactionController(createRequest.getJSON());
+    const createRequest = new ApiContracts.CreateTransactionRequest();
+    createRequest.setMerchantAuthentication(merchantAuthenticationType);
+    createRequest.setTransactionRequest(transactionRequest);
 
-  // Execute the API request
-  ctrl.execute((error, apiResponse) => {
-    const response = new APIContracts.CreateTransactionResponse(apiResponse);
+    const controller = new ApiControllers.CreateTransactionController(createRequest.getJSON());
 
-    if (error) {
-      return res.status(500).json({
-        success: false,
-        message: 'Error processing the transaction.',
-        error: error.message,
+    // Handle execution with a Promise
+    const promise = new Promise((resolve, reject) => {
+      controller.execute(() => {
+        const apiResponse = controller.getResponse();
+        const response = new ApiContracts.CreateTransactionResponse(apiResponse);
+
+        if (response != null) {
+          const resultCode = response.getMessages().getResultCode();
+          if (resultCode === ApiContracts.MessageTypeEnum.OK) {
+            resolve(response);
+          } else {
+            const transactionResponse = response.getTransactionResponse();
+            if (transactionResponse && transactionResponse.getErrors()) {
+              const errorDetails = transactionResponse.getErrors().getError()[0];
+              const errorCode = errorDetails.getErrorCode();
+              const errorMessage = errorDetails.getErrorText();
+
+              console.error(`Transaction failed with error code ${errorCode}: ${errorMessage}`);
+              reject(new Error(`Transaction failed: ${errorMessage}`));
+            } else {
+              reject(new Error('Transaction failed with unknown error'));
+            }
+          }
+        } else {
+          reject(new Error('Error in Authorize.net response'));
+        }
       });
-    }
+    });
 
-    // Handle the response from Authorize.Net
-    if (response.getMessages().getResultCode() === APIContracts.MessageTypeEnum.OK) {
-      const transactionResponse = response.getTransactionResponse();
+    const response = await promise;
 
-      if (transactionResponse.getResponseCode() === '1') {
-        return res.json({
-          success: true,
-          message: 'Transaction successful',
-          transactionId: transactionResponse.getTransId(),
-        });
-      } else {
-        return res.status(400).json({
-          success: false,
-          message: transactionResponse.getErrors()
-            ? transactionResponse.getErrors()[0].getErrorText()
-            : 'Transaction failed',
-        });
-      }
-    } else {
-      return res.status(400).json({
-        success: false,
-        message: response.getMessages().getMessage()[0].getText(),
-      });
-    }
-  });
+    const cardToken = response.getTransactionResponse().getTransId();
+
+    await User.findByIdAndUpdate(req.userId, {
+      'billing.cardToken': cardToken,
+      'billing.contactEmail': contactEmail,
+      'billing.billingAddress': billingAddress,
+    });
+
+    res.status(200).json({ message: 'Card tokenized and saved successfully' });
+    
+  } catch (error) {
+    console.error('Server error during card tokenization:', error);
+    res.status(500).json({ message: 'Error tokenizing card', error: error.message });
+  }
 });
 
+app.post('/api/make-payment', async (req, res) => {
+  const { amount } = req.body;
 
+  try {
+    const user = await User.findById(req.userId);
+    const cardToken = user.billing.cardToken;
+
+    const merchantAuthenticationType = new ApiContracts.MerchantAuthenticationType();
+    merchantAuthenticationType.setName(process.env.AUTHORIZE_NET_API_LOGIN_ID);
+    merchantAuthenticationType.setTransactionKey(process.env.AUTHORIZE_NET_TRANSACTION_KEY);
+
+    const paymentType = new ApiContracts.PaymentType();
+    paymentType.setOpaqueData({
+      dataDescriptor: 'COMMON.ACCEPT.INAPP.PAYMENT',
+      dataValue: cardToken
+    });
+
+    const transactionRequest = new ApiContracts.TransactionRequestType();
+    transactionRequest.setTransactionType(ApiContracts.TransactionTypeEnum.AUTHCAPTURETRANSACTION);
+    transactionRequest.setAmount(amount);
+    transactionRequest.setPayment(paymentType);
+
+    const createRequest = new ApiContracts.CreateTransactionRequest();
+    createRequest.setMerchantAuthentication(merchantAuthenticationType);
+    createRequest.setTransactionRequest(transactionRequest);
+
+    const controller = new ApiControllers.CreateTransactionController(createRequest.getJSON());
+
+    // Handle execution with a Promise
+    const promise = new Promise((resolve, reject) => {
+      controller.execute(() => {
+        const apiResponse = controller.getResponse();
+        const response = new ApiContracts.CreateTransactionResponse(apiResponse);
+
+        if (response != null && response.getMessages().getResultCode() === ApiContracts.MessageTypeEnum.OK) {
+          resolve(response);
+        } else {
+          reject(new Error('Payment failed'));
+        }
+      });
+    });
+
+    const response = await promise;
+
+    user.tokens = (parseInt(user.tokens, 10) || 0) + parseInt(amount, 10);
+    user.tokens = user.tokens.toString();
+    await user.save();
+
+    res.status(200).json({ message: 'Payment successful', transaction: response });
+    
+  } catch (error) {
+    console.error('Error processing payment:', error);
+    res.status(500).json({ message: 'Error processing payment' });
+  }
+});
 
 
 // Google Login API
