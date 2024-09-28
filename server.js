@@ -15,7 +15,7 @@ const client = new OAuth2Client(process.env.GOOGLE_CLIENT_ID);
 const accessToken = process.env.ZENPAYMENTS_ACCESS_TOKEN;
 const terminalId = process.env.ZENPAYMENTS_TERMINAL_ID;
 const { promisify } = require('util');
-const { ApiContracts, ApiControllers } = require('authorizenet');
+const { APIContracts, APIControllers } = require('authorizenet');
 
 const fetch = require('node-fetch');
 
@@ -1070,43 +1070,43 @@ app.post('/api/process-payment', (req, res) => {
   const { amount, cardNumber, expDate, cvv, firstName, lastName, zip } = req.body;
 
   // Set up Merchant Authentication
-  const merchantAuthenticationType = new ApiContracts.MerchantAuthenticationType();
+  const merchantAuthenticationType = new APIContracts.MerchantAuthenticationType();
   merchantAuthenticationType.setName('4g4wf3Te5BMu');
   merchantAuthenticationType.setTransactionKey('34jWFe673p4Q7CmQ');
 
   // Set up credit card payment details
-  const creditCard = new ApiContracts.CreditCardType();
+  const creditCard = new APIContracts.CreditCardType();
   creditCard.setCardNumber(cardNumber);
   creditCard.setExpirationDate(expDate); // Format: YYYY-MM
   creditCard.setCardCode(cvv);
 
-  const paymentType = new ApiContracts.PaymentType();
+  const paymentType = new APIContracts.PaymentType();
   paymentType.setCreditCard(creditCard);
 
   // Set up billing address
-  const billTo = new ApiContracts.CustomerAddressType();
+  const billTo = new APIContracts.CustomerAddressType();
   billTo.setFirstName(firstName);
   billTo.setLastName(lastName);
   billTo.setZip(zip);
 
   // Set up transaction request
-  const transactionRequestType = new ApiContracts.TransactionRequestType();
-  transactionRequestType.setTransactionType(ApiContracts.TransactionTypeEnum.AUTHCAPTURETRANSACTION);
+  const transactionRequestType = new APIContracts.TransactionRequestType();
+  transactionRequestType.setTransactionType(APIContracts.TransactionTypeEnum.AUTHCAPTURETRANSACTION);
   transactionRequestType.setPayment(paymentType);
   transactionRequestType.setAmount(amount);
   transactionRequestType.setBillTo(billTo);
 
   // Create the transaction request object
-  const createRequest = new ApiContracts.CreateTransactionRequest();
+  const createRequest = new APIContracts.CreateTransactionRequest();
   createRequest.setMerchantAuthentication(merchantAuthenticationType);
   createRequest.setTransactionRequest(transactionRequestType);
 
   // Create the controller
-  const ctrl = new ApiControllers.CreateTransactionController(createRequest.getJSON());
+  const ctrl = new APIControllers.CreateTransactionController(createRequest.getJSON());
 
   // Execute the API request
   ctrl.execute((error, apiResponse) => {
-    const response = new ApiContracts.CreateTransactionResponse(apiResponse);
+    const response = new APIContracts.CreateTransactionResponse(apiResponse);
 
     if (error) {
       return res.status(500).json({
@@ -1117,7 +1117,7 @@ app.post('/api/process-payment', (req, res) => {
     }
 
     // Handle the response from Authorize.Net
-    if (response.getMessages().getResultCode() === ApiContracts.MessageTypeEnum.OK) {
+    if (response.getMessages().getResultCode() === APIContracts.MessageTypeEnum.OK) {
       const transactionResponse = response.getTransactionResponse();
 
       if (transactionResponse.getResponseCode() === '1') {
