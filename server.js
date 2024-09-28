@@ -15,7 +15,7 @@ const client = new OAuth2Client(process.env.GOOGLE_CLIENT_ID);
 const accessToken = process.env.ZENPAYMENTS_ACCESS_TOKEN;
 const terminalId = process.env.ZENPAYMENTS_TERMINAL_ID;
 const { promisify } = require('util');
-
+const authorizenet = require('authorizenet');
 // Importing APIContracts and APIControllers from authorizenet
 const ApiContracts = authorizenet.APIContracts;
 const ApiControllers = authorizenet.APIControllers;
