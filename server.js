@@ -16,10 +16,9 @@ const accessToken = process.env.ZENPAYMENTS_ACCESS_TOKEN;
 const terminalId = process.env.ZENPAYMENTS_TERMINAL_ID;
 const { promisify } = require('util');
 
-// Importing the specific modules directly from their paths
-const ApiContracts = require('node_modules/authorizenet/lib/apicontracts');
-const ApiControllers = require('node_modules/authorizenet/lib/apicontrollers');
-
+// Importing APIContracts and APIControllers from authorizenet
+const ApiContracts = authorizenet.APIContracts;
+const ApiControllers = authorizenet.APIControllers;
 
 const fetch = require('node-fetch');
 
