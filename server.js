@@ -1067,96 +1067,62 @@ const userSchema = new mongoose.Schema({
 }, { timestamps: true });
 
 const User = mongoose.model('User', userSchema);
+// Tokenize Card Endpoint
 app.post('/api/tokenize-card', async (req, res) => {
   const { card, billingAddress, contactEmail } = req.body;
-
   try {
-    // Initialize Merchant Authentication
-    const merchantAuthenticationType = new ApiContracts.MerchantAuthenticationType();
-    merchantAuthenticationType.setName(process.env.AUTHORIZE_NET_API_LOGIN_ID);
-    merchantAuthenticationType.setTransactionKey(process.env.AUTHORIZE_NET_TRANSACTION_KEY);
+      const merchantAuthenticationType = new ApiContracts.MerchantAuthenticationType();
+      merchantAuthenticationType.setName(process.env.AUTHORIZE_NET_API_LOGIN_ID);
+      merchantAuthenticationType.setTransactionKey(process.env.AUTHORIZE_NET_TRANSACTION_KEY);
 
-    // Initialize Card Details
-    const creditCard = new ApiContracts.CreditCardType();
-    creditCard.setCardNumber(card.number);
-    creditCard.setExpirationDate(card.exp);
-    creditCard.setCardCode(card.cvv);
+      const creditCard = new ApiContracts.CreditCardType();
+      creditCard.setCardNumber(card.number);
+      creditCard.setExpirationDate(card.exp); // Ensure this is YYYY-MM
+      creditCard.setCardCode(card.cvv);
 
-    const paymentType = new ApiContracts.PaymentType();
-    paymentType.setCreditCard(creditCard);
+      const paymentType = new ApiContracts.PaymentType();
+      paymentType.setCreditCard(creditCard);
 
-    // Initialize Billing Details
-    const customerAddress = new ApiContracts.CustomerAddressType();
-    customerAddress.setFirstName(card.name);
-    customerAddress.setAddress(billingAddress.line1);
-    customerAddress.setCity(billingAddress.city);
-    customerAddress.setState(billingAddress.state);
-    customerAddress.setZip(billingAddress.postalCode);
-    customerAddress.setCountry(billingAddress.country);
+      const customerAddress = new ApiContracts.CustomerAddressType();
+      customerAddress.setFirstName(card.name);
+      customerAddress.setAddress(billingAddress.line1);
+      customerAddress.setCity(billingAddress.city);
+      customerAddress.setState(billingAddress.state);
+      customerAddress.setZip(billingAddress.postalCode);
+      customerAddress.setCountry(billingAddress.country);
 
-    // Customer Data
-    const customerData = new ApiContracts.CustomerDataType();
-    customerData.setEmail(contactEmail);
+      const customerData = new ApiContracts.CustomerDataType();
+      customerData.setEmail(contactEmail);
 
-    // Transaction Request
-    const transactionRequest = new ApiContracts.TransactionRequestType();
-    transactionRequest.setTransactionType(ApiContracts.TransactionTypeEnum.AUTHCAPTURETRANSACTION);
-    transactionRequest.setPayment(paymentType);
-    transactionRequest.setCustomer(customerData);
+      const transactionRequest = new ApiContracts.TransactionRequestType();
+      transactionRequest.setTransactionType(ApiContracts.TransactionTypeEnum.AUTHCAPTURETRANSACTION);
+      transactionRequest.setPayment(paymentType);
+      transactionRequest.setCustomer(customerData);
 
-    // Create Transaction Request
-    const createRequest = new ApiContracts.CreateTransactionRequest();
-    createRequest.setMerchantAuthentication(merchantAuthenticationType);
-    createRequest.setTransactionRequest(transactionRequest);
+      const createRequest = new ApiContracts.CreateTransactionRequest();
+      createRequest.setMerchantAuthentication(merchantAuthenticationType);
+      createRequest.setTransactionRequest(transactionRequest);
 
-    const controller = new ApiControllers.CreateTransactionController(createRequest.getJSON());
+      const controller = new ApiControllers.CreateTransactionController(createRequest.getJSON());
 
-    // Handle execution with a Promise
-    const promise = new Promise((resolve, reject) => {
+      // Use a Promise to handle the execution
       controller.execute(() => {
-        const apiResponse = controller.getResponse();
-        const response = new ApiContracts.CreateTransactionResponse(apiResponse);
+          const apiResponse = controller.getResponse();
+          const response = new ApiContracts.CreateTransactionResponse(apiResponse);
 
-        if (response != null) {
-          const resultCode = response.getMessages().getResultCode();
-          if (resultCode === ApiContracts.MessageTypeEnum.OK) {
-            resolve(response);
+          // Log the entire response for debugging
+          console.log('API Response:', JSON.stringify(response, null, 2));
+
+          if (response != null && response.getMessages().getResultCode() === ApiContracts.MessageTypeEnum.OK) {
+              const cardToken = response.getTransactionResponse().getTransId();
+              res.status(200).json({ message: 'Card tokenized successfully', cardToken });
           } else {
-            const transactionResponse = response.getTransactionResponse();
-            if (transactionResponse && transactionResponse.getErrors()) {
-              const errorDetails = transactionResponse.getErrors().getError()[0];
-              const errorCode = errorDetails.getErrorCode();
-              const errorMessage = errorDetails.getErrorText();
-
-              console.error(`Transaction failed with error code ${errorCode}: ${errorMessage}`);
-              reject(new Error(`Transaction failed: ${errorMessage}`));
-            } else {
-              reject(new Error('Transaction failed with unknown error'));
-            }
+              res.status(400).json({ message: 'Transaction failed', details: response.getMessages() });
           }
-        } else {
-          reject(new Error('Error in Authorize.net response'));
-        }
       });
-    });
-
-    const response = await promise;
-
-    // Extract card token from the response
-    const cardToken = response.getTransactionResponse().getTransId();
-
-    // Save the card token and customer details in your database (this is just an example)
-    // await User.findByIdAndUpdate(req.userId, {
-    //   'billing.cardToken': cardToken,
-    //   'billing.contactEmail': contactEmail,
-    //   'billing.billingAddress': billingAddress,
-    // });
-
-    res.status(200).json({ message: 'Card tokenized and saved successfully', cardToken });
-    
   } catch (error) {
-    console.error('Server error during card tokenization:', error);
-    res.status(500).json({ message: 'Error tokenizing card', error: error.message });
+      console.error('Error tokenizing card:', error);
+      res.status(500).json({ message: 'Error tokenizing card', error: error.message });
   }
 });
 
