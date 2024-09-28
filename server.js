@@ -1156,7 +1156,19 @@ app.post('/api/tokenize-card', async (req, res) => {
     res.status(500).json({ message: 'Error tokenizing card', error: error.message });
   }
 });
+// GET request to verify the SDK imports
+app.get('/api/sdk-info', (req, res) => {
+  // Check if the SDK objects are correctly initialized
+  const sdkInfo = {
+    ApiContracts: ApiContracts ? 'Loaded' : 'Not Loaded',
+    ApiControllers: ApiControllers ? 'Loaded' : 'Not Loaded'
+  };
 
+  res.status(200).json({
+    message: 'Authorize.Net SDK info',
+    sdkInfo
+  });
+});
 
 app.post('/api/make-payment', async (req, res) => {
   const { amount } = req.body;
