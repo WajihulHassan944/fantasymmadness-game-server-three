@@ -15,8 +15,10 @@ const client = new OAuth2Client(process.env.GOOGLE_CLIENT_ID);
 const accessToken = process.env.ZENPAYMENTS_ACCESS_TOKEN;
 const terminalId = process.env.ZENPAYMENTS_TERMINAL_ID;
 const { promisify } = require('util');
+
 const authorizenet = require('authorizenet');
-const { ApiContracts, ApiControllers } = authorizenet;
+const ApiContracts = authorizenet.lib.apicontracts;
+const ApiControllers = authorizenet.lib.apicontrollers;
 
 const fetch = require('node-fetch');
 
