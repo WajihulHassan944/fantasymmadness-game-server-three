@@ -15,7 +15,7 @@ const client = new OAuth2Client(process.env.GOOGLE_CLIENT_ID);
 const accessToken = process.env.ZENPAYMENTS_ACCESS_TOKEN;
 const terminalId = process.env.ZENPAYMENTS_TERMINAL_ID;
 const { promisify } = require('util');
-const { ApiContracts, ApiControllers } = require('authorizenet'); // Ensure you import from the Authorize.Net SDK
+const { ApiContracts, ApiControllers } = require('authorizenet');
 
 const fetch = require('node-fetch');
 
@@ -1064,15 +1064,16 @@ const userSchema = new mongoose.Schema({
 }, { timestamps: true });
 
 const User = mongoose.model('User', userSchema);
-
 app.post('/api/tokenize-card', async (req, res) => {
   const { card, billingAddress, contactEmail } = req.body;
 
   try {
+    // Initialize Merchant Authentication
     const merchantAuthenticationType = new ApiContracts.MerchantAuthenticationType();
     merchantAuthenticationType.setName(process.env.AUTHORIZE_NET_API_LOGIN_ID);
     merchantAuthenticationType.setTransactionKey(process.env.AUTHORIZE_NET_TRANSACTION_KEY);
 
+    // Initialize Card Details
     const creditCard = new ApiContracts.CreditCardType();
     creditCard.setCardNumber(card.number);
     creditCard.setExpirationDate(card.exp);
@@ -1081,6 +1082,7 @@ app.post('/api/tokenize-card', async (req, res) => {
     const paymentType = new ApiContracts.PaymentType();
     paymentType.setCreditCard(creditCard);
 
+    // Initialize Billing Details
     const customerAddress = new ApiContracts.CustomerAddressType();
     customerAddress.setFirstName(card.name);
     customerAddress.setAddress(billingAddress.line1);
@@ -1089,14 +1091,17 @@ app.post('/api/tokenize-card', async (req, res) => {
     customerAddress.setZip(billingAddress.postalCode);
     customerAddress.setCountry(billingAddress.country);
 
+    // Customer Data
     const customerData = new ApiContracts.CustomerDataType();
     customerData.setEmail(contactEmail);
 
+    // Transaction Request
     const transactionRequest = new ApiContracts.TransactionRequestType();
     transactionRequest.setTransactionType(ApiContracts.TransactionTypeEnum.AUTHCAPTURETRANSACTION);
     transactionRequest.setPayment(paymentType);
     transactionRequest.setCustomer(customerData);
 
+    // Create Transaction Request
     const createRequest = new ApiContracts.CreateTransactionRequest();
     createRequest.setMerchantAuthentication(merchantAuthenticationType);
     createRequest.setTransactionRequest(transactionRequest);
@@ -1134,21 +1139,24 @@ app.post('/api/tokenize-card', async (req, res) => {
 
     const response = await promise;
 
+    // Extract card token from the response
     const cardToken = response.getTransactionResponse().getTransId();
 
-    await User.findByIdAndUpdate(req.userId, {
-      'billing.cardToken': cardToken,
-      'billing.contactEmail': contactEmail,
-      'billing.billingAddress': billingAddress,
-    });
+    // Save the card token and customer details in your database (this is just an example)
+    // await User.findByIdAndUpdate(req.userId, {
+    //   'billing.cardToken': cardToken,
+    //   'billing.contactEmail': contactEmail,
+    //   'billing.billingAddress': billingAddress,
+    // });
 
-    res.status(200).json({ message: 'Card tokenized and saved successfully' });
+    res.status(200).json({ message: 'Card tokenized and saved successfully', cardToken });
     
   } catch (error) {
     console.error('Server error during card tokenization:', error);
     res.status(500).json({ message: 'Error tokenizing card', error: error.message });
   }
 });
+
 
 app.post('/api/make-payment', async (req, res) => {
   const { amount } = req.body;
