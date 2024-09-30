@@ -19,7 +19,7 @@ const authorizenet = require('authorizenet');
 // Importing APIContracts and APIControllers from authorizenet
 const ApiContracts = authorizenet.APIContracts;
 const ApiControllers = authorizenet.APIControllers;
-
+const axios = require('axios');
 const fetch = require('node-fetch');
 
 
@@ -1208,6 +1208,49 @@ app.post('/api/make-payment', async (req, res) => {
     res.status(500).json({ message: 'Error processing payment' });
   }
 });
+
+app.post('/api/authorize-net/transaction', async (req, res) => {
+  // Extract the necessary information from the request body
+  const { amount, cardNumber, expirationDate, cardCode } = req.body;
+
+  // Construct the request payload for Authorize.Net
+  const payload = {
+      createTransactionRequest: {
+          transactionRequest: {
+              transactionType: "authCaptureTransaction", // Change as needed (e.g., "authOnlyTransaction")
+              amount: amount,
+              payment: {
+                  creditCard: {
+                      cardNumber: cardNumber,
+                      expirationDate: expirationDate,
+                      cardCode: cardCode,
+                  },
+              },
+          },
+      },
+  };
+
+  try {
+      // Send the request to Authorize.Net API
+      const response = await axios.post('https://api.authorize.net/xml/v1/request.api', payload, {
+          headers: {
+              'Content-Type': 'application/xml',
+              'Authorization': `Basic ${Buffer.from(`${process.env.AUTHORIZE_NET_API_LOGIN_ID}:${process.env.AUTHORIZE_NET_TRANSACTION_KEY}`).toString('base64')}`,
+          },
+      });
+
+      // Handle the response from Authorize.Net
+      if (response.data) {
+          return res.json(response.data);
+      } else {
+          return res.status(500).json({ message: 'No response from Authorize.Net' });
+      }
+  } catch (error) {
+      console.error('Error sending request to Authorize.Net:', error);
+      return res.status(500).json({ message: 'Error processing transaction', error: error.message });
+  }
+});
+
 
 
 // Google Login API
