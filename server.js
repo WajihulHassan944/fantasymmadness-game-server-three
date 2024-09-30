@@ -1145,6 +1145,82 @@ app.post('/api/tokenize-card', async (req, res) => {
 });
 
 
+app.post('/api/process-payment', (req, res) => {
+  const { amount, cardNumber, expDate, cvv, firstName, lastName, zip } = req.body;
+
+  // Set up Merchant Authentication
+  const merchantAuthenticationType = new ApiContracts.MerchantAuthenticationType();
+  merchantAuthenticationType.setName('4g4wf3Te5BMu');  // Hardcoded API Login ID for testing
+  merchantAuthenticationType.setTransactionKey('34jWFe673p4Q7CmQ');  // Hardcoded Transaction Key for testing
+
+  // Set up credit card payment details
+  const creditCard = new ApiContracts.CreditCardType();
+  creditCard.setCardNumber(cardNumber);
+  creditCard.setExpirationDate(expDate); // Format: YYYY-MM
+  creditCard.setCardCode(cvv);
+
+  const paymentType = new ApiContracts.PaymentType();
+  paymentType.setCreditCard(creditCard);
+
+  // Set up billing address
+  const billTo = new ApiContracts.CustomerAddressType();
+  billTo.setFirstName(firstName);
+  billTo.setLastName(lastName);
+  billTo.setZip(zip);
+
+  // Set up transaction request
+  const transactionRequestType = new ApiContracts.TransactionRequestType();
+  transactionRequestType.setTransactionType(ApiContracts.TransactionTypeEnum.AUTHCAPTURETRANSACTION);
+  transactionRequestType.setPayment(paymentType);
+  transactionRequestType.setAmount(amount);
+  transactionRequestType.setBillTo(billTo);
+
+  // Create the transaction request object
+  const createRequest = new ApiContracts.CreateTransactionRequest();
+  createRequest.setMerchantAuthentication(merchantAuthenticationType);
+  createRequest.setTransactionRequest(transactionRequestType);
+
+  // Create the controller
+  const ctrl = new ApiControllers.CreateTransactionController(createRequest.getJSON());
+
+  // Execute the API request
+  ctrl.execute((error, apiResponse) => {
+    if (error) {
+      return res.status(500).json({
+        success: false,
+        message: 'Error processing the transaction.',
+        error: error.message,
+      });
+    }
+
+    const response = new ApiContracts.CreateTransactionResponse(apiResponse);
+
+    // Handle the response from Authorize.Net
+    if (response.getMessages().getResultCode() === ApiContracts.MessageTypeEnum.OK) {
+      const transactionResponse = response.getTransactionResponse();
+
+      if (transactionResponse.getResponseCode() === '1') {
+        return res.json({
+          success: true,
+          message: 'Transaction successful',
+          transactionId: transactionResponse.getTransId(),
+        });
+      } else {
+        return res.status(400).json({
+          success: false,
+          message: transactionResponse.getErrors()
+            ? transactionResponse.getErrors()[0].getErrorText()
+            : 'Transaction failed',
+        });
+      }
+    } else {
+      return res.status(400).json({
+        success: false,
+        message: response.getMessages().getMessage()[0].getText(),
+      });
+    }
+  });
+});
 
 // GET request to verify the SDK imports
 app.get('/api/sdk-info', (req, res) => {
