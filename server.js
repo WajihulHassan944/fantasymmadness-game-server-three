@@ -21,6 +21,7 @@ const ApiContracts = authorizenet.APIContracts;
 const ApiControllers = authorizenet.APIControllers;
 const axios = require('axios');
 const fetch = require('node-fetch');
+const xml2js = require('xml2js');
 
 
 app.use(express.json());
@@ -57,6 +58,10 @@ mongoose.connect(MONGODB_URI, {
 // Middleware
 app.use(bodyParser.urlencoded({ extended: false }));
 app.use(bodyParser.json());
+
+
+// Function to convert JS object to XML
+const builder = new xml2js.Builder({ headless: true });
 
 // File upload configuration
 const storage = multer.memoryStorage();
@@ -1210,14 +1215,17 @@ app.post('/api/make-payment', async (req, res) => {
 });
 
 app.post('/api/authorize-net/transaction', async (req, res) => {
-  // Extract the necessary information from the request body
   const { amount, cardNumber, expirationDate, cardCode } = req.body;
 
-  // Construct the request payload for Authorize.Net
+  // Construct the XML request payload for Authorize.Net
   const payload = {
       createTransactionRequest: {
+          merchantAuthentication: {
+              name: process.env.AUTHORIZE_NET_API_LOGIN_ID,
+              transactionKey: process.env.AUTHORIZE_NET_TRANSACTION_KEY,
+          },
           transactionRequest: {
-              transactionType: "authCaptureTransaction", // Change as needed (e.g., "authOnlyTransaction")
+              transactionType: "authCaptureTransaction", // change if needed
               amount: amount,
               payment: {
                   creditCard: {
@@ -1230,23 +1238,19 @@ app.post('/api/authorize-net/transaction', async (req, res) => {
       },
   };
 
+  const xmlPayload = builder.buildObject(payload);
+
   try {
-      // Send the request to Authorize.Net API
-      const response = await axios.post('https://api.authorize.net/xml/v1/request.api', payload, {
+      const response = await axios.post('https://api.authorize.net/xml/v1/request.api', xmlPayload, {
           headers: {
               'Content-Type': 'application/xml',
-              'Authorization': `Basic ${Buffer.from(`${process.env.AUTHORIZE_NET_API_LOGIN_ID}:${process.env.AUTHORIZE_NET_TRANSACTION_KEY}`).toString('base64')}`,
           },
       });
 
-      // Handle the response from Authorize.Net
-      if (response.data) {
-          return res.json(response.data);
-      } else {
-          return res.status(500).json({ message: 'No response from Authorize.Net' });
-      }
+      // Handle the XML response from Authorize.Net
+      return res.send(response.data);
   } catch (error) {
-      console.error('Error sending request to Authorize.Net:', error);
+      console.error('Error sending request to Authorize.Net:', error.response?.data || error.message);
       return res.status(500).json({ message: 'Error processing transaction', error: error.message });
   }
 });
