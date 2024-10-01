@@ -1070,7 +1070,6 @@ const userSchema = new mongoose.Schema({
 
 const User = mongoose.model('User', userSchema);
 
-
 app.post('/api/authorize-net/first-payment', async (req, res) => {
   const { email, amount, cardNumber, expirationDate, cardCode, address, city, state, zip, country } = req.body;
 
@@ -1123,31 +1122,43 @@ app.post('/api/authorize-net/first-payment', async (req, res) => {
       },
     });
 
+    const transactionResponse = response.data.createTransactionResponse.transactionResponse;
+
     // Check if the response indicates success
-    if (response.data && response.data.createTransactionResponse && response.data.createTransactionResponse.transactionResponse.responseCode === '1') {
+    if (transactionResponse && transactionResponse.responseCode === '1') {
       // Encrypt card details
       const encryptedCardNumber = await bcrypt.hash(cardNumber, SALT_ROUNDS);
       const encryptedExpirationDate = await bcrypt.hash(expirationDate, SALT_ROUNDS);
       const encryptedCardCode = await bcrypt.hash(cardCode, SALT_ROUNDS);
 
       // Store encrypted details
-      user.billing.cardNumber = encryptedCardNumber;
-      user.billing.expirationDate = encryptedExpirationDate;
-      user.billing.cardCode = encryptedCardCode;
-      user.billing.address = address;
-      user.billing.city = city;
-      user.billing.state = state;
-      user.billing.zip = zip;
-      user.billing.country = country;
+      user.billing = {
+        cardNumber: encryptedCardNumber,
+        expirationDate: encryptedExpirationDate,
+        cardCode: encryptedCardCode,
+        address,
+        city,
+        state,
+        zip,
+        country,
+      };
 
       // Add tokens to the user's account
       user.tokens = (parseInt(user.tokens, 10) + parseInt(amount, 10)).toString();
 
       await user.save();
 
-      return res.status(200).json({ message: 'Payment processed and user updated successfully', transactionId: response.data.createTransactionResponse.transactionResponse.transId });
+      return res.status(200).json({
+        message: 'Payment processed and user updated successfully',
+        transactionId: transactionResponse.transId,
+        authCode: transactionResponse.authCode,
+      });
     } else {
-      return res.status(400).json({ message: 'Payment failed', details: response.data });
+      // If the payment response code is not 1, return an error
+      return res.status(400).json({
+        message: 'Payment failed',
+        details: transactionResponse.messages.message[0].description,
+      });
     }
   } catch (error) {
     console.error('Error processing first payment:', error);
