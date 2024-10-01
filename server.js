@@ -1030,13 +1030,17 @@ app.post('/match/addRoundResults/:id', async (req, res) => {
 
 
 
-// User Schema
+
+
+
+
+
 const userSchema = new mongoose.Schema({
   firstName: String,
   lastName: String,
   playerName: String,
   zipCode: String,
-  tokens: { type: String, default: '0' }, // Tokens stored as a string
+  tokens: String,
   email: String,
   phone: String,
   shortBio: String,
@@ -1048,86 +1052,44 @@ const userSchema = new mongoose.Schema({
   verificationToken: String,
   verified: { type: Boolean, default: false },
   profileUrl: String,
-  currentPlan: { type: String, default: 'None' },
-  freePlanExpiryDate: Date,
-  hasAvailedFreePlan: { type: Boolean, default: false },
+  currentPlan: { type: String, default: 'None' }, // Current subscription plan
+  freePlanExpiryDate: Date, // Date when the free plan expires
+  hasAvailedFreePlan: { type: Boolean, default: false }, // Indicates if the user has availed the free plan
   preferredPaymentMethod: String,
   preferredPaymentMethodValue: String,
   billing: {
-    cardNumber: String,
-    expirationDate: String,
-    cardCode: String,
-    billingAddress: {
-      address: String,
-      city: String,
-      state: String,
-      zip: String,
-      country: String,
-    }
   },
+
 }, { timestamps: true });
 
 const User = mongoose.model('User', userSchema);
-
-// Hashing function for card information
-async function hashCardInfo(cardNumber, cardCode) {
-  const saltRounds = 10; // You can adjust this as needed
-  const hashedCardNumber = await bcrypt.hash(cardNumber, saltRounds);
-  const hashedCardCode = await bcrypt.hash(cardCode, saltRounds);
-  return { hashedCardNumber, hashedCardCode };
-}
-
-// Transaction endpoint
 app.post('/api/authorize-net/transaction', async (req, res) => {
   const { amount, cardNumber, expirationDate, cardCode, customerId, firstName, lastName, email, address, city, state, zip, country } = req.body;
 
-  // Find the user in the database
-  let user = await User.findById(customerId);
-  
-  // If user doesn't exist, return an error
-  if (!user) {
-    return res.status(404).json({ message: 'User not found' });
-  }
-
-  // If this is the user's first payment, update the billing information
-  if (!user.billing.cardNumber) {
-    const { hashedCardNumber, hashedCardCode } = await hashCardInfo(cardNumber, cardCode);
-    
-    user.billing.cardNumber = hashedCardNumber; // Store hashed card number
-    user.billing.expirationDate = expirationDate; // Store expiration date (consider hashing if needed)
-    user.billing.cardCode = hashedCardCode; // Store hashed card code
-    user.billing.billingAddress = { 
-      address, 
-      city, 
-      state, 
-      zip, 
-      country 
-    };
-  }
-
   // Construct the XML request payload for Authorize.Net
   const payload = {
-    $: { 'xmlns': 'AnetApi/xml/v1/schema/AnetApiSchema.xsd' },
+    $: { 'xmlns': 'AnetApi/xml/v1/schema/AnetApiSchema.xsd' }, // Add namespace
     merchantAuthentication: {
       name: process.env.AUTHORIZE_NET_API_LOGIN_ID,
       transactionKey: process.env.AUTHORIZE_NET_TRANSACTION_KEY,
     },
     transactionRequest: {
-      transactionType: 'authCaptureTransaction',
+      transactionType: 'authCaptureTransaction', // or 'authOnlyTransaction' depending on the use case
       amount: amount,
       payment: {
         creditCard: {
-          cardNumber: cardNumber, // You'll need to find a way to decrypt this for the transaction
-          expirationDate: user.billing.expirationDate, // Make sure this is safe to store
-          cardCode: cardCode, // Same here, you might want to decrypt or manage this properly
+          cardNumber: cardNumber,
+          expirationDate: expirationDate,
+          cardCode: cardCode,
         },
       },
       order: {
-        invoiceNumber: `INV-${new Date().getTime()}`,
+        invoiceNumber: `INV-${new Date().getTime()}`,  // Example for generating a unique invoice number
         description: 'Purchase description here',
       },
       customer: {
-        email: email,
+        id: customerId, // Optional customer ID for tracking purposes
+        email: email,   // User email address
       },
       billTo: {
         firstName: firstName,
@@ -1138,6 +1100,16 @@ app.post('/api/authorize-net/transaction', async (req, res) => {
         zip: zip,
         country: country,
       },
+      shipTo: { // Optional, if shipping details are different from billing
+        firstName: firstName,
+        lastName: lastName,
+        address: address,
+        city: city,
+        state: state,
+        zip: zip,
+        country: country,
+      },
+   
     },
   };
 
@@ -1145,38 +1117,17 @@ app.post('/api/authorize-net/transaction', async (req, res) => {
 
   try {
     const response = await axios.post('https://apitest.authorize.net/xml/v1/request.api', xmlPayload, {
-      headers: { 'Content-Type': 'application/xml' },
+      headers: {
+        'Content-Type': 'application/xml',
+      },
     });
 
-    const responseData = response.data;
-
-    // Check if the transaction was successful
-    if (responseData.transactionResponse.responseCode === '1') {
-      const tokensToAdd = amount.toString(); // Convert the amount to string
-
-      // Update user's token balance
-      user.tokens = (parseFloat(user.tokens) + parseFloat(tokensToAdd)).toString();
-      
-      // Save the user
-      await user.save();
-
-      // Send success response
-      return res.send({ message: 'Transaction successful', user });
-    } else {
-      // Handle transaction failure
-      return res.status(400).json({ message: 'Transaction failed', details: responseData.transactionResponse.errors });
-    }
+    return res.send(response.data);
   } catch (error) {
     console.error('Error sending request to Authorize.Net:', error.response?.data || error.message);
     return res.status(500).json({ message: 'Error processing transaction', error: error.message });
   }
 });
-
-
-
-
-
-
 
 
 
