@@ -1122,9 +1122,11 @@ app.post('/api/authorize-net/first-payment', async (req, res) => {
       },
     });
 
-    const transactionResponse = response.data.createTransactionResponse.transactionResponse;
+    // Check if the response contains createTransactionResponse
+    const createTransactionResponse = response.data?.createTransactionResponse;
+    const transactionResponse = createTransactionResponse?.transactionResponse;
 
-    // Check if the response indicates success
+    // Ensure transactionResponse exists and responseCode is 1 (successful transaction)
     if (transactionResponse && transactionResponse.responseCode === '1') {
       // Encrypt card details
       const encryptedCardNumber = await bcrypt.hash(cardNumber, SALT_ROUNDS);
@@ -1154,10 +1156,11 @@ app.post('/api/authorize-net/first-payment', async (req, res) => {
         authCode: transactionResponse.authCode,
       });
     } else {
-      // If the payment response code is not 1, return an error
+      // Handle failure response
+      const errorDetails = transactionResponse?.messages?.message[0]?.description || 'Unknown error';
       return res.status(400).json({
         message: 'Payment failed',
-        details: transactionResponse.messages.message[0].description,
+        details: errorDetails,
       });
     }
   } catch (error) {
