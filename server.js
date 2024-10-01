@@ -24,6 +24,9 @@ const ALGORITHM = 'aes-256-cbc'; // AES algorithm
 const ENCRYPTION_KEY = process.env.ENCRYPTION_KEY; // Must be 32 bytes
 const IV_LENGTH = 16; // For AES, this is always 16
 
+// Example of generating a random IV for encryption
+const iv = crypto.randomBytes(IV_LENGTH);
+
 app.use(express.json());
 
 
