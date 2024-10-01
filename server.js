@@ -998,13 +998,49 @@ app.post('/match/addRoundResults/:id', async (req, res) => {
 
 
 
-// User Schema
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 const userSchema = new mongoose.Schema({
   firstName: String,
   lastName: String,
   playerName: String,
   zipCode: String,
-  tokens: String, // Tokens stored as a string
+  tokens: String,
   email: String,
   phone: String,
   shortBio: String,
@@ -1021,83 +1057,37 @@ const userSchema = new mongoose.Schema({
   hasAvailedFreePlan: { type: Boolean, default: false }, // Indicates if the user has availed the free plan
   preferredPaymentMethod: String,
   preferredPaymentMethodValue: String,
-  billing: {
-    cardNumber: String, // Will store the hashed card number
-    expirationDate: String, // Store as is or encrypt if needed
-    cardCode: String, // Store as is or encrypt if needed
-    billingAddress: {
-      address: String,
-      city: String,
-      state: String,
-      zip: String,
-      country: String,
-    },
-  },
+  
 }, { timestamps: true });
 
-// Pre-save hook to hash card number and card code
-userSchema.pre('save', async function (next) {
-  if (this.isModified('billing.cardNumber')) {
-    const saltRounds = 10;
-    this.billing.cardNumber = await bcrypt.hash(this.billing.cardNumber, saltRounds);
-  }
-  if (this.isModified('billing.cardCode')) {
-    const saltRounds = 10;
-    this.billing.cardCode = await bcrypt.hash(this.billing.cardCode, saltRounds);
-  }
-  next();
-});
-
 const User = mongoose.model('User', userSchema);
-// Transaction endpoint
 app.post('/api/authorize-net/transaction', async (req, res) => {
   const { amount, cardNumber, expirationDate, cardCode, customerId, firstName, lastName, email, address, city, state, zip, country } = req.body;
 
-  // Find the user in the database
-  let user = await User.findById(customerId);
-  
-  // If user doesn't exist, return an error
-  if (!user) {
-    return res.status(404).json({ message: 'User not found' });
-  }
-
-  // If this is the user's first payment, update the billing information
-  if (!user.billing.cardNumber) {
-    user.billing.cardNumber = cardNumber; // Temporarily store plain card number
-    user.billing.cardCode = cardCode; // Temporarily store plain card code
-    user.billing.expirationDate = expirationDate; // Optionally store this
-    user.billing.billingAddress = {
-      address,
-      city,
-      state,
-      zip,
-      country,
-    };
-  }
-
   // Construct the XML request payload for Authorize.Net
   const payload = {
-    $: { 'xmlns': 'AnetApi/xml/v1/schema/AnetApiSchema.xsd' },
+    $: { 'xmlns': 'AnetApi/xml/v1/schema/AnetApiSchema.xsd' }, // Add namespace
     merchantAuthentication: {
       name: process.env.AUTHORIZE_NET_API_LOGIN_ID,
       transactionKey: process.env.AUTHORIZE_NET_TRANSACTION_KEY,
     },
     transactionRequest: {
-      transactionType: 'authCaptureTransaction',
+      transactionType: 'authCaptureTransaction', // or 'authOnlyTransaction' depending on the use case
       amount: amount,
       payment: {
         creditCard: {
-          cardNumber: user.billing.cardNumber ? user.billing.cardNumber : cardNumber,
+          cardNumber: cardNumber,
           expirationDate: expirationDate,
-          cardCode: user.billing.cardCode ? user.billing.cardCode : cardCode,
+          cardCode: cardCode,
         },
       },
       order: {
-        invoiceNumber: `INV-${new Date().getTime()}`,
+        invoiceNumber: `INV-${new Date().getTime()}`,  // Example for generating a unique invoice number
         description: 'Purchase description here',
       },
       customer: {
-        email: email,
+        id: customerId, // Optional customer ID for tracking purposes
+        email: email,   // User email address
       },
       billTo: {
         firstName: firstName,
@@ -1108,6 +1098,16 @@ app.post('/api/authorize-net/transaction', async (req, res) => {
         zip: zip,
         country: country,
       },
+      shipTo: { // Optional, if shipping details are different from billing
+        firstName: firstName,
+        lastName: lastName,
+        address: address,
+        city: city,
+        state: state,
+        zip: zip,
+        country: country,
+      },
+   
     },
   };
 
@@ -1115,55 +1115,17 @@ app.post('/api/authorize-net/transaction', async (req, res) => {
 
   try {
     const response = await axios.post('https://apitest.authorize.net/xml/v1/request.api', xmlPayload, {
-      headers: { 'Content-Type': 'application/xml' },
+      headers: {
+        'Content-Type': 'application/xml',
+      },
     });
 
-    // Check if response structure is valid before accessing it
-    if (response.data && response.data.transactionResponse) {
-      const transactionResponse = response.data.transactionResponse;
-
-      // Check if the transaction was successful
-      if (transactionResponse.responseCode === '1') {
-        // If this is the user's first payment, hash and save billing info
-        if (!user.billing.cardNumber) {
-          user.billing.cardNumber = await bcrypt.hash(cardNumber, 10);
-          user.billing.cardCode = await bcrypt.hash(cardCode, 10);
-        }
-
-        const tokensToAdd = amount.toString(); // Convert the amount to string
-        // Add tokens to the user's account
-        user.tokens = parseInt(user.tokens, 10) + parseInt(tokensToAdd, 10); // Update tokens
-        
-        // Save the user
-        await user.save();
-
-        // Send success response
-        return res.send({ message: 'Transaction successful', user });
-      } else {
-        // Handle transaction failure
-        return res.status(400).json({ message: 'Transaction failed', details: transactionResponse.errors });
-      }
-    } else {
-      // If the response doesn't have the expected structure
-      return res.status(500).json({ message: 'Unexpected response format', response });
-    }
+    return res.send(response.data);
   } catch (error) {
-    // Log specific error details without circular references
-    console.error('Error sending request to Authorize.Net:', error.message);
-    if (error.response) {
-      console.error('Response data:', error.response.data);
-      console.error('Response status:', error.response.status);
-    }
+    console.error('Error sending request to Authorize.Net:', error.response?.data || error.message);
     return res.status(500).json({ message: 'Error processing transaction', error: error.message });
   }
 });
-
-
-
-
-
-
-
 
 
 
