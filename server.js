@@ -1024,21 +1024,30 @@ app.post('/match/addRoundResults/:id', async (req, res) => {
 
 
 
-
-
+// Function to encrypt card details
 const encrypt = (text) => {
-  const iv = crypto.randomBytes(IV_LENGTH);
-  const cipher = crypto.createCipheriv(ALGORITHM, Buffer.from(ENCRYPTION_KEY), iv);
+  try {
+    
+    const iv = crypto.randomBytes(IV_LENGTH);
+    const cipher = crypto.createCipheriv(ALGORITHM, Buffer.from(ENCRYPTION_KEY), iv);
 
-  // Combine the encryption steps inline
-  let encrypted = Buffer.concat([
-    cipher.update(text, 'utf8'),
-    cipher.final(),
-  ]);
+    let encrypted = Buffer.concat([
+      cipher.update(text, 'utf8'),
+      cipher.final(),
+    ]);
 
-  // Return IV and encrypted data as a single string
-  return `${iv.toString('hex')}:${encrypted.toString('hex')}`;
+    // Return IV and encrypted data as a single string
+    return `${iv.toString('hex')}:${encrypted.toString('hex')}`;
+  } catch (error) {
+    console.error('Error encrypting data:', error);
+    throw new Error('Encryption failed');
+  }
 };
+
+
+
+
+
 // Function to decrypt card details
 function decrypt(text) {
   const parts = text.split(':');
