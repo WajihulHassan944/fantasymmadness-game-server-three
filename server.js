@@ -1023,23 +1023,19 @@ app.post('/match/addRoundResults/:id', async (req, res) => {
 
 
 
-
-
-
-
-
-// Function to encrypt card details
-function encrypt(text) {
-  // Generate random Initialization Vector
+const encrypt = (text) => {
   const iv = crypto.randomBytes(IV_LENGTH);
   const cipher = crypto.createCipheriv(ALGORITHM, Buffer.from(ENCRYPTION_KEY), iv);
 
-  let encrypted = cipher.update(text, 'utf8', 'hex');
-  encrypted += cipher.final('hex');
+  // Combine the encryption steps inline
+  let encrypted = Buffer.concat([
+    cipher.update(text, 'utf8'),
+    cipher.final(),
+  ]);
 
-  // Return the IV and encrypted data
-  return iv.toString('hex') + ':' + encrypted;
-}
+  // Return IV and encrypted data as a single string
+  return `${iv.toString('hex')}:${encrypted.toString('hex')}`;
+};
 // Function to decrypt card details
 function decrypt(text) {
   const parts = text.split(':');
