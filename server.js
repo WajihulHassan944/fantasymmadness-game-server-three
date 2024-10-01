@@ -1187,7 +1187,7 @@ app.post('/api/authorize-net/first-payment', async (req, res) => {
   
           // Add tokens to the user's account
           user.tokens = (parseInt(user.tokens, 10) + parseInt(amount, 10)).toString();
-  
+          user.currentPlan = 'Standard';
           await user.save();
   
           return res.status(200).json({
