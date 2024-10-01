@@ -1148,7 +1148,12 @@ app.post('/api/authorize-net/transaction', async (req, res) => {
       return res.status(500).json({ message: 'Unexpected response format', response });
     }
   } catch (error) {
-    console.error('Error sending request to Authorize.Net:', error.response?.data || error.message);
+    // Log specific error details without circular references
+    console.error('Error sending request to Authorize.Net:', error.message);
+    if (error.response) {
+      console.error('Response data:', error.response.data);
+      console.error('Response status:', error.response.status);
+    }
     return res.status(500).json({ message: 'Error processing transaction', error: error.message });
   }
 });
