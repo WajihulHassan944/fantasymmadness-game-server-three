@@ -1069,7 +1069,7 @@ const userSchema = new mongoose.Schema({
 }, { timestamps: true });
 
 const User = mongoose.model('User', userSchema);
-const xml2js = require('xml2js');
+
 
 app.post('/api/authorize-net/first-payment', async (req, res) => {
   const { email, amount, cardNumber, expirationDate, cardCode, address, city, state, zip, country } = req.body;
