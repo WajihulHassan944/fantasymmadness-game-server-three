@@ -1133,8 +1133,8 @@ app.post('/api/authorize-net/first-payment', async (req, res) => {
           email: email,
         },
         billTo: {
-          firstName:firstName,
-          lastName: lastName,
+          firstName: user.firstName,
+          lastName: user.lastName,
           address: address,
           city: city,
           state: state,
