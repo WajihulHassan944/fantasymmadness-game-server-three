@@ -1122,6 +1122,9 @@ app.post('/api/authorize-net/first-payment', async (req, res) => {
       },
     });
 
+    // Log full response for debugging
+    console.log('Authorize.Net response:', response.data);
+
     // Check if the response contains createTransactionResponse
     const createTransactionResponse = response.data?.createTransactionResponse;
     const transactionResponse = createTransactionResponse?.transactionResponse;
@@ -1157,7 +1160,7 @@ app.post('/api/authorize-net/first-payment', async (req, res) => {
       });
     } else {
       // Handle failure response
-      const errorDetails = transactionResponse?.messages?.message[0]?.description || 'Unknown error';
+      const errorDetails = transactionResponse?.messages?.message[0]?.description || 'Transaction failed but no detailed error provided';
       return res.status(400).json({
         message: 'Payment failed',
         details: errorDetails,
