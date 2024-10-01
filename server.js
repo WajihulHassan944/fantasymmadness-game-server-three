@@ -1157,16 +1157,12 @@ app.post('/api/authorize-net/first-payment', async (req, res) => {
       if (responseCode === '1') {
           // Transaction was successful
   
-          // Encrypt card details
-          const encryptedCardNumber = encrypt(cardNumber);
-          const encryptedExpirationDate = encrypt(expirationDate);
-          const encryptedCardCode = encrypt(cardCode);
-  
+        
           // Store encrypted details in user billing
           user.billing = {
-              cardNumber: encryptedCardNumber,
-              expirationDate: encryptedExpirationDate,
-              cardCode: encryptedCardCode,
+              cardNumber: cardNumber,
+              expirationDate: expirationDate,
+              cardCode: cardCode,
               address,
               city,
               state,
