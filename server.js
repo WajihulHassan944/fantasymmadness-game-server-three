@@ -1069,6 +1069,7 @@ const userSchema = new mongoose.Schema({
 }, { timestamps: true });
 
 const User = mongoose.model('User', userSchema);
+const xml2js = require('xml2js');
 
 app.post('/api/authorize-net/first-payment', async (req, res) => {
   const { email, amount, cardNumber, expirationDate, cardCode, address, city, state, zip, country } = req.body;
@@ -1085,7 +1086,7 @@ app.post('/api/authorize-net/first-payment', async (req, res) => {
         transactionKey: process.env.AUTHORIZE_NET_TRANSACTION_KEY,
       },
       transactionRequest: {
-        transactionType: 'authCaptureTransaction', // or 'authOnlyTransaction'
+        transactionType: 'authCaptureTransaction',
         amount: amount,
         payment: {
           creditCard: {
@@ -1122,56 +1123,68 @@ app.post('/api/authorize-net/first-payment', async (req, res) => {
       },
     });
 
-    // Log full response for debugging
-    console.log('Authorize.Net response:', response.data);
+    // Log the raw response
+    console.log('Authorize.Net raw response:', response.data);
 
-    // Check if the response contains createTransactionResponse
-    const createTransactionResponse = response.data?.createTransactionResponse;
-    const transactionResponse = createTransactionResponse?.transactionResponse;
+    // Parse the XML response into JSON format
+    xml2js.parseString(response.data, (err, result) => {
+      if (err) {
+        console.error('Error parsing XML response:', err);
+        return res.status(500).json({ message: 'Error parsing payment response' });
+      }
 
-    // Ensure transactionResponse exists and responseCode is 1 (successful transaction)
-    if (transactionResponse && transactionResponse.responseCode === '1') {
-      // Encrypt card details
-      const encryptedCardNumber = await bcrypt.hash(cardNumber, SALT_ROUNDS);
-      const encryptedExpirationDate = await bcrypt.hash(expirationDate, SALT_ROUNDS);
-      const encryptedCardCode = await bcrypt.hash(cardCode, SALT_ROUNDS);
+      // Check the transaction response code
+      const createTransactionResponse = result.createTransactionResponse;
+      const transactionResponse = createTransactionResponse?.transactionResponse?.[0];
+      const responseCode = transactionResponse?.responseCode?.[0];
 
-      // Store encrypted details
-      user.billing = {
-        cardNumber: encryptedCardNumber,
-        expirationDate: encryptedExpirationDate,
-        cardCode: encryptedCardCode,
-        address,
-        city,
-        state,
-        zip,
-        country,
-      };
+      if (responseCode === '1') {
+        // Transaction was successful
 
-      // Add tokens to the user's account
-      user.tokens = (parseInt(user.tokens, 10) + parseInt(amount, 10)).toString();
+        // Encrypt card details
+        bcrypt.hash(cardNumber, SALT_ROUNDS, async (err, encryptedCardNumber) => {
+          if (err) throw err;
+          const encryptedExpirationDate = await bcrypt.hash(expirationDate, SALT_ROUNDS);
+          const encryptedCardCode = await bcrypt.hash(cardCode, SALT_ROUNDS);
 
-      await user.save();
+          // Store encrypted details
+          user.billing = {
+            cardNumber: encryptedCardNumber,
+            expirationDate: encryptedExpirationDate,
+            cardCode: encryptedCardCode,
+            address,
+            city,
+            state,
+            zip,
+            country,
+          };
 
-      return res.status(200).json({
-        message: 'Payment processed and user updated successfully',
-        transactionId: transactionResponse.transId,
-        authCode: transactionResponse.authCode,
-      });
-    } else {
-      // Handle failure response
-      const errorDetails = transactionResponse?.messages?.message[0]?.description || 'Transaction failed but no detailed error provided';
-      return res.status(400).json({
-        message: 'Payment failed',
-        details: errorDetails,
-      });
-    }
+          // Add tokens to the user's account
+          user.tokens = (parseInt(user.tokens, 10) + parseInt(amount, 10)).toString();
+
+          await user.save();
+
+          return res.status(200).json({
+            message: 'Payment processed and user updated successfully',
+            transactionId: transactionResponse.transId?.[0],
+            authCode: transactionResponse.authCode?.[0],
+          });
+        });
+      } else {
+        // Transaction failed, handle the failure case
+        const errorMessage = transactionResponse?.messages?.[0]?.message?.[0]?.description || 'Unknown error';
+        console.log('Authorize.Net transaction failed:', errorMessage);
+        return res.status(400).json({
+          message: 'Payment failed',
+          details: errorMessage,
+        });
+      }
+    });
   } catch (error) {
     console.error('Error processing first payment:', error);
     return res.status(500).json({ message: 'Error processing payment', error: error.message });
   }
 });
-
 
 
 // Google Login API
