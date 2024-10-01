@@ -1069,7 +1069,7 @@ const userSchema = new mongoose.Schema({
   lastName: String,
   playerName: String,
   zipCode: String,
-  tokens: String, // Keeping tokens as a string
+  tokens: { type: String, default: '0' },
   email: { type: String, required: true, unique: true },
   phone: String,
   shortBio: String,
