@@ -20,8 +20,8 @@ const axios = require('axios');
 const fetch = require('node-fetch');
 const xml2js = require('xml2js');
 
-
-const ENCRYPTION_KEY = process.env.ENCRYPTION_KEY; // Set your encryption key in the environment variables
+const ALGORITHM = 'aes-256-cbc'; // AES algorithm
+const ENCRYPTION_KEY = process.env.ENCRYPTION_KEY; // Must be 32 bytes
 const IV_LENGTH = 16; // For AES, this is always 16
 
 app.use(express.json());
@@ -1028,6 +1028,25 @@ app.post('/match/addRoundResults/:id', async (req, res) => {
 
 
 
+// Function to encrypt card details
+function encrypt(text) {
+  const iv = crypto.randomBytes(IV_LENGTH);
+  const cipher = crypto.createCipheriv(ALGORITHM, Buffer.from(ENCRYPTION_KEY), iv);
+  let encrypted = cipher.update(text);
+  encrypted = Buffer.concat([encrypted, cipher.final()]);
+  return iv.toString('hex') + ':' + encrypted.toString('hex');
+}
+
+// Function to decrypt card details
+function decrypt(text) {
+  const parts = text.split(':');
+  const iv = Buffer.from(parts.shift(), 'hex');
+  const encryptedText = Buffer.from(parts.join(':'), 'hex');
+  const decipher = crypto.createDecipheriv(ALGORITHM, Buffer.from(ENCRYPTION_KEY), iv);
+  let decrypted = decipher.update(encryptedText);
+  decrypted = Buffer.concat([decrypted, decipher.final()]);
+  return decrypted.toString();
+}
 
 
 
@@ -1125,51 +1144,46 @@ app.post('/api/authorize-net/first-payment', async (req, res) => {
 
     // Log the raw response
     console.log('Authorize.Net raw response:', response.data);
-
-    // Parse the XML response into JSON format
-    xml2js.parseString(response.data, (err, result) => {
+    xml2js.parseString(response.data, async (err, result) => {
       if (err) {
-        console.error('Error parsing XML response:', err);
-        return res.status(500).json({ message: 'Error parsing payment response' });
+          console.error('Error parsing XML response:', err);
+          return res.status(500).json({ message: 'Error parsing payment response' });
       }
-
-      // Check the transaction response code
+  
       const createTransactionResponse = result.createTransactionResponse;
       const transactionResponse = createTransactionResponse?.transactionResponse?.[0];
       const responseCode = transactionResponse?.responseCode?.[0];
-
+  
       if (responseCode === '1') {
-        // Transaction was successful
-
-        // Encrypt card details
-        bcrypt.hash(cardNumber, SALT_ROUNDS, async (err, encryptedCardNumber) => {
-          if (err) throw err;
-          const encryptedExpirationDate = await bcrypt.hash(expirationDate, SALT_ROUNDS);
-          const encryptedCardCode = await bcrypt.hash(cardCode, SALT_ROUNDS);
-
-          // Store encrypted details
+          // Transaction was successful
+  
+          // Encrypt card details
+          const encryptedCardNumber = encrypt(cardNumber);
+          const encryptedExpirationDate = encrypt(expirationDate);
+          const encryptedCardCode = encrypt(cardCode);
+  
+          // Store encrypted details in user billing
           user.billing = {
-            cardNumber: encryptedCardNumber,
-            expirationDate: encryptedExpirationDate,
-            cardCode: encryptedCardCode,
-            address,
-            city,
-            state,
-            zip,
-            country,
+              cardNumber: encryptedCardNumber,
+              expirationDate: encryptedExpirationDate,
+              cardCode: encryptedCardCode,
+              address,
+              city,
+              state,
+              zip,
+              country,
           };
-
+  
           // Add tokens to the user's account
           user.tokens = (parseInt(user.tokens, 10) + parseInt(amount, 10)).toString();
-
+  
           await user.save();
-
+  
           return res.status(200).json({
-            message: 'Payment processed and user updated successfully',
-            transactionId: transactionResponse.transId?.[0],
-            authCode: transactionResponse.authCode?.[0],
+              message: 'Payment processed and user updated successfully',
+              transactionId: transactionResponse.transId?.[0],
+              authCode: transactionResponse.authCode?.[0],
           });
-        });
       } else {
         // Transaction failed, handle the failure case
         const errorMessage = transactionResponse?.messages?.[0]?.message?.[0]?.description || 'Unknown error';
