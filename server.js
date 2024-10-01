@@ -20,8 +20,6 @@ const axios = require('axios');
 const fetch = require('node-fetch');
 const xml2js = require('xml2js');
 
-const ENCRYPTION_KEY = process.env.ENCRYPTION_KEY; // Ensure it's 32 bytes for AES-256
-const IV_LENGTH = 16;
 
 app.use(express.json());
 
@@ -1025,23 +1023,9 @@ app.post('/match/addRoundResults/:id', async (req, res) => {
 
 
 
-function encrypt(text) {
-  let iv = crypto.randomBytes(IV_LENGTH);
-  let cipher = crypto.createCipheriv('aes-256-cbc', Buffer.from(ENCRYPTION_KEY), iv);
-  let encrypted = cipher.update(text);
-  encrypted = Buffer.concat([encrypted, cipher.final()]);
-  return iv.toString('hex') + ':' + encrypted.toString('hex');
-}
 
-function decrypt(text) {
-  let parts = text.split(':');
-  let iv = Buffer.from(parts.shift(), 'hex');
-  let encryptedText = Buffer.from(parts.join(':'), 'hex');
-  let decipher = crypto.createDecipheriv('aes-256-cbc', Buffer.from(ENCRYPTION_KEY), iv);
-  let decrypted = decipher.update(encryptedText);
-  decrypted = Buffer.concat([decrypted, decipher.final()]);
-  return decrypted.toString();
-}
+
+
 
 
 
@@ -1053,7 +1037,7 @@ const userSchema = new mongoose.Schema({
   lastName: String,
   playerName: String,
   zipCode: String,
-  tokens: { type: String, default: '0' }, // Tokens stored as a string
+  tokens: String,
   email: String,
   phone: String,
   shortBio: String,
@@ -1065,49 +1049,29 @@ const userSchema = new mongoose.Schema({
   verificationToken: String,
   verified: { type: Boolean, default: false },
   profileUrl: String,
-  currentPlan: { type: String, default: 'None' }, 
-  freePlanExpiryDate: Date, 
-  hasAvailedFreePlan: { type: Boolean, default: false }, 
+  currentPlan: { type: String, default: 'None' }, // Current subscription plan
+  freePlanExpiryDate: Date, // Date when the free plan expires
+  hasAvailedFreePlan: { type: Boolean, default: false }, // Indicates if the user has availed the free plan
   preferredPaymentMethod: String,
   preferredPaymentMethodValue: String,
   billing: {
-    cardNumber: { 
-      type: String,
-      set: encrypt, // Encrypt card number before storing
-      get: decrypt, // Decrypt when retrieved
-    },
-    expirationDate: String,
-    cardCode: { 
-      type: String,
-      set: encrypt,
-      get: decrypt,
-    },
-    billingAddress: {
-      address: String,
-      city: String,
-      state: String,
-      zip: String,
-      country: String,
-    }
   },
+
 }, { timestamps: true });
 
-
 const User = mongoose.model('User', userSchema);
-
-
 app.post('/api/authorize-net/transaction', async (req, res) => {
   const { amount, cardNumber, expirationDate, cardCode, customerId, firstName, lastName, email, address, city, state, zip, country } = req.body;
 
   // Construct the XML request payload for Authorize.Net
   const payload = {
-    $: { 'xmlns': 'AnetApi/xml/v1/schema/AnetApiSchema.xsd' },
+    $: { 'xmlns': 'AnetApi/xml/v1/schema/AnetApiSchema.xsd' }, // Add namespace
     merchantAuthentication: {
       name: process.env.AUTHORIZE_NET_API_LOGIN_ID,
       transactionKey: process.env.AUTHORIZE_NET_TRANSACTION_KEY,
     },
     transactionRequest: {
-      transactionType: 'authCaptureTransaction',
+      transactionType: 'authCaptureTransaction', // or 'authOnlyTransaction' depending on the use case
       amount: amount,
       payment: {
         creditCard: {
@@ -1117,12 +1081,12 @@ app.post('/api/authorize-net/transaction', async (req, res) => {
         },
       },
       order: {
-        invoiceNumber: `INV-${new Date().getTime()}`,
+        invoiceNumber: `INV-${new Date().getTime()}`,  // Example for generating a unique invoice number
         description: 'Purchase description here',
       },
       customer: {
-        id: customerId,
-        email: email,
+        id: customerId, // Optional customer ID for tracking purposes
+        email: email,   // User email address
       },
       billTo: {
         firstName: firstName,
@@ -1133,6 +1097,16 @@ app.post('/api/authorize-net/transaction', async (req, res) => {
         zip: zip,
         country: country,
       },
+      shipTo: { // Optional, if shipping details are different from billing
+        firstName: firstName,
+        lastName: lastName,
+        address: address,
+        city: city,
+        state: state,
+        zip: zip,
+        country: country,
+      },
+   
     },
   };
 
@@ -1140,69 +1114,17 @@ app.post('/api/authorize-net/transaction', async (req, res) => {
 
   try {
     const response = await axios.post('https://apitest.authorize.net/xml/v1/request.api', xmlPayload, {
-      headers: { 'Content-Type': 'application/xml' },
+      headers: {
+        'Content-Type': 'application/xml',
+      },
     });
 
-    // Log the entire response to debug
-    console.log(response.data);
-
-    const responseData = response.data;
-
-    // Ensure transactionResponse exists before trying to access responseCode
-    if (responseData.transactionResponse && responseData.transactionResponse.responseCode === '1') {
-      const tokensToAdd = amount.toString(); // Convert the amount to string
-
-      // Find the user and update their tokens and billing details
-      let user = await User.findOne({ _id: customerId });
-      if (!user) {
-        // If user doesn't exist, create a new one
-        user = new User({
-          firstName,
-          lastName,
-          email,
-          billing: {
-            cardNumber,
-            expirationDate,
-            cardCode,
-            billingAddress: { address, city, state, zip, country },
-          },
-          tokens: tokensToAdd, // Set tokens as string
-        });
-      } else {
-        // If the user exists, update their token balance (string concatenation)
-        user.tokens = (parseFloat(user.tokens) + parseFloat(tokensToAdd)).toString();
-        user.billing.cardNumber = cardNumber;
-        user.billing.expirationDate = expirationDate;
-        user.billing.cardCode = cardCode;
-        user.billing.billingAddress = { address, city, state, zip, country };
-      }
-
-      // Save the user
-      await user.save();
-
-      // Send success response
-      return res.send({ message: 'Transaction successful', user });
-    } else {
-      // Handle transaction failure
-      return res.status(400).json({ message: 'Transaction failed', details: responseData.transactionResponse?.errors || 'Unknown error' });
-    }
+    return res.send(response.data);
   } catch (error) {
     console.error('Error sending request to Authorize.Net:', error.response?.data || error.message);
     return res.status(500).json({ message: 'Error processing transaction', error: error.message });
   }
 });
-
-
-
-
-
-
-
-
-
-
-
-
 
 
 
