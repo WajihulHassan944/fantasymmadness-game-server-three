@@ -1030,13 +1030,16 @@ app.post('/match/addRoundResults/:id', async (req, res) => {
 
 // Function to encrypt card details
 function encrypt(text) {
+  // Generate random Initialization Vector
   const iv = crypto.randomBytes(IV_LENGTH);
   const cipher = crypto.createCipheriv(ALGORITHM, Buffer.from(ENCRYPTION_KEY), iv);
-  let encrypted = cipher.update(text);
-  encrypted = Buffer.concat([encrypted, cipher.final()]);
-  return iv.toString('hex') + ':' + encrypted.toString('hex');
-}
 
+  let encrypted = cipher.update(text, 'utf8', 'hex');
+  encrypted += cipher.final('hex');
+
+  // Return the IV and encrypted data
+  return iv.toString('hex') + ':' + encrypted;
+}
 // Function to decrypt card details
 function decrypt(text) {
   const parts = text.split(':');
@@ -1157,12 +1160,16 @@ app.post('/api/authorize-net/first-payment', async (req, res) => {
       if (responseCode === '1') {
           // Transaction was successful
   
-        
+          // Encrypt card details
+          const encryptedCardNumber = encrypt(cardNumber);
+          const encryptedExpirationDate = encrypt(expirationDate);
+          const encryptedCardCode = encrypt(cardCode);
+  
           // Store encrypted details in user billing
           user.billing = {
-              cardNumber: cardNumber,
-              expirationDate: expirationDate,
-              cardCode: cardCode,
+              cardNumber: encryptedCardNumber,
+              expirationDate: encryptedExpirationDate,
+              cardCode: encryptedCardCode,
               address,
               city,
               state,
