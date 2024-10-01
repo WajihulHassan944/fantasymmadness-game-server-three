@@ -1027,7 +1027,7 @@ app.post('/match/addRoundResults/:id', async (req, res) => {
 // Function to encrypt card details
 const encrypt = (text) => {
   try {
-    
+
     const iv = crypto.randomBytes(IV_LENGTH);
     const cipher = crypto.createCipheriv(ALGORITHM, Buffer.from(ENCRYPTION_KEY), iv);
 
@@ -1211,8 +1211,6 @@ app.post('/api/authorize-net/first-payment', async (req, res) => {
   }
 });
 
-
-
 app.post('/api/authorize-net/transaction', async (req, res) => {
   const { email, amount } = req.body;
 
@@ -1221,10 +1219,11 @@ app.post('/api/authorize-net/transaction', async (req, res) => {
     if (!user) return res.status(404).json({ message: 'User not found' });
 
     // Decrypt card details
-    const cardNumber = await bcrypt.compare(req.body.cardNumber, user.billing.cardNumber) ? req.body.cardNumber : null;
-    const expirationDate = await bcrypt.compare(req.body.expirationDate, user.billing.expirationDate) ? req.body.expirationDate : null;
-    const cardCode = await bcrypt.compare(req.body.cardCode, user.billing.cardCode) ? req.body.cardCode : null;
+    const cardNumber = decrypt(user.billing.cardNumber);
+    const expirationDate = decrypt(user.billing.expirationDate);
+    const cardCode = decrypt(user.billing.cardCode);
 
+    // Check if decryption was successful
     if (!cardNumber || !expirationDate || !cardCode) {
       return res.status(400).json({ message: 'Invalid card details' });
     }
@@ -1267,6 +1266,7 @@ app.post('/api/authorize-net/transaction', async (req, res) => {
 
     const xmlPayload = builder.buildObject(payload);
 
+    // Send the transaction request to Authorize.Net
     const response = await axios.post('https://apitest.authorize.net/xml/v1/request.api', xmlPayload, {
       headers: {
         'Content-Type': 'application/xml',
@@ -1283,7 +1283,6 @@ app.post('/api/authorize-net/transaction', async (req, res) => {
     return res.status(500).json({ message: 'Error processing transaction', error: error.message });
   }
 });
-
 
 // Google Login API
 app.post('/google-login', async (req, res) => {
