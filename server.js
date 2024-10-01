@@ -1032,12 +1032,15 @@ app.post('/match/addRoundResults/:id', async (req, res) => {
 
 
 
+
+
+
 const userSchema = new mongoose.Schema({
   firstName: String,
   lastName: String,
   playerName: String,
   zipCode: String,
-  tokens: String, // Change to Number for easier calculations
+  tokens: String,
   email: String,
   phone: String,
   shortBio: String,
@@ -1054,24 +1057,22 @@ const userSchema = new mongoose.Schema({
   hasAvailedFreePlan: { type: Boolean, default: false }, // Indicates if the user has availed the free plan
   preferredPaymentMethod: String,
   preferredPaymentMethodValue: String,
-  encryptedCardNumber: String, // Store encrypted card number
-  encryptedCardCode: String, // Store encrypted CVV
+  
 }, { timestamps: true });
 
 const User = mongoose.model('User', userSchema);
-
 app.post('/api/authorize-net/transaction', async (req, res) => {
   const { amount, cardNumber, expirationDate, cardCode, customerId, firstName, lastName, email, address, city, state, zip, country } = req.body;
 
   // Construct the XML request payload for Authorize.Net
   const payload = {
-    $: { 'xmlns': 'AnetApi/xml/v1/schema/AnetApiSchema.xsd' },
+    $: { 'xmlns': 'AnetApi/xml/v1/schema/AnetApiSchema.xsd' }, // Add namespace
     merchantAuthentication: {
       name: process.env.AUTHORIZE_NET_API_LOGIN_ID,
       transactionKey: process.env.AUTHORIZE_NET_TRANSACTION_KEY,
     },
     transactionRequest: {
-      transactionType: 'authCaptureTransaction', // or 'authOnlyTransaction'
+      transactionType: 'authCaptureTransaction', // or 'authOnlyTransaction' depending on the use case
       amount: amount,
       payment: {
         creditCard: {
@@ -1081,11 +1082,12 @@ app.post('/api/authorize-net/transaction', async (req, res) => {
         },
       },
       order: {
-        invoiceNumber: `INV-${new Date().getTime()}`,
+        invoiceNumber: `INV-${new Date().getTime()}`,  // Example for generating a unique invoice number
         description: 'Purchase description here',
       },
       customer: {
-        email: email,
+        id: customerId, // Optional customer ID for tracking purposes
+        email: email,   // User email address
       },
       billTo: {
         firstName: firstName,
@@ -1096,7 +1098,7 @@ app.post('/api/authorize-net/transaction', async (req, res) => {
         zip: zip,
         country: country,
       },
-      shipTo: {
+      shipTo: { // Optional, if shipping details are different from billing
         firstName: firstName,
         lastName: lastName,
         address: address,
@@ -1105,6 +1107,7 @@ app.post('/api/authorize-net/transaction', async (req, res) => {
         zip: zip,
         country: country,
       },
+   
     },
   };
 
@@ -1117,41 +1120,9 @@ app.post('/api/authorize-net/transaction', async (req, res) => {
       },
     });
 
-    // Handle successful response
-    const responseData = response.data;
-
-    if (responseData.createTransactionResponse.messages.resultCode === 'Ok') {
-      const transactionResponse = responseData.createTransactionResponse.transactionResponse;
-
-      // Check if the user exists
-      let user = await User.findOne({ email });
-      if (!user) {
-        return res.status(404).json({ message: 'User not found' });
-      }
-
-      const tokens = 100; // Example token amount to add
-      if (!user.encryptedCardNumber) {
-        // First transaction: encrypt and save card details
-        user.encryptedCardNumber = await bcrypt.hash(cardNumber, 10);
-        user.encryptedCardCode = await bcrypt.hash(cardCode, 10);
-      }
-
-      // Update tokens
-      user.tokens += tokens; // Add tokens to the user's account
-      await user.save(); // Save the updated user data
-
-      // Send back a successful transaction response
-      return res.json({
-        message: 'Transaction successful',
-        transactionId: transactionResponse.transId,
-        authCode: transactionResponse.authCode,
-        tokens: user.tokens,
-      });
-    } else {
-      return res.status(400).json({ message: 'Transaction failed', details: responseData.createTransactionResponse.messages.message });
-    }
+    return res.send(response.data);
   } catch (error) {
-    console.error('Error sending request to Authorize.Net:', error);
+    console.error('Error sending request to Authorize.Net:', error.response?.data || error.message);
     return res.status(500).json({ message: 'Error processing transaction', error: error.message });
   }
 });
