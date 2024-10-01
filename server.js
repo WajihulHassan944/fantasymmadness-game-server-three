@@ -1176,14 +1176,7 @@ if (!user.billing.cardNumber) {
 
     // Check if the transaction was successful
     if (responseData.transactionResponse.responseCode === '1') {
-      const tokensToAdd = amount.toString(); // Convert the amount to string
-
-      // Update user's token balance
-      user.tokens = (parseFloat(user.tokens) + parseFloat(tokensToAdd)).toString();
-      
-      // Save the user
-      await user.save();
-
+    
       // Send success response
       return res.send({ message: 'Transaction successful', user });
     } else {
