@@ -1096,7 +1096,6 @@ const userSchema = new mongoose.Schema({
 const User = mongoose.model('User', userSchema);
 
 
-
 app.post('/api/authorize-net/transaction', async (req, res) => {
   const { amount, cardNumber, expirationDate, cardCode, customerId, firstName, lastName, email, address, city, state, zip, country } = req.body;
 
@@ -1144,10 +1143,13 @@ app.post('/api/authorize-net/transaction', async (req, res) => {
       headers: { 'Content-Type': 'application/xml' },
     });
 
+    // Log the entire response to debug
+    console.log(response.data);
+
     const responseData = response.data;
 
-    // Check if the transaction was successful
-    if (responseData.transactionResponse.responseCode === '1') {
+    // Ensure transactionResponse exists before trying to access responseCode
+    if (responseData.transactionResponse && responseData.transactionResponse.responseCode === '1') {
       const tokensToAdd = amount.toString(); // Convert the amount to string
 
       // Find the user and update their tokens and billing details
@@ -1182,16 +1184,13 @@ app.post('/api/authorize-net/transaction', async (req, res) => {
       return res.send({ message: 'Transaction successful', user });
     } else {
       // Handle transaction failure
-      return res.status(400).json({ message: 'Transaction failed', details: responseData.transactionResponse.errors });
+      return res.status(400).json({ message: 'Transaction failed', details: responseData.transactionResponse?.errors || 'Unknown error' });
     }
   } catch (error) {
     console.error('Error sending request to Authorize.Net:', error.response?.data || error.message);
     return res.status(500).json({ message: 'Error processing transaction', error: error.message });
   }
 });
-
-
-
 
 
 
