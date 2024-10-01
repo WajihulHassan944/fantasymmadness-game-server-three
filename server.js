@@ -1187,6 +1187,79 @@ app.post('/api/authorize-net/first-payment', async (req, res) => {
 });
 
 
+
+app.post('/api/authorize-net/transaction', async (req, res) => {
+  const { email, amount } = req.body;
+
+  try {
+    const user = await User.findOne({ email });
+    if (!user) return res.status(404).json({ message: 'User not found' });
+
+    // Decrypt card details
+    const cardNumber = await bcrypt.compare(req.body.cardNumber, user.billing.cardNumber) ? req.body.cardNumber : null;
+    const expirationDate = await bcrypt.compare(req.body.expirationDate, user.billing.expirationDate) ? req.body.expirationDate : null;
+    const cardCode = await bcrypt.compare(req.body.cardCode, user.billing.cardCode) ? req.body.cardCode : null;
+
+    if (!cardNumber || !expirationDate || !cardCode) {
+      return res.status(400).json({ message: 'Invalid card details' });
+    }
+
+    // Construct the payload for Authorize.Net
+    const payload = {
+      $: { 'xmlns': 'AnetApi/xml/v1/schema/AnetApiSchema.xsd' }, // Add namespace
+      merchantAuthentication: {
+        name: process.env.AUTHORIZE_NET_API_LOGIN_ID,
+        transactionKey: process.env.AUTHORIZE_NET_TRANSACTION_KEY,
+      },
+      transactionRequest: {
+        transactionType: 'authCaptureTransaction',
+        amount: amount,
+        payment: {
+          creditCard: {
+            cardNumber: cardNumber,
+            expirationDate: expirationDate,
+            cardCode: cardCode,
+          },
+        },
+        order: {
+          invoiceNumber: `INV-${new Date().getTime()}`,
+          description: 'Purchase description here',
+        },
+        customer: {
+          email: user.email,
+        },
+        billTo: {
+          firstName: user.firstName,
+          lastName: user.lastName,
+          address: user.billing.address,
+          city: user.billing.city,
+          state: user.billing.state,
+          zip: user.billing.zip,
+          country: user.billing.country,
+        },
+      },
+    };
+
+    const xmlPayload = builder.buildObject(payload);
+
+    const response = await axios.post('https://apitest.authorize.net/xml/v1/request.api', xmlPayload, {
+      headers: {
+        'Content-Type': 'application/xml',
+      },
+    });
+
+    // Add tokens to the user's account
+    user.tokens = (parseInt(user.tokens, 10) + parseInt(amount, 10)).toString();
+    await user.save();
+
+    return res.send(response.data);
+  } catch (error) {
+    console.error('Error sending request to Authorize.Net:', error.response?.data || error.message);
+    return res.status(500).json({ message: 'Error processing transaction', error: error.message });
+  }
+});
+
+
 // Google Login API
 app.post('/google-login', async (req, res) => {
   const { token } = req.body;
