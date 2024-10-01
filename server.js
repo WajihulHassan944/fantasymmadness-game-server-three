@@ -1277,7 +1277,10 @@ app.post('/api/authorize-net/transaction', async (req, res) => {
     user.tokens = (parseInt(user.tokens, 10) + parseInt(amount, 10)).toString();
     await user.save();
 
-    return res.send(response.data);
+    return res.json({
+      status: 'success',
+      transaction: response.data,
+    });
   } catch (error) {
     console.error('Error sending request to Authorize.Net:', error.response?.data || error.message);
     return res.status(500).json({ message: 'Error processing transaction', error: error.message });
