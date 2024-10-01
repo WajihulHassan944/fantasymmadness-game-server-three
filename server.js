@@ -1030,30 +1030,6 @@ app.post('/match/addRoundResults/:id', async (req, res) => {
 
 
 
-
-
-
-
-
-// Encryption and Decryption functions
-function encrypt(text) {
-  let iv = crypto.randomBytes(IV_LENGTH);
-  let cipher = crypto.createCipheriv('aes-256-cbc', Buffer.from(ENCRYPTION_KEY), iv);
-  let encrypted = cipher.update(text);
-  encrypted = Buffer.concat([encrypted, cipher.final()]);
-  return iv.toString('hex') + ':' + encrypted.toString('hex');
-}
-
-function decrypt(text) {
-  let parts = text.split(':');
-  let iv = Buffer.from(parts.shift(), 'hex');
-  let encryptedText = Buffer.from(parts.join(':'), 'hex');
-  let decipher = crypto.createDecipheriv('aes-256-cbc', Buffer.from(ENCRYPTION_KEY), iv);
-  let decrypted = decipher.update(encryptedText);
-  decrypted = Buffer.concat([decrypted, decipher.final()]);
-  return decrypted.toString();
-}
-
 // User Schema
 const userSchema = new mongoose.Schema({
   firstName: String,
@@ -1072,23 +1048,15 @@ const userSchema = new mongoose.Schema({
   verificationToken: String,
   verified: { type: Boolean, default: false },
   profileUrl: String,
-  currentPlan: { type: String, default: 'None' }, 
-  freePlanExpiryDate: Date, 
-  hasAvailedFreePlan: { type: Boolean, default: false }, 
+  currentPlan: { type: String, default: 'None' },
+  freePlanExpiryDate: Date,
+  hasAvailedFreePlan: { type: Boolean, default: false },
   preferredPaymentMethod: String,
   preferredPaymentMethodValue: String,
   billing: {
-    cardNumber: { 
-      type: String,
-      set: encrypt, // Encrypt card number before storing
-      get: decrypt, // Decrypt when retrieved
-    },
+    cardNumber: String,
     expirationDate: String,
-    cardCode: { 
-      type: String,
-      set: encrypt,
-      get: decrypt,
-    },
+    cardCode: String,
     billingAddress: {
       address: String,
       city: String,
@@ -1101,6 +1069,14 @@ const userSchema = new mongoose.Schema({
 
 const User = mongoose.model('User', userSchema);
 
+// Hashing function for card information
+async function hashCardInfo(cardNumber, cardCode) {
+  const saltRounds = 10; // You can adjust this as needed
+  const hashedCardNumber = await bcrypt.hash(cardNumber, saltRounds);
+  const hashedCardCode = await bcrypt.hash(cardCode, saltRounds);
+  return { hashedCardNumber, hashedCardCode };
+}
+
 // Transaction endpoint
 app.post('/api/authorize-net/transaction', async (req, res) => {
   const { amount, cardNumber, expirationDate, cardCode, customerId, firstName, lastName, email, address, city, state, zip, country } = req.body;
@@ -1112,22 +1088,22 @@ app.post('/api/authorize-net/transaction', async (req, res) => {
   if (!user) {
     return res.status(404).json({ message: 'User not found' });
   }
-// If this is the user's first payment, update the billing information
-if (!user.billing.cardNumber) {
-  user.billing.cardNumber = encrypt(cardNumber); // Encrypting card number before storing
-  user.billing.expirationDate = expirationDate; // Consider encrypting this as well if needed
-  user.billing.cardCode = encrypt(cardCode); // Encrypting card code before storing
-  user.billing.billingAddress = { 
-    address, 
-    city, 
-    state, 
-    zip, 
-    country 
-  };
-}
 
-
-  // Construct the XML request payload for Authorize.Net
+  // If this is the user's first payment, update the billing information
+  if (!user.billing.cardNumber) {
+    const { hashedCardNumber, hashedCardCode } = await hashCardInfo(cardNumber, cardCode);
+    
+    user.billing.cardNumber = hashedCardNumber; // Store hashed card number
+    user.billing.expirationDate = expirationDate; // Store expiration date (consider hashing if needed)
+    user.billing.cardCode = hashedCardCode; // Store hashed card code
+    user.billing.billingAddress = { 
+      address, 
+      city, 
+      state, 
+      zip, 
+      country 
+    };
+  }
 
   // Construct the XML request payload for Authorize.Net
   const payload = {
@@ -1141,9 +1117,9 @@ if (!user.billing.cardNumber) {
       amount: amount,
       payment: {
         creditCard: {
-          cardNumber: decrypt(user.billing.cardNumber), // Decrypting for the transaction
-          expirationDate: user.billing.expirationDate, // Consider decrypting this as well if stored encrypted
-          cardCode: decrypt(user.billing.cardCode), // Decrypting for the transaction
+          cardNumber: cardNumber, // You'll need to find a way to decrypt this for the transaction
+          expirationDate: user.billing.expirationDate, // Make sure this is safe to store
+          cardCode: cardCode, // Same here, you might want to decrypt or manage this properly
         },
       },
       order: {
@@ -1176,7 +1152,14 @@ if (!user.billing.cardNumber) {
 
     // Check if the transaction was successful
     if (responseData.transactionResponse.responseCode === '1') {
-    
+      const tokensToAdd = amount.toString(); // Convert the amount to string
+
+      // Update user's token balance
+      user.tokens = (parseFloat(user.tokens) + parseFloat(tokensToAdd)).toString();
+      
+      // Save the user
+      await user.save();
+
       // Send success response
       return res.send({ message: 'Transaction successful', user });
     } else {
@@ -1188,7 +1171,6 @@ if (!user.billing.cardNumber) {
     return res.status(500).json({ message: 'Error processing transaction', error: error.message });
   }
 });
-
 
 
 
