@@ -1032,16 +1032,15 @@ app.post('/match/addRoundResults/:id', async (req, res) => {
 
 
 
-
-
+const SALT_ROUNDS = 10;
 
 const userSchema = new mongoose.Schema({
   firstName: String,
   lastName: String,
   playerName: String,
   zipCode: String,
-  tokens: String,
-  email: String,
+  tokens: String, // Keeping tokens as a string
+  email: { type: String, required: true, unique: true },
   phone: String,
   shortBio: String,
   password: String,
@@ -1057,73 +1056,102 @@ const userSchema = new mongoose.Schema({
   hasAvailedFreePlan: { type: Boolean, default: false }, // Indicates if the user has availed the free plan
   preferredPaymentMethod: String,
   preferredPaymentMethodValue: String,
-  
+  billing: {
+    cardNumber: { type: String },  // Encrypted
+    expirationDate: { type: String },  // Encrypted
+    cardCode: { type: String },  // Encrypted
+    address: String,
+    city: String,
+    state: String,
+    zip: String,
+    country: String
+  },
 }, { timestamps: true });
 
 const User = mongoose.model('User', userSchema);
-app.post('/api/authorize-net/transaction', async (req, res) => {
-  const { amount, cardNumber, expirationDate, cardCode, customerId, firstName, lastName, email, address, city, state, zip, country } = req.body;
 
-  // Construct the XML request payload for Authorize.Net
-  const payload = {
-    $: { 'xmlns': 'AnetApi/xml/v1/schema/AnetApiSchema.xsd' }, // Add namespace
-    merchantAuthentication: {
-      name: process.env.AUTHORIZE_NET_API_LOGIN_ID,
-      transactionKey: process.env.AUTHORIZE_NET_TRANSACTION_KEY,
-    },
-    transactionRequest: {
-      transactionType: 'authCaptureTransaction', // or 'authOnlyTransaction' depending on the use case
-      amount: amount,
-      payment: {
-        creditCard: {
-          cardNumber: cardNumber,
-          expirationDate: expirationDate,
-          cardCode: cardCode,
-        },
-      },
-      order: {
-        invoiceNumber: `INV-${new Date().getTime()}`,  // Example for generating a unique invoice number
-        description: 'Purchase description here',
-      },
-      customer: {
-        id: customerId, // Optional customer ID for tracking purposes
-        email: email,   // User email address
-      },
-      billTo: {
-        firstName: firstName,
-        lastName: lastName,
-        address: address,
-        city: city,
-        state: state,
-        zip: zip,
-        country: country,
-      },
-      shipTo: { // Optional, if shipping details are different from billing
-        firstName: firstName,
-        lastName: lastName,
-        address: address,
-        city: city,
-        state: state,
-        zip: zip,
-        country: country,
-      },
-   
-    },
-  };
 
-  const xmlPayload = builder.buildObject(payload);
+app.post('/api/authorize-net/first-payment', async (req, res) => {
+  const { email, amount, cardNumber, expirationDate, cardCode, address, city, state, zip, country } = req.body;
 
   try {
+    const user = await User.findOne({ email });
+    if (!user) return res.status(404).json({ message: 'User not found' });
+
+    // Construct the XML payload for Authorize.Net
+    const payload = {
+      $: { 'xmlns': 'AnetApi/xml/v1/schema/AnetApiSchema.xsd' }, // Add namespace
+      merchantAuthentication: {
+        name: process.env.AUTHORIZE_NET_API_LOGIN_ID,
+        transactionKey: process.env.AUTHORIZE_NET_TRANSACTION_KEY,
+      },
+      transactionRequest: {
+        transactionType: 'authCaptureTransaction', // or 'authOnlyTransaction'
+        amount: amount,
+        payment: {
+          creditCard: {
+            cardNumber: cardNumber,
+            expirationDate: expirationDate,
+            cardCode: cardCode,
+          },
+        },
+        order: {
+          invoiceNumber: `INV-${new Date().getTime()}`,
+          description: 'First-time payment',
+        },
+        customer: {
+          email: email,
+        },
+        billTo: {
+          firstName: user.firstName,
+          lastName: user.lastName,
+          address: address,
+          city: city,
+          state: state,
+          zip: zip,
+          country: country,
+        },
+      },
+    };
+
+    const xmlPayload = builder.buildObject(payload);
+
+    // Send the transaction request to Authorize.Net
     const response = await axios.post('https://apitest.authorize.net/xml/v1/request.api', xmlPayload, {
       headers: {
         'Content-Type': 'application/xml',
       },
     });
 
-    return res.send(response.data);
+    // Check if the response indicates success
+    if (response.data && response.data.createTransactionResponse && response.data.createTransactionResponse.transactionResponse.responseCode === '1') {
+      // Encrypt card details
+      const encryptedCardNumber = await bcrypt.hash(cardNumber, SALT_ROUNDS);
+      const encryptedExpirationDate = await bcrypt.hash(expirationDate, SALT_ROUNDS);
+      const encryptedCardCode = await bcrypt.hash(cardCode, SALT_ROUNDS);
+
+      // Store encrypted details
+      user.billing.cardNumber = encryptedCardNumber;
+      user.billing.expirationDate = encryptedExpirationDate;
+      user.billing.cardCode = encryptedCardCode;
+      user.billing.address = address;
+      user.billing.city = city;
+      user.billing.state = state;
+      user.billing.zip = zip;
+      user.billing.country = country;
+
+      // Add tokens to the user's account
+      user.tokens = (parseInt(user.tokens, 10) + parseInt(amount, 10)).toString();
+
+      await user.save();
+
+      return res.status(200).json({ message: 'Payment processed and user updated successfully', transactionId: response.data.createTransactionResponse.transactionResponse.transId });
+    } else {
+      return res.status(400).json({ message: 'Payment failed', details: response.data });
+    }
   } catch (error) {
-    console.error('Error sending request to Authorize.Net:', error.response?.data || error.message);
-    return res.status(500).json({ message: 'Error processing transaction', error: error.message });
+    console.error('Error processing first payment:', error);
+    return res.status(500).json({ message: 'Error processing payment', error: error.message });
   }
 });
 
