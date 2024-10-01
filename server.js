@@ -1049,7 +1049,6 @@ userSchema.pre('save', async function (next) {
 });
 
 const User = mongoose.model('User', userSchema);
-
 // Transaction endpoint
 app.post('/api/authorize-net/transaction', async (req, res) => {
   const { amount, cardNumber, expirationDate, cardCode, customerId, firstName, lastName, email, address, city, state, zip, country } = req.body;
@@ -1088,9 +1087,9 @@ app.post('/api/authorize-net/transaction', async (req, res) => {
       amount: amount,
       payment: {
         creditCard: {
-          cardNumber: user.billing.cardNumber ? user.billing.cardNumber : cardNumber, // Send the hashed card number for comparison
-          expirationDate: expirationDate, // Consider encrypting this as well if needed
-          cardCode: user.billing.cardCode ? user.billing.cardCode : cardCode, // Send the hashed card code for comparison
+          cardNumber: user.billing.cardNumber ? user.billing.cardNumber : cardNumber,
+          expirationDate: expirationDate,
+          cardCode: user.billing.cardCode ? user.billing.cardCode : cardCode,
         },
       },
       order: {
@@ -1119,33 +1118,40 @@ app.post('/api/authorize-net/transaction', async (req, res) => {
       headers: { 'Content-Type': 'application/xml' },
     });
 
-    // Check if the transaction was successful
-    if (response.data.transactionResponse.responseCode === '1') {
-      // If this is the user's first payment, hash and save billing info
-      if (!user.billing.cardNumber) {
-        user.billing.cardNumber = await bcrypt.hash(cardNumber, 10); // Hash the card number
-        user.billing.cardCode = await bcrypt.hash(cardCode, 10); // Hash the card code
+    // Check if response structure is valid before accessing it
+    if (response.data && response.data.transactionResponse) {
+      const transactionResponse = response.data.transactionResponse;
+
+      // Check if the transaction was successful
+      if (transactionResponse.responseCode === '1') {
+        // If this is the user's first payment, hash and save billing info
+        if (!user.billing.cardNumber) {
+          user.billing.cardNumber = await bcrypt.hash(cardNumber, 10);
+          user.billing.cardCode = await bcrypt.hash(cardCode, 10);
+        }
+
+        const tokensToAdd = amount.toString(); // Convert the amount to string
+        // Add tokens to the user's account
+        user.tokens = parseInt(user.tokens, 10) + parseInt(tokensToAdd, 10); // Update tokens
+        
+        // Save the user
+        await user.save();
+
+        // Send success response
+        return res.send({ message: 'Transaction successful', user });
+      } else {
+        // Handle transaction failure
+        return res.status(400).json({ message: 'Transaction failed', details: transactionResponse.errors });
       }
-
-      const tokensToAdd = amount.toString(); // Convert the amount to string
-      // Add tokens to the user's account
-      user.tokens = parseInt(user.tokens, 10) + parseInt(tokensToAdd, 10); // Update tokens
-      
-      // Save the user
-      await user.save();
-
-      // Send success response
-      return res.send({ message: 'Transaction successful', user });
     } else {
-      // Handle transaction failure
-      return res.status(400).json({ message: 'Transaction failed', details: response.data.transactionResponse.errors });
+      // If the response doesn't have the expected structure
+      return res.status(500).json({ message: 'Unexpected response format', response });
     }
   } catch (error) {
     console.error('Error sending request to Authorize.Net:', error.response?.data || error.message);
     return res.status(500).json({ message: 'Error processing transaction', error: error.message });
   }
 });
-
 
 
 
