@@ -1210,7 +1210,6 @@ app.post('/api/authorize-net/first-payment', async (req, res) => {
     return res.status(500).json({ message: 'Error processing payment', error: error.message });
   }
 });
-
 app.post('/api/authorize-net/transaction', async (req, res) => {
   const { email, amount } = req.body;
 
@@ -1273,16 +1272,39 @@ app.post('/api/authorize-net/transaction', async (req, res) => {
       },
     });
 
-    // Add tokens to the user's account
-    user.tokens = (parseInt(user.tokens, 10) + parseInt(amount, 10)).toString();
-    await user.save();
+    // Parse XML response
+    xml2js.parseString(response.data, async (err, result) => {
+      if (err) {
+        console.error('Error parsing XML response:', err);
+        return res.status(500).json({ message: 'Error parsing transaction response' });
+      }
 
-    return res.json({
-      status: 'success',
-      transaction: response.data,
+      const createTransactionResponse = result.createTransactionResponse;
+      const transactionResponse = createTransactionResponse?.transactionResponse?.[0];
+      const responseCode = transactionResponse?.responseCode?.[0];
+
+      if (responseCode === '1') {
+        // Transaction was successful
+        user.tokens = (parseInt(user.tokens, 10) + parseInt(amount, 10)).toString();
+        await user.save();
+
+        return res.status(200).json({
+          message: 'Transaction successful and tokens added',
+          transactionId: transactionResponse.transId?.[0],
+          authCode: transactionResponse.authCode?.[0],
+        });
+      } else {
+        // Transaction failed
+        const errorMessage = transactionResponse?.messages?.[0]?.message?.[0]?.description || 'Unknown error';
+        console.log('Authorize.Net transaction failed:', errorMessage);
+        return res.status(400).json({
+          message: 'Transaction failed',
+          details: errorMessage,
+        });
+      }
     });
   } catch (error) {
-    console.error('Error sending request to Authorize.Net:', error.response?.data || error.message);
+    console.error('Error processing transaction:', error.response?.data || error.message);
     return res.status(500).json({ message: 'Error processing transaction', error: error.message });
   }
 });
