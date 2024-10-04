@@ -709,7 +709,7 @@ const newMatch = new Match(matchData);
   
   const mailPromises = users.map(user => {
     const mailOptions = {
-      from: 'vascularbundle43@gmail.com',
+      from: 'Fantasymmadness2@gmail.com',
       to: user.email,
       subject: 'Fantasy mmadness',
    html: `
@@ -1506,8 +1506,8 @@ app.get('/users', async (req, res) => {
 const transporter = nodemailer.createTransport({
   service: 'Gmail',
   auth: {
-    user: 'vascularbundle43@gmail.com',
-    pass: 'mgopragxyqdftxig',
+    user: 'Fantasymmadness2@gmail.com',
+    pass: 'nxoozxaywvjzivsh',
   },
 });
 
@@ -1523,7 +1523,7 @@ app.post('/contact-us-fantasymmadness', (req, res) => {
 
   const mailOptions = {
       from: email,
-      to: 'vascularbundle43@gmail.com', // Using your email address to receive the message
+      to: 'Fantasymmadness2@gmail.com', // Using your email address to receive the message
       subject: `Contact Form Submission: ${subject}`,
       text: `Message from ${fullName} (${email}):\n\n${message}`,
   };
@@ -1550,7 +1550,7 @@ app.post('/send-emails-to-all-users', async (req, res) => {
     // Loop through each email and send the message
     for (let email of emails) {
       await transporter.sendMail({
-        from: '"Fantasy MMAdness" <vascularbundle43@gmail.com>', // sender address
+        from: '"Fantasy MMAdness" <Fantasymmadness2@gmail.com>', // sender address
         to: email, // receiver email
         subject: subject, // subject line
         text: message, // plain text body
@@ -1608,7 +1608,7 @@ app.post('/register', async (req, res) => {
       // Send failure notification email
       console.log('Attempting to send failure email...');
       const failureMailOptions = {
-        from: 'vascularbundle43@gmail.com',
+        from: 'Fantasymmadness2@gmail.com',
         to: email,
         subject: 'Verification Failed',
         html: `<p>Dear ${user.firstName},</p>
@@ -1633,7 +1633,7 @@ app.post('/register', async (req, res) => {
   // Send verification email
   const verificationLink = `https://fantasymmadness-game-server-three.vercel.app/verify-email?token=${verificationToken}`;
   const mailOptions = {
-    from: 'vascularbundle43@gmail.com',
+    from: 'Fantasymmadness2@gmail.com',
     to: email,
     subject: 'Email Verification',
     html: `<p>Thank you for registering with us. Please click the link below to verify your email address:</p>
@@ -2105,7 +2105,7 @@ app.post('/send-email-affiliate', async (req, res) => {
   try {
       // Send mail with the defined transport object
       await transporter.sendMail({
-          from: '"Fantasy mmadnress Team" <vascularbundle43@gmail.com>', // sender address
+          from: '"Fantasy mmadnress Team" <Fantasymmadness2@gmail.com>', // sender address
           to: email, // list of receivers
           subject: subject, // Subject line
           text: message, // plain text body
@@ -2553,7 +2553,7 @@ app.post('/addShadow', upload.fields([{ name: 'fighterAImage' }, { name: 'fighte
 
   const mailPromises = users.map(user => {
     const mailOptions = {
-      from: 'vascularbundle43@gmail.com',
+      from: 'Fantasymmadness2@gmail.com',
       to: user.email,
       subject: 'Fantasy MMAdness - New Fight Announcement',
       html: `
