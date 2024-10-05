@@ -481,6 +481,35 @@ const matchSchema = new mongoose.Schema({
 
 const Match = mongoose.model('Match', matchSchema);
 
+
+// POST API to update match reward status by matchId
+app.post('/api/update-match-reward', async (req, res) => {
+  try {
+    const { matchId, matchReward } = req.body;
+
+    // Validate matchReward value
+    if (!['Rewarded', 'NotRewarded'].includes(matchReward)) {
+      return res.status(400).json({ success: false, message: 'Invalid matchReward value' });
+    }
+
+    // Find the match by matchId and update the matchReward status
+    const match = await Match.findByIdAndUpdate(
+      matchId, 
+      { matchReward },
+      { new: true }
+    );
+
+    if (!match) {
+      return res.status(404).json({ success: false, message: 'Match not found' });
+    }
+
+    res.status(200).json({ success: true, message: 'Match reward status updated successfully', match });
+  } catch (error) {
+    res.status(500).json({ success: false, message: 'Server error', error });
+  }
+});
+
+
 app.get('/matchByName', async (req, res) => {
   const { matchName } = req.query;
 
