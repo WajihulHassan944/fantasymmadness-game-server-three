@@ -1942,6 +1942,7 @@ const affiliateSchema = new mongoose.Schema({
   isAgreed: Boolean,
   verified: { type: Boolean, default: false },
   profileUrl: String,
+  tokens: { type: String, default: '0' },
   preferredPaymentMethod: String, 
   preferredPaymentMethodValue: String, 
   usersJoined: [{
@@ -1953,6 +1954,35 @@ const affiliateSchema = new mongoose.Schema({
 
 
 const Affiliate = mongoose.model('Affiliate', affiliateSchema);
+
+
+// POST API to reward tokens to the user and update matchReward status
+app.post('/api/reward-tokens-to-affiliate/:affiliateId', async (req, res) => {
+  try {
+    const { affiliateId } = req.params;
+    const { tokens } = req.body;
+
+    // Find the user by ID
+    const user = await Affiliate.findById(affiliateId);
+
+    if (!user) {
+      return res.status(404).json({ message: 'User not found' });
+    }
+
+    // Add tokens to the user's account
+    user.tokens = parseInt(user.tokens, 10) + parseInt(tokens, 10);
+
+    // Save the updated user
+    await user.save();
+
+    res.status(200).json({ success: true, message: 'Tokens rewarded to affiliate successfully', user });
+  } catch (error) {
+    res.status(500).json({ success: false, message: 'Server error', error });
+  }
+});
+
+
+
 
 
 app.get('/affiliateByName', async (req, res) => {
