@@ -1935,6 +1935,26 @@ app.post('/api/reward-tokens-to-admin', async (req, res) => {
 
 
 
+// GET API to fetch all admin token details
+app.get('/api/admin-tokens', async (req, res) => {
+  try {
+    // Fetch all admin tokens from the database
+    const adminTokens = await Admintokens.find();
+
+    if (adminTokens.length === 0) {
+      return res.status(404).json({ success: false, message: 'No admin tokens found' });
+    }
+
+    // Return all admin token details
+    res.status(200).json({ 
+      success: true, 
+      message: 'Admin token data fetched successfully', 
+      adminTokens 
+    });
+  } catch (error) {
+    res.status(500).json({ success: false, message: 'Server error', error });
+  }
+});
 
 
 
