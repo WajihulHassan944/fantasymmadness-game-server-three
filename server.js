@@ -1898,8 +1898,38 @@ app.get('/profileAffiliate', verifyToken, async (req, res) => {
 
 
 
+const adminTokensSchema = new mongoose.Schema({
+  tokens: { type: String, default: '0' },
+  matchId: String, 
+  matchName: String, 
+  totalTokens: { type: String, default: '0' }, // New field to track total tokens
+}, { timestamps: true });
 
+const Admintokens = mongoose.model('Admintokens', adminTokensSchema);
 
+// POST API to reward tokens to the admin and update matchReward status
+app.post('/api/reward-tokens-to-admin', async (req, res) => {
+  try {
+    const { tokens, matchId, matchName } = req.body;
+
+    // Fetch or create an admin token document
+    let adminToken = await Admintokens.findOne({ matchId });
+
+    if (!adminToken) {
+      adminToken = new Admintokens({ matchId, matchName });
+    }
+
+    // Add tokens to the admin's account and update totalTokens
+    adminToken.tokens = (parseInt(adminToken.tokens, 10) + parseInt(tokens, 10)).toString();
+    adminToken.totalTokens = (parseInt(adminToken.totalTokens, 10) + parseInt(tokens, 10)).toString();
+
+    await adminToken.save();
+
+    res.status(200).json({ success: true, message: 'Tokens added to Admin wallet successfully', adminToken });
+  } catch (error) {
+    res.status(500).json({ success: false, message: 'Server error', error });
+  }
+});
 
 
 
