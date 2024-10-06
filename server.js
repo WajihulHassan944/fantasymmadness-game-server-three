@@ -1929,6 +1929,7 @@ app.get('/profileAffiliate', verifyToken, async (req, res) => {
 
 const adminTokensSchema = new mongoose.Schema({
   tokens: { type: String, default: '0' },
+  affiliateRewarded: { type: String, default: '0' },
   matchId: String, 
   matchName: String, 
   totalTokens: { type: String, default: '0' }, // New field to track total tokens
@@ -1939,7 +1940,7 @@ const Admintokens = mongoose.model('Admintokens', adminTokensSchema);
 // POST API to reward tokens to the admin and update matchReward status
 app.post('/api/reward-tokens-to-admin', async (req, res) => {
   try {
-    const { tokens, matchId, matchName } = req.body;
+    const { tokens, matchId, matchName, affiliateRewarded } = req.body;
 
     // Fetch or create an admin token document
     let adminToken = await Admintokens.findOne({ matchId });
@@ -1950,6 +1951,7 @@ app.post('/api/reward-tokens-to-admin', async (req, res) => {
 
     // Add tokens to the admin's account and update totalTokens
     adminToken.tokens = (parseInt(adminToken.tokens, 10) + parseInt(tokens, 10)).toString();
+    adminToken.affiliateRewarded = (parseInt(adminToken.affiliateRewarded, 10) + parseInt(affiliateRewarded, 10)).toString();
     adminToken.totalTokens = (parseInt(adminToken.totalTokens, 10) + parseInt(tokens, 10)).toString();
 
     await adminToken.save();
