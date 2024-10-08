@@ -2037,6 +2037,39 @@ const affiliateSchema = new mongoose.Schema({
 const Affiliate = mongoose.model('Affiliate', affiliateSchema);
 
 
+app.post('/affiliate/:affiliateId/remove-user', async (req, res) => {
+  const { affiliateId } = req.params;
+  const { userId } = req.body; // UserId comes from the request body
+
+  try {
+    const affiliate = await Affiliate.findById(affiliateId);
+
+    if (!affiliate) {
+      return res.status(404).json({ message: 'Affiliate not found' });
+    }
+
+    // Check if user is part of the league
+    const userExists = affiliate.usersJoined.some(user => user.userId.toString() === userId.toString());
+
+    if (!userExists) {
+      return res.status(400).json({ message: 'User not found in this league' });
+    }
+
+    // Remove the user from usersJoined array using $pull
+    await Affiliate.findByIdAndUpdate(
+      affiliateId,
+      { $pull: { usersJoined: { userId: userId } } },  // Pull removes the user from the array
+      { new: true }  // Return the updated document
+    );
+
+    return res.status(200).json({ message: 'User successfully removed from the league' });
+  } catch (error) {
+    return res.status(500).json({ message: 'Error removing user from the league', error });
+  }
+});
+
+
+
 // POST API to reward tokens to the user and update matchReward status
 app.post('/api/reward-tokens-to-affiliate/:affiliateId', async (req, res) => {
   try {
