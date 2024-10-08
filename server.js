@@ -29,12 +29,12 @@ const iv = crypto.randomBytes(IV_LENGTH);
 
 app.use(express.json());
 
-
 // CORS configuration
 const allowedOrigins = [
   'https://fantasymmadness-version2.vercel.app', // Production
   'http://localhost:3000',
   'https://www.fantasymmadness.com',
+  'https://fantasymmadness.com', // Add this line
   'http://18.212.65.201:3000'
 ];
 
