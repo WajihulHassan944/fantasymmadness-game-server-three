@@ -2891,6 +2891,28 @@ app.post('/addShadow', upload.fields([{ name: 'fighterAImage' }, { name: 'fighte
 
 
 
+app.get('/dashboard-counts', async (req, res) => {
+  try {
+    // Fetch counts using Mongoose's countDocuments method
+    const affiliatesCount = await Affiliate.countDocuments({});
+    const matchesCount = await Match.countDocuments({});
+    const usersCount = await User.countDocuments({});
+    const shadowTemplatesCount = await Shadow.countDocuments({});
+
+    // Send response with all counts
+    res.json({
+      affiliatesCount,
+      matchesCount,
+      usersCount,
+      shadowTemplatesCount
+    });
+  } catch (error) {
+    console.error('Error fetching dashboard counts:', error);
+    res.status(500).json({ error: 'Failed to fetch counts' });
+  }
+});
+
+
 // Start server
 const server = app.listen(PORT, () => {
   console.log(`Server started on port ${PORT}`);
