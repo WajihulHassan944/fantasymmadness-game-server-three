@@ -2122,6 +2122,117 @@ app.post('/affiliate/updatePayment/:id', async (req, res) => {
 
 
 
+
+
+
+
+const sendUserEmail = async (user, affiliate) => {
+  const mailOptions = {
+    from: '"Fantasy Madness" <Fantasymmadness2@gmail.com>',
+    to: user.email,
+    subject: `Thank You for Joining ${affiliate.playerName}'s League!`,
+    html: `
+      <table width="100%" cellpadding="0" cellspacing="0" border="0" style="width:100%; max-width:600px; margin:auto;">
+        <!-- Logo Section -->
+        <tr>
+          <td align="center" style="padding: 15px 0;">
+            <img src="https://i.ibb.co/mF88zvd/Image-5-removebg-preview.png" alt="Fantasy Madness Logo" style="width:100px;" />
+            <h2 style="margin: 0; color: #191164; font-family: 'New York', Charter, Georgia, serif;">Fantasy Madness</h2>
+          </td>
+        </tr>
+        
+        <!-- Greeting Section -->
+        <tr>
+          <td style="padding: 10px 0;">
+            <p style="font-size: 16px; font-family: Arial, sans-serif; color: #333;">Dear ${user.firstName},</p>
+            <p style="font-size: 16px; font-family: Arial, sans-serif; color: #333;">
+              Thank you for joining <strong>${affiliate.playerName}</strong>'s league!
+            </p>
+            <p style="font-size: 16px; font-family: Arial, sans-serif; color: #333;">
+              We are thrilled to have you on board. Stay tuned for more exciting updates and matches ahead!
+            </p>
+          </td>
+        </tr>
+        
+        <!-- Affiliate Profile Section -->
+        <tr>
+          <td align="center" style="padding: 20px; background-color:#f8f8f8;">
+            <img src="${affiliate.profileUrl}" alt="Affiliate Profile" style="width:60px; height:60px; border-radius:50%; border:3px solid #191164;" />
+            <h3 style="color: #191164; font-family: 'Impact', fantasy, sans-serif;">${affiliate.playerName}'s League</h3>
+            <p style="font-size: 17px; font-family: 'Comic Sans MS', fantasy, sans-serif; color: #555;">
+              Get ready for the ultimate competition! We’re excited to see you in action.
+            </p>
+          </td>
+        </tr>
+
+        <!-- Footer Section -->
+        <tr>
+          <td align="center" style="padding: 15px 0;">
+            <img src="https://i.ibb.co/mF88zvd/Image-5-removebg-preview.png" alt="Fantasy Madness Logo" style="width:70px;" />
+            <p><a href="https://fantasymmadness.com" style="font-family: Arial, sans-serif; color: #191164; text-decoration: none;">https://fantasymmadness.com</a></p>
+          </td>
+        </tr>
+      </table>
+    `,
+  };
+
+  await transporter.sendMail(mailOptions);
+};
+
+
+const sendAffiliateEmail = async (affiliate, user) => {
+  const mailOptions = {
+    from: '"Fantasy Madness" <Fantasymmadness2@gmail.com>',
+    to: affiliate.email,
+    subject: `${user.firstName} ${user.lastName} has joined your league!`,
+    html: `
+      <table width="100%" cellpadding="0" cellspacing="0" border="0" style="width:100%; max-width:600px; margin:auto;">
+        <!-- Logo Section -->
+        <tr>
+          <td align="center" style="padding: 15px 0;">
+            <img src="https://i.ibb.co/mF88zvd/Image-5-removebg-preview.png" alt="Fantasy Madness Logo" style="width:100px;" />
+            <h2 style="margin: 0; color: #191164; font-family: 'New York', Charter, Georgia, serif;">Fantasy Madness</h2>
+          </td>
+        </tr>
+        
+        <!-- Greeting Section -->
+        <tr>
+          <td style="padding: 10px 0;">
+            <p style="font-size: 16px; font-family: Arial, sans-serif; color: #333;">Dear ${affiliate.firstName},</p>
+            <p style="font-size: 16px; font-family: Arial, sans-serif; color: #333;">
+              We are excited to inform you that <strong>${user.firstName} ${user.lastName}</strong> has joined your league!
+            </p>
+            <p style="font-size: 16px; font-family: Arial, sans-serif; color: #333;">
+              You are now one step closer to building a fantastic team. Keep an eye on the upcoming matches and engage with your new members.
+            </p>
+          </td>
+        </tr>
+
+        <!-- Affiliate Profile Section -->
+        <tr>
+          <td align="center" style="padding: 20px; background-color:#f8f8f8;">
+            <img src="${affiliate.profileUrl}" alt="Affiliate Profile" style="width:60px; height:60px; border-radius:50%; border:3px solid #191164;" />
+            <h3 style="color: #191164; font-family: 'Impact', fantasy, sans-serif;">${affiliate.playerName}'s League</h3>
+            <p style="font-size: 17px; font-family: 'Comic Sans MS', fantasy, sans-serif; color: #555;">
+              Keep building your team and prepare for thrilling challenges ahead!
+            </p>
+          </td>
+        </tr>
+
+        <!-- Footer Section -->
+        <tr>
+          <td align="center" style="padding: 15px 0;">
+            <img src="https://i.ibb.co/mF88zvd/Image-5-removebg-preview.png" alt="Fantasy Madness Logo" style="width:70px;" />
+            <p><a href="https://fantasymmadness.com" style="font-family: Arial, sans-serif; color: #191164; text-decoration: none;">https://fantasymmadness.com</a></p>
+          </td>
+        </tr>
+      </table>
+    `,
+  };
+
+  await transporter.sendMail(mailOptions);
+};
+
 app.post('/affiliate/:affiliateId/join', async (req, res) => {
   const { affiliateId } = req.params;
   const { userId, userEmail } = req.body; // Receive userId and userEmail from the request body
@@ -2140,16 +2251,25 @@ app.post('/affiliate/:affiliateId/join', async (req, res) => {
       return res.status(400).json({ message: 'User already joined this league' });
     }
 
+    // Fetch the user's details from the User collection using userId
+    const user = await User.findById(userId);
+    if (!user) {
+      return res.status(404).json({ message: 'User not found' });
+    }
+
     // Add the user to the league
     affiliate.usersJoined.push({ userId, email: userEmail });
     await affiliate.save();
+
+    // Send emails to both the user and the affiliate
+    await sendUserEmail(user, affiliate);
+    await sendAffiliateEmail(affiliate, user);
 
     return res.status(200).json({ message: 'User successfully joined the league', affiliate });
   } catch (error) {
     return res.status(500).json({ message: 'Error joining the league', error });
   }
 });
-
 
 
 app.put('/update-profile-affiliate/:userId', async (req, res) => {
