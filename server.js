@@ -2090,7 +2090,51 @@ app.post('/affiliate/:id/payout', async (req, res) => {
   }
 });
 
+const express = require('express');
+const router = express.Router();
+const Affiliate = require('../models/Affiliate'); // Adjust the path to your Affiliate model
 
+// Endpoint to confirm payment
+app.post('/confirm-payment-affiliate', async (req, res) => {
+    const { affiliateId, amount, payoutId } = req.body;
+
+    try {
+        // Find the affiliate by ID
+        const affiliate = await Affiliate.findById(affiliateId);
+
+        if (!affiliate) {
+            return res.status(404).json({ message: 'Affiliate not found' });
+        }
+
+        // Convert tokens to a number for comparison and deduction
+        const currentTokens = Number(affiliate.tokens); // Convert string to number
+
+        // Check if the affiliate has enough tokens
+        if (currentTokens < amount) {
+            return res.status(400).json({ message: 'Insufficient tokens' });
+        }
+
+        // Deduct the amount from tokens
+        affiliate.tokens = (currentTokens - amount).toString(); // Convert back to string
+
+        // Update the payout status to completed
+        const payout = affiliate.payouts.id(payoutId);
+        if (payout) {
+            payout.status = 'completed';
+        } else {
+            return res.status(404).json({ message: 'Payout not found' });
+        }
+
+        // Save the changes
+        await affiliate.save();
+
+        // Return a success response
+        res.status(200).json({ message: 'Payment processed successfully', affiliate });
+    } catch (error) {
+        console.error('Error processing payment:', error);
+        res.status(500).json({ message: 'Server error', error });
+    }
+});
 
 
 app.post('/affiliate/:affiliateId/remove-user', async (req, res) => {
