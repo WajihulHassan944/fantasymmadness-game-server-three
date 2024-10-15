@@ -2049,6 +2049,8 @@ const affiliateSchema = new mongoose.Schema({
   tokens: { type: String, default: '0' },
   preferredPaymentMethod: String, 
   preferredPaymentMethodValue: String, 
+  resetPasswordToken: String,
+  resetPasswordExpires: Date,
   usersJoined: [{
     userId: { type: mongoose.Schema.Types.ObjectId, ref: 'User' }, // User who joined
     email: String,  // Email of the user who joined
@@ -2063,6 +2065,78 @@ const affiliateSchema = new mongoose.Schema({
 
 const Affiliate = mongoose.model('Affiliate', affiliateSchema);
 
+
+app.post('/forgotPassword', async (req, res) => {
+  const { email } = req.body;
+
+  try {
+    // Find the affiliate by email
+    const affiliate = await Affiliate.findOne({ email });
+    if (!affiliate) {
+      return res.status(404).send('Affiliate not found');
+    }
+
+    // Generate reset token
+    const resetToken = crypto.randomBytes(32).toString('hex');
+    const resetTokenHash = crypto.createHash('sha256').update(resetToken).digest('hex');
+
+    // Set reset token and expiration time (e.g., 1 hour)
+    affiliate.resetPasswordToken = resetTokenHash;
+    affiliate.resetPasswordExpires = Date.now() + 3600000;
+
+    await affiliate.save();
+
+    // Send email with reset token
+    const resetURL = `${req.protocol}://${req.get('host')}/resetPassword/${resetToken}`;
+
+    const mailOptions = {
+      to: affiliate.email,
+      from: 'wajih786hassan@gmail.com',
+      subject: 'Password Reset Request',
+      text: `You are receiving this because you have requested a password reset for your account.\n\n
+      Please click the following link to reset your password:\n\n
+      ${resetURL}\n\n
+      If you did not request this, please ignore this email.\n`,
+    };
+
+    await transporter.sendMail(mailOptions);
+    
+    res.status(200).send('Password reset email sent');
+  } catch (error) {
+    console.error('Error sending reset password email:', error);
+    res.status(500).send('Server error');
+  }
+});
+
+
+app.post('/resetPassword/:token', async (req, res) => {
+  try {
+    // Hash the token from the URL to match the stored hash
+    const resetTokenHash = crypto.createHash('sha256').update(req.params.token).digest('hex');
+
+    // Find the affiliate by the token and ensure the token hasn't expired
+    const affiliate = await Affiliate.findOne({
+      resetPasswordToken: resetTokenHash,
+      resetPasswordExpires: { $gt: Date.now() }, // Ensure token is not expired
+    });
+
+    if (!affiliate) {
+      return res.status(400).send('Invalid or expired token');
+    }
+
+    // Update the password and remove the reset token and expiry
+    affiliate.password = await bcrypt.hash(req.body.password, 10);
+    affiliate.resetPasswordToken = undefined;
+    affiliate.resetPasswordExpires = undefined;
+
+    await affiliate.save();
+
+    res.status(200).send('Password has been reset');
+  } catch (error) {
+    console.error('Error resetting password:', error);
+    res.status(500).send('Server error');
+  }
+});
 
 
 app.delete('/affiliates/:id/payouts-to-delete', async (req, res) => {
