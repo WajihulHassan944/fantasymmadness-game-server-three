@@ -2090,9 +2090,6 @@ app.post('/affiliate/:id/payout', async (req, res) => {
   }
 });
 
-const express = require('express');
-const router = express.Router();
-const Affiliate = require('../models/Affiliate'); // Adjust the path to your Affiliate model
 
 // Endpoint to confirm payment
 app.post('/confirm-payment-affiliate', async (req, res) => {
