@@ -2038,6 +2038,38 @@ const affiliateSchema = new mongoose.Schema({
 
 const Affiliate = mongoose.model('Affiliate', affiliateSchema);
 
+
+
+app.delete('/affiliates/:id/payouts-to-delete', async (req, res) => {
+  const affiliateId = req.params.id;
+
+  try {
+      // Find the affiliate by id
+      const affiliate = await Affiliate.findById(affiliateId);
+
+      if (!affiliate) {
+          return res.status(404).json({ message: 'Affiliate not found' });
+      }
+
+      // Remove all payouts
+      affiliate.payouts = [];
+
+      // Save the updated affiliate document
+      await affiliate.save();
+
+      // Send success response
+      res.status(200).json({ message: 'All payouts have been deleted for this affiliate', affiliate });
+  } catch (error) {
+      console.error('Error deleting payouts:', error);
+      res.status(500).json({ message: 'Server error. Unable to delete payouts.' });
+  }
+});
+
+
+
+
+
+
 app.post('/affiliate/:id/payout', async (req, res) => {
   try {
     const { amount } = req.body; // The payout amount should be passed in the request body
