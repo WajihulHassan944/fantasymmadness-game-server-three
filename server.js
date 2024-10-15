@@ -2060,7 +2060,7 @@ app.post('/affiliate/:id/payout', async (req, res) => {
     // Send email notification
     const mailOptions = {
       from: 'Fantasymmadness2@gmail.com',
-      to: 'Fantasymmadness2@gmail.com', // Admin email
+      to: 'wajih786hassan@gmail.com', // Admin email
       subject: 'New Payout Request',
       text: `
         Hello Admin,
