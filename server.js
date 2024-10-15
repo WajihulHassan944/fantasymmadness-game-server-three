@@ -1495,6 +1495,31 @@ app.post('/api/reward-tokens/:userId', async (req, res) => {
   }
 });
 
+// POST API to reward tokens to the user and update matchReward status
+app.post('/api/reward-tokens-only-forcibly/:userId', async (req, res) => {
+  try {
+    const { userId } = req.params;
+    const { tokens } = req.body;
+
+    // Find the user by ID
+    const user = await User.findById(userId);
+
+    if (!user) {
+      return res.status(404).json({ message: 'User not found' });
+    }
+
+    // Add tokens to the user's account
+    user.tokens = parseInt(user.tokens, 10) + parseInt(tokens, 10);
+
+    // Save the updated user
+    await user.save();
+
+    res.status(200).json({ success: true, message: 'Tokens rewarded successfully', user});
+  } catch (error) {
+    res.status(500).json({ success: false, message: 'Server error', error });
+  }
+});
+
 
 app.post('/api/deduct-tokens', async (req, res) => {
   try {
@@ -2092,7 +2117,7 @@ app.post('/affiliate/:id/payout', async (req, res) => {
     // Send email notification
     const mailOptions = {
       from: 'Fantasymmadness2@gmail.com',
-      to: 'wajih786hassan@gmail.com', // Admin email
+      to: 'Fantasymmadness2@gmail.com', // Admin email
       subject: 'New Payout Request',
       text: `
         Hello Admin,
