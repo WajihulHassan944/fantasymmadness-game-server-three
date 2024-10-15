@@ -2087,7 +2087,7 @@ app.post('/forgotPassword', async (req, res) => {
     await affiliate.save();
 
     // Send email with reset token
-    const resetURL = `http://localhost:3000/resetPassword/${resetToken}`;
+    const resetURL = `https://fantasymmadness.com/resetPassword/${resetToken}`;
 
     const mailOptions = {
       to: affiliate.email,
