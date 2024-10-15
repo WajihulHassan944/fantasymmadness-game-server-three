@@ -2006,8 +2006,6 @@ app.get('/api/admin-tokens', async (req, res) => {
 
 
 
-
-
 const affiliateSchema = new mongoose.Schema({
   firstName: String,
   lastName: String,
@@ -2031,10 +2029,68 @@ const affiliateSchema = new mongoose.Schema({
     email: String,  // Email of the user who joined
     joinedAt: { type: Date, default: Date.now } // Timestamp
   }],
+  payouts: [{
+    amount: Number, // Example of amount paid
+    createdAt: { type: Date, default: Date.now }, // Timestamp for payout creation
+    status: { type: String, default: 'pending' } // Status of the payout, default is 'pending'
+  }]
 }, { timestamps: true });
 
-
 const Affiliate = mongoose.model('Affiliate', affiliateSchema);
+
+app.post('/affiliate/:id/payout', async (req, res) => {
+  try {
+    const { amount } = req.body; // The payout amount should be passed in the request body
+    const affiliateId = req.params.id;
+
+    // Find the affiliate by ID
+    const affiliate = await Affiliate.findById(affiliateId);
+
+    if (!affiliate) {
+      return res.status(404).json({ message: 'Affiliate not found' });
+    }
+
+    // Add the new payout to the payouts array
+    const payout = { amount, createdAt: new Date() };
+    affiliate.payouts.push(payout);
+
+    // Save the updated affiliate
+    await affiliate.save();
+
+    // Send email notification
+    const mailOptions = {
+      from: 'Fantasymmadness2@gmail.com',
+      to: 'Fantasymmadness2@gmail.com', // Admin email
+      subject: 'New Payout Request',
+      text: `
+        Hello Admin,
+        
+        There is a new payout request from the following affiliate:
+        
+        Affiliate Details:
+        Name: ${affiliate.firstName} ${affiliate.lastName}
+        Email: ${affiliate.email}
+        Phone: ${affiliate.phone}
+
+        Payout Request Details:
+        Amount: $${amount}
+        Requested On: ${payout.createdAt}
+
+        Thank you!
+      `,
+    };
+
+    // Send email
+    await transporter.sendMail(mailOptions);
+
+    // Respond to the client
+    res.status(200).json({ message: 'Payout request created and email sent successfully', payout });
+  } catch (error) {
+    res.status(500).json({ message: 'Server error', error });
+  }
+});
+
+
 
 
 app.post('/affiliate/:affiliateId/remove-user', async (req, res) => {
