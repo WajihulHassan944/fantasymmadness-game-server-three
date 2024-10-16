@@ -3053,6 +3053,24 @@ const userRemovedMatchesSchema = new mongoose.Schema({
 
 const UserRemovedMatches = mongoose.model('UserRemovedMatches', userRemovedMatchesSchema);
 
+
+app.delete('/remove-matches-of-user/:userId', async (req, res) => {
+  const { userId } = req.params;
+
+  try {
+      const result = await UserRemovedMatches.deleteMany({ userId });
+      
+      if (result.deletedCount === 0) {
+          return res.status(404).json({ message: 'No records found for this userId.' });
+      }
+      
+      res.status(200).json({ message: 'All records removed successfully.' });
+  } catch (error) {
+      console.error('Error deleting records:', error);
+      res.status(500).json({ message: 'Internal server error.' });
+  }
+});
+
 // Add removed match for a user
 app.post('/remove-match-from-my-dashboard', async (req, res) => {
   const { userId, matchId } = req.body;
