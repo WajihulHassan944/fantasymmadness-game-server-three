@@ -3055,30 +3055,34 @@ const UserRemovedMatches = mongoose.model('UserRemovedMatches', userRemovedMatch
 
 // Add removed match for a user
 app.post('/remove-match-from-my-dashboard', async (req, res) => {
-    const { userId, matchId } = req.body;
+  const { userId, matchId } = req.body;
 
-    try {
-        // Find the user's removed matches document
-        let userMatches = await UserRemovedMatches.findOne({ userId });
+  try {
+      // Find the user's removed matches document
+      let userMatches = await UserRemovedMatches.findOne({ userId });
 
-        if (!userMatches) {
-            // If the document doesn't exist, create it
-            userMatches = new UserRemovedMatches({
-                userId,
-                removedMatchesIds: [matchId]
-            });
-        } else {
-            // If it exists, add the new removed match
-            userMatches.removedMatchesIds.push(matchId);
-        }
+      if (!userMatches) {
+          // If the document doesn't exist, create it
+          userMatches = new UserRemovedMatches({
+              userId,
+              removedMatchesIds: [matchId]
+          });
+      } else {
+          // If it exists, check if the matchId already exists
+          if (!userMatches.removedMatchesIds.includes(matchId)) {
+              userMatches.removedMatchesIds.push(matchId);
+          } else {
+              return res.status(409).json({ message: 'Match already removed for this user' });
+          }
+      }
 
-        // Save the updated document
-        await userMatches.save();
+      // Save the updated document
+      await userMatches.save();
 
-        res.status(201).json({ message: 'Match removed successfully', data: userMatches });
-    } catch (error) {
-        res.status(500).json({ message: 'Server error', error });
-    }
+      res.status(201).json({ message: 'Match removed successfully', data: userMatches });
+  } catch (error) {
+      res.status(500).json({ message: 'Server error', error });
+  }
 });
 
 
