@@ -3039,6 +3039,87 @@ app.get('/dashboard-counts', async (req, res) => {
 });
 
 
+
+
+
+const userRemovedMatchesSchema = new mongoose.Schema({
+  userId: { type: String, required: true },  // userId as a string
+  removedMatchesIds: { 
+      type: [String],  // array of strings to store removed match IDs
+      default: [] 
+  },
+}, { timestamps: true });
+
+
+const UserRemovedMatches = mongoose.model('UserRemovedMatches', userRemovedMatchesSchema);
+
+// Add removed match for a user
+app.post('/remove-match-from-my-dashboard', async (req, res) => {
+    const { userId, matchId } = req.body;
+
+    try {
+        // Find the user's removed matches document
+        let userMatches = await UserRemovedMatches.findOne({ userId });
+
+        if (!userMatches) {
+            // If the document doesn't exist, create it
+            userMatches = new UserRemovedMatches({
+                userId,
+                removedMatchesIds: [matchId]
+            });
+        } else {
+            // If it exists, add the new removed match
+            userMatches.removedMatchesIds.push(matchId);
+        }
+
+        // Save the updated document
+        await userMatches.save();
+
+        res.status(201).json({ message: 'Match removed successfully', data: userMatches });
+    } catch (error) {
+        res.status(500).json({ message: 'Server error', error });
+    }
+});
+
+
+
+app.get('/user/:userId/removed-matches', async (req, res) => {
+  const { userId } = req.params;
+
+  try {
+      // Find the user's removed matches document
+      const userMatches = await UserRemovedMatches.findOne({ userId });
+
+      if (!userMatches) {
+          return res.status(404).json({ message: 'No matches found for this user' });
+      }
+
+      res.status(200).json(userMatches);
+  } catch (error) {
+      res.status(500).json({ message: 'Server error', error });
+  }
+});
+
+
+app.get('/users/removed-matches', async (req, res) => {
+  try {
+      // Find all documents in the UserRemovedMatches collection
+      const allUserMatches = await UserRemovedMatches.find();
+
+      if (!allUserMatches || allUserMatches.length === 0) {
+          return res.status(404).json({ message: 'No removed matches found for any user' });
+      }
+
+      res.status(200).json(allUserMatches);
+  } catch (error) {
+      res.status(500).json({ message: 'Server error', error });
+  }
+});
+
+
+
+
+
 // Start server
 const server = app.listen(PORT, () => {
   console.log(`Server started on port ${PORT}`);
