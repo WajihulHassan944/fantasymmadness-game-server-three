@@ -862,7 +862,8 @@ const nonRegisteredUserMailPromises = nonRegisteredUsers.map(user => {
             <p style="font-size: 16px; font-family: Arial, sans-serif; color: #333;">Dear ${user.fullName},</p>
             <p style="font-size: 16px; font-family: Arial, sans-serif; color: #333;">We noticed you haven't registered yet, and we want to invite you to join the Fantasy mmadness community!</p>
             <p style="font-size: 16px; font-family: Arial, sans-serif; color: #333;">Sign up now to unleash your prediction skills and be part of the action!</p>
-            <p style="font-size: 16px; font-family: Arial, sans-serif; color: #333;">Don't miss out on the next thrilling fight!</p>
+            <p style="font-size: 16px; font-family: Arial, sans-serif; color: #333;">Don't miss out on the next thrilling fight between <strong>${matchFighterA}</strong> and <strong>${matchFighterB}</strong>!</p>
+            <p style="font-size: 16px; font-family: Arial, sans-serif; color: #333;">Date: <strong>${matchDate}</strong>, Time: <strong>${matchTime}</strong>.</p>
             <p><a href="https://fantasymmadness.com/register" style="font-family: Arial, sans-serif; color: #191164; text-decoration: none;">Register Now</a></p>
           </td>
         </tr>
