@@ -742,7 +742,7 @@ const newMatch = new Match(matchData);
   const registeredUserMailPromises = users.map(user => {
     const mailOptions = {
       from: 'Fantasymmadness2@gmail.com',
-      to: 'wajih786hassan@gmail.com',
+      to: user.email,
       subject: 'Fantasy mmadness',
    html: `
   <table width="100%" cellpadding="0" cellspacing="0" border="0" style="width:100%; max-width:600px; margin:auto;">
@@ -864,7 +864,7 @@ const nonRegisteredUserMailPromises = nonRegisteredUsers.map(user => {
             <p style="font-size: 16px; font-family: Arial, sans-serif; color: #333;">Sign up now to unleash your prediction skills and be part of the action!</p>
             <p style="font-size: 16px; font-family: Arial, sans-serif; color: #333;">Don't miss out on the next thrilling fight between <strong>${matchFighterA}</strong> and <strong>${matchFighterB}</strong>!</p>
             <p style="font-size: 16px; font-family: Arial, sans-serif; color: #333;">Date: <strong>${matchDate}</strong>, Time: <strong>${matchTime}</strong>.</p>
-            <p><a href="https://fantasymmadness.com/register" style="font-family: Arial, sans-serif; color: #191164; text-decoration: none;">Register Now</a></p>
+            <p><a href="https://fantasymmadness.com/CreateAccount" style="font-family: Arial, sans-serif; color: #191164; text-decoration: none;">Register Now</a></p>
           </td>
         </tr>
         <tr>
