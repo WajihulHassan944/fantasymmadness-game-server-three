@@ -3165,12 +3165,23 @@ const Usernonregistered = mongoose.model('Usernonregistered', customUserSchema);
 // POST API to create a new non-registered user
 app.post('/api/users/nonregistered', async (req, res) => {
   try {
-      const { fullName, email } = req.body;
-      const newUser = new Usernonregistered({ fullName, email });
-      await newUser.save();
-      res.status(201).json({ message: 'User created successfully', newUser });
+    const { fullName, email } = req.body;
+
+    // Check if the email already exists in the User collection
+    const existingUser = await User.findOne({ email });
+
+    if (existingUser) {
+      // If the email already exists, return an error
+      return res.status(400).json({ message: 'Email is already registered' });
+    }
+
+    // If the email does not exist, create a new non-registered user
+    const newUser = new Usernonregistered({ fullName, email });
+    await newUser.save();
+    
+    res.status(201).json({ message: 'User created successfully', newUser });
   } catch (error) {
-      res.status(400).json({ message: 'Error creating user', error });
+    res.status(400).json({ message: 'Error creating user', error });
   }
 });
 
