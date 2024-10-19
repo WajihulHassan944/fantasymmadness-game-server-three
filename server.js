@@ -3376,6 +3376,7 @@ const ForumSchema = new mongoose.Schema({
     {
       title: { type: String, required: true }, // Thread title
       body: { type: String, required: true }, // Thread body content
+      profileUrl: String,
       author: {
         userId: { type: String, required: true }, // Author's user ID stored as a string
         username: { type: String, required: true } // Author's username
@@ -3417,6 +3418,7 @@ app.post('/threads', async (req, res) => {
     const newThread = {
       title: req.body.title,
       body: req.body.body,
+      profileUrl: req.body.profileUrl,
       author: {
         userId: req.body.author.userId,
         username: req.body.author.username
