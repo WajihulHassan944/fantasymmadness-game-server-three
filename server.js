@@ -3369,6 +3369,413 @@ app.delete('/api/users/nonregistered/:id', async (req, res) => {
 
 
 
+
+
+const ForumSchema = new mongoose.Schema({
+  threads: [
+    {
+      title: { type: String, required: true }, // Thread title
+      body: { type: String, required: true }, // Thread body content
+      author: {
+        userId: { type: String, required: true }, // Author's user ID stored as a string
+        username: { type: String, required: true } // Author's username
+      },
+      views: { type: Number, default: 0 }, // Thread view count
+      replies: [
+        {
+          body: { type: String, required: true }, // Reply content
+          author: {
+            userId: { type: String, required: true }, // Reply author's user ID as a string
+            username: { type: String, required: true } // Reply author's username
+          },
+          createdDate: { type: Date, default: Date.now }, // Reply creation date
+          likes: [{ type: String }] // User IDs of those who liked the reply, stored as strings
+        }
+      ],
+      createdDate: { type: Date, default: Date.now }, // Thread creation date
+      lastUpdated: { type: Date, default: Date.now }, // Last update timestamp for the thread
+      locked: { type: Boolean, default: false }, // If the thread is locked
+      pinned: { type: Boolean, default: false } // If the thread is pinned
+    }
+  ],
+  notifications: [
+    {
+      type: { type: String, enum: ['reply', 'like', 'follow', 'mention'], required: true }, // Notification type
+      recipient: { type: String, required: true }, // Recipient's user ID as a string
+      sender: { type: String, required: true }, // Sender's user ID as a string
+      thread: { type: String }, // Associated thread ID as a string
+      post: { type: String }, // Associated post ID as a string
+      read: { type: Boolean, default: false }, // Whether the notification has been read
+      createdDate: { type: Date, default: Date.now } // Date of notification creation
+    }
+  ]
+});
+
+const Forum = mongoose.model('Forum', ForumSchema);
+
+app.post('/threads', async (req, res) => {
+  try {
+    const newThread = {
+      title: req.body.title,
+      body: req.body.body,
+      author: {
+        userId: req.body.author.userId,
+        username: req.body.author.username
+      },
+      createdDate: new Date(),
+      lastUpdated: new Date()
+    };
+
+    const forum = await Forum.findOne(); // Assuming one forum instance
+    forum.threads.push(newThread);
+    await forum.save();
+    
+    res.status(201).json(newThread);
+  } catch (err) {
+    res.status(500).json({ message: err.message });
+  }
+});
+
+// Reply to a thread
+app.post('/threads/:threadId/replies', async (req, res) => {
+  try {
+    const forum = await Forum.findOne(); // Assuming one forum instance
+    const thread = forum.threads.id(req.params.threadId);
+
+    const newReply = {
+      body: req.body.body,
+      author: {
+        userId: req.body.author.userId,
+        username: req.body.author.username
+      },
+      createdDate: new Date()
+    };
+
+    thread.replies.push(newReply);
+    thread.lastUpdated = new Date(); // Update the thread's last update time
+    await forum.save();
+
+    res.status(201).json(newReply);
+  } catch (err) {
+    res.status(500).json({ message: err.message });
+  }
+});
+
+// Like a reply
+app.post('/threads/:threadId/replies/:replyId/like', async (req, res) => {
+  try {
+    const forum = await Forum.findOne(); // Assuming one forum instance
+    const thread = forum.threads.id(req.params.threadId);
+    const reply = thread.replies.id(req.params.replyId);
+
+    reply.likes.push(req.body.userId); // Push userId into likes array
+    await forum.save();
+
+    res.status(200).json({ message: 'Reply liked!' });
+  } catch (err) {
+    res.status(500).json({ message: err.message });
+  }
+});
+
+
+// Create a notification
+app.post('/notifications', async (req, res) => {
+  try {
+    const forum = await Forum.findOne(); // Assuming one forum instance
+    const newNotification = {
+      type: req.body.type,
+      recipient: req.body.recipient,
+      sender: req.body.sender,
+      thread: req.body.thread || null,
+      post: req.body.post || null,
+      read: req.body.read || false,
+      createdDate: new Date()
+    };
+
+    forum.notifications.push(newNotification);
+    await forum.save();
+
+    res.status(201).json(newNotification);
+  } catch (err) {
+    res.status(500).json({ message: err.message });
+  }
+});
+
+
+// Mark a notification as read
+app.post('/notifications/:notificationId/read', async (req, res) => {
+  try {
+    const forum = await Forum.findOne(); // Assuming one forum instance
+    const notification = forum.notifications.id(req.params.notificationId);
+
+    if (!notification) return res.status(404).json({ message: 'Notification not found' });
+
+    notification.read = true;
+    await forum.save();
+
+    res.status(200).json({ message: 'Notification marked as read' });
+  } catch (err) {
+    res.status(500).json({ message: err.message });
+  }
+});
+
+
+// Get all threads
+app.get('/threads', async (req, res) => {
+  try {
+    const forum = await Forum.findOne(); // Assuming one forum instance
+    res.status(200).json(forum.threads);
+  } catch (err) {
+    res.status(500).json({ message: err.message });
+  }
+});
+
+
+
+// Get a single thread by ID
+app.get('/threads/:threadId', async (req, res) => {
+  try {
+    const forum = await Forum.findOne();
+    const thread = forum.threads.id(req.params.threadId);
+
+    if (!thread) return res.status(404).json({ message: 'Thread not found' });
+
+    res.status(200).json(thread);
+  } catch (err) {
+    res.status(500).json({ message: err.message });
+  }
+});
+
+
+// Get all replies in a thread
+app.get('/threads/:threadId/replies', async (req, res) => {
+  try {
+    const forum = await Forum.findOne();
+    const thread = forum.threads.id(req.params.threadId);
+
+    if (!thread) return res.status(404).json({ message: 'Thread not found' });
+
+    res.status(200).json(thread.replies);
+  } catch (err) {
+    res.status(500).json({ message: err.message });
+  }
+});
+
+// Get all notifications for a user
+app.get('/notifications/:userId', async (req, res) => {
+  try {
+    const forum = await Forum.findOne();
+    const notifications = forum.notifications.filter(
+      notification => notification.recipient === req.params.userId
+    );
+
+    res.status(200).json(notifications);
+  } catch (err) {
+    res.status(500).json({ message: err.message });
+  }
+});
+
+
+// Get a single notification by ID
+app.get('/notifications/:notificationId', async (req, res) => {
+  try {
+    const forum = await Forum.findOne();
+    const notification = forum.notifications.id(req.params.notificationId);
+
+    if (!notification) return res.status(404).json({ message: 'Notification not found' });
+
+    res.status(200).json(notification);
+  } catch (err) {
+    res.status(500).json({ message: err.message });
+  }
+});
+
+
+// Delete a thread
+app.delete('/threads/:threadId', async (req, res) => {
+  try {
+    const forum = await Forum.findOne(); // Assuming one forum instance
+    const thread = forum.threads.id(req.params.threadId);
+
+    if (!thread) return res.status(404).json({ message: 'Thread not found' });
+
+    thread.remove(); // Remove thread
+    await forum.save();
+
+    res.status(200).json({ message: 'Thread deleted successfully' });
+  } catch (err) {
+    res.status(500).json({ message: err.message });
+  }
+});
+
+// Delete a reply from a thread
+app.delete('/threads/:threadId/replies/:replyId', async (req, res) => {
+  try {
+    const forum = await Forum.findOne();
+    const thread = forum.threads.id(req.params.threadId);
+
+    if (!thread) return res.status(404).json({ message: 'Thread not found' });
+
+    const reply = thread.replies.id(req.params.replyId);
+    if (!reply) return res.status(404).json({ message: 'Reply not found' });
+
+    reply.remove(); // Remove reply
+    await forum.save();
+
+    res.status(200).json({ message: 'Reply deleted successfully' });
+  } catch (err) {
+    res.status(500).json({ message: err.message });
+  }
+});
+
+
+// Delete a notification
+app.delete('/notifications/:notificationId', async (req, res) => {
+  try {
+    const forum = await Forum.findOne(); // Assuming one forum instance
+    const notification = forum.notifications.id(req.params.notificationId);
+
+    if (!notification) return res.status(404).json({ message: 'Notification not found' });
+
+    notification.remove(); // Remove notification
+    await forum.save();
+
+    res.status(200).json({ message: 'Notification deleted successfully' });
+  } catch (err) {
+    res.status(500).json({ message: err.message });
+  }
+});
+
+// Delete all replies from a thread
+app.delete('/threads/:threadId/replies', async (req, res) => {
+  try {
+    const forum = await Forum.findOne();
+    const thread = forum.threads.id(req.params.threadId);
+
+    if (!thread) return res.status(404).json({ message: 'Thread not found' });
+
+    thread.replies = []; // Clear all replies
+    await forum.save();
+
+    res.status(200).json({ message: 'All replies deleted successfully' });
+  } catch (err) {
+    res.status(500).json({ message: err.message });
+  }
+});
+
+// Delete all threads in the forum
+app.delete('/threads', async (req, res) => {
+  try {
+    const forum = await Forum.findOne(); // Assuming one forum instance
+    forum.threads = []; // Clear all threads
+    await forum.save();
+
+    res.status(200).json({ message: 'All threads deleted successfully' });
+  } catch (err) {
+    res.status(500).json({ message: err.message });
+  }
+});
+
+
+// Update a thread (only by the author)
+app.put('/threads/:threadId', async (req, res) => {
+  try {
+    const forum = await Forum.findOne();
+    const thread = forum.threads.id(req.params.threadId);
+
+    if (!thread) return res.status(404).json({ message: 'Thread not found' });
+
+    // Check if the user is the author of the thread
+    if (thread.author.userId !== req.body.userId) {
+      return res.status(403).json({ message: 'Permission denied' });
+    }
+
+    // Update thread fields
+    thread.title = req.body.title || thread.title;
+    thread.body = req.body.body || thread.body;
+    thread.lastUpdated = Date.now();
+
+    await forum.save();
+    res.status(200).json({ message: 'Thread updated successfully', thread });
+  } catch (err) {
+    res.status(500).json({ message: err.message });
+  }
+});
+
+// Update a reply (only by the author)
+app.put('/threads/:threadId/replies/:replyId', async (req, res) => {
+  try {
+    const forum = await Forum.findOne();
+    const thread = forum.threads.id(req.params.threadId);
+
+    if (!thread) return res.status(404).json({ message: 'Thread not found' });
+
+    const reply = thread.replies.id(req.params.replyId);
+    if (!reply) return res.status(404).json({ message: 'Reply not found' });
+
+    // Check if the user is the author of the reply
+    if (reply.author.userId !== req.body.userId) {
+      return res.status(403).json({ message: 'Permission denied' });
+    }
+
+    // Update reply fields
+    reply.body = req.body.body || reply.body;
+    reply.lastUpdated = Date.now();
+
+    await forum.save();
+    res.status(200).json({ message: 'Reply updated successfully', reply });
+  } catch (err) {
+    res.status(500).json({ message: err.message });
+  }
+});
+
+// Update a notification (only by the recipient)
+app.put('/notifications/:notificationId', async (req, res) => {
+  try {
+    const forum = await Forum.findOne();
+    const notification = forum.notifications.id(req.params.notificationId);
+
+    if (!notification) return res.status(404).json({ message: 'Notification not found' });
+
+    // Check if the user is the recipient of the notification
+    if (notification.recipient !== req.body.userId) {
+      return res.status(403).json({ message: 'Permission denied' });
+    }
+
+    // Update notification fields
+    notification.read = req.body.read || notification.read;
+
+    await forum.save();
+    res.status(200).json({ message: 'Notification updated successfully', notification });
+  } catch (err) {
+    res.status(500).json({ message: err.message });
+  }
+});
+
+// Increment thread views
+app.put('/threads/:threadId/views', async (req, res) => {
+  try {
+    const forum = await Forum.findOne();
+    const thread = forum.threads.id(req.params.threadId);
+
+    if (!thread) return res.status(404).json({ message: 'Thread not found' });
+
+    // Increment views count
+    thread.views += 1;
+
+    await forum.save();
+    res.status(200).json({ message: 'Thread view count updated', views: thread.views });
+  } catch (err) {
+    res.status(500).json({ message: err.message });
+  }
+});
+
+
+
+
+
+
+
 // Start server
 const server = app.listen(PORT, () => {
   console.log(`Server started on port ${PORT}`);
