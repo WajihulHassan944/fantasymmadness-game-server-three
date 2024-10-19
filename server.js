@@ -3412,7 +3412,6 @@ const ForumSchema = new mongoose.Schema({
 });
 
 const Forum = mongoose.model('Forum', ForumSchema);
-
 app.post('/threads', async (req, res) => {
   try {
     const newThread = {
@@ -3426,15 +3425,22 @@ app.post('/threads', async (req, res) => {
       lastUpdated: new Date()
     };
 
-    const forum = await Forum.findOne(); // Assuming one forum instance
+    // Find the forum instance, or create a new one if it doesn't exist
+    let forum = await Forum.findOne();
+    if (!forum) {
+      forum = new Forum({ threads: [] }); // Create a new forum if none exists
+    }
+
     forum.threads.push(newThread);
     await forum.save();
-    
+
     res.status(201).json(newThread);
   } catch (err) {
     res.status(500).json({ message: err.message });
   }
 });
+
+
 
 // Reply to a thread
 app.post('/threads/:threadId/replies', async (req, res) => {
