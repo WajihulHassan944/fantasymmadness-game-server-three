@@ -3524,6 +3524,11 @@ app.post('/notifications/:notificationId/read', async (req, res) => {
 app.get('/threads', async (req, res) => {
   try {
     const forum = await Forum.findOne(); // Assuming one forum instance
+
+    if (!forum) {
+      return res.status(200).json([]); // No forum found, return an empty array
+    }
+
     res.status(200).json(forum.threads);
   } catch (err) {
     res.status(500).json({ message: err.message });
