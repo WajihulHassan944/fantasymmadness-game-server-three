@@ -3619,7 +3619,6 @@ app.delete('/threads/:threadId', async (req, res) => {
     res.status(500).json({ message: err.message });
   }
 });
-
 // Delete a reply from a thread
 app.delete('/threads/:threadId/replies/:replyId', async (req, res) => {
   try {
@@ -3631,7 +3630,7 @@ app.delete('/threads/:threadId/replies/:replyId', async (req, res) => {
     const reply = thread.replies.id(req.params.replyId);
     if (!reply) return res.status(404).json({ message: 'Reply not found' });
 
-    reply.remove(); // Remove reply
+    thread.replies.pull(req.params.replyId); // Remove reply using pull
     await forum.save();
 
     res.status(200).json({ message: 'Reply deleted successfully' });
@@ -3639,6 +3638,7 @@ app.delete('/threads/:threadId/replies/:replyId', async (req, res) => {
     res.status(500).json({ message: err.message });
   }
 });
+
 
 
 // Delete a notification
