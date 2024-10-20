@@ -3603,7 +3603,6 @@ app.get('/notifications/:notificationId', async (req, res) => {
   }
 });
 
-
 // Delete a thread
 app.delete('/threads/:threadId', async (req, res) => {
   try {
@@ -3612,8 +3611,8 @@ app.delete('/threads/:threadId', async (req, res) => {
 
     if (!thread) return res.status(404).json({ message: 'Thread not found' });
 
-    thread.remove(); // Remove thread
-    await forum.save();
+    forum.threads.pull(req.params.threadId); // Remove thread using pull
+    await forum.save(); // Save the updated forum
 
     res.status(200).json({ message: 'Thread deleted successfully' });
   } catch (err) {
