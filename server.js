@@ -3258,6 +3258,36 @@ app.post('/remove-match-from-my-dashboard', async (req, res) => {
   }
 });
 
+// Remove a removed match for a user
+app.delete('/remove-match-from-my-dashboard', async (req, res) => {
+  const { userId, matchId } = req.body;
+
+  try {
+      // Find the user's removed matches document
+      let userMatches = await UserRemovedMatches.findOne({ userId });
+
+      if (!userMatches) {
+          return res.status(404).json({ message: 'No removed matches found for this user' });
+      }
+
+      // Check if the matchId exists in the removedMatchesIds array
+      const matchIndex = userMatches.removedMatchesIds.indexOf(matchId);
+
+      if (matchIndex === -1) {
+          return res.status(404).json({ message: 'Match not found in removed list' });
+      }
+
+      // Remove the matchId from the array
+      userMatches.removedMatchesIds.splice(matchIndex, 1);
+
+      // Save the updated document
+      await userMatches.save();
+
+      res.status(200).json({ message: 'Match removed from dashboard successfully', data: userMatches });
+  } catch (error) {
+      res.status(500).json({ message: 'Server error', error });
+  }
+});
 
 
 app.get('/user/:userId/removed-matches', async (req, res) => {
