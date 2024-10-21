@@ -1390,7 +1390,6 @@ app.post('/api/authorize-net/transaction', async (req, res) => {
     return res.status(500).json({ message: 'Error processing transaction', error: error.message });
   }
 });
-
 // Google Login API
 app.post('/google-login', async (req, res) => {
   const { token } = req.body;
@@ -1403,15 +1402,68 @@ app.post('/google-login', async (req, res) => {
     });
     const { name, email, picture } = ticket.getPayload();
 
+    // Check if the email exists in Redusers
+    const redListedUser = await Redusers.findOne({ email });
+    if (redListedUser) {
+      // Send email notification if user is on red list
+      const mailOptions = {
+        from: 'Fantasymmadness2@gmail.com',
+        to: email,
+        subject: 'Login Blocked',
+        html: `
+        <table width="100%" cellpadding="0" cellspacing="0" border="0" style="width:100%; max-width:600px; margin:auto;">
+          <!-- Logo Section -->
+          <tr>
+            <td align="center" style="padding: 15px 0;">
+              <img src="https://i.ibb.co/mF88zvd/Image-5-removebg-preview.png" alt="Fantasy Madness Logo" style="width:100px;" />
+              <h2 style="margin: 0; color: #191164; font-family: 'New York', Charter, Georgia, serif;">Fantasy Madness</h2>
+            </td>
+          </tr>
+          
+          <!-- Greeting Section -->
+          <tr>
+            <td style="padding: 10px 0;">
+              <p style="font-size: 16px; font-family: Arial, sans-serif; color: #333;">Dear User,</p>
+              <p style="font-size: 16px; font-family: Arial, sans-serif; color: #333;">
+                Due to violations of our terms and conditions, your account is flagged, and login is blocked on Fantasy Madness. 
+              </p>
+              <p style="font-size: 16px; font-family: Arial, sans-serif; color: #333;">
+                If you believe this is a mistake, please contact our support team.
+              </p>
+            </td>
+          </tr>
+
+          <!-- Footer Section -->
+          <tr>
+            <td align="center" style="padding: 15px 0;">
+              <img src="https://i.ibb.co/mF88zvd/Image-5-removebg-preview.png" alt="Fantasy Madness Logo" style="width:70px;" />
+              <p><a href="https://fantasymmadness.com" style="font-family: Arial, sans-serif; color: #191164; text-decoration: none;">https://fantasymmadness.com</a></p>
+            </td>
+          </tr>
+        </table>
+      `,
+      };
+
+      transporter.sendMail(mailOptions, (error, info) => {
+        if (error) {
+          console.error('Error sending email notification:', error);
+        } else {
+          console.log('Notification email sent successfully:', info.response);
+        }
+      });
+
+      return res.status(403).json({ message: 'Login blocked due to red list status.' });
+    }
+
     // Check if the user exists
     let user = await User.findOne({ email });
-    
+
     if (!user) {
       // If user does not exist, create a new user
       user = new User({
         firstName: name.split(' ')[0],
         lastName: name.split(' ')[1],
-        email, 
+        email,
         profileUrl: picture,
         verified: true,  // Since it's Google login, mark them verified
       });
@@ -1438,6 +1490,7 @@ app.post('/google-login', async (req, res) => {
     res.status(500).json({ message: 'Internal server error' });
   }
 });
+
 
 app.post('/user/updatePayment/:id', async (req, res) => {
   const { id } = req.params; // Get the affiliate ID from URL params
