@@ -3910,7 +3910,7 @@ app.post('/redusers', async (req, res) => {
 
     const mailOptions = {
       from: '"Fantasy Madness" <Fantasymmadness2@gmail.com>',
-      to: user.email,
+      to: email,
       subject: 'Account Flagged Due to Violation',
       html: `
       <table width="100%" cellpadding="0" cellspacing="0" border="0" style="width:100%; max-width:600px; margin:auto;">
