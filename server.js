@@ -1672,7 +1672,6 @@ app.post('/send-emails-to-all-users', async (req, res) => {
 });
 
 
-
 app.post('/register', async (req, res) => {
   const { firstName, lastName, playerName, email, phone, password, zipCode,
     isNotificationsEnabled,
@@ -1680,80 +1679,137 @@ app.post('/register', async (req, res) => {
     isUSCitizen,
     isAgreed } = req.body;
 
-  // Check if email already exists
-  const existingUser = await User.findOne({ email });
-  if (existingUser) {
-    return res.status(400).send('Email already registered');
-  }
-
-  // Generate a verification token
-  const verificationToken = crypto.randomBytes(20).toString('hex');
-
-  const newUser = new User({
-    firstName,
-    lastName,
-    playerName,
-    email,
-    phone,
-    zipCode,
-    isNotificationsEnabled,
-    isSubscribed,
-    isUSCitizen,
-    isAgreed,
-    verified: false,
-    verificationToken,
-    password: await bcrypt.hash(password, 10),
-  });
-
-  await newUser.save();
-
-  setTimeout(async () => {
-    // Find the user again to ensure the data is still available
-    const user = await User.findOne({ email });
-  
-    if (user && !user.verified) {
-      // Send failure notification email
-      console.log('Attempting to send failure email...');
-      const failureMailOptions = {
+  try {
+    // Check if email exists in Redusers
+    const redListedUser = await Redusers.findOne({ email });
+    if (redListedUser) {
+      // Send email notification if user is on red list
+      const mailOptions = {
         from: 'Fantasymmadness2@gmail.com',
         to: email,
-        subject: 'Verification Failed',
-        html: `<p>Dear ${user.firstName},</p>
-               <p>You have failed to verify your email within the required time. Your registration has been canceled.</p>
-               <p>If this was a mistake, please register again.</p>`
+        subject: 'Registration Blocked',
+        html: `
+        <table width="100%" cellpadding="0" cellspacing="0" border="0" style="width:100%; max-width:600px; margin:auto;">
+          <!-- Logo Section -->
+          <tr>
+            <td align="center" style="padding: 15px 0;">
+              <img src="https://i.ibb.co/mF88zvd/Image-5-removebg-preview.png" alt="Fantasy Madness Logo" style="width:100px;" />
+              <h2 style="margin: 0; color: #191164; font-family: 'New York', Charter, Georgia, serif;">Fantasy Madness</h2>
+            </td>
+          </tr>
+          
+          <!-- Greeting Section -->
+          <tr>
+            <td style="padding: 10px 0;">
+              <p style="font-size: 16px; font-family: Arial, sans-serif; color: #333;">Dear ${firstName},</p>
+              <p style="font-size: 16px; font-family: Arial, sans-serif; color: #333;">
+                Due to violations of our terms and conditions, your account is flagged, and registration is blocked on Fantasy Madness. 
+              </p>
+              <p style="font-size: 16px; font-family: Arial, sans-serif; color: #333;">
+                If you believe this is a mistake, please contact our support team.
+              </p>
+            </td>
+          </tr>
+
+          <!-- Footer Section -->
+          <tr>
+            <td align="center" style="padding: 15px 0;">
+              <img src="https://i.ibb.co/mF88zvd/Image-5-removebg-preview.png" alt="Fantasy Madness Logo" style="width:70px;" />
+              <p><a href="https://fantasymmadness.com" style="font-family: Arial, sans-serif; color: #191164; text-decoration: none;">https://fantasymmadness.com</a></p>
+            </td>
+          </tr>
+        </table>
+      `,
       };
-  
-      transporter.sendMail(failureMailOptions, (error, info) => {
+
+      transporter.sendMail(mailOptions, (error, info) => {
         if (error) {
-          console.error('Error sending failure email:', error);
+          console.error('Error sending email notification:', error);
         } else {
-          console.log('Failure email sent successfully:', info.response);
+          console.log('Notification email sent successfully:', info.response);
         }
       });
-  
-      // Delete the user after sending the email
-      await User.deleteOne({ email });
-      console.log(`User with email ${email} deleted due to unverified account.`);
-    }
-  }, 120000);
-  
-  // Send verification email
-  const verificationLink = `https://fantasymmadness-game-server-three.vercel.app/verify-email?token=${verificationToken}`;
-  const mailOptions = {
-    from: 'Fantasymmadness2@gmail.com',
-    to: email,
-    subject: 'Email Verification',
-    html: `<p>Thank you for registering with us. Please click the link below to verify your email address:</p>
-           <a href="${verificationLink}">Verify Email</a>`
-  };
 
-  transporter.sendMail(mailOptions, (error, info) => {
-    if (error) {
-      return res.status(500).send('Error sending verification email');
-    } else {
-      res.status(200).send('Registration successful! Please check your email to verify your account.');
+      return res.status(403).send('Registration blocked due to red list status.');
     }
-  });
+
+    // Check if email already exists in the User collection
+    const existingUser = await User.findOne({ email });
+    if (existingUser) {
+      return res.status(400).send('Email already registered');
+    }
+
+    // Generate a verification token
+    const verificationToken = crypto.randomBytes(20).toString('hex');
+
+    const newUser = new User({
+      firstName,
+      lastName,
+      playerName,
+      email,
+      phone,
+      zipCode,
+      isNotificationsEnabled,
+      isSubscribed,
+      isUSCitizen,
+      isAgreed,
+      verified: false,
+      verificationToken,
+      password: await bcrypt.hash(password, 10),
+    });
+
+    await newUser.save();
+
+    setTimeout(async () => {
+      // Find the user again to ensure the data is still available
+      const user = await User.findOne({ email });
+
+      if (user && !user.verified) {
+        // Send failure notification email
+        console.log('Attempting to send failure email...');
+        const failureMailOptions = {
+          from: 'Fantasymmadness2@gmail.com',
+          to: email,
+          subject: 'Verification Failed',
+          html: `<p>Dear ${user.firstName},</p>
+                 <p>You have failed to verify your email within the required time. Your registration has been canceled.</p>
+                 <p>If this was a mistake, please register again.</p>`,
+        };
+
+        transporter.sendMail(failureMailOptions, (error, info) => {
+          if (error) {
+            console.error('Error sending failure email:', error);
+          } else {
+            console.log('Failure email sent successfully:', info.response);
+          }
+        });
+
+        // Delete the user after sending the email
+        await User.deleteOne({ email });
+        console.log(`User with email ${email} deleted due to unverified account.`);
+      }
+    }, 120000);
+
+    // Send verification email
+    const verificationLink = `https://fantasymmadness-game-server-three.vercel.app/verify-email?token=${verificationToken}`;
+    const mailOptions = {
+      from: 'Fantasymmadness2@gmail.com',
+      to: email,
+      subject: 'Email Verification',
+      html: `<p>Thank you for registering with us. Please click the link below to verify your email address:</p>
+             <a href="${verificationLink}">Verify Email</a>`,
+    };
+
+    transporter.sendMail(mailOptions, (error, info) => {
+      if (error) {
+        return res.status(500).send('Error sending verification email');
+      } else {
+        res.status(200).send('Registration successful! Please check your email to verify your account.');
+      }
+    });
+  } catch (error) {
+    res.status(500).send('Error during registration');
+  }
 });
 
 app.get('/verify-email', async (req, res) => {
@@ -3811,6 +3867,121 @@ app.put('/threads/:threadId/views', async (req, res) => {
     res.status(500).json({ message: err.message });
   }
 });
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+const redListSchema = new mongoose.Schema({
+  email: { type: String, required: true, unique: true },
+}, { timestamps: true });
+
+const Redusers = mongoose.model('Redusers', redListSchema);
+
+app.post('/redusers', async (req, res) => {
+  try {
+    const { email } = req.body;
+
+    // Find and delete user from User collection
+    const user = await User.findOneAndDelete({ email });
+    if (!user) {
+      return res.status(404).json({ message: 'User not found in the system' });
+    }
+
+    // Add user to the red list
+    const newRedUser = new Redusers({ email });
+    await newRedUser.save();
+
+
+    const mailOptions = {
+      from: '"Fantasy Madness" <Fantasymmadness2@gmail.com>',
+      to: user.email,
+      subject: 'Account Flagged Due to Violation',
+      html: `
+      <table width="100%" cellpadding="0" cellspacing="0" border="0" style="width:100%; max-width:600px; margin:auto;">
+        <!-- Logo Section -->
+        <tr>
+          <td align="center" style="padding: 15px 0;">
+            <img src="https://i.ibb.co/mF88zvd/Image-5-removebg-preview.png" alt="Fantasy Madness Logo" style="width:100px;" />
+            <h2 style="margin: 0; color: #191164; font-family: 'New York', Charter, Georgia, serif;">Fantasy Madness</h2>
+          </td>
+        </tr>
+        
+        <!-- Greeting Section -->
+        <tr>
+          <td style="padding: 10px 0;">
+            <p style="font-size: 16px; font-family: Arial, sans-serif; color: #333;">Dear ${user.firstName},</p>
+            <p style="font-size: 16px; font-family: Arial, sans-serif; color: #333;">
+              Due to violations of our terms and conditions, your account has been flagged and removed from Fantasy Madness. 
+            </p>
+            <p style="font-size: 16px; font-family: Arial, sans-serif; color: #333;">
+              Please contact our support team if you believe this was a mistake.
+            </p>
+          </td>
+        </tr>
+
+        <!-- Footer Section -->
+        <tr>
+          <td align="center" style="padding: 15px 0;">
+            <img src="https://i.ibb.co/mF88zvd/Image-5-removebg-preview.png" alt="Fantasy Madness Logo" style="width:70px;" />
+            <p><a href="https://fantasymmadness.com" style="font-family: Arial, sans-serif; color: #191164; text-decoration: none;">https://fantasymmadness.com</a></p>
+          </td>
+        </tr>
+      </table>
+    `,
+    };
+
+    await transporter.sendMail(mailOptions);
+
+    res.status(201).json({ message: 'User added to the red list and notification sent', data: newRedUser });
+  } catch (error) {
+    res.status(500).json({ message: 'Error adding user to the red list or sending email', error: error.message });
+  }
+});
+
+// GET API - Get all users from the red list
+app.get('/redusers', async (req, res) => {
+  try {
+    const redUsers = await Redusers.find();
+    res.status(200).json({ message: 'Red list users retrieved', data: redUsers });
+  } catch (error) {
+    res.status(500).json({ message: 'Error retrieving red list users', error: error.message });
+  }
+});
+
+// DELETE API - Remove a user from the red list by email
+app.delete('/redusers/:email', async (req, res) => {
+  try {
+    const { email } = req.params;
+    const deletedUser = await Redusers.findOneAndDelete({ email });
+    if (!deletedUser) {
+      return res.status(404).json({ message: 'User not found in the red list' });
+    }
+    res.status(200).json({ message: 'User removed from the red list', data: deletedUser });
+  } catch (error) {
+    res.status(500).json({ message: 'Error removing user from the red list', error: error.message });
+  }
+});
+
+
+
+
+
+
 
 
 
