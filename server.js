@@ -3888,13 +3888,14 @@ app.put('/threads/:threadId/views', async (req, res) => {
 
 const redListSchema = new mongoose.Schema({
   email: { type: String, required: true, unique: true },
+  profileUrl: String,
 }, { timestamps: true });
 
 const Redusers = mongoose.model('Redusers', redListSchema);
 
 app.post('/redusers', async (req, res) => {
   try {
-    const { email } = req.body;
+    const { email, profileUrl } = req.body;
 
     // Find and delete user from User collection
     const user = await User.findOneAndDelete({ email });
@@ -3903,7 +3904,7 @@ app.post('/redusers', async (req, res) => {
     }
 
     // Add user to the red list
-    const newRedUser = new Redusers({ email });
+    const newRedUser = new Redusers({ email, profileUrl });
     await newRedUser.save();
 
 
