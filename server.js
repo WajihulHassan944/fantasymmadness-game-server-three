@@ -481,8 +481,7 @@ const matchSchema = new mongoose.Schema({
 
 
 const Match = mongoose.model('Match', matchSchema);
-
-app.put('/api/matches/:matchId/promotional-video', async (req, res) => {
+app.post('/api/matches/:matchId/promotional-video', async (req, res) => {
   const { matchId } = req.params;
   const { promotionalVideoUrl } = req.body;
 
@@ -507,6 +506,7 @@ app.put('/api/matches/:matchId/promotional-video', async (req, res) => {
     res.status(500).json({ message: 'Internal server error' });
   }
 });
+
 // POST API to update match reward status by matchId
 app.post('/api/update-match-reward', async (req, res) => {
   try {
