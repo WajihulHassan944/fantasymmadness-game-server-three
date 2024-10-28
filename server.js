@@ -405,6 +405,7 @@ const matchSchema = new mongoose.Schema({
   matchStatus: { type: String, enum: ['Finished', 'Ongoing'], default: 'Ongoing' },
   matchReward: { type: String, enum: ['Rewarded', 'NotRewarded'], default: 'NotRewarded' },
   matchVideoUrl: String,
+  matchPromotionalVideoUrl: String,
   matchDate: Date,
   matchTime: String,  // Store the match time as a string in 'HH:MM' format
   matchTokens: Number,
@@ -481,7 +482,31 @@ const matchSchema = new mongoose.Schema({
 
 const Match = mongoose.model('Match', matchSchema);
 
+app.put('/api/matches/:matchId/promotional-video', async (req, res) => {
+  const { matchId } = req.params;
+  const { promotionalVideoUrl } = req.body;
 
+  try {
+    // Find the match by ID and update the promotional video URL
+    const updatedMatch = await Match.findByIdAndUpdate(
+      matchId,
+      { matchPromotionalVideoUrl: promotionalVideoUrl },
+      { new: true } // Return the updated document
+    );
+
+    if (!updatedMatch) {
+      return res.status(404).json({ message: 'Match not found' });
+    }
+
+    res.json({
+      message: 'Promotional video URL updated successfully',
+      match: updatedMatch,
+    });
+  } catch (error) {
+    console.error('Error updating promotional video URL:', error);
+    res.status(500).json({ message: 'Internal server error' });
+  }
+});
 // POST API to update match reward status by matchId
 app.post('/api/update-match-reward', async (req, res) => {
   try {
