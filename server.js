@@ -447,6 +447,9 @@ const matchSchema = new mongoose.Schema({
   fighterAImageDeleteUrl: String,
   fighterBImageDeleteUrl: String,
 
+  promotionBackgroundDeleteUrl:String,
+  promotionBackground:String,
+
   // Boxing-specific stats
   BoxingMatch: {
     fighterOneStats: [{
@@ -699,7 +702,7 @@ app.delete('/api/matches/:id', async (req, res) => {
 
 app.post('/addMatch', upload.fields([{ name: 'fighterAImage' }, { name: 'fighterBImage' }]), async (req, res) => {
   const { default: fetch } = await import('node-fetch');
-  const { BoxingMatch, MMAMatch, matchCategoryTwo, shadowFightId, maxRounds, affiliateId, matchBy, profit, amountOverPotBudget, matchCategory, matchName, matchFighterA, matchFighterB, matchDescription, matchVideoUrl, matchDate, matchTime, matchTokens, matchStatus, pot, matchType, fighterAImageUrl, fighterBImageUrl } = req.body;
+  const { BoxingMatch, MMAMatch, matchCategoryTwo, shadowFightId, maxRounds, affiliateId, matchBy, profit, amountOverPotBudget, matchCategory, matchName, matchFighterA, matchFighterB, matchDescription, matchVideoUrl, matchDate, matchTime, matchTokens, matchStatus, pot, matchType, fighterAImageUrl, fighterBImageUrl ,  promotionBackground , promotionBackgroundDeleteUrl } = req.body;
 
   let fighterAImage, fighterBImage, fighterAImageDeleteUrl, fighterBImageDeleteUrl;
 
@@ -758,6 +761,10 @@ const matchData = {
   matchCategoryTwo,
   fighterAImageDeleteUrl, // Save the delete URL for Fighter A
   fighterBImageDeleteUrl,
+
+  promotionBackground,
+  promotionBackgroundDeleteUrl,
+ 
 };
 
 // Conditionally append BoxingMatch and MMAMatch only if they have values
