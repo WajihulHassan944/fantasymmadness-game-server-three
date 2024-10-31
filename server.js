@@ -161,9 +161,9 @@ const Shadow = mongoose.model('Shadow', shadowSchema);
 
 app.post('/editShadow', upload.fields([{ name: 'fighterAImage' }, { name: 'fighterBImage' }, { name: 'promotionBackground' }]), async (req, res) => {
   const { default: fetch } = await import('node-fetch');
-  const { matchId, matchCategoryTwo, maxRounds,  matchCategory, matchName, matchFighterA, matchFighterB, matchDescription,  fighterAImageUrl, fighterBImageUrl } = req.body;
+  const { matchId, matchCategoryTwo, maxRounds,  matchCategory, matchName, matchFighterA, matchFighterB, matchDescription,  fighterAImageUrl, fighterBImageUrl, promotionBackgroundUrl } = req.body;
 
-  let fighterAImage, fighterBImage, fighterAImageDeleteUrl, fighterBImageDeleteUrl;
+  let fighterAImage, fighterBImage, fighterAImageDeleteUrl, fighterBImageDeleteUrl, promotionBackgroundUrls, promotionBackgroundDeleteUrl;
 
   try {
     // Check if matchId is provided and valid
@@ -208,6 +208,30 @@ app.post('/editShadow', upload.fields([{ name: 'fighterAImage' }, { name: 'fight
       }
     }
 
+
+
+    // Use the image URLs directly if they are provided
+    if (promotionBackgroundUrl) {
+      promotionBackgroundUrls = promotionBackgroundUrl;
+    } else {
+
+    // Handle promotionBackground image upload
+    if (req.files.promotionBackground) {
+      const formDataBackground = new FormData();
+      formDataBackground.append('image', req.files.promotionBackground[0].buffer.toString('base64'));
+      const responseBackground = await fetch('https://api.imgbb.com/1/upload?key=368cbdb895c5bed277d50d216adbfa52', {
+        method: 'POST',
+        body: formDataBackground,
+      });
+      const dataBackground = await responseBackground.json();
+      promotionBackgroundUrls = dataBackground.data.url;            // Store Promotion Background image URL
+      promotionBackgroundDeleteUrl = dataBackground.data.delete_url; // Store Promotion Background delete URL
+    }
+    }
+
+
+
+
     // Update the match object
     existingMatch.matchCategory = matchCategory || existingMatch.matchCategory;
     existingMatch.matchName = matchName || existingMatch.matchName;
@@ -221,6 +245,8 @@ app.post('/editShadow', upload.fields([{ name: 'fighterAImage' }, { name: 'fight
     if (fighterBImage) existingMatch.fighterBImage = fighterBImage;
     if (fighterAImageDeleteUrl) existingMatch.fighterAImageDeleteUrl = fighterAImageDeleteUrl;
     if (fighterBImageDeleteUrl) existingMatch.fighterBImageDeleteUrl = fighterBImageDeleteUrl;
+    if (promotionBackgroundUrls) existingMatch.promotionBackground = promotionBackgroundUrls;
+    if (promotionBackgroundDeleteUrl) existingMatch.promotionBackgroundDeleteUrl = promotionBackgroundDeleteUrl;
 
     // Save the updated match to the database
     const updatedMatch = await existingMatch.save();
