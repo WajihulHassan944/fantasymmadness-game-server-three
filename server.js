@@ -395,6 +395,10 @@ app.delete('/shadowfighttodelete/:id', async (req, res) => {
     if (fighterBImageDeleteUrl) {
       await fetch(fighterBImageDeleteUrl, { method: 'DELETE' });
     }
+    
+    if (shadowFight.promotionBackgroundDeleteUrl) {
+      await fetch(shadowFight.promotionBackgroundDeleteUrl, { method: 'DELETE' });
+    }
 
     // Delete the shadow fight from the database
     await Shadow.findByIdAndDelete(id);
@@ -675,6 +679,9 @@ app.delete('/api/matches/:id', async (req, res) => {
     }
     if (match.fighterBImageDeleteUrl) {
       await fetch(match.fighterBImageDeleteUrl, { method: 'DELETE' });
+    }
+    if (match.promotionBackgroundDeleteUrl) {
+      await fetch(match.promotionBackgroundDeleteUrl, { method: 'DELETE' });
     }
 
     // Delete the match by ID
