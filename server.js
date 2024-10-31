@@ -78,6 +78,7 @@ const shadowSchema = new mongoose.Schema({
   matchName: String,
   matchFighterA: String,
   matchFighterB: String,
+  promotionBackground: String,
   matchDescription: String,
   matchVideoUrl: String,
   fighterAImage: String,  // URL of Fighter A's image
@@ -86,6 +87,7 @@ const shadowSchema = new mongoose.Schema({
   maxRounds: Number,
   fighterAImageDeleteUrl: String, // ImgBB delete URL for Fighter A's image
   fighterBImageDeleteUrl: String, 
+  promotionBackgroundDeleteUrl: String, 
   matchStatus: { type: String, enum: ['Finished', 'Ongoing'], default: 'Ongoing' },
   
   // Boxing-specific stats
@@ -157,7 +159,7 @@ const shadowSchema = new mongoose.Schema({
 
 const Shadow = mongoose.model('Shadow', shadowSchema);
 
-app.post('/editShadow', upload.fields([{ name: 'fighterAImage' }, { name: 'fighterBImage' }]), async (req, res) => {
+app.post('/editShadow', upload.fields([{ name: 'fighterAImage' }, { name: 'fighterBImage' }, { name: 'promotionBackground' }]), async (req, res) => {
   const { default: fetch } = await import('node-fetch');
   const { matchId, matchCategoryTwo, maxRounds,  matchCategory, matchName, matchFighterA, matchFighterB, matchDescription,  fighterAImageUrl, fighterBImageUrl } = req.body;
 
@@ -3172,10 +3174,10 @@ app.get('/youtubeVideos', async (req, res) => {
 
 
 
-app.post('/addShadow', upload.fields([{ name: 'fighterAImage' }, { name: 'fighterBImage' }]), async (req, res) => {
+app.post('/addShadow', upload.fields([{ name: 'fighterAImage' }, { name: 'fighterBImage' }, { name: 'promotionBackground' }]), async (req, res) => {
   const { default: fetch } = await import('node-fetch');
 
-  let fighterAImageUrl, fighterBImageUrl, fighterAImageDeleteUrl, fighterBImageDeleteUrl;
+  let fighterAImageUrl, fighterBImageUrl, fighterAImageDeleteUrl, fighterBImageDeleteUrl , promotionBackgroundUrl , promotionBackgroundDeleteUrl;
 
   // Upload Fighter A image
   if (req.files.fighterAImage) {
@@ -3207,6 +3209,23 @@ app.post('/addShadow', upload.fields([{ name: 'fighterAImage' }, { name: 'fighte
     fighterBImageDeleteUrl = dataB.data.delete_url; // Store Fighter B delete URL
   }
 
+// Upload Promotion Background image
+if (req.files.promotionBackground) {
+  const formDataBackground = new URLSearchParams();
+  formDataBackground.append('image', req.files.promotionBackground[0].buffer.toString('base64'));
+
+  const responseBackground = await fetch('https://api.imgbb.com/1/upload?key=368cbdb895c5bed277d50d216adbfa52', {
+    method: 'POST',
+    body: formDataBackground,
+  });
+
+  const dataBackground = await responseBackground.json();
+  promotionBackgroundUrl = dataBackground.data.url;            // Store Promotion Background image URL
+  promotionBackgroundDeleteUrl = dataBackground.data.delete_url; // Store Promotion Background delete URL
+}
+
+
+
   const { matchCategoryTwo, maxRounds, matchCategory, matchName, matchFighterA, matchFighterB, matchDescription, matchVideoUrl, matchType } = req.body;
 
   // Save the match details to the database
@@ -3222,6 +3241,8 @@ app.post('/addShadow', upload.fields([{ name: 'fighterAImage' }, { name: 'fighte
     fighterBImage: fighterBImageUrl,
     fighterAImageDeleteUrl,
     fighterBImageDeleteUrl,
+    promotionBackground: promotionBackgroundUrl,
+    promotionBackgroundDeleteUrl,
     matchType,
     maxRounds,
   });
