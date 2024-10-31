@@ -680,9 +680,7 @@ app.delete('/api/matches/:id', async (req, res) => {
     if (match.fighterBImageDeleteUrl) {
       await fetch(match.fighterBImageDeleteUrl, { method: 'DELETE' });
     }
-    if (match.promotionBackgroundDeleteUrl) {
-      await fetch(match.promotionBackgroundDeleteUrl, { method: 'DELETE' });
-    }
+    
 
     // Delete the match by ID
     const deletedMatch = await Match.findByIdAndDelete(id);
