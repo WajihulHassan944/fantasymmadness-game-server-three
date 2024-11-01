@@ -2271,7 +2271,8 @@ const affiliateSchema = new mongoose.Schema({
   isSubscribed: Boolean,
   isUSCitizen: Boolean,
   isAgreed: Boolean,
-  verified: { type: Boolean, default: false },
+  totalViews: { type: Number, default: 0 },
+verified: { type: Boolean, default: false },
   profileUrl: String,
   tokens: { type: String, default: '0' },
   preferredPaymentMethod: String, 
@@ -2291,6 +2292,27 @@ const affiliateSchema = new mongoose.Schema({
 }, { timestamps: true });
 
 const Affiliate = mongoose.model('Affiliate', affiliateSchema);
+
+// Route to increment totalViews
+app.post('/affiliate/:affiliateId/incrementViews', async (req, res) => {
+  try {
+    const { affiliateId } = req.params;
+    const updatedAffiliate = await Affiliate.findByIdAndUpdate(
+      affiliateId,
+      { $inc: { totalViews: 1 } },
+      { new: true }
+    );
+
+    if (!updatedAffiliate) {
+      return res.status(404).json({ message: 'Affiliate not found' });
+    }
+
+    res.status(200).json(updatedAffiliate);
+  } catch (error) {
+    console.error('Error incrementing views:', error);
+    res.status(500).json({ message: 'Internal server error' });
+  }
+});
 
 
 app.post('/forgotPassword', async (req, res) => {
