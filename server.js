@@ -1229,6 +1229,7 @@ const userSchema = new mongoose.Schema({
   verificationToken: String,
   verified: { type: Boolean, default: false },
   profileUrl: String,
+  profileDeleteUrl: String,
   currentPlan: { type: String, default: 'None' }, // Current subscription plan
   freePlanExpiryDate: Date, // Date when the free plan expires
   hasAvailedFreePlan: { type: Boolean, default: false }, // Indicates if the user has availed the free plan
@@ -1585,48 +1586,76 @@ app.post('/user/updatePayment/:id', async (req, res) => {
 });
 
 
-app.put('/update-profile/:userId', async (req, res) => {
+app.put('/update-profile/:userId', upload.single('image'), async (req, res) => {
   const { userId } = req.params;
-  const { 
-      firstName, 
-      lastName, 
-      playerName, 
-      phone, 
-      zipCode, 
-      shortBio, 
-      isNotificationsEnabled,  // Include the new field
-      isSubscribed,            // Include the new field
-      isUSCitizen              // Include the new field
+  const {
+    firstName,
+    lastName,
+    playerName,
+    phone,
+    zipCode,
+    shortBio,
+    isNotificationsEnabled,
+    isSubscribed,
+    isUSCitizen
   } = req.body;
 
   try {
-      // Create an object to hold the fields that should be updated
-      const updateFields = {};
+    // Create an object to hold the fields that should be updated
+    const updateFields = {};
 
-      if (firstName) updateFields.firstName = firstName;
-      if (lastName) updateFields.lastName = lastName;
-      if (playerName) updateFields.playerName = playerName;
-      if (phone) updateFields.phone = phone;
-      if (zipCode) updateFields.zipCode = zipCode;
-      if (shortBio) updateFields.shortBio = shortBio;
-      if (isNotificationsEnabled !== undefined) updateFields.isNotificationsEnabled = isNotificationsEnabled; // Add notifications preference
-      if (isSubscribed !== undefined) updateFields.isSubscribed = isSubscribed;                                 // Add subscription status
-      if (isUSCitizen !== undefined) updateFields.isUSCitizen = isUSCitizen;                                   // Add citizenship status
+    // Add other fields to be updated
+    if (firstName) updateFields.firstName = firstName;
+    if (lastName) updateFields.lastName = lastName;
+    if (playerName) updateFields.playerName = playerName;
+    if (phone) updateFields.phone = phone;
+    if (zipCode) updateFields.zipCode = zipCode;
+    if (shortBio) updateFields.shortBio = shortBio;
+    if (isNotificationsEnabled !== undefined) updateFields.isNotificationsEnabled = isNotificationsEnabled;
+    if (isSubscribed !== undefined) updateFields.isSubscribed = isSubscribed;
+    if (isUSCitizen !== undefined) updateFields.isUSCitizen = isUSCitizen;
 
-      // Update the user document with the specified fields
-      const updatedUser = await User.findByIdAndUpdate(userId, updateFields, { new: true });
-
-      if (!updatedUser) {
-          return res.status(404).send('User not found');
+    // Check if a new image is provided
+    if (req.file) {
+      // Find the user to retrieve the previous delete URL
+      const user = await User.findById(userId);
+      if (!user) {
+        return res.status(404).send('User not found');
       }
 
-      res.status(200).json({
-          message: 'Profile updated successfully',
-          user: updatedUser
+      // Delete previous image from imgbb if delete URL exists
+      if (user.profileDeleteUrl) {
+        await fetch(user.profileDeleteUrl, { method: 'DELETE' });
+      }
+
+      // Upload new avatar image
+      const formData = new FormData();
+      formData.append('image', req.file.buffer.toString('base64'));
+
+      const response = await fetch('https://api.imgbb.com/1/upload?key=368cbdb895c5bed277d50d216adbfa52', {
+        method: 'POST',
+        body: formData,
       });
+
+      const data = await response.json();
+      updateFields.profileUrl = data.data.url;
+      updateFields.profileDeleteUrl = data.data.delete_url;
+    }
+
+    // Update the user document with the specified fields
+    const updatedUser = await User.findByIdAndUpdate(userId, updateFields, { new: true });
+
+    if (!updatedUser) {
+      return res.status(404).send('User not found');
+    }
+
+    res.status(200).json({
+      message: 'Profile updated successfully',
+      user: updatedUser
+    });
   } catch (error) {
-      console.error('Error updating profile:', error);
-      res.status(500).send('Server error');
+    console.error('Error updating profile:', error);
+    res.status(500).send('Server error');
   }
 });
 
@@ -2000,8 +2029,6 @@ app.get('/user/:email', async (req, res) => {
 });
 
 
-
-
 app.post('/upload-avatar', upload.single('image'), async (req, res) => {
   const formData = new FormData();
   const { default: fetch } = await import('node-fetch');
@@ -2015,13 +2042,20 @@ app.post('/upload-avatar', upload.single('image'), async (req, res) => {
   
   const data = await response.json();
   const avatarUrl = data.data.url;
-
-  // Update user profile with avatar URL
+  const deleteUrl = data.data.delete_url; // Get the delete URL
+  
+  // Update user profile with avatar URL and delete URL
   const { email } = req.body;
-  await User.findOneAndUpdate({ email }, { profileUrl: avatarUrl });
+  await User.findOneAndUpdate(
+    { email },
+    { profileUrl: avatarUrl, profileDeleteUrl: deleteUrl }
+  );
 
   res.status(200).send('Avatar uploaded and saved successfully');
 });
+
+
+
 
 app.post('/user/:email/subscribe', async (req, res) => {
   const { email } = req.params;
