@@ -873,8 +873,9 @@ const newMatch = new Match(matchData);
     <tr>
       <td style="padding: 10px;">
         <p style="font-size: 16px; font-family: Arial, sans-serif; color: #333;"><strong>Date:</strong> ${matchDate}</p>
-        <p style="font-size: 16px; font-family: Arial, sans-serif; color: #333;"><strong>Time:</strong> ${matchTime}</p>
-        <p style="font-size: 16px; font-family: Arial, sans-serif; color: #333;"><strong>Max Rounds:</strong> ${maxRounds}</p>
+       <p style="font-size: 16px; font-family: Arial, sans-serif; color: #333;">
+  <strong>Time:</strong> ${new Date(`1970-01-01T${matchTime}:00`).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: true })} EST</p>
+ <p style="font-size: 16px; font-family: Arial, sans-serif; color: #333;"><strong>Max Rounds:</strong> ${maxRounds}</p>
         <p style="font-size: 16px; font-family: Arial, sans-serif; color: #333;"><strong>Fight Type:</strong> ${matchType}</p>
         <p><a href="https://fantasymmadness.com/upcomingfights" style="font-family: Arial, sans-serif; color: #191164; text-decoration: none;">Click here</a> to get more details</p>
       </td>
