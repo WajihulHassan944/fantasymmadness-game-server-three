@@ -1274,7 +1274,7 @@ app.post('/forgotPassword-user', async (req, res) => {
     await user.save();
 
     // Send email with reset token
-    const resetURL = `https://fantasymmadness.com/resetPassword/${resetToken}`;
+    const resetURL = `https://fantasymmadness.com/resetPassword-user/${resetToken}`;
 
     const mailOptions = {
       to: user.email,
