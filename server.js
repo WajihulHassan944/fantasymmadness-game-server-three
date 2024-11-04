@@ -3152,9 +3152,9 @@ app.post('/registerAffiliate', upload.single('image'), async (req, res) => {
           <tr>
             <td align="center" style="padding: 20px; background-color:#f8f8f8;">
               <img src="${newUser.profileUrl}" alt="Affiliate Profile" style="width:60px; height:60px; border-radius:50%; border:3px solid #191164;" />
-              <h3 style="color: #191164; font-family: 'Impact', fantasy, sans-serif;">${newUser.playerName}'s League</h3>
+              <h3 style="color: #191164; font-family: 'Impact', fantasy, sans-serif;">Affiliate Details</h3>
               <p style="font-size: 17px; font-family: 'Comic Sans MS', fantasy, sans-serif; color: #555;">
-                Affiliate Details:<br>
+                
                 Name: ${newUser.firstName} ${newUser.lastName}<br>
                 Email: ${newUser.email}<br>
                 Phone: ${newUser.phone}<br>
