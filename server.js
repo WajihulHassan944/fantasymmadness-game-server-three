@@ -2309,6 +2309,7 @@ const affiliateSchema = new mongoose.Schema({
   totalViews: { type: Number, default: 0 },
 verified: { type: Boolean, default: false },
   profileUrl: String,
+  profileDeleteUrl: String,
   tokens: { type: String, default: '0' },
   preferredPaymentMethod: String, 
   preferredPaymentMethodValue: String, 
@@ -2816,39 +2817,64 @@ app.post('/affiliate/:affiliateId/join', async (req, res) => {
   }
 });
 
-
-app.put('/update-profile-affiliate/:userId', async (req, res) => {
+app.put('/update-profile-affiliate/:userId', upload.single('image'), async (req, res) => {
   const { userId } = req.params;
   const { firstName, lastName, playerName, phone, zipCode, shortBio } = req.body;
 
   try {
-      // Create an object to hold the fields that should be updated
-      const updateFields = {};
+    // Create an object to hold the fields that should be updated
+    const updateFields = {};
 
-      if (firstName) updateFields.firstName = firstName;
-      if (lastName) updateFields.lastName = lastName;
-      if (playerName) updateFields.playerName = playerName;
-      if (phone) updateFields.phone = phone;
-      if (zipCode) updateFields.zipCode = zipCode;
-      if (shortBio) updateFields.shortBio = shortBio;
+    if (firstName) updateFields.firstName = firstName;
+    if (lastName) updateFields.lastName = lastName;
+    if (playerName) updateFields.playerName = playerName;
+    if (phone) updateFields.phone = phone;
+    if (zipCode) updateFields.zipCode = zipCode;
+    if (shortBio) updateFields.shortBio = shortBio;
 
-      // Update the user document with the specified fields
-      const updatedUser = await Affiliate.findByIdAndUpdate(userId, updateFields, { new: true });
-
-      if (!updatedUser) {
-          return res.status(404).send('User not found');
+    // Check if a new image is provided
+    if (req.file) {
+      // Find the affiliate to retrieve the previous delete URL
+      const affiliate = await Affiliate.findById(userId);
+      if (!affiliate) {
+        return res.status(404).send('Affiliate not found');
       }
 
-      res.status(200).json({
-          message: 'Profile updated successfully',
-          user: updatedUser
+      // Delete previous image from imgbb if delete URL exists
+      if (affiliate.profileDeleteUrl) {
+        await fetch(affiliate.profileDeleteUrl, { method: 'DELETE' });
+      }
+
+      // Upload new avatar image
+      const formData = new FormData();
+      formData.append('image', req.file.buffer.toString('base64'));
+
+      const response = await fetch('https://api.imgbb.com/1/upload?key=368cbdb895c5bed277d50d216adbfa52', {
+        method: 'POST',
+        body: formData,
       });
+
+      const data = await response.json();
+      updateFields.profileUrl = data.data.url;
+      updateFields.profileDeleteUrl = data.data.delete_url;
+    }
+
+    // Update the affiliate document with the specified fields
+    const updatedAffiliate = await Affiliate.findByIdAndUpdate(userId, updateFields, { new: true });
+
+    if (!updatedAffiliate) {
+      return res.status(404).send('Affiliate not found');
+    }
+
+    res.status(200).json({
+      message: 'Profile updated successfully',
+      user: updatedAffiliate,
+    });
   } catch (error) {
-      console.error('Error updating profile:', error);
-      res.status(500).send('Server error');
+    console.error('Error updating affiliate profile:', error);
+    res.status(500).send('Server error');
   }
 });
-
 
 // Delete API
 app.delete('/affiliatetodelete/:id', async (req, res) => {
