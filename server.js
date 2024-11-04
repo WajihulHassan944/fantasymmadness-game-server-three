@@ -1235,6 +1235,8 @@ const userSchema = new mongoose.Schema({
   hasAvailedFreePlan: { type: Boolean, default: false }, // Indicates if the user has availed the free plan
   preferredPaymentMethod: String,
   preferredPaymentMethodValue: String,
+  resetPasswordToken: String,
+  resetPasswordExpires: Date,
   billing: {
     cardNumber: { type: String },  // Encrypted
     expirationDate: { type: String },  // Encrypted
@@ -1248,6 +1250,82 @@ const userSchema = new mongoose.Schema({
 }, { timestamps: true });
 
 const User = mongoose.model('User', userSchema);
+
+
+
+app.post('/forgotPassword-user', async (req, res) => {
+  const { email } = req.body;
+
+  try {
+    
+    const user = await User.findOne({ email });
+    if (!user) {
+      return res.status(404).send('User not found');
+    }
+
+    // Generate reset token
+    const resetToken = crypto.randomBytes(32).toString('hex');
+    const resetTokenHash = crypto.createHash('sha256').update(resetToken).digest('hex');
+
+    // Set reset token and expiration time (e.g., 1 hour)
+    user.resetPasswordToken = resetTokenHash;
+    user.resetPasswordExpires = Date.now() + 3600000;
+
+    await user.save();
+
+    // Send email with reset token
+    const resetURL = `https://fantasymmadness.com/resetPassword/${resetToken}`;
+
+    const mailOptions = {
+      to: user.email,
+      from: 'wajih786hassan@gmail.com',
+      subject: 'Password Reset Request',
+      text: `You are receiving this because you have requested a password reset for your account.\n\n
+      Please click the following link to reset your password:\n\n
+      ${resetURL}\n\n
+      If you did not request this, please ignore this email.\n`,
+    };
+
+    await transporter.sendMail(mailOptions);
+    
+    res.status(200).send('Password reset email sent');
+  } catch (error) {
+    console.error('Error sending reset password email:', error);
+    res.status(500).send('Server error');
+  }
+});
+
+
+app.post('/resetPassword-user/:token', async (req, res) => {
+  try {
+    // Hash the token from the URL to match the stored hash
+    const resetTokenHash = crypto.createHash('sha256').update(req.params.token).digest('hex');
+
+    // Find the User by the token and ensure the token hasn't expired
+    const user = await User.findOne({
+      resetPasswordToken: resetTokenHash,
+      resetPasswordExpires: { $gt: Date.now() }, // Ensure token is not expired
+    });
+
+    if (!user) {
+      return res.status(400).send('Invalid or expired token');
+    }
+
+    // Update the password and remove the reset token and expiry
+    user.password = await bcrypt.hash(req.body.password, 10);
+    user.resetPasswordToken = undefined;
+    user.resetPasswordExpires = undefined;
+
+    await user.save();
+
+    res.status(200).send('Password has been reset');
+  } catch (error) {
+    console.error('Error resetting password:', error);
+    res.status(500).send('Server error');
+  }
+});
+
+
 
 
 app.post('/api/authorize-net/first-payment', async (req, res) => {
