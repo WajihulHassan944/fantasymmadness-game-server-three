@@ -2063,16 +2063,35 @@ app.get("/", (req, res) =>{
 });
 
 
-
-// Delete Match API
 app.delete('/usertodelete/:id', async (req, res) => {
   const { id } = req.params;
-  console.log('Received DELETE request for User ID:', id);
+
   try {
-    const user = await User.findByIdAndDelete(id);
-    
-    res.status(200).json({ message: 'User deleted successfully' });
+    // Find the user by ID
+    const user = await User.findById(id);
+    if (!user) {
+      return res.status(404).json({ message: 'User not found' });
+    }
+
+    // Delete profile image from imgbb if a delete URL exists
+    if (user.profileDeleteUrl) {
+      await fetch(user.profileDeleteUrl, { method: 'DELETE' })
+        .then(response => {
+          if (!response.ok) {
+            console.warn('Failed to delete profile image from imgbb');
+          }
+        })
+        .catch(error => {
+          console.error('Error deleting image from imgbb:', error);
+        });
+    }
+
+    // Delete the user from the database
+    await User.findByIdAndDelete(id);
+
+    res.status(200).json({ message: 'User and profile image deleted successfully' });
   } catch (error) {
+    console.error('Error deleting user:', error);
     res.status(500).json({ message: 'Internal server error' });
   }
 });
@@ -2953,19 +2972,41 @@ app.put('/update-profile-affiliate/:userId', upload.single('image'), async (req,
     res.status(500).send('Server error');
   }
 });
-
-// Delete API
+// Delete Affiliate API
 app.delete('/affiliatetodelete/:id', async (req, res) => {
   const { id } = req.params;
-  console.log('Received DELETE request for User ID:', id);
+  console.log('Received DELETE request for Affiliate ID:', id);
+
   try {
-    const user = await Affiliate.findByIdAndDelete(id);
-    
-    res.status(200).json({ message: 'User deleted successfully' });
+    // Find the affiliate by ID
+    const affiliate = await Affiliate.findById(id);
+    if (!affiliate) {
+      return res.status(404).json({ message: 'Affiliate not found' });
+    }
+
+    // Delete profile image from imgbb if a delete URL exists
+    if (affiliate.profileDeleteUrl) {
+      await fetch(affiliate.profileDeleteUrl, { method: 'DELETE' })
+        .then(response => {
+          if (!response.ok) {
+            console.warn('Failed to delete affiliate profile image from imgbb');
+          }
+        })
+        .catch(error => {
+          console.error('Error deleting image from imgbb:', error);
+        });
+    }
+
+    // Delete the affiliate from the database
+    await Affiliate.findByIdAndDelete(id);
+
+    res.status(200).json({ message: 'Affiliate and profile image deleted successfully' });
   } catch (error) {
+    console.error('Error deleting affiliate:', error);
     res.status(500).json({ message: 'Internal server error' });
   }
 });
+
 
 
 // Get Matches API
@@ -3023,7 +3064,6 @@ app.post('/affiliates/:id/verify', async (req, res) => {
 
 
 
-
 app.post('/registerAffiliate', upload.single('image'), async (req, res) => {
   try {
     const {
@@ -3049,6 +3089,7 @@ app.post('/registerAffiliate', upload.single('image'), async (req, res) => {
 
     // Handle image upload if an image is provided
     let profileUrl = '';
+    let profileDeleteUrl = '';
     if (req.file) {
       const formData = new FormData();
       formData.append('image', req.file.buffer.toString('base64'));
@@ -3060,6 +3101,7 @@ app.post('/registerAffiliate', upload.single('image'), async (req, res) => {
 
       const data = await response.json();
       profileUrl = data.data.url;
+      profileDeleteUrl = data.data.delete_url; // Capture delete URL
     }
 
     // Create new user with hashed password
@@ -3078,10 +3120,58 @@ app.post('/registerAffiliate', upload.single('image'), async (req, res) => {
       verified: false,
       password: await bcrypt.hash(password, 10),
       profileUrl, // Save the profile image URL
+      profileDeleteUrl, // Save the delete URL for future image deletion
     });
 
     // Save the new user to the database
     await newUser.save();
+
+    // Send email notification to the admin
+    await transporter.sendMail({
+      from: '"Fantasy Madness" <Fantasymmadness2@gmail.com>',
+      to: 'wajih786hassan@gmail.com', // Admin email
+      subject: 'New Affiliate Registration - Approval Needed',
+      html: `
+        <table width="100%" cellpadding="0" cellspacing="0" border="0" style="width:100%; max-width:600px; margin:auto;">
+          <tr>
+            <td align="center" style="padding: 15px 0;">
+              <img src="https://i.ibb.co/mF88zvd/Image-5-removebg-preview.png" alt="Fantasy Madness Logo" style="width:100px;" />
+              <h2 style="margin: 0; color: #191164; font-family: 'New York', Charter, Georgia, serif;">Fantasy Madness</h2>
+            </td>
+          </tr>
+          
+          <tr>
+            <td style="padding: 10px 0;">
+              <p style="font-size: 16px; font-family: Arial, sans-serif; color: #333;">Dear Admin,</p>
+              <p style="font-size: 16px; font-family: Arial, sans-serif; color: #333;">
+                A new affiliate <strong>${newUser.firstName} ${newUser.lastName}</strong> has registered on Fantasy Madness. Please review and approve their profile via the admin panel.
+              </p>
+            </td>
+          </tr>
+          
+          <tr>
+            <td align="center" style="padding: 20px; background-color:#f8f8f8;">
+              <img src="${newUser.profileUrl}" alt="Affiliate Profile" style="width:60px; height:60px; border-radius:50%; border:3px solid #191164;" />
+              <h3 style="color: #191164; font-family: 'Impact', fantasy, sans-serif;">${newUser.playerName}'s League</h3>
+              <p style="font-size: 17px; font-family: 'Comic Sans MS', fantasy, sans-serif; color: #555;">
+                Affiliate Details:<br>
+                Name: ${newUser.firstName} ${newUser.lastName}<br>
+                Email: ${newUser.email}<br>
+                Phone: ${newUser.phone}<br>
+                ZIP Code: ${newUser.zipCode}
+              </p>
+            </td>
+          </tr>
+
+          <tr>
+            <td align="center" style="padding: 15px 0;">
+              <img src="https://i.ibb.co/mF88zvd/Image-5-removebg-preview.png" alt="Fantasy Madness Logo" style="width:70px;" />
+              <p><a href="https://fantasymmadness.com" style="font-family: Arial, sans-serif; color: #191164; text-decoration: none;">https://fantasymmadness.com</a></p>
+            </td>
+          </tr>
+        </table>
+      `,
+    });
 
     res.status(201).send('User registered successfully');
   } catch (error) {
