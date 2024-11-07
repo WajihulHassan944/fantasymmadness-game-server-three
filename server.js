@@ -3201,17 +3201,75 @@ app.get('/approveAffiliate/:id', async (req, res) => {
       `);
     }
 
+    // Check if the affiliate is already verified
+    if (affiliate.verified) {
+      return res.send(`
+        <html>
+          <head>
+            <style>
+              body {
+                background-color: #000;
+                color: #fff;
+                font-family: Arial, sans-serif;
+                display: flex;
+                align-items: center;
+                justify-content: center;
+                height: 100vh;
+                margin: 0;
+              }
+              .container {
+                text-align: center;
+                border: 2px solid #ff0000;
+                padding: 20px;
+                width: 80%;
+                max-width: 500px;
+                background-color: #222;
+                border-radius: 10px;
+                box-shadow: 0px 4px 15px rgba(255, 0, 0, 0.6);
+              }
+              h1 {
+                font-size: 36px;
+                margin-bottom: 15px;
+                color: #ff0000;
+                text-shadow: 2px 2px #000;
+              }
+              p {
+                font-size: 18px;
+                margin-bottom: 20px;
+                color: #ccc;
+              }
+              .profile-img {
+                width: 100px;
+                height: 100px;
+                border-radius: 50%;
+                border: 3px solid #ff0000;
+                margin-top: 15px;
+              }
+            </style>
+          </head>
+          <body>
+            <div class="container">
+              <h1>Affiliate Already Approved</h1>
+              <p>This affiliate has already been approved previously.</p>
+              <img src="${affiliate.profileUrl}" alt="Affiliate Profile Image" class="profile-img" />
+            </div>
+          </body>
+        </html>
+      `);
+    }
+
+    // Mark affiliate as verified if not already verified
     affiliate.verified = true;
     await affiliate.save();
 
-    // Send a detailed, stylized response for success with profile image
+    // Send success response
     res.send(`
       <html>
         <head>
           <style>
             body {
-              background-color: #000; /* Black background */
-              color: #fff; /* White text */
+              background-color: #000;
+              color: #fff;
               font-family: Arial, sans-serif;
               display: flex;
               align-items: center;
@@ -3221,40 +3279,30 @@ app.get('/approveAffiliate/:id', async (req, res) => {
             }
             .container {
               text-align: center;
-              border: 2px solid #ff0000; /* Red border */
+              border: 2px solid #ff0000;
               padding: 20px;
               width: 80%;
               max-width: 500px;
-              background-color: #222; /* Dark grey background for the card */
+              background-color: #222;
               border-radius: 10px;
               box-shadow: 0px 4px 15px rgba(255, 0, 0, 0.6);
             }
             h1 {
               font-size: 36px;
               margin-bottom: 15px;
-              color: #ff0000; /* Bold red text for title */
+              color: #ff0000;
               text-shadow: 2px 2px #000;
             }
             p {
               font-size: 18px;
               margin-bottom: 20px;
-              color: #ccc; /* Light grey text */
-            }
-            .cta-text {
-              color: #fff;
-              font-size: 16px;
-              font-weight: bold;
+              color: #ccc;
             }
             .profile-img {
               width: 100px;
               height: 100px;
               border-radius: 50%;
-              border: 3px solid #ff0000; /* Red border around profile */
-              margin-top: 15px;
-            }
-            .mma-glove {
-              width: 80px;
-              height: auto;
+              border: 3px solid #ff0000;
               margin-top: 15px;
             }
           </style>
@@ -3263,7 +3311,6 @@ app.get('/approveAffiliate/:id', async (req, res) => {
           <div class="container">
             <h1>Affiliate Approved!</h1>
             <p>Congratulations! The affiliate has been successfully approved.</p>
-            <p class="cta-text">You may now close this window.</p>
             <img src="${affiliate.profileUrl}" alt="Affiliate Profile Image" class="profile-img" />
             <script>
               setTimeout(() => window.close(), 2000); // Close tab after 2 seconds
