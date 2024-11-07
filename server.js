@@ -3129,7 +3129,7 @@ app.post('/registerAffiliate', upload.single('image'), async (req, res) => {
     // Send email notification to the admin
     await transporter.sendMail({
       from: '"Fantasy Madness" <Fantasymmadness2@gmail.com>',
-      to: 'wajih786hassan@gmail.com', // Admin email
+      to: 'Fantasymmadness2@gmail.com', // Admin email
       subject: 'New Affiliate Registration - Approval Needed',
       html: `
         <table width="100%" cellpadding="0" cellspacing="0" border="0" style="width:100%; max-width:600px; margin:auto;">
