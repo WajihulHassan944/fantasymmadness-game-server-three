@@ -3253,6 +3253,9 @@ app.get('/approveAffiliate/:id', async (req, res) => {
               <p>This affiliate has already been approved previously.</p>
               <img src="${affiliate.profileUrl}" alt="Affiliate Profile Image" class="profile-img" />
             </div>
+             <script>
+              setTimeout(() => window.close(), 3000); // Close tab after 2 seconds
+            </script>
           </body>
         </html>
       `);
@@ -3313,7 +3316,7 @@ app.get('/approveAffiliate/:id', async (req, res) => {
             <p>Congratulations! The affiliate has been successfully approved.</p>
             <img src="${affiliate.profileUrl}" alt="Affiliate Profile Image" class="profile-img" />
             <script>
-              setTimeout(() => window.close(), 2000); // Close tab after 2 seconds
+              setTimeout(() => window.close(), 3000); // Close tab after 2 seconds
             </script>
           </div>
         </body>
