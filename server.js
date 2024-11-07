@@ -3062,8 +3062,6 @@ app.post('/affiliates/:id/verify', async (req, res) => {
 });
 
 
-
-
 app.post('/registerAffiliate', upload.single('image'), async (req, res) => {
   try {
     const {
@@ -3126,10 +3124,12 @@ app.post('/registerAffiliate', upload.single('image'), async (req, res) => {
     // Save the new user to the database
     await newUser.save();
 
+    const approvalLink = `https://fantasymmadness-game-server-three.vercel.app/approveAffiliate/${newUser._id}`;
+
     // Send email notification to the admin
     await transporter.sendMail({
       from: '"Fantasy Madness" <Fantasymmadness2@gmail.com>',
-      to: 'Fantasymmadness2@gmail.com', // Admin email
+      to: 'wajih786hassan@gmail.com', // Admin email
       subject: 'New Affiliate Registration - Approval Needed',
       html: `
         <table width="100%" cellpadding="0" cellspacing="0" border="0" style="width:100%; max-width:600px; margin:auto;">
@@ -3144,7 +3144,7 @@ app.post('/registerAffiliate', upload.single('image'), async (req, res) => {
             <td style="padding: 10px 0;">
               <p style="font-size: 16px; font-family: Arial, sans-serif; color: #333;">Dear Admin,</p>
               <p style="font-size: 16px; font-family: Arial, sans-serif; color: #333;">
-                A new affiliate <strong>${newUser.firstName} ${newUser.lastName}</strong> has registered on Fantasy Madness. Please review and approve their profile via the admin panel.
+                A new affiliate <strong>${newUser.firstName} ${newUser.lastName}</strong> has registered on Fantasy Madness. Please review and approve their profile.
               </p>
             </td>
           </tr>
@@ -3154,7 +3154,6 @@ app.post('/registerAffiliate', upload.single('image'), async (req, res) => {
               <img src="${newUser.profileUrl}" alt="Affiliate Profile" style="width:60px; height:60px; border-radius:50%; border:3px solid #191164;" />
               <h3 style="color: #191164; font-family: 'Impact', fantasy, sans-serif;">Affiliate Details</h3>
               <p style="font-size: 17px; font-family: 'Comic Sans MS', fantasy, sans-serif; color: #555;">
-                
                 Name: ${newUser.firstName} ${newUser.lastName}<br>
                 Email: ${newUser.email}<br>
                 Phone: ${newUser.phone}<br>
@@ -3162,6 +3161,13 @@ app.post('/registerAffiliate', upload.single('image'), async (req, res) => {
               </p>
             </td>
           </tr>
+
+         <tr>
+           <td align="center" style="padding: 20px;">
+             <a href="${approvalLink}" style="display:inline-block; padding:10px 20px; color:#fff; background-color:#191164; border-radius:5px; text-decoration:none; font-family: Arial, sans-serif;">Approve Now</a>
+           </td>
+          </tr>
+
 
           <tr>
             <td align="center" style="padding: 15px 0;">
@@ -3180,8 +3186,103 @@ app.post('/registerAffiliate', upload.single('image'), async (req, res) => {
   }
 });
 
+app.get('/approveAffiliate/:id', async (req, res) => {
+  try {
+    const { id } = req.params;
+    const affiliate = await Affiliate.findById(id);
 
+    if (!affiliate) {
+      return res.status(404).send(`
+        <html>
+          <body style="display: flex; align-items: center; justify-content: center; height: 100vh; background-color: #333; color: white; font-family: Arial, sans-serif;">
+            <h1 style="color: #ff0000; font-size: 48px;">Affiliate not found</h1>
+          </body>
+        </html>
+      `);
+    }
 
+    affiliate.verified = true;
+    await affiliate.save();
+
+    // Send a detailed, stylized response for success with profile image
+    res.send(`
+      <html>
+        <head>
+          <style>
+            body {
+              background-color: #000; /* Black background */
+              color: #fff; /* White text */
+              font-family: Arial, sans-serif;
+              display: flex;
+              align-items: center;
+              justify-content: center;
+              height: 100vh;
+              margin: 0;
+            }
+            .container {
+              text-align: center;
+              border: 2px solid #ff0000; /* Red border */
+              padding: 20px;
+              width: 80%;
+              max-width: 500px;
+              background-color: #222; /* Dark grey background for the card */
+              border-radius: 10px;
+              box-shadow: 0px 4px 15px rgba(255, 0, 0, 0.6);
+            }
+            h1 {
+              font-size: 36px;
+              margin-bottom: 15px;
+              color: #ff0000; /* Bold red text for title */
+              text-shadow: 2px 2px #000;
+            }
+            p {
+              font-size: 18px;
+              margin-bottom: 20px;
+              color: #ccc; /* Light grey text */
+            }
+            .cta-text {
+              color: #fff;
+              font-size: 16px;
+              font-weight: bold;
+            }
+            .profile-img {
+              width: 100px;
+              height: 100px;
+              border-radius: 50%;
+              border: 3px solid #ff0000; /* Red border around profile */
+              margin-top: 15px;
+            }
+            .mma-glove {
+              width: 80px;
+              height: auto;
+              margin-top: 15px;
+            }
+          </style>
+        </head>
+        <body>
+          <div class="container">
+            <h1>Affiliate Approved!</h1>
+            <p>Congratulations! The affiliate has been successfully approved.</p>
+            <p class="cta-text">You may now close this window.</p>
+            <img src="${affiliate.profileUrl}" alt="Affiliate Profile Image" class="profile-img" />
+            <script>
+              setTimeout(() => window.close(), 2000); // Close tab after 2 seconds
+            </script>
+          </div>
+        </body>
+      </html>
+    `);
+  } catch (error) {
+    console.error('Error approving affiliate:', error);
+    res.status(500).send(`
+      <html>
+        <body style="display: flex; align-items: center; justify-content: center; height: 100vh; background-color: #333; color: white; font-family: Arial, sans-serif;">
+          <h1 style="color: #ff0000; font-size: 48px;">Internal Server Error</h1>
+        </body>
+      </html>
+    `);
+  }
+});
 
 // Login API
 app.post('/loginAffiliate', async (req, res) => {
