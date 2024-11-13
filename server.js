@@ -1851,17 +1851,17 @@ app.post('/contact-us-fantasymmadness', (req, res) => {
   if (!fullName || !email || !message) {
     return res.status(400).json({ error: 'Full name, email, and message are required.' });
   }
-
   // Email template for Admin
   const adminHtml = `
     <table width="100%" cellpadding="0" cellspacing="0" border="0" style="width:100%; max-width:600px; margin:auto;">
       <!-- Header Section -->
       <tr>
-        <td align="center" style="padding: 15px 0; background-color:#191164; color: white;">
+        <td align="center" style="padding: 15px 0;">
           <img src="https://i.ibb.co/mF88zvd/Image-5-removebg-preview.png" alt="Fantasy Madness Logo" style="width:100px;" />
-          <h2 style="margin: 0; font-family: 'New York', Charter, Georgia, serif;">Fantasy Madness Contact Submission</h2>
+          <h2 style="margin: 0; color: #191164; font-family: 'New York', Charter, Georgia, serif;">Fantasy Madness</h2>
         </td>
       </tr>
+      
       <!-- Message Details Section -->
       <tr>
         <td style="padding: 20px; font-family: Arial, sans-serif; color: #333;">
@@ -1872,11 +1872,24 @@ app.post('/contact-us-fantasymmadness', (req, res) => {
           <p style="font-size: 16px; color: #555;">${message}</p>
         </td>
       </tr>
-      <!-- Footer Section -->
+
+      <!-- Footer Section with Social Icons -->
       <tr>
-        <td align="center" style="padding: 20px; background-color:#f8f8f8;">
-          <p style="font-family: Arial, sans-serif; color: #191164; text-decoration: none;">Fantasy Madness Team</p>
-          <p><a href="https://fantasymmadness.com" style="font-family: Arial, sans-serif; color: #191164; text-decoration: none;">Visit Our Website</a></p>
+        <td align="center" style="padding: 20px 0;">
+          <img src="https://i.ibb.co/mF88zvd/Image-5-removebg-preview.png" alt="Fantasy Madness Logo" style="width:70px;" />
+          <p><a href="https://fantasymmadness.com" style="font-family: Arial, sans-serif; color: #191164; text-decoration: none;">https://fantasymmadness.com</a></p>
+          <div style="padding-top: 10px;">
+            <!-- Social Icons -->
+            <a href="https://www.facebook.com/share/2pzYV9XdQpAU7n6p/?mibextid=LQQJ4d" style="margin: 0 5px;">
+              <img src="https://i.ibb.co/G9wVH2g/facebook-removebg-preview-two.png" alt="Facebook" style="width:35px; height:35px; border-radius:50%;" />
+            </a>
+            <a href="https://www.instagram.com/fantasymmadness" style="margin: 0 5px;">
+              <img src="https://i.ibb.co/tKj4px0/insta-removebg-preview-two.png" alt="Instagram" style="width:35px; height:35px; border-radius:50%;" />
+            </a>
+            <a href="https://x.com/davis_kell51697" style="margin: 0 5px;">
+              <img src="https://i.ibb.co/T0cvy2Q/twitter-removebg-preview-two.png" alt="Twitter" style="width:35px; height:35px; border-radius:50%;" />
+            </a>
+          </div>
         </td>
       </tr>
     </table>
@@ -1892,6 +1905,7 @@ app.post('/contact-us-fantasymmadness', (req, res) => {
           <h2 style="margin: 0; font-family: 'New York', Charter, Georgia, serif;">Thank You for Contacting Us!</h2>
         </td>
       </tr>
+      
       <!-- Message Confirmation Section -->
       <tr>
         <td style="padding: 20px; font-family: Arial, sans-serif; color: #333;">
@@ -1904,15 +1918,29 @@ app.post('/contact-us-fantasymmadness', (req, res) => {
           <p style="font-size: 16px; color: #555;">${message}</p>
         </td>
       </tr>
-      <!-- Footer Section -->
+
+      <!-- Footer Section with Social Icons -->
       <tr>
-        <td align="center" style="padding: 20px; background-color:#f8f8f8;">
-          <p style="font-family: Arial, sans-serif; color: #191164; text-decoration: none;">Fantasy Madness Team</p>
-          <p><a href="https://fantasymmadness.com" style="font-family: Arial, sans-serif; color: #191164; text-decoration: none;">Visit Our Website</a></p>
+        <td align="center" style="padding: 20px 0;">
+          <img src="https://i.ibb.co/mF88zvd/Image-5-removebg-preview.png" alt="Fantasy Madness Logo" style="width:70px;" />
+          <p><a href="https://fantasymmadness.com" style="font-family: Arial, sans-serif; color: #191164; text-decoration: none;">https://fantasymmadness.com</a></p>
+          <div style="padding-top: 10px;">
+            <!-- Social Icons -->
+            <a href="https://www.facebook.com/share/2pzYV9XdQpAU7n6p/?mibextid=LQQJ4d" style="margin: 0 5px;">
+              <img src="https://i.ibb.co/G9wVH2g/facebook-removebg-preview-two.png" alt="Facebook" style="width:35px; height:35px; border-radius:50%;" />
+            </a>
+            <a href="https://www.instagram.com/fantasymmadness" style="margin: 0 5px;">
+              <img src="https://i.ibb.co/tKj4px0/insta-removebg-preview-two.png" alt="Instagram" style="width:35px; height:35px; border-radius:50%;" />
+            </a>
+            <a href="https://x.com/davis_kell51697" style="margin: 0 5px;">
+              <img src="https://i.ibb.co/T0cvy2Q/twitter-removebg-preview-two.png" alt="Twitter" style="width:35px; height:35px; border-radius:50%;" />
+            </a>
+          </div>
         </td>
       </tr>
     </table>
   `;
+
 
   // Admin email options
   const adminMailOptions = {
