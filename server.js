@@ -1945,7 +1945,7 @@ app.post('/contact-us-fantasymmadness', (req, res) => {
   // Admin email options
   const adminMailOptions = {
     from: email,
-    to: 'wajih786hassan@gmail.com',
+    to: 'Fantasymmadness2@gmail.com',
     subject: `Contact Form Submission: ${subject}`,
     html: adminHtml,
   };
