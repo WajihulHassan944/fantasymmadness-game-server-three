@@ -1862,7 +1862,6 @@ app.post('/contact-us-fantasymmadness', (req, res) => {
           <h2 style="margin: 0; font-family: 'New York', Charter, Georgia, serif;">Fantasy Madness Contact Submission</h2>
         </td>
       </tr>
-      
       <!-- Message Details Section -->
       <tr>
         <td style="padding: 20px; font-family: Arial, sans-serif; color: #333;">
@@ -1873,7 +1872,6 @@ app.post('/contact-us-fantasymmadness', (req, res) => {
           <p style="font-size: 16px; color: #555;">${message}</p>
         </td>
       </tr>
-
       <!-- Footer Section -->
       <tr>
         <td align="center" style="padding: 20px; background-color:#f8f8f8;">
@@ -1894,7 +1892,6 @@ app.post('/contact-us-fantasymmadness', (req, res) => {
           <h2 style="margin: 0; font-family: 'New York', Charter, Georgia, serif;">Thank You for Contacting Us!</h2>
         </td>
       </tr>
-      
       <!-- Message Confirmation Section -->
       <tr>
         <td style="padding: 20px; font-family: Arial, sans-serif; color: #333;">
@@ -1907,7 +1904,6 @@ app.post('/contact-us-fantasymmadness', (req, res) => {
           <p style="font-size: 16px; color: #555;">${message}</p>
         </td>
       </tr>
-
       <!-- Footer Section -->
       <tr>
         <td align="center" style="padding: 20px; background-color:#f8f8f8;">
@@ -1917,7 +1913,6 @@ app.post('/contact-us-fantasymmadness', (req, res) => {
       </tr>
     </table>
   `;
-
 
   // Admin email options
   const adminMailOptions = {
@@ -1936,26 +1931,20 @@ app.post('/contact-us-fantasymmadness', (req, res) => {
   };
 
   // Send both emails
-  transporter.sendMail(adminMailOptions, (error, info) => {
-    if (error) {
-      console.error('Error sending email:', error);
-      return res.status(500).json({ error: 'Failed to send email.' });
-    }
-    console.log('Admin email sent:', info.response);
-
-    // Send confirmation email to user
-    transporter.sendMail(userMailOptions, (userError, userInfo) => {
-      if (userError) {
-        console.error('Error sending email to user:', userError);
-      } else {
-        console.log('User email sent:', userInfo.response);
-      }
+  Promise.all([
+    transporter.sendMail(adminMailOptions),
+    transporter.sendMail(userMailOptions)
+  ])
+    .then(([adminInfo, userInfo]) => {
+      console.log('Admin email sent:', adminInfo.response);
+      console.log('User email sent:', userInfo.response);
+      res.status(200).json({ message: 'Emails sent successfully.' });
+    })
+    .catch(error => {
+      console.error('Error sending emails:', error);
+      res.status(500).json({ error: 'Failed to send emails.' });
     });
-
-    res.status(200).json({ message: 'Emails sent successfully.' });
-  });
 });
-
 app.post('/send-emails-to-all-users', async (req, res) => {
   const { emails, subject, message } = req.body;
 
