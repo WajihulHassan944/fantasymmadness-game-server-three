@@ -1844,33 +1844,116 @@ const transporter = nodemailer.createTransport({
   },
 });
 
-
-// Contact form endpoint
 app.post('/contact-us-fantasymmadness', (req, res) => {
   const { fullName, email, subject, message } = req.body;
 
   // Validate input (basic validation)
   if (!fullName || !email || !message) {
-      return res.status(400).json({ error: 'Full name, email, and message are required.' });
+    return res.status(400).json({ error: 'Full name, email, and message are required.' });
   }
 
-  const mailOptions = {
-      from: email,
-      to: 'Fantasymmadness2@gmail.com', // Using your email address to receive the message
-      subject: `Contact Form Submission: ${subject}`,
-      text: `Message from ${fullName} (${email}):\n\n${message}`,
+  // Email template for Admin
+  const adminHtml = `
+    <table width="100%" cellpadding="0" cellspacing="0" border="0" style="width:100%; max-width:600px; margin:auto;">
+      <!-- Header Section -->
+      <tr>
+        <td align="center" style="padding: 15px 0; background-color:#191164; color: white;">
+          <img src="https://i.ibb.co/mF88zvd/Image-5-removebg-preview.png" alt="Fantasy Madness Logo" style="width:100px;" />
+          <h2 style="margin: 0; font-family: 'New York', Charter, Georgia, serif;">Fantasy Madness Contact Submission</h2>
+        </td>
+      </tr>
+      
+      <!-- Message Details Section -->
+      <tr>
+        <td style="padding: 20px; font-family: Arial, sans-serif; color: #333;">
+          <p style="font-size: 16px;"><strong>Full Name:</strong> ${fullName}</p>
+          <p style="font-size: 16px;"><strong>Email:</strong> ${email}</p>
+          <p style="font-size: 16px;"><strong>Subject:</strong> ${subject || 'No Subject'}</p>
+          <p style="font-size: 16px;"><strong>Message:</strong></p>
+          <p style="font-size: 16px; color: #555;">${message}</p>
+        </td>
+      </tr>
+
+      <!-- Footer Section -->
+      <tr>
+        <td align="center" style="padding: 20px; background-color:#f8f8f8;">
+          <p style="font-family: Arial, sans-serif; color: #191164; text-decoration: none;">Fantasy Madness Team</p>
+          <p><a href="https://fantasymmadness.com" style="font-family: Arial, sans-serif; color: #191164; text-decoration: none;">Visit Our Website</a></p>
+        </td>
+      </tr>
+    </table>
+  `;
+
+  // Email template for User
+  const userHtml = `
+    <table width="100%" cellpadding="0" cellspacing="0" border="0" style="width:100%; max-width:600px; margin:auto;">
+      <!-- Header Section -->
+      <tr>
+        <td align="center" style="padding: 15px 0; background-color:#191164; color: white;">
+          <img src="https://i.ibb.co/mF88zvd/Image-5-removebg-preview.png" alt="Fantasy Madness Logo" style="width:100px;" />
+          <h2 style="margin: 0; font-family: 'New York', Charter, Georgia, serif;">Thank You for Contacting Us!</h2>
+        </td>
+      </tr>
+      
+      <!-- Message Confirmation Section -->
+      <tr>
+        <td style="padding: 20px; font-family: Arial, sans-serif; color: #333;">
+          <p style="font-size: 16px;">Hello ${fullName},</p>
+          <p style="font-size: 16px; color: #555;">
+            Thank you for reaching out! We have received your message and will get back to you as soon as possible. Here's a summary of your submission:
+          </p>
+          <p style="font-size: 16px;"><strong>Subject:</strong> ${subject || 'No Subject'}</p>
+          <p style="font-size: 16px;"><strong>Message:</strong></p>
+          <p style="font-size: 16px; color: #555;">${message}</p>
+        </td>
+      </tr>
+
+      <!-- Footer Section -->
+      <tr>
+        <td align="center" style="padding: 20px; background-color:#f8f8f8;">
+          <p style="font-family: Arial, sans-serif; color: #191164; text-decoration: none;">Fantasy Madness Team</p>
+          <p><a href="https://fantasymmadness.com" style="font-family: Arial, sans-serif; color: #191164; text-decoration: none;">Visit Our Website</a></p>
+        </td>
+      </tr>
+    </table>
+  `;
+
+  // Admin email options
+  const adminMailOptions = {
+    from: email,
+    to: 'wajih786hassan@gmail.com',
+    subject: `Contact Form Submission: ${subject}`,
+    html: adminHtml,
   };
 
-  transporter.sendMail(mailOptions, (error, info) => {
-      if (error) {
-          console.error('Error sending email:', error);
-          return res.status(500).json({ error: 'Failed to send email.' });
+  // User email options
+  const userMailOptions = {
+    from: 'Fantasymmadness2@gmail.com',
+    to: email,
+    subject: 'Thank You for Contacting Fantasy Madness!',
+    html: userHtml,
+  };
+
+  // Send both emails
+  transporter.sendMail(adminMailOptions, (error, info) => {
+    if (error) {
+      console.error('Error sending email:', error);
+      return res.status(500).json({ error: 'Failed to send email.' });
+    }
+    console.log('Admin email sent:', info.response);
+
+    // Send confirmation email to user
+    transporter.sendMail(userMailOptions, (userError, userInfo) => {
+      if (userError) {
+        console.error('Error sending email to user:', userError);
+      } else {
+        console.log('User email sent:', userInfo.response);
       }
-      console.log('Email sent:', info.response);
-      res.status(200).json({ message: 'Email sent successfully.' });
+    });
+
+    res.status(200).json({ message: 'Emails sent successfully.' });
   });
 });
-
 
 app.post('/send-emails-to-all-users', async (req, res) => {
   const { emails, subject, message } = req.body;
