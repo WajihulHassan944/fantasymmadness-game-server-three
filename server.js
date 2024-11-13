@@ -1917,7 +1917,7 @@ app.post('/contact-us-fantasymmadness', (req, res) => {
       </tr>
     </table>
   `;
-  
+
 
   // Admin email options
   const adminMailOptions = {
@@ -1941,7 +1941,7 @@ app.post('/contact-us-fantasymmadness', (req, res) => {
       console.error('Error sending email:', error);
       return res.status(500).json({ error: 'Failed to send email.' });
     }
-    console.log('Admin email sent:', info.response);
+    console.log('Admin email sent to admin:', info.response);
 
     // Send confirmation email to user
     transporter.sendMail(userMailOptions, (userError, userInfo) => {
