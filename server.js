@@ -1900,11 +1900,11 @@ app.post('/contact-us-fantasymmadness', (req, res) => {
     <table width="100%" cellpadding="0" cellspacing="0" border="0" style="width:100%; max-width:600px; margin:auto;">
       <!-- Header Section -->
       <tr>
-        <td align="center" style="padding: 15px 0; background-color:#191164; color: white;">
+       <td align="center" style="padding: 15px 0;">
           <img src="https://i.ibb.co/mF88zvd/Image-5-removebg-preview.png" alt="Fantasy Madness Logo" style="width:100px;" />
-          <h2 style="margin: 0; font-family: 'New York', Charter, Georgia, serif;">Thank You for Contacting Us!</h2>
+          <h2 style="margin: 0; color: #191164; font-family: 'New York', Charter, Georgia, serif;">Fantasy Madness</h2>
         </td>
-      </tr>
+     </tr>
       
       <!-- Message Confirmation Section -->
       <tr>
