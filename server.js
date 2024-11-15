@@ -1637,6 +1637,8 @@ app.post('/google-login', async (req, res) => {
 });
 
 
+
+
 app.post('/user/updatePayment/:id', async (req, res) => {
   const { id } = req.params; // Get the affiliate ID from URL params
   const { preferredPaymentMethod, preferredPaymentMethodValue } = req.body; // Get data from request body
