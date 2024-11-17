@@ -800,6 +800,7 @@ const newMatch = new Match(matchData);
   }
   
 
+  if (req.body.notify === 'true' || req.body.notify === true) {
 
   const users = await User.find();
   
@@ -952,8 +953,12 @@ const nonRegisteredUserMailPromises = nonRegisteredUsers.map(user => {
     console.log('Emails sent successfully to all users');
   } catch (error) {
     console.error('Error sending emails:', error);
+  } 
+  
+  
+} else {
+    console.log('Notification skipped because notify is set to false');
   }
-
 
   // Respond with success and the saved match ID
   res.status(200).json({ message: 'Match Added Successfully and Notifications Sent', matchId: savedMatch._id });
@@ -3792,6 +3797,9 @@ if (req.files.promotionBackground) {
 
   await newMatch.save();
 
+  if (req.body.notify === 'true' || req.body.notify === true) {
+
+
   const users = await Affiliate.find();
 
   const mailPromises = users.map(user => {
@@ -3863,7 +3871,9 @@ if (req.files.promotionBackground) {
   } catch (error) {
     console.error('Error sending emails:', error);
   }
-
+} else {
+  console.log('Notification skipped because notify is set to false');
+}
   res.status(200).json({ message: 'Match Added Successfully and Notifications Sent', matchId: newMatch._id });
 });
 
