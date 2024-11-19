@@ -2534,6 +2534,56 @@ verified: { type: Boolean, default: false },
 
 const Affiliate = mongoose.model('Affiliate', affiliateSchema);
 
+// Affiliate Google Login API
+app.post('/affiliate-google-login', async (req, res) => {
+  const { token } = req.body;
+
+  try {
+    // Verify Google token
+    const ticket = await client.verifyIdToken({
+      idToken: token,
+      audience: process.env.GOOGLE_CLIENT_ID,
+    });
+    const { name, email, picture } = ticket.getPayload();
+
+    // Check if the affiliate exists
+    let affiliate = await Affiliate.findOne({ email });
+
+    if (!affiliate) {
+      // If affiliate does not exist, create a new one
+      affiliate = new Affiliate({
+        firstName: name.split(' ')[0],
+        lastName: name.split(' ')[1] || '', // Handle single-word names
+        email,
+        profileUrl: picture,
+        verified: true, // Mark as verified since it's Google login
+      });
+
+      await affiliate.save();
+    }
+
+    // Generate JWT token
+    const jwtToken = jwt.sign({ id: affiliate._id }, process.env.JWT_SECRET, { expiresIn: '1h' });
+
+    // Return JWT token and affiliate info
+    res.status(200).json({
+      message: 'Affiliate Google login successful',
+      token: jwtToken,
+      affiliate: {
+        id: affiliate._id,
+        name: `${affiliate.firstName} ${affiliate.lastName}`.trim(),
+        email: affiliate.email,
+        profileUrl: affiliate.profileUrl,
+      },
+    });
+  } catch (error) {
+    console.error('Affiliate Google login error', error);
+    res.status(500).json({ message: 'Internal server error' });
+  }
+});
+
+
+
 // Route to increment totalViews
 app.post('/affiliate/:affiliateId/incrementViews', async (req, res) => {
   try {
