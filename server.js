@@ -2534,7 +2534,7 @@ verified: { type: Boolean, default: false },
 
 const Affiliate = mongoose.model('Affiliate', affiliateSchema);
 
-// Affiliate Google Login API
+
 app.post('/affiliate-google-login', async (req, res) => {
   const { token } = req.body;
 
@@ -2556,10 +2556,62 @@ app.post('/affiliate-google-login', async (req, res) => {
         lastName: name.split(' ')[1] || '', // Handle single-word names
         email,
         profileUrl: picture,
-        verified: true, // Mark as verified since it's Google login
+        verified: false, // Mark as unverified, admin will verify
       });
 
       await affiliate.save();
+
+      // Send email notification to admin for approval
+      const approvalLink = `https://fantasymmadness-game-server-three.vercel.app/approveAffiliate/${affiliate._id}`;
+
+      await transporter.sendMail({
+        from: '"Fantasy Madness" <Fantasymmadness2@gmail.com>',
+        to: 'wajih786hassan@gmail.com', // Admin email
+        subject: 'New Affiliate Registration - Approval Needed',
+        html: `
+          <table width="100%" cellpadding="0" cellspacing="0" border="0" style="width:100%; max-width:600px; margin:auto;">
+            <tr>
+              <td align="center" style="padding: 15px 0;">
+                <img src="https://i.ibb.co/mF88zvd/Image-5-removebg-preview.png" alt="Fantasy Madness Logo" style="width:100px;" />
+                <h2 style="margin: 0; color: #191164; font-family: 'New York', Charter, Georgia, serif;">Fantasy Madness</h2>
+              </td>
+            </tr>
+
+            <tr>
+              <td style="padding: 10px 0;">
+                <p style="font-size: 16px; font-family: Arial, sans-serif; color: #333;">Dear Admin,</p>
+                <p style="font-size: 16px; font-family: Arial, sans-serif; color: #333;">
+                  A new affiliate <strong>${affiliate.firstName} ${affiliate.lastName}</strong> has registered via Google Login on Fantasy Madness. Please review and approve their profile.
+                </p>
+              </td>
+            </tr>
+
+            <tr>
+              <td align="center" style="padding: 20px; background-color:#f8f8f8;">
+                <img src="${affiliate.profileUrl}" alt="Affiliate Profile" style="width:60px; height:60px; border-radius:50%; border:3px solid #191164;" />
+                <h3 style="color: #191164; font-family: 'Impact', fantasy, sans-serif;">Affiliate Details</h3>
+                <p style="font-size: 17px; font-family: 'Comic Sans MS', fantasy, sans-serif; color: #555;">
+                  Name: ${affiliate.firstName} ${affiliate.lastName}<br>
+                  Email: ${affiliate.email}
+                </p>
+              </td>
+            </tr>
+
+           <tr>
+             <td align="center" style="padding: 20px;">
+               <a href="${approvalLink}" style="display:inline-block; padding:10px 20px; color:#fff; background-color:#191164; border-radius:5px; text-decoration:none; font-family: Arial, sans-serif;">Approve Now</a>
+             </td>
+            </tr>
+
+            <tr>
+              <td align="center" style="padding: 15px 0;">
+                <img src="https://i.ibb.co/mF88zvd/Image-5-removebg-preview.png" alt="Fantasy Madness Logo" style="width:70px;" />
+                <p><a href="https://fantasymmadness.com" style="font-family: Arial, sans-serif; color: #191164; text-decoration: none;">https://fantasymmadness.com</a></p>
+              </td>
+            </tr>
+          </table>
+        `,
+      });
     }
 
     // Generate JWT token
@@ -2574,6 +2626,7 @@ app.post('/affiliate-google-login', async (req, res) => {
         name: `${affiliate.firstName} ${affiliate.lastName}`.trim(),
         email: affiliate.email,
         profileUrl: affiliate.profileUrl,
+        verified: affiliate.verified,
       },
     });
   } catch (error) {
@@ -2581,6 +2634,7 @@ app.post('/affiliate-google-login', async (req, res) => {
     res.status(500).json({ message: 'Internal server error' });
   }
 });
+
 
 
 
