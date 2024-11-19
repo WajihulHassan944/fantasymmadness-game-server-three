@@ -4743,21 +4743,37 @@ app.delete('/redusers/:email', async (req, res) => {
 
 
 
-
 const siteStatsSchema = new mongoose.Schema({
   totalClicks: { type: Number, default: 0 },
+  trackedDevices: { type: [String], default: [] }, // Array to store unique device IDs
 });
 
 const SiteStats = mongoose.model('SiteStats', siteStatsSchema);
-
 app.post('/track-click', async (req, res) => {
+  const { deviceId } = req.body;
+
+  if (!deviceId) {
+    return res.status(400).send({ message: 'Device ID is required' });
+  }
+
   try {
-    // Increment a counter in your database
-    const stats = await SiteStats.findOneAndUpdate(
-      {}, // Assuming a single stats document for simplicity
-      { $inc: { totalClicks: 1 } },
-      { upsert: true, new: true }
-    );
+    // Find the stats document (assuming there's only one)
+    let stats = await SiteStats.findOne({});
+
+    if (!stats) {
+      // Create a new stats document if it doesn't exist
+      stats = await SiteStats.create({ totalClicks: 0, trackedDevices: [] });
+    }
+
+    // Check if the device ID is already tracked
+    if (stats.trackedDevices.includes(deviceId)) {
+      return res.status(200).send({ message: 'Device already tracked', totalClicks: stats.totalClicks });
+    }
+
+    // Add the device ID and increment the total clicks
+    stats.totalClicks += 1;
+    stats.trackedDevices.push(deviceId);
+    await stats.save();
 
     res.status(200).send({ message: 'Click tracked', totalClicks: stats.totalClicks });
   } catch (error) {
