@@ -4746,6 +4746,11 @@ app.delete('/redusers/:email', async (req, res) => {
 const siteStatsSchema = new mongoose.Schema({
   totalClicks: { type: Number, default: 0 },
   trackedDevices: { type: [String], default: [] }, // Array to store unique device IDs
+  clicksByDate: { 
+    type: Map, 
+    of: Number, 
+    default: new Map() // Map to store dates and their respective click counts
+  },
 });
 
 const SiteStats = mongoose.model('SiteStats', siteStatsSchema);
@@ -4757,30 +4762,50 @@ app.post('/track-click', async (req, res) => {
   }
 
   try {
+    const today = new Date().toISOString().split('T')[0]; // Get current date in YYYY-MM-DD format
+
     // Find the stats document (assuming there's only one)
     let stats = await SiteStats.findOne({});
 
     if (!stats) {
       // Create a new stats document if it doesn't exist
-      stats = await SiteStats.create({ totalClicks: 0, trackedDevices: [] });
+      stats = await SiteStats.create({
+        totalClicks: 0,
+        trackedDevices: [],
+        clicksByDate: new Map(),
+      });
     }
 
     // Check if the device ID is already tracked
     if (stats.trackedDevices.includes(deviceId)) {
-      return res.status(200).send({ message: 'Device already tracked', totalClicks: stats.totalClicks });
+      return res.status(200).send({ 
+        message: 'Device already tracked', 
+        totalClicks: stats.totalClicks, 
+        clicksByDate: Object.fromEntries(stats.clicksByDate) // Convert Map to plain object for response
+      });
     }
 
     // Add the device ID and increment the total clicks
     stats.totalClicks += 1;
     stats.trackedDevices.push(deviceId);
+
+    // Increment the click count for today
+    stats.clicksByDate.set(today, (stats.clicksByDate.get(today) || 0) + 1);
+
     await stats.save();
 
-    res.status(200).send({ message: 'Click tracked', totalClicks: stats.totalClicks });
+    res.status(200).send({ 
+      message: 'Click tracked', 
+      totalClicks: stats.totalClicks, 
+      clicksByDate: Object.fromEntries(stats.clicksByDate) // Convert Map to plain object for response
+    });
   } catch (error) {
     console.error('Error tracking click:', error);
     res.status(500).send({ message: 'Error tracking click' });
   }
 });
+
+
 
 app.get('/get-total-clicks', async (req, res) => {
   try {
