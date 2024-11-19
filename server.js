@@ -2566,7 +2566,7 @@ app.post('/affiliate-google-login', async (req, res) => {
 
       await transporter.sendMail({
         from: '"Fantasy Madness" <Fantasymmadness2@gmail.com>',
-        to: 'wajih786hassan@gmail.com', // Admin email
+        to: 'Fantasymmadness2@gmail.com', // Admin email
         subject: 'New Affiliate Registration - Approval Needed',
         html: `
           <table width="100%" cellpadding="0" cellspacing="0" border="0" style="width:100%; max-width:600px; margin:auto;">
@@ -4738,6 +4738,42 @@ app.delete('/redusers/:email', async (req, res) => {
 
 
 
+
+
+const siteStatsSchema = new mongoose.Schema({
+  totalClicks: { type: Number, default: 0 },
+});
+
+const SiteStats = mongoose.model('SiteStats', siteStatsSchema);
+
+app.post('/track-click', async (req, res) => {
+  try {
+    // Increment a counter in your database
+    const stats = await SiteStats.findOneAndUpdate(
+      {}, // Assuming a single stats document for simplicity
+      { $inc: { totalClicks: 1 } },
+      { upsert: true, new: true }
+    );
+
+    res.status(200).send({ message: 'Click tracked', totalClicks: stats.totalClicks });
+  } catch (error) {
+    console.error('Error tracking click:', error);
+    res.status(500).send({ message: 'Error tracking click' });
+  }
+});
+
+app.get('/get-total-clicks', async (req, res) => {
+  try {
+    // Find the single document storing site stats
+    const stats = await SiteStats.findOne({});
+    const totalClicks = stats ? stats.totalClicks : 0;
+
+    res.status(200).send({ totalClicks });
+  } catch (error) {
+    console.error('Error fetching total clicks:', error);
+    res.status(500).send({ message: 'Error fetching total clicks' });
+  }
+});
 
 
 
