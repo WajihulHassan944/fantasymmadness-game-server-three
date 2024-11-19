@@ -4786,9 +4786,8 @@ app.get('/get-total-clicks', async (req, res) => {
   try {
     // Find the single document storing site stats
     const stats = await SiteStats.findOne({});
-    const totalClicks = stats ? stats.totalClicks : 0;
-
-    res.status(200).send({ totalClicks });
+    
+    res.status(200).send({ stats });
   } catch (error) {
     console.error('Error fetching total clicks:', error);
     res.status(500).send({ message: 'Error fetching total clicks' });
