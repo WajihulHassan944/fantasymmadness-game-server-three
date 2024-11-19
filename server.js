@@ -3983,7 +3983,6 @@ if (req.files.promotionBackground) {
 
 
 
-
 app.get('/dashboard-counts', async (req, res) => {
   try {
     // Fetch counts using Mongoose's countDocuments method
@@ -3991,13 +3990,18 @@ app.get('/dashboard-counts', async (req, res) => {
     const matchesCount = await Match.countDocuments({});
     const usersCount = await User.countDocuments({});
     const shadowTemplatesCount = await Shadow.countDocuments({});
+    
+    // Fetch total clicks from SiteStats
+    const stats = await SiteStats.findOne({});
+    const totalClicks = stats ? stats.totalClicks : 0;
 
-    // Send response with all counts
+    // Send response with all counts, including total clicks
     res.json({
       affiliatesCount,
       matchesCount,
       usersCount,
-      shadowTemplatesCount
+      shadowTemplatesCount,
+      totalClicks // Include total clicks in the response
     });
   } catch (error) {
     console.error('Error fetching dashboard counts:', error);
