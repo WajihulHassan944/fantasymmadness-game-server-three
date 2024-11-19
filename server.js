@@ -4794,6 +4794,18 @@ app.get('/get-total-clicks', async (req, res) => {
   }
 });
 
+app.post('/reset-stats', async (req, res) => {
+  try {
+    // Delete the stats document(s)
+    await SiteStats.deleteMany({});
+    
+    // Respond with a success message
+    res.status(200).send({ message: 'All site stats have been reset successfully.' });
+  } catch (error) {
+    console.error('Error resetting stats:', error);
+    res.status(500).send({ message: 'Error resetting stats.' });
+  }
+});
 
 
 
