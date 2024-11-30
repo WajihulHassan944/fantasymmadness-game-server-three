@@ -5011,7 +5011,7 @@ app.post('/faqs/bulk', async (req, res) => {
 
   try {
     // Insert the array of FAQs into the database
-    const insertedFaqs = await Faq.insertMany(faqs);
+    const insertedFaqs = await Faqs.insertMany(faqs);
     res.status(201).json({
       message: 'FAQs added successfully.',
       data: insertedFaqs,
