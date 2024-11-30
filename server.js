@@ -4960,6 +4960,21 @@ const faqSchema = new mongoose.Schema({
 
 const Faqs = mongoose.model('Faqs', faqSchema);
 
+
+app.delete('/all/delete/faqs', async (req, res) => {
+  try {
+    // Delete all documents from the Faqs collection
+    const result = await Faqs.deleteMany({});
+    res.status(200).json({
+      message: 'All FAQs deleted successfully.',
+      deletedCount: result.deletedCount,
+    });
+  } catch (error) {
+    console.error('Error deleting FAQs:', error);
+    res.status(500).json({ error: 'Failed to delete FAQs from the database.' });
+  }
+});
+
 app.post('/faqs', async (req, res) => {
   try {
     const faq = new Faqs(req.body);
