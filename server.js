@@ -5002,6 +5002,26 @@ app.delete('/faqs/:id', async (req, res) => {
   }
 });
 
+app.post('/faqs/bulk', async (req, res) => {
+  const faqs = req.body; // Expecting an array of FAQ objects in the request body
+
+  if (!Array.isArray(faqs) || faqs.length === 0) {
+    return res.status(400).json({ error: 'Request body should be an array of FAQs.' });
+  }
+
+  try {
+    // Insert the array of FAQs into the database
+    const insertedFaqs = await Faq.insertMany(faqs);
+    res.status(201).json({
+      message: 'FAQs added successfully.',
+      data: insertedFaqs,
+    });
+  } catch (error) {
+    console.error('Error adding FAQs:', error);
+    res.status(500).json({ error: 'Failed to add FAQs to the database.' });
+  }
+});
+
 
 
 
