@@ -4945,6 +4945,69 @@ app.post('/reset-stats', async (req, res) => {
 
 
 
+
+
+
+
+
+
+
+
+const faqSchema = new mongoose.Schema({
+  title: String,
+  description:String,
+});
+
+const Faqs = mongoose.model('Faqs', faqSchema);
+
+app.post('/faqs', async (req, res) => {
+  try {
+    const faq = new Faqs(req.body);
+    await faq.save();
+    res.status(201).json({ success: true, data: faq });
+  } catch (error) {
+    res.status(400).json({ success: false, message: error.message });
+  }
+});
+
+app.get('/faqs', async (req, res) => {
+  try {
+    const faqs = await Faqs.find();
+    res.status(200).json({ success: true, data: faqs });
+  } catch (error) {
+    res.status(500).json({ success: false, message: error.message });
+  }
+});
+
+app.put('/faqs/:id', async (req, res) => {
+  try {
+    const faq = await Faqs.findByIdAndUpdate(req.params.id, req.body, {
+      new: true,
+      runValidators: true,
+    });
+    if (!faq) return res.status(404).json({ success: false, message: 'FAQ not found' });
+    res.status(200).json({ success: true, data: faq });
+  } catch (error) {
+    res.status(400).json({ success: false, message: error.message });
+  }
+});
+
+app.delete('/faqs/:id', async (req, res) => {
+  try {
+    const faq = await Faqs.findByIdAndDelete(req.params.id);
+    if (!faq) return res.status(404).json({ success: false, message: 'FAQ not found' });
+    res.status(200).json({ success: true, message: 'FAQ deleted successfully' });
+  } catch (error) {
+    res.status(400).json({ success: false, message: error.message });
+  }
+});
+
+
+
+
+
+
+
 // Start server
 const server = app.listen(PORT, () => {
   console.log(`Server started on port ${PORT}`);
