@@ -5089,13 +5089,13 @@ app.post('/news', async (req, res) => {
     // Check if notifications are enabled in the request
     if (req.body.notify === 'true' || req.body.notify === true) {
       // Fetch all users with isSubscribed set to true
-      const subscribedUsers = await User.find();
+      const subscribedUsers = await User.find({ isSubscribed: true });
 
       if (subscribedUsers.length > 0) {
         const emailPromises = subscribedUsers.map(user => {
           const mailOptions = {
             from: 'Fantasymmadness2@gmail.com',
-            to: 'wajih786hassan@gmail.com',
+            to: user.email,
             subject: 'Fantasy mmadness - New Update!',
             html: `
               <table width="100%" cellpadding="0" cellspacing="0" border="0" style="width:100%; max-width:600px; margin:auto;">
