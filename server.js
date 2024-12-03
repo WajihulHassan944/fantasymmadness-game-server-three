@@ -5164,7 +5164,7 @@ app.post('/news', async (req, res) => {
       console.log('Notification skipped because notify is set to false');
     }
 
-    res.status(201).json({ success: true, message: 'News article added successfully and notifications sent (if applicable).' });
+    res.status(201).json({ success: true, message: 'News article added successfully and notifications sent (if applicable).', data: news });
   } catch (error) {
     console.error('Error creating news article:', error);
     res.status(400).json({ success: false, message: error.message });
