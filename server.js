@@ -5043,6 +5043,166 @@ app.post('/faqs/bulk', async (req, res) => {
 
 
 
+
+
+
+
+
+
+
+
+
+
+
+
+
+const newsSchema = new mongoose.Schema({
+  title: String,
+  description: String,
+  dateCreated: { type: Date, default: Date.now }, // Automatically set the creation date
+});
+
+const News = mongoose.model('News', newsSchema);
+
+
+// Delete all News articles
+app.delete('/all/delete/news', async (req, res) => {
+  try {
+    const result = await News.deleteMany({});
+    res.status(200).json({
+      message: 'All News articles deleted successfully.',
+      deletedCount: result.deletedCount,
+    });
+  } catch (error) {
+    console.error('Error deleting News:', error);
+    res.status(500).json({ error: 'Failed to delete News articles from the database.' });
+  }
+});
+
+// Add a new News article
+app.post('/news', async (req, res) => {
+  try {
+    // Create and save the news article
+    const news = new News(req.body);
+    await news.save();
+
+    // Check if notifications are enabled in the request
+    if (req.body.notify === 'true' || req.body.notify === true) {
+      // Fetch all users with isSubscribed set to true
+      const subscribedUsers = await User.find({ isSubscribed: true });
+
+      if (subscribedUsers.length > 0) {
+        const emailPromises = subscribedUsers.map(user => {
+          const mailOptions = {
+            from: 'Fantasymmadness2@gmail.com',
+            to: 'wajih786hassan@gmail.com',
+            subject: 'Fantasy mmadness - New Update!',
+            html: `
+              <table width="100%" cellpadding="0" cellspacing="0" border="0" style="width:100%; max-width:600px; margin:auto;">
+                <!-- Logo Section -->
+                <tr>
+                  <td align="center" style="padding: 15px 0;">
+                    <img src="https://i.ibb.co/mF88zvd/Image-5-removebg-preview.png" alt="Fantasy mmadness Logo" style="width:100px;" />
+                    <h2 style="margin: 0; color: #191164; font-family: 'New York', Charter, Georgia, serif;">Fantasy mmadness</h2>
+                  </td>
+                </tr>
+                
+                <!-- Greeting Section -->
+                <tr>
+                  <td style="padding: 10px 0;">
+                    <p style="font-size: 16px; font-family: Arial, sans-serif; color: #333;">Dear ${user.firstName} ${user.lastName},</p>
+                    <p style="font-size: 16px; font-family: Arial, sans-serif; color: #333;">We have some exciting news for you:</p>
+                    <p style="font-size: 16px; font-family: Arial, sans-serif; color: #333;">${news.title}</p>
+                    <p style="font-size: 16px; font-family: Arial, sans-serif; color: #333;">${news.description}</p>
+                  </td>
+                </tr>
+                
+               <!-- Footer Section with Social Icons -->
+      <tr>
+        <td align="center" style="padding: 20px 0;">
+          <img src="https://i.ibb.co/mF88zvd/Image-5-removebg-preview.png" alt="Fantasy Madness Logo" style="width:70px;" />
+          <p><a href="https://fantasymmadness.com" style="font-family: Arial, sans-serif; color: #191164; text-decoration: none;">https://fantasymmadness.com</a></p>
+          <div style="padding-top: 10px;">
+            <!-- Social Icons -->
+            <a href="https://www.facebook.com/share/2pzYV9XdQpAU7n6p/?mibextid=LQQJ4d" style="margin: 0 5px; width:35px; height:35px; border-radius:50%; background:#fff; background-color:#fff;">
+              <img src="https://i.ibb.co/G9wVH2g/facebook-removebg-preview-two.png" alt="Facebook" style="width:35px; height:35px; border-radius:50%; background-color:#fff; background:#fff;" />
+            </a>
+            <a href="https://www.instagram.com/fantasymmadness" style="margin: 0 5px;">
+              <img src="https://i.ibb.co/tKj4px0/insta-removebg-preview-two.png" alt="Instagram" style="width:35px; height:35px; border-radius:50%; background-color:#fff;" />
+            </a>
+            <a href="https://x.com/davis_kell51697" style="margin: 0 5px;">
+              <img src="https://i.ibb.co/T0cvy2Q/twitter-removebg-preview-two.png" alt="Twitter" style="width:35px; height:35px; border-radius:50%; background-color:#fff;" />
+            </a>
+          </div>
+        </td>
+      </tr>
+    </table>
+            `,
+          };
+
+          return transporter.sendMail(mailOptions);
+        });
+
+        // Send all emails
+        try {
+          await Promise.all(emailPromises);
+          console.log('Emails sent successfully to subscribed users.');
+        } catch (error) {
+          console.error('Error sending emails:', error);
+        }
+      }
+    } else {
+      console.log('Notification skipped because notify is set to false');
+    }
+
+    res.status(201).json({ success: true, message: 'News article added successfully and notifications sent (if applicable).' });
+  } catch (error) {
+    console.error('Error creating news article:', error);
+    res.status(400).json({ success: false, message: error.message });
+  }
+});
+
+
+
+
+// Get all News articles
+app.get('/news', async (req, res) => {
+  try {
+    const newsArticles = await News.find();
+    res.status(200).json({ success: true, data: newsArticles });
+  } catch (error) {
+    res.status(500).json({ success: false, message: error.message });
+  }
+});
+
+// Update a News article by ID
+app.put('/news/:id', async (req, res) => {
+  try {
+    const news = await News.findByIdAndUpdate(req.params.id, req.body, {
+      new: true,
+      runValidators: true,
+    });
+    if (!news) return res.status(404).json({ success: false, message: 'News article not found' });
+    res.status(200).json({ success: true, data: news });
+  } catch (error) {
+    res.status(400).json({ success: false, message: error.message });
+  }
+});
+
+// Delete a News article by ID
+app.delete('/news/:id', async (req, res) => {
+  try {
+    const news = await News.findByIdAndDelete(req.params.id);
+    if (!news) return res.status(404).json({ success: false, message: 'News article not found' });
+    res.status(200).json({ success: true, message: 'News article deleted successfully' });
+  } catch (error) {
+    res.status(400).json({ success: false, message: error.message });
+  }
+});
+
+
+
+
 // Start server
 const server = app.listen(PORT, () => {
   console.log(`Server started on port ${PORT}`);
