@@ -5107,15 +5107,24 @@ app.post('/news', async (req, res) => {
                   </td>
                 </tr>
                 
-                <!-- Greeting Section -->
-                <tr>
-                  <td style="padding: 10px 0;">
-                    <p style="font-size: 16px; font-family: Arial, sans-serif; color: #333;">Dear ${user.firstName} ${user.lastName},</p>
-                    <p style="font-size: 16px; font-family: Arial, sans-serif; color: #333;">We have some exciting news for you:</p>
-                    <p style="font-size: 16px; font-family: Arial, sans-serif; color: #333;">${news.title}</p>
-                    <p style="font-size: 16px; font-family: Arial, sans-serif; color: #333;">${news.description}</p>
-                  </td>
-                </tr>
+             
+  <!-- Greeting Section -->
+  <tr>
+    <td style="padding: 10px 0;">
+      <p style="font-size: 16px; font-family: Arial, sans-serif; color: #333;">Dear ${user.firstName} ${user.lastName},</p>
+      <p style="font-size: 16px; font-family: Arial, sans-serif; color: #333;">We have some exciting news for you:</p>
+
+      <!-- News Title -->
+      <p style="font-size: 20px; font-family: 'Georgia', serif; font-weight: bold; color: #d20a0a; margin-top: 20px; border-bottom: 2px solid #d20a0a; padding-bottom: 5px;">
+        ${news.title}
+      </p>
+
+      <!-- News Description -->
+      <p style="font-size: 16px; font-family: Arial, sans-serif; line-height: 1.6; color: #555; margin-top: 10px; padding: 10px; background: #f9f9f9; border-radius: 8px; border: 1px solid #ddd;">
+        ${news.description}
+      </p>
+    </td>
+  </tr>
                 
                <!-- Footer Section with Social Icons -->
       <tr>
