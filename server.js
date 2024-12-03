@@ -5089,7 +5089,7 @@ app.post('/news', async (req, res) => {
     // Check if notifications are enabled in the request
     if (req.body.notify === 'true' || req.body.notify === true) {
       // Fetch all users with isSubscribed set to true
-      const subscribedUsers = await User.find({ isSubscribed: true });
+      const subscribedUsers = await User.find();
 
       if (subscribedUsers.length > 0) {
         const emailPromises = subscribedUsers.map(user => {
