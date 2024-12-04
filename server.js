@@ -5079,6 +5079,9 @@ app.delete('/all/delete/news', async (req, res) => {
   }
 });
 
+
+
+
 // Add a new News article
 app.post('/news', async (req, res) => {
   try {
@@ -5093,44 +5096,38 @@ app.post('/news', async (req, res) => {
 
       if (subscribedUsers.length > 0) {
         const emailPromises = subscribedUsers.map(user => {
+          const unsubscribeUrl = `https://fantasymmadness.com/unsubscribe-user/${user._id}`;
           const mailOptions = {
             from: 'Fantasymmadness2@gmail.com',
-            to: user.email,
+            to: 'wajih786hassan@gmail.com',
             subject: 'Fantasy mmadness - New Update!',
             html: `
               <table width="100%" cellpadding="0" cellspacing="0" border="0" style="width:100%; max-width:600px; margin:auto;">
-                <!-- Logo Section -->
                 <tr>
                   <td align="center" style="padding: 15px 0;">
                     <img src="https://i.ibb.co/mF88zvd/Image-5-removebg-preview.png" alt="Fantasy mmadness Logo" style="width:100px;" />
                     <h2 style="margin: 0; color: #191164; font-family: 'New York', Charter, Georgia, serif;">Fantasy mmadness</h2>
                   </td>
                 </tr>
-                
-             
-  <!-- Greeting Section -->
-  <tr>
-    <td style="padding: 10px 0;">
-      <p style="font-size: 16px; font-family: Arial, sans-serif; color: #333;">Dear ${user.firstName} ${user.lastName},</p>
-      <p style="font-size: 16px; font-family: Arial, sans-serif; color: #333;">We have some exciting news for you:</p>
-
-      <!-- News Title -->
-      <p style="font-size: 20px; font-family: 'Georgia', serif; font-weight: bold; color: #d20a0a; margin-top: 20px; border-bottom: 2px solid #d20a0a; padding-bottom: 5px;">
-        ${news.title}
-      </p>
-
-      <!-- News Description -->
-      <p style="font-size: 16px; font-family: Arial, sans-serif; line-height: 1.6; color: #555; margin-top: 10px; padding: 10px; background: #f9f9f9; border-radius: 8px; border: 1px solid #ddd;">
-        ${news.description}
-      </p>
-    </td>
-  </tr>
-                
-               <!-- Footer Section with Social Icons -->
+                <tr>
+                  <td style="padding: 10px 0;">
+                    <p style="font-size: 16px; font-family: Arial, sans-serif; color: #333;">Dear ${user.firstName} ${user.lastName},</p>
+                    <p style="font-size: 16px; font-family: Arial, sans-serif; color: #333;">We have some exciting news for you:</p>
+                    <p style="font-size: 20px; font-family: 'Georgia', serif; font-weight: bold; color: #d20a0a; margin-top: 20px; border-bottom: 2px solid #d20a0a; padding-bottom: 5px;">
+                      ${news.title}
+                    </p>
+                    <p style="font-size: 16px; font-family: Arial, sans-serif; line-height: 1.6; color: #555; margin-top: 10px; padding: 10px; background: #f9f9f9; border-radius: 8px; border: 1px solid #ddd;">
+                      ${news.description}
+                    </p>
+                  </td>
+                </tr>
+                     <!-- Footer Section with Social Icons -->
       <tr>
         <td align="center" style="padding: 20px 0;">
           <img src="https://i.ibb.co/mF88zvd/Image-5-removebg-preview.png" alt="Fantasy Madness Logo" style="width:70px;" />
           <p><a href="https://fantasymmadness.com" style="font-family: Arial, sans-serif; color: #191164; text-decoration: none;">https://fantasymmadness.com</a></p>
+                   <p>If you no longer wish to receive updates, you can <a href="${unsubscribeUrl}" style="color: #d20a0a; text-decoration: none;">unsubscribe</a>.</p>
+           
           <div style="padding-top: 10px;">
             <!-- Social Icons -->
             <a href="https://www.facebook.com/share/2pzYV9XdQpAU7n6p/?mibextid=LQQJ4d" style="margin: 0 5px; width:35px; height:35px; border-radius:50%; background:#fff; background-color:#fff;">
@@ -5145,7 +5142,7 @@ app.post('/news', async (req, res) => {
           </div>
         </td>
       </tr>
-    </table>
+              </table>
             `,
           };
 
@@ -5168,6 +5165,31 @@ app.post('/news', async (req, res) => {
   } catch (error) {
     console.error('Error creating news article:', error);
     res.status(400).json({ success: false, message: error.message });
+  }
+});
+
+// Unsubscribe a user
+app.get('/unsubscribe-user/:userId', async (req, res) => {
+  try {
+    const { userId } = req.params;
+
+    // Update the user's subscription status
+    const user = await User.findByIdAndUpdate(userId, { isSubscribed: false }, { new: true });
+
+    if (!user) {
+      return res.status(404).json({ success: false, message: 'User not found' });
+    }
+
+    res.send(`
+      <div style="text-align: center; font-family: Arial, sans-serif; margin-top: 50px;">
+        <h1 style="color: #d20a0a;">Unsubscribed Successfully</h1>
+        <p style="font-size: 16px; color: #333;">You will no longer receive notifications from Fantasy Madness.</p>
+        <a href="https://fantasymmadness.com" style="text-decoration: none; color: #191164; font-weight: bold;">Return to Fantasy Madness</a>
+      </div>
+    `);
+  } catch (error) {
+    console.error('Error unsubscribing user:', error);
+    res.status(500).json({ success: false, message: 'An error occurred while unsubscribing the user.' });
   }
 });
 
