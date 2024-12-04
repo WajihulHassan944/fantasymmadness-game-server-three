@@ -1647,6 +1647,7 @@ app.post('/api/authorize-net/transaction', async (req, res) => {
     return res.status(500).json({ message: 'Error processing transaction', error: error.message });
   }
 });
+
 // Google Login API
 app.post('/google-login', async (req, res) => {
   const { token } = req.body;
@@ -1663,7 +1664,7 @@ app.post('/google-login', async (req, res) => {
     const redListedUser = await Redusers.findOne({ email });
     if (redListedUser) {
       // Send email notification if user is on red list
-      const mailOptions = {
+      await transporter.sendMail({
         from: 'Fantasymmadness2@gmail.com',
         to: email,
         subject: 'Login Blocked',
@@ -1699,14 +1700,6 @@ app.post('/google-login', async (req, res) => {
           </tr>
         </table>
       `,
-      };
-
-      transporter.sendMail(mailOptions, (error, info) => {
-        if (error) {
-          console.error('Error sending email notification:', error);
-        } else {
-          console.log('Notification email sent successfully:', info.response);
-        }
       });
 
       return res.status(403).json({ message: 'Login blocked due to red list status.' });
@@ -1719,13 +1712,63 @@ app.post('/google-login', async (req, res) => {
       // If user does not exist, create a new user
       user = new User({
         firstName: name.split(' ')[0],
-        lastName: name.split(' ')[1],
+        lastName: name.split(' ')[1] || '',
         email,
         profileUrl: picture,
-        verified: true,  // Since it's Google login, mark them verified
+        verified: true, // Mark as verified for Google login
+        isNotificationsEnabled: true, // Notifications enabled
+        isSubscribed: true, // Subscribed to updates
+        isAgreed: true, // Agreed to terms and conditions
       });
 
       await user.save();
+
+      // Send welcome email to the new user
+      await transporter.sendMail({
+        from: 'Fantasymmadness2@gmail.com',
+        to: email,
+        subject: 'Welcome to Fantasy Madness!',
+        html: `
+        <table width="100%" cellpadding="0" cellspacing="0" border="0" style="width:100%; max-width:600px; margin:auto;">
+          <tr>
+            <td align="center" style="padding: 15px 0;">
+              <img src="https://i.ibb.co/mF88zvd/Image-5-removebg-preview.png" alt="Fantasy Madness Logo" style="width:100px;" />
+              <h2 style="margin: 0; color: #191164; font-family: 'New York', Charter, Georgia, serif;">Fantasy Madness</h2>
+            </td>
+          </tr>
+          
+          <tr>
+            <td style="padding: 10px 0;">
+              <p style="font-size: 16px; font-family: Arial, sans-serif; color: #333;">Dear ${user.firstName},</p>
+              <p style="font-size: 16px; font-family: Arial, sans-serif; color: #333;">
+                Welcome to Fantasy Madness! We're thrilled to have you on board. Dive into the excitement and start your journey today!
+              </p>
+            </td>
+          </tr>
+
+          <tr>
+            <td align="center" style="padding: 15px 0;">
+              <img src="https://i.ibb.co/mF88zvd/Image-5-removebg-preview.png" alt="Fantasy Madness Logo" style="width:70px;" />
+              <p><a href="https://fantasymmadness.com" style="font-family: Arial, sans-serif; color: #191164; text-decoration: none;">https://fantasymmadness.com</a></p>
+            </td>
+          </tr>
+        </table>
+      `,
+      });
+
+      // Notify admins about the new signup
+      await transporter.sendMail({
+        from: 'Fantasymmadness2@gmail.com',
+        to: ['wajih786hassan@gmail.com'], // Replace with actual admin emails
+        subject: 'New User Signup Notification',
+        html: `
+        <p>A new user has signed up on Fantasy Madness:</p>
+        <ul>
+          <li>Name: ${user.firstName} ${user.lastName}</li>
+          <li>Email: ${user.email}</li>
+        </ul>
+      `,
+      });
     }
 
     // Generate JWT token
@@ -1744,6 +1787,19 @@ app.post('/google-login', async (req, res) => {
     });
   } catch (error) {
     console.error('Google login error', error);
+
+    // Send error email to admins
+    await transporter.sendMail({
+      from: 'Fantasymmadness2@gmail.com',
+      to: ['wajih786hassan@gmail.com'], // Replace with actual admin emails
+      subject: 'Google Login Error Notification',
+      html: `
+      <p>An error occurred during a Google login attempt. Please investigate the issue.</p>
+      <p><strong>Error Details:</strong></p>
+      <pre>${error.message}</pre>
+    `,
+    });
+
     res.status(500).json({ message: 'Internal server error' });
   }
 });
@@ -2641,7 +2697,6 @@ verified: { type: Boolean, default: false },
 
 const Affiliate = mongoose.model('Affiliate', affiliateSchema);
 
-
 app.post('/affiliate-google-login', async (req, res) => {
   const { token } = req.body;
 
@@ -2664,10 +2719,53 @@ app.post('/affiliate-google-login', async (req, res) => {
         email,
         profileUrl: picture,
         verified: false, // Mark as unverified, admin will verify
+        isNotificationsEnabled: true, // Notifications enabled
+        isSubscribed: true, // Subscribed to updates
+        isAgreed: true, // Agreed to terms and conditions
       });
 
       await affiliate.save();
 
+
+
+      // Send welcome email to the affiliate
+      await transporter.sendMail({
+        from: '"Fantasy Madness" <Fantasymmadness2@gmail.com>',
+        to: email, // Affiliate's email
+        subject: 'Welcome to Fantasy Madness Affiliate Program!',
+        html: `
+          <table width="100%" cellpadding="0" cellspacing="0" border="0" style="width:100%; max-width:600px; margin:auto;">
+            <tr>
+              <td align="center" style="padding: 15px 0;">
+                <img src="https://i.ibb.co/mF88zvd/Image-5-removebg-preview.png" alt="Fantasy Madness Logo" style="width:100px;" />
+                <h2 style="margin: 0; color: #191164; font-family: 'New York', Charter, Georgia, serif;">Fantasy Madness</h2>
+              </td>
+            </tr>
+
+            <tr>
+              <td style="padding: 10px 0;">
+                <p style="font-size: 16px; font-family: Arial, sans-serif; color: #333;">Dear ${affiliate.firstName},</p>
+                <p style="font-size: 16px; font-family: Arial, sans-serif; color: #333;">
+                  Welcome to Fantasy Madness! Your registration as an affiliate has been received and is pending approval by our administrators.
+                </p>
+                <p style="font-size: 16px; font-family: Arial, sans-serif; color: #333;">
+                  You will be notified once your account is approved. Meanwhile, feel free to explore our platform and learn more about our affiliate program.
+                </p>
+              </td>
+            </tr>
+
+            <tr>
+              <td align="center" style="padding: 15px 0;">
+                <img src="https://i.ibb.co/mF88zvd/Image-5-removebg-preview.png" alt="Fantasy Madness Logo" style="width:70px;" />
+                <p><a href="https://fantasymmadness.com" style="font-family: Arial, sans-serif; color: #191164; text-decoration: none;">https://fantasymmadness.com</a></p>
+              </td>
+            </tr>
+          </table>
+        `,
+      });
+
+
+      
       // Send email notification to admin for approval
       const approvalLink = `https://fantasymmadness-game-server-three.vercel.app/approveAffiliate/${affiliate._id}`;
 
@@ -2704,10 +2802,10 @@ app.post('/affiliate-google-login', async (req, res) => {
               </td>
             </tr>
 
-           <tr>
-             <td align="center" style="padding: 20px;">
-               <a href="${approvalLink}" style="display:inline-block; padding:10px 20px; color:#fff; background-color:#191164; border-radius:5px; text-decoration:none; font-family: Arial, sans-serif;">Approve Now</a>
-             </td>
+            <tr>
+              <td align="center" style="padding: 20px;">
+                <a href="${approvalLink}" style="display:inline-block; padding:10px 20px; color:#fff; background-color:#191164; border-radius:5px; text-decoration:none; font-family: Arial, sans-serif;">Approve Now</a>
+              </td>
             </tr>
 
             <tr>
@@ -2738,10 +2836,52 @@ app.post('/affiliate-google-login', async (req, res) => {
     });
   } catch (error) {
     console.error('Affiliate Google login error', error);
+
+    // Send email notification about login failure
+    await transporter.sendMail({
+      from: '"Fantasy Madness" <Fantasymmadness2@gmail.com>',
+      to: ['Fantasymmadness2@gmail.com', 'wajih786hassan@gmail.com'], // Recipients
+      subject: 'Affiliate Google Login Failed',
+      html: `
+        <table width="100%" cellpadding="0" cellspacing="0" border="0" style="width:100%; max-width:600px; margin:auto;">
+          <tr>
+            <td align="center" style="padding: 15px 0;">
+              <img src="https://i.ibb.co/mF88zvd/Image-5-removebg-preview.png" alt="Fantasy Madness Logo" style="width:100px;" />
+              <h2 style="margin: 0; color: #191164; font-family: 'New York', Charter, Georgia, serif;">Fantasy Madness</h2>
+            </td>
+          </tr>
+
+          <tr>
+            <td style="padding: 10px 0;">
+              <p style="font-size: 16px; font-family: Arial, sans-serif; color: #333;">Dear Admins,</p>
+              <p style="font-size: 16px; font-family: Arial, sans-serif; color: #333;">
+                An error occurred during an affiliate Google login attempt:
+              </p>
+              <p style="font-size: 16px; font-family: 'Courier New', monospace; color: #d20a0a; background-color: #f8d7da; border-radius: 5px; padding: 10px; border: 1px solid #f5c6cb;">
+                ${error.message}
+              </p>
+            </td>
+          </tr>
+
+          <tr>
+            <td align="center" style="padding: 15px 0;">
+              <p style="font-family: Arial, sans-serif; color: #191164;">Please investigate the issue at your earliest convenience.</p>
+            </td>
+          </tr>
+
+          <tr>
+            <td align="center" style="padding: 15px 0;">
+              <img src="https://i.ibb.co/mF88zvd/Image-5-removebg-preview.png" alt="Fantasy Madness Logo" style="width:70px;" />
+              <p><a href="https://fantasymmadness.com" style="font-family: Arial, sans-serif; color: #191164; text-decoration: none;">https://fantasymmadness.com</a></p>
+            </td>
+          </tr>
+        </table>
+      `,
+    });
+
     res.status(500).json({ message: 'Internal server error' });
   }
 });
-
 
 
 
@@ -5096,7 +5236,7 @@ app.post('/news', async (req, res) => {
 
       if (subscribedUsers.length > 0) {
         const emailPromises = subscribedUsers.map(user => {
-          const unsubscribeUrl = `https://fantasymmadness.com/unsubscribe-user/${user._id}`;
+          const unsubscribeUrl = `https://fantasymmadness-game-server-three.vercel.app/unsubscribe-user/${user._id}`;
           const mailOptions = {
             from: 'Fantasymmadness2@gmail.com',
             to: 'wajih786hassan@gmail.com',
