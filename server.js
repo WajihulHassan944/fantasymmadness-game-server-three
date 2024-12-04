@@ -1759,7 +1759,7 @@ app.post('/google-login', async (req, res) => {
       // Notify admins about the new signup
       await transporter.sendMail({
         from: 'Fantasymmadness2@gmail.com',
-        to: ['wajih786hassan@gmail.com'], // Replace with actual admin emails
+        to: ['wajih786hassan@gmail.com', 'Fantasymmadness2@gmail.com'], // Replace with actual admin emails
         subject: 'New User Signup Notification',
         html: `
         <p>A new user has signed up on Fantasy Madness:</p>
@@ -1791,7 +1791,7 @@ app.post('/google-login', async (req, res) => {
     // Send error email to admins
     await transporter.sendMail({
       from: 'Fantasymmadness2@gmail.com',
-      to: ['wajih786hassan@gmail.com'], // Replace with actual admin emails
+      to: ['wajih786hassan@gmail.com', 'Fantasymmadness2@gmail.com'], // Replace with actual admin emails
       subject: 'Google Login Error Notification',
       html: `
       <p>An error occurred during a Google login attempt. Please investigate the issue.</p>
@@ -2765,7 +2765,7 @@ app.post('/affiliate-google-login', async (req, res) => {
       });
 
 
-      
+
       // Send email notification to admin for approval
       const approvalLink = `https://fantasymmadness-game-server-three.vercel.app/approveAffiliate/${affiliate._id}`;
 
@@ -5239,7 +5239,7 @@ app.post('/news', async (req, res) => {
           const unsubscribeUrl = `https://fantasymmadness-game-server-three.vercel.app/unsubscribe-user/${user._id}`;
           const mailOptions = {
             from: 'Fantasymmadness2@gmail.com',
-            to: 'wajih786hassan@gmail.com',
+            to: user.email,
             subject: 'Fantasy mmadness - New Update!',
             html: `
               <table width="100%" cellpadding="0" cellspacing="0" border="0" style="width:100%; max-width:600px; margin:auto;">
