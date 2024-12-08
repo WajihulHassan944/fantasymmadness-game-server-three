@@ -2697,6 +2697,159 @@ verified: { type: Boolean, default: false },
 
 const Affiliate = mongoose.model('Affiliate', affiliateSchema);
 
+app.post('/admin/add-affiliate', async (req, res) => {
+  const { firstName, lastName, email, password } = req.body;
+
+  if (!firstName || !lastName || !email || !password) {
+    return res.status(400).json({ message: 'All fields are required.' });
+  }
+
+  try {
+    // Check if affiliate already exists
+    const existingAffiliate = await Affiliate.findOne({ email });
+    if (existingAffiliate) {
+      return res.status(400).json({ message: 'Affiliate with this email already exists.' });
+    }
+
+    // Hash the password
+    const hashedPassword = await bcrypt.hash(password, 10);
+
+    // Create new affiliate with default values and profileUrl
+    const newAffiliate = new Affiliate({
+      firstName,
+      lastName,
+      email,
+      password: hashedPassword,
+      verified: true,
+      isNotificationsEnabled: true,
+      isSubscribed: true,
+      isAgreed: true,
+      profileUrl: "https://i.ibb.co/mF88zvd/Image-5-removebg-preview.png",
+    });
+
+    await newAffiliate.save();
+
+    // Email to the affiliate
+    await transporter.sendMail({
+      from: '"Fantasy Madness" <Fantasymmadness2@gmail.com>',
+      to: email,
+      subject: 'Welcome to Fantasy Madness Affiliate Program!',
+      html: `
+        <table width="100%" cellpadding="0" cellspacing="0" border="0" style="width:100%; max-width:600px; margin:auto;">
+          <tr>
+            <td align="center" style="padding: 15px 0;">
+              <img src="https://i.ibb.co/mF88zvd/Image-5-removebg-preview.png" alt="Fantasy Madness Logo" style="width:100px;" />
+              <h2 style="margin: 0; color: #191164; font-family: 'New York', Charter, Georgia, serif;">Fantasy Madness</h2>
+            </td>
+          </tr>
+
+          <tr>
+            <td style="padding: 10px 0;">
+              <p style="font-size: 16px; font-family: Arial, sans-serif; color: #333;">Dear ${firstName},</p>
+              <p style="font-size: 16px; font-family: Arial, sans-serif; color: #333;">
+                You have been successfully added to the Fantasy Madness Affiliate Program by our administrators!
+              </p>
+              <p style="font-size: 16px; font-family: Arial, sans-serif; color: #333;">
+                Below are your login credentials:
+              </p>
+              <ul style="font-size: 16px; font-family: Arial, sans-serif; color: #333;">
+                <li><strong>Email:</strong> ${email}</li>
+                <li><strong>Password:</strong> ${password}</li>
+              </ul>
+              <p style="font-size: 16px; font-family: Arial, sans-serif; color: #333;">
+                Please log in at <a href="https://fantasymmadness.com/login" style="color: #191164; text-decoration: none;">https://fantasymmadness.com/login</a> to explore your account and get started!
+              </p>
+              <p style="font-size: 16px; font-family: Arial, sans-serif; color: #333;">
+                If you have any questions, feel free to reach out to us!
+              </p>
+            </td>
+          </tr>
+
+          <tr>
+        <td align="center" style="padding: 20px 0;">
+          <img src="https://i.ibb.co/mF88zvd/Image-5-removebg-preview.png" alt="Fantasy Madness Logo" style="width:70px;" />
+          <p><a href="https://fantasymmadness.com" style="font-family: Arial, sans-serif; color: #191164; text-decoration: none;">https://fantasymmadness.com</a></p>   
+          <div style="padding-top: 10px;">
+            <!-- Social Icons -->
+            <a href="https://www.facebook.com/share/2pzYV9XdQpAU7n6p/?mibextid=LQQJ4d" style="margin: 0 5px; width:35px; height:35px; border-radius:50%; background:#fff; background-color:#fff;">
+              <img src="https://i.ibb.co/G9wVH2g/facebook-removebg-preview-two.png" alt="Facebook" style="width:35px; height:35px; border-radius:50%; background-color:#fff; background:#fff;" />
+            </a>
+            <a href="https://www.instagram.com/fantasymmadness" style="margin: 0 5px;">
+              <img src="https://i.ibb.co/tKj4px0/insta-removebg-preview-two.png" alt="Instagram" style="width:35px; height:35px; border-radius:50%; background-color:#fff;" />
+            </a>
+            <a href="https://x.com/davis_kell51697" style="margin: 0 5px;">
+              <img src="https://i.ibb.co/T0cvy2Q/twitter-removebg-preview-two.png" alt="Twitter" style="width:35px; height:35px; border-radius:50%; background-color:#fff;" />
+            </a>
+          </div>
+        </td>
+      </tr>
+    
+        </table>
+      `,
+    });
+
+    // Email to the admin
+    await transporter.sendMail({
+      from: '"Fantasy Madness" <Fantasymmadness2@gmail.com>',
+      to: 'wajih786hassan@gmail.com', // Replace with admin email
+      subject: 'Affiliate Successfully Added',
+      html: `
+      <table width="100%" cellpadding="0" cellspacing="0" border="0" style="width:100%; max-width:600px; margin:auto;">
+        <tr>
+          <td align="center" style="padding: 15px 0;">
+            <img src="https://i.ibb.co/mF88zvd/Image-5-removebg-preview.png" alt="Fantasy Madness Logo" style="width:100px;" />
+            <h2 style="margin: 0; color: #191164; font-family: 'New York', Charter, Georgia, serif;">Fantasy Madness</h2>
+          </td>
+        </tr>
+  
+        <tr>
+          <td style="padding: 10px 0;">
+            <p style="font-size: 16px; font-family: Arial, sans-serif; color: #333;">
+              You have successfully added a new affiliate to the Fantasy Madness program with the following details:
+            </p>
+            <ul style="font-size: 16px; font-family: Arial, sans-serif; color: #333;">
+              <li><strong>First Name:</strong> ${firstName}</li>
+              <li><strong>Last Name:</strong> ${lastName}</li>
+              <li><strong>Email:</strong> ${email}</li>
+            </ul>
+            <p style="font-size: 16px; font-family: Arial, sans-serif; color: #333;">
+              No approval is needed as the account was added directly by you. The affiliate has been notified of their login credentials.
+            </p>
+          </td>
+        </tr>
+  
+          <tr>
+        <td align="center" style="padding: 20px 0;">
+          <img src="https://i.ibb.co/mF88zvd/Image-5-removebg-preview.png" alt="Fantasy Madness Logo" style="width:70px;" />
+          <p><a href="https://fantasymmadness.com" style="font-family: Arial, sans-serif; color: #191164; text-decoration: none;">https://fantasymmadness.com</a></p>   
+          <div style="padding-top: 10px;">
+            <!-- Social Icons -->
+            <a href="https://www.facebook.com/share/2pzYV9XdQpAU7n6p/?mibextid=LQQJ4d" style="margin: 0 5px; width:35px; height:35px; border-radius:50%; background:#fff; background-color:#fff;">
+              <img src="https://i.ibb.co/G9wVH2g/facebook-removebg-preview-two.png" alt="Facebook" style="width:35px; height:35px; border-radius:50%; background-color:#fff; background:#fff;" />
+            </a>
+            <a href="https://www.instagram.com/fantasymmadness" style="margin: 0 5px;">
+              <img src="https://i.ibb.co/tKj4px0/insta-removebg-preview-two.png" alt="Instagram" style="width:35px; height:35px; border-radius:50%; background-color:#fff;" />
+            </a>
+            <a href="https://x.com/davis_kell51697" style="margin: 0 5px;">
+              <img src="https://i.ibb.co/T0cvy2Q/twitter-removebg-preview-two.png" alt="Twitter" style="width:35px; height:35px; border-radius:50%; background-color:#fff;" />
+            </a>
+          </div>
+        </td>
+      </tr>
+      
+      </table> `,
+    });
+
+    res.status(201).json({ message: 'Affiliate added successfully and emails sent.' });
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ message: 'An error occurred while adding the affiliate.' });
+  }
+});
+
+
+
+
 app.post('/affiliate-google-login', async (req, res) => {
   const { token } = req.body;
 
