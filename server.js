@@ -5781,16 +5781,59 @@ app.get('/sponsors', async (req, res) => {
   }
 });
 
-// Update a News article by ID
-app.put('/sponsor/:id', async (req, res) => {
+// PUT route to update a sponsor by ID
+app.put('/sponsor/:id', upload.single('image'), async (req, res) => {
   try {
-    const sponsor = await Sponsors.findByIdAndUpdate(req.params.id, req.body, {
+    const { name, description, websiteLink, instaLink } = req.body; // Extract sponsor data
+
+    // Find the existing sponsor
+    const sponsor = await Sponsors.findById(req.params.id);
+    if (!sponsor) {
+      return res.status(404).json({ success: false, message: 'Sponsor not found' });
+    }
+
+    let updatedData = { name, description, websiteLink, instaLink };
+
+    // Check if a new image is uploaded
+    if (req.file) {
+      // Prepare the image for uploading
+      const formData = new FormData();
+      formData.append('image', req.file.buffer.toString('base64'));
+
+      // Upload the new image to ImgBB
+      const imgResponse = await fetch('https://api.imgbb.com/1/upload?key=368cbdb895c5bed277d50d216adbfa52', {
+        method: 'POST',
+        body: formData,
+      });
+
+      const imgData = await imgResponse.json();
+
+      if (!imgData.success) {
+        return res.status(500).json({ error: 'Image upload failed', details: imgData });
+      }
+
+      const newImageUrl = imgData.data.url;
+      const newDeleteUrl = imgData.data.delete_url;
+
+      // Delete the old image from ImgBB
+      if (sponsor.imageDeleteUrl) {
+        await fetch(sponsor.imageDeleteUrl, { method: 'DELETE' });
+      }
+
+      // Add new image details to the update data
+      updatedData.image = newImageUrl;
+      updatedData.imageDeleteUrl = newDeleteUrl;
+    }
+
+    // Update the sponsor in the database
+    const updatedSponsor = await Sponsors.findByIdAndUpdate(req.params.id, updatedData, {
       new: true,
       runValidators: true,
     });
-    if (!sponsor) return res.status(404).json({ success: false, message: 'Sponsors article not found' });
-    res.status(200).json({ success: true, data: sponsor });
+
+    res.status(200).json({ success: true, data: updatedSponsor });
   } catch (error) {
+    console.error('Error updating sponsor:', error);
     res.status(400).json({ success: false, message: error.message });
   }
 });
