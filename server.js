@@ -5678,6 +5678,156 @@ app.delete('/news/:id', async (req, res) => {
 
 
 
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+const sponsorSchema = new mongoose.Schema({
+  name: String,
+  description: String,
+  image: String,
+  imageDeleteUrl: String,
+  websiteLink: String,
+  instaLink: String,
+  dateCreated: { type: Date, default: Date.now }, // Automatically set the creation date
+});
+
+const Sponsors = mongoose.model('Sponsors', sponsorSchema);
+
+
+app.delete('/all/delete/sponsors', async (req, res) => {
+  try {
+    const result = await Sponsors.deleteMany({});
+    res.status(200).json({
+      message: 'All Sponsors articles deleted successfully.',
+      deletedCount: result.deletedCount,
+    });
+  } catch (error) {
+    console.error('Error deleting Sponsors:', error);
+    res.status(500).json({ error: 'Failed to delete Sponsors articles from the database.' });
+  }
+});
+
+
+
+
+// POST route to upload sponsor
+app.post('/upload-sponsor', upload.single('image'), async (req, res) => {
+  try {
+    const { name, description, websiteLink, instaLink } = req.body; // Extract sponsor data
+
+    if (!req.file) {
+      return res.status(400).json({ error: 'Image is required' });
+    }
+
+    // Prepare the image for uploading
+    const formData = new FormData();
+    formData.append('image', req.file.buffer.toString('base64'));
+
+    // Upload the image to ImgBB
+    const imgResponse = await fetch('https://api.imgbb.com/1/upload?key=368cbdb895c5bed277d50d216adbfa52', {
+      method: 'POST',
+      body: formData,
+    });
+
+    const imgData = await imgResponse.json();
+
+    if (!imgData.success) {
+      return res.status(500).json({ error: 'Image upload failed', details: imgData });
+    }
+
+    const imageUrl = imgData.data.url;
+    const deleteUrl = imgData.data.delete_url;
+
+    // Save the sponsor data to MongoDB
+    const newSponsor = new Sponsors({
+      name,
+      description,
+      image: imageUrl,
+      imageDeleteUrl: deleteUrl,
+      websiteLink,
+      instaLink,
+    });
+
+    await newSponsor.save();
+
+    res.status(200).json({ message: 'Sponsor uploaded and saved successfully', sponsor: newSponsor });
+  } catch (error) {
+    console.error('Error uploading sponsor:', error);
+    res.status(500).json({ error: 'An error occurred while uploading the sponsor' });
+  }
+});
+
+
+// Get all News articles
+app.get('/sponsors', async (req, res) => {
+  try {
+    const sponsorArticles = await Sponsors.find();
+    res.status(200).json({ success: true, data: sponsorArticles });
+  } catch (error) {
+    res.status(500).json({ success: false, message: error.message });
+  }
+});
+
+// Update a News article by ID
+app.put('/sponsor/:id', async (req, res) => {
+  try {
+    const sponsor = await Sponsors.findByIdAndUpdate(req.params.id, req.body, {
+      new: true,
+      runValidators: true,
+    });
+    if (!sponsor) return res.status(404).json({ success: false, message: 'Sponsors article not found' });
+    res.status(200).json({ success: true, data: sponsor });
+  } catch (error) {
+    res.status(400).json({ success: false, message: error.message });
+  }
+});
+
+// DELETE route to delete a sponsor
+app.delete('/sponsor/:id', async (req, res) => {
+  try {
+    const sponsor = await Sponsors.findByIdAndDelete(req.params.id);
+    if (!sponsor) return res.status(404).json({ success: false, message: 'Sponsor not found' });
+
+    // Delete the image from ImgBB
+    if (sponsor.imageDeleteUrl) {
+      const deleteResponse = await fetch(sponsor.imageDeleteUrl, { method: 'GET' });
+      if (!deleteResponse.ok) {
+        console.warn('Failed to delete image from ImgBB:', await deleteResponse.text());
+      }
+    }
+
+    res.status(200).json({ success: true, message: 'Sponsor deleted successfully' });
+  } catch (error) {
+    console.error('Error deleting sponsor:', error);
+    res.status(400).json({ success: false, message: error.message });
+  }
+});
+
+
+
+
+
+
+
+
+
+
+
+
+
 // Start server
 const server = app.listen(PORT, () => {
   console.log(`Server started on port ${PORT}`);
