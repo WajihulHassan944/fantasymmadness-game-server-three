@@ -5696,6 +5696,7 @@ app.delete('/news/:id', async (req, res) => {
 
 const sponsorSchema = new mongoose.Schema({
   name: String,
+  email: String,
   description: String,
   image: String,
   imageDeleteUrl: String,
@@ -5726,7 +5727,7 @@ app.delete('/all/delete/sponsors', async (req, res) => {
 // POST route to upload sponsor
 app.post('/upload-sponsor', upload.single('image'), async (req, res) => {
   try {
-    const { name, description, websiteLink, instaLink } = req.body; // Extract sponsor data
+    const { name, description, websiteLink, instaLink ,email} = req.body; // Extract sponsor data
 
     if (!req.file) {
       return res.status(400).json({ error: 'Image is required' });
@@ -5755,6 +5756,7 @@ app.post('/upload-sponsor', upload.single('image'), async (req, res) => {
     const newSponsor = new Sponsors({
       name,
       description,
+      email,
       image: imageUrl,
       imageDeleteUrl: deleteUrl,
       websiteLink,
@@ -5784,7 +5786,7 @@ app.get('/sponsors', async (req, res) => {
 // PUT route to update a sponsor by ID
 app.put('/sponsor/:id', upload.single('image'), async (req, res) => {
   try {
-    const { name, description, websiteLink, instaLink } = req.body; // Extract sponsor data
+    const { name, description, websiteLink, instaLink, email } = req.body; // Extract sponsor data
 
     // Find the existing sponsor
     const sponsor = await Sponsors.findById(req.params.id);
@@ -5792,7 +5794,7 @@ app.put('/sponsor/:id', upload.single('image'), async (req, res) => {
       return res.status(404).json({ success: false, message: 'Sponsor not found' });
     }
 
-    let updatedData = { name, description, websiteLink, instaLink };
+    let updatedData = { name, description, websiteLink, instaLink, email };
 
     // Check if a new image is uploaded
     if (req.file) {
