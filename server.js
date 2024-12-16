@@ -5747,6 +5747,10 @@ app.delete('/all/delete/sponsors', async (req, res) => {
 app.post('/upload-sponsor', upload.single('image'), async (req, res) => {
   try {
     const { name, description, websiteLink, instaLink, email } = req.body; // Extract sponsor data
+ const existingSponsor = await Sponsors.findOne({ email });
+ if (existingSponsor) {
+   return res.status(400).json({ message: 'Sponsor with this email already exists.' });
+ }
 
     if (!req.file) {
       return res.status(400).json({ error: 'Image is required' });
