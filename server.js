@@ -5707,6 +5707,25 @@ const sponsorSchema = new mongoose.Schema({
 
 const Sponsors = mongoose.model('Sponsors', sponsorSchema);
 
+// Get all sponsors by email
+app.get('/sponsors/email/:email', async (req, res) => {
+  try {
+    const { email } = req.params; // Extract email from the request parameters
+
+    // Find all sponsors with the given email
+    const sponsors = await Sponsors.find({ email });
+
+    if (sponsors.length === 0) {
+      return res.status(404).json({ success: false, message: 'No sponsors found for the given email' });
+    }
+
+    res.status(200).json({ success: true, data: sponsors });
+  } catch (error) {
+    console.error('Error fetching sponsors by email:', error);
+    res.status(500).json({ success: false, message: 'An error occurred while fetching sponsors' });
+  }
+});
+
 
 app.delete('/all/delete/sponsors', async (req, res) => {
   try {
@@ -5727,7 +5746,7 @@ app.delete('/all/delete/sponsors', async (req, res) => {
 // POST route to upload sponsor
 app.post('/upload-sponsor', upload.single('image'), async (req, res) => {
   try {
-    const { name, description, websiteLink, instaLink ,email} = req.body; // Extract sponsor data
+    const { name, description, websiteLink, instaLink, email } = req.body; // Extract sponsor data
 
     if (!req.file) {
       return res.status(400).json({ error: 'Image is required' });
@@ -5765,13 +5784,66 @@ app.post('/upload-sponsor', upload.single('image'), async (req, res) => {
 
     await newSponsor.save();
 
-    res.status(200).json({ message: 'Sponsor uploaded and saved successfully', sponsor: newSponsor });
+    // Prepare the email content
+    const emailContent = `
+      <table width="100%" cellpadding="0" cellspacing="0" border="0" style="width:100%; max-width:600px; margin:auto;">
+        <tr>
+          <td align="center" style="padding: 15px 0;">
+            <img src="https://i.ibb.co/mF88zvd/Image-5-removebg-preview.png" alt="Fantasy Madness Logo" style="width:100px;" />
+            <h2 style="margin: 0; color: #191164; font-family: 'New York', Charter, Georgia, serif;">Fantasy Madness</h2>
+          </td>
+        </tr>
+        <tr>
+          <td style="padding: 10px 0;">
+            <p style="font-size: 16px; font-family: Arial, sans-serif; color: #333;">Dear ${name},</p>
+            <p style="font-size: 16px; font-family: Arial, sans-serif; color: #333;">
+              Thank you for supporting Fantasy Madness! We have successfully added the following information to our website:
+            </p>
+            <ul style="font-size: 16px; font-family: Arial, sans-serif; color: #333;">
+              <li><strong>Name:</strong> ${name}</li>
+              <li><strong>Description:</strong> ${description}</li>
+              <li><strong>Website Link:</strong> <a href="${websiteLink}" style="color: #191164; text-decoration: none;">${websiteLink}</a></li>
+              <li><strong>Instagram Link:</strong> <a href="${instaLink}" style="color: #191164; text-decoration: none;">${instaLink}</a></li>
+            </ul>
+            <p style="font-size: 16px; font-family: Arial, sans-serif; color: #333;">
+              If you have any questions or updates, feel free to contact us.
+            </p>
+          </td>
+        </tr>
+        <tr>
+          <td align="center" style="padding: 20px 0;">
+            <img src="https://i.ibb.co/mF88zvd/Image-5-removebg-preview.png" alt="Fantasy Madness Logo" style="width:70px;" />
+            <p><a href="https://fantasymmadness.com" style="font-family: Arial, sans-serif; color: #191164; text-decoration: none;">https://fantasymmadness.com</a></p>   
+            <div style="padding-top: 10px;">
+              <a href="https://www.facebook.com/share/2pzYV9XdQpAU7n6p/?mibextid=LQQJ4d" style="margin: 0 5px;">
+                <img src="https://i.ibb.co/G9wVH2g/facebook-removebg-preview-two.png" alt="Facebook" style="width:35px; height:35px; border-radius:50%;" />
+              </a>
+              <a href="https://www.instagram.com/fantasymmadness" style="margin: 0 5px;">
+                <img src="https://i.ibb.co/tKj4px0/insta-removebg-preview-two.png" alt="Instagram" style="width:35px; height:35px; border-radius:50%;" />
+              </a>
+              <a href="https://x.com/davis_kell51697" style="margin: 0 5px;">
+                <img src="https://i.ibb.co/T0cvy2Q/twitter-removebg-preview-two.png" alt="Twitter" style="width:35px; height:35px; border-radius:50%;" />
+              </a>
+            </div>
+          </td>
+        </tr>
+      </table>
+    `;
+
+    // Send the email
+    await transporter.sendMail({
+      from: '"Fantasy Madness" <Fantasymmadness2@gmail.com>',
+      to: email,
+      subject: 'Welcome to Fantasy Madness!',
+      html: emailContent,
+    });
+
+    res.status(200).json({ message: 'Sponsor uploaded, saved successfully, and email sent', sponsor: newSponsor });
   } catch (error) {
     console.error('Error uploading sponsor:', error);
     res.status(500).json({ error: 'An error occurred while uploading the sponsor' });
   }
 });
-
 
 // Get all News articles
 app.get('/sponsors', async (req, res) => {
