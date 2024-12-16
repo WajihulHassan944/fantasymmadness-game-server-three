@@ -5808,7 +5808,9 @@ app.post('/upload-sponsor', upload.single('image'), async (req, res) => {
               <li><strong>Description:</strong> ${description}</li>
               <li><strong>Website Link:</strong> <a href="${websiteLink}" style="color: #191164; text-decoration: none;">${websiteLink}</a></li>
               <li><strong>Instagram Link:</strong> <a href="${instaLink}" style="color: #191164; text-decoration: none;">${instaLink}</a></li>
-            </ul>
+              <li>You can use this email:<strong>${email}</strong> to access the sponsor dashboard </li>
+           
+              </ul>
             <p style="font-size: 16px; font-family: Arial, sans-serif; color: #333;">
               If you have any questions or updates, feel free to contact us.
             </p>
