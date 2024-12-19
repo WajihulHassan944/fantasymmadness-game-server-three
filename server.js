@@ -2763,6 +2763,130 @@ cron.schedule('* * * * *', async () => {
 });
 
 
+// Cron Job Route
+app.get('/api/cron-job', async (req, res) => {
+  console.log('Cron job started.');
+
+  try {
+    const now = new Date();
+    now.setUTCHours(0, 0, 0, 0); // Normalize 'now' to midnight UTC
+
+    // Find all LIVE matches
+    const liveMatches = await Match.find({ matchType: 'LIVE' });
+
+    // Filter matches to only include those with a past date (ignoring time)
+    const matchesToConvert = liveMatches.filter((match) => {
+      const matchDate = new Date(match.matchDate);
+      matchDate.setUTCHours(0, 0, 0, 0); // Normalize match date to midnight UTC
+      return matchDate < now; // Match date is in the past
+    });
+
+    if (matchesToConvert.length === 0) {
+      console.log('No matches to convert to shadow.');
+      return res.status(200).json({ message: 'No matches to convert to shadow.' });
+    }
+
+    for (const match of matchesToConvert) {
+      // Create and save shadow match
+      const shadowMatch = new Shadow({
+        matchCategory: match.matchCategory,
+        matchCategoryTwo: match.matchCategoryTwo,
+        matchName: match.matchName,
+        matchFighterA: match.matchFighterA,
+        matchFighterB: match.matchFighterB,
+        promotionBackground: match.promotionBackground,
+        matchDescription: match.matchDescription,
+        fighterAImage: match.fighterAImage,
+        fighterBImage: match.fighterBImage,
+        matchType: 'SHADOW',
+        maxRounds: match.maxRounds,
+        fighterAImageDeleteUrl: match.fighterAImageDeleteUrl,
+        fighterBImageDeleteUrl: match.fighterBImageDeleteUrl,
+        promotionBackgroundDeleteUrl: match.promotionBackgroundDeleteUrl,
+      });
+
+      await shadowMatch.save();
+
+      console.log(`Converted match ${match._id} to shadow.`);
+      await Match.findByIdAndUpdate(match._id, { matchType: 'SHADOW' });
+      // Notify affiliates about the new shadow match
+      const users = await Affiliate.find();
+      const mailPromises = users.map((user) => {
+        const mailOptions = {
+          from: 'Fantasymmadness2@gmail.com',
+          to: user.email,
+          subject: 'Fantasy MMAdness - New Fight Announcement',
+          html: `
+            <table width="100%" cellpadding="0" cellspacing="0" border="0" style="width:100%; max-width:600px; margin:auto;">
+              <!-- Logo Section -->
+              <tr>
+                <td align="center" style="padding: 15px 0;">
+                  <img src="https://i.ibb.co/mF88zvd/Image-5-removebg-preview.png" alt="Fantasy mmadness Logo" style="width:100px;" />
+                  <h2 style="margin: 0; color: #191164; font-family: 'New York', Charter, Georgia, serif;">Fantasy mmadness</h2>
+                </td>
+              </tr>
+              
+              <!-- Greeting Section -->
+              <tr>
+                <td style="padding: 10px 0;">
+                  <p style="font-size: 16px; font-family: Arial, sans-serif; color: #333;">Dear ${user.firstName} ${user.lastName},</p>
+                  <p style="font-size: 16px; font-family: Arial, sans-serif; color: #333;">We're thrilled to announce that a new Shadow Fight has been added to your dashboard, ready for promotion.</p>
+                  <p style="font-size: 16px; font-family: Arial, sans-serif; color: #333;"><strong>Fight Name:</strong> ${match.matchName}</p>
+                </td>
+              </tr>
+              
+              <!-- Affiliate Call-to-Action Section -->
+              <tr>
+                <td align="center" style="padding: 20px; background-color:#f8f8f8;">
+                  <h2 style="color: #191164; font-family: 'Impact', fantasy, sans-serif;">Take the Lead!</h2>
+                  <p style="font-size: 17px; font-family: 'Comic Sans MS', fantasy, sans-serif; color: #555;">
+                    The new Shadow Fight is now available for promotion. Share the excitement with your audience, build anticipation, and engage them in this thrilling event. 
+                  </p>
+                  <p style="font-size: 17px; font-family: 'Comic Sans MS', fantasy, sans-serif; color: #555;">
+                    Boost your league’s activity by encouraging fans to participate, and don’t miss the opportunity to expand your reach and earn rewards.
+                  </p>
+                </td>
+              </tr>
+    
+              <!-- Match Details Section -->
+              <tr>
+                <td style="padding: 10px;">
+                  <p style="font-size: 16px; font-family: Arial, sans-serif; color: #333;"><strong>Max Rounds:</strong> ${match.maxRounds}</p>
+                  <p style="font-size: 16px; font-family: Arial, sans-serif; color: #333;"><strong>Match Type:</strong> SHADOW</p>
+                  <p style="font-size: 16px; font-family: Arial, sans-serif; color: #333;">
+                    Now is the time to activate your followers and get them involved. Start promoting the fight today, and keep the excitement growing in your community!
+                  </p>
+                </td>
+              </tr>
+    
+              <!-- Footer Section -->
+              <tr>
+                <td align="center" style="padding: 15px 0;">
+                  <img src="https://i.ibb.co/mF88zvd/Image-5-removebg-preview.png" alt="Fantasy mmadness Logo" style="width:70px;" />
+                  <p><a href="https://fantasymmadness.com" style="font-family: Arial, sans-serif; color: #191164; text-decoration: none;">https://fantasymmadness.com</a></p>
+                </td>
+              </tr>
+            </table>
+          `,
+        };
+        return transporter.sendMail(mailOptions);
+      });
+
+      try {
+        await Promise.all(mailPromises);
+        console.log(`Emails sent successfully for match ${match._id}`);
+      } catch (error) {
+        console.error(`Error sending emails for match ${match._id}:`, error);
+      }
+    }
+
+    res.status(200).json({ message: 'Cron job completed successfully.' });
+  } catch (error) {
+    console.error('Error in cron job:', error);
+    res.status(500).json({ error: 'Cron job failed.' });
+  }
+});
+
 
 // Login API
 app.post('/login', async (req, res) => {
