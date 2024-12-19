@@ -2633,25 +2633,33 @@ cron.schedule('0 0 * * *', async () => { // Runs daily at midnight
   console.log('Expired free plans have been reset to "None"');
 });
 
-
 // Schedule a task to run every day at midnight
 cron.schedule('0 0 * * *', async () => {
   try {
     const now = new Date();
 
-    // Find all LIVE matches where the match date has passed
+    // Normalize 'now' to ignore the time part (set it to midnight UTC)
+    now.setUTCHours(0, 0, 0, 0);
+
+    // Find all LIVE matches where the match date has passed (ignoring the time part)
     const liveMatches = await Match.find({
       matchType: 'LIVE',
-      matchDate: { $lt: now },
     });
 
-    if (liveMatches.length === 0) {
+    // Filter matches where the match date (without time) is less than today (ignoring time)
+    const matchesToConvert = liveMatches.filter((match) => {
+      const matchDate = new Date(match.matchDate);
+      matchDate.setUTCHours(0, 0, 0, 0);  // Normalize matchDate to midnight UTC
+      return matchDate < now;  // Match date is in the past (ignoring time)
+    });
+
+    if (matchesToConvert.length === 0) {
       console.log('No matches to convert to shadow.');
       return;
     }
 
     // Process each match
-    for (const match of liveMatches) {
+    for (const match of matchesToConvert) {
       // Create a new shadow match
       const shadowMatch = new Shadow({
         matchCategory: match.matchCategory,
@@ -2751,7 +2759,6 @@ cron.schedule('0 0 * * *', async () => {
     console.error('Error converting live matches to shadow:', error);
   }
 });
-
 
 
 
