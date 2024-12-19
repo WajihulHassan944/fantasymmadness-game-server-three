@@ -2633,8 +2633,10 @@ cron.schedule('0 0 * * *', async () => { // Runs daily at midnight
   console.log('Expired free plans have been reset to "None"');
 });
 
-// Schedule a task to run every day at midnight
-cron.schedule('0 0 * * *', async () => {
+
+// Schedule a task to run every minute
+cron.schedule('* * * * *', async () => {
+  console.log('Cron job started.');
   try {
     const now = new Date();
 
