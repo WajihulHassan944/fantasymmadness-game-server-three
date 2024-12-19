@@ -2,5 +2,13 @@
   "version": 2,
   "name": "backend-for-share-experiences",
   "builds": [{ "src": "server.js", "use": "@vercel/node" }],
-  "routes": [{ "src": "/(.*)", "dest": "/server.js" }]
+  "routes": [
+    { "src": "/(.*)", "dest": "/server.js" }
+  ],
+  "crons": [
+    {
+      "path": "/api/cron-job",
+      "schedule": "0 0 * * *" 
+    }
+  ]
 }

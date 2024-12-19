@@ -2634,25 +2634,32 @@ cron.schedule('0 0 * * *', async () => { // Runs daily at midnight
 });
 
 
-// Schedule a task to run every day at midnight
-cron.schedule('0 0 * * *', async () => {
+
+// Cron Job Route
+app.get('/api/cron-job', async (req, res) => {
+  console.log('Cron job started.');
+
   try {
     const now = new Date();
+    now.setUTCHours(0, 0, 0, 0); // Normalize 'now' to midnight UTC
 
-    // Find all LIVE matches where the match date has passed
-    const liveMatches = await Match.find({
-      matchType: 'LIVE',
-      matchDate: { $lt: now },
+    // Find all LIVE matches
+    const liveMatches = await Match.find({ matchType: 'LIVE' });
+
+    // Filter matches to only include those with a past date (ignoring time)
+    const matchesToConvert = liveMatches.filter((match) => {
+      const matchDate = new Date(match.matchDate);
+      matchDate.setUTCHours(0, 0, 0, 0); // Normalize match date to midnight UTC
+      return matchDate < now; // Match date is in the past
     });
 
-    if (liveMatches.length === 0) {
+    if (matchesToConvert.length === 0) {
       console.log('No matches to convert to shadow.');
-      return;
+      return res.status(200).json({ message: 'No matches to convert to shadow.' });
     }
 
-    // Process each match
-    for (const match of liveMatches) {
-      // Create a new shadow match
+    for (const match of matchesToConvert) {
+      // Create and save shadow match
       const shadowMatch = new Shadow({
         matchCategory: match.matchCategory,
         matchCategoryTwo: match.matchCategoryTwo,
@@ -2663,21 +2670,22 @@ cron.schedule('0 0 * * *', async () => {
         matchDescription: match.matchDescription,
         fighterAImage: match.fighterAImage,
         fighterBImage: match.fighterBImage,
-        matchType: 'SHADOW', // Change matchType to SHADOW
+        matchType: 'SHADOW',
         maxRounds: match.maxRounds,
         fighterAImageDeleteUrl: match.fighterAImageDeleteUrl,
         fighterBImageDeleteUrl: match.fighterBImageDeleteUrl,
         promotionBackgroundDeleteUrl: match.promotionBackgroundDeleteUrl,
       });
 
-      // Save the shadow match
       await shadowMatch.save();
 
+
+      // Optionally, update the original match to reflect the conversion
+      match.matchType = 'SHADOW';
+      await match.save();
+
       console.log(`Converted match ${match._id} to shadow.`);
-
-      // Notify affiliates about the new shadow match
       const users = await Affiliate.find();
-
       const mailPromises = users.map((user) => {
         const mailOptions = {
           from: 'Fantasymmadness2@gmail.com',
@@ -2736,7 +2744,6 @@ cron.schedule('0 0 * * *', async () => {
             </table>
           `,
         };
-
         return transporter.sendMail(mailOptions);
       });
 
@@ -2747,11 +2754,13 @@ cron.schedule('0 0 * * *', async () => {
         console.error(`Error sending emails for match ${match._id}:`, error);
       }
     }
+
+    res.status(200).json({ message: 'Cron job completed successfully.' });
   } catch (error) {
-    console.error('Error converting live matches to shadow:', error);
+    console.error('Error in cron job:', error);
+    res.status(500).json({ error: 'Cron job failed.' });
   }
 });
-
 
 
 
