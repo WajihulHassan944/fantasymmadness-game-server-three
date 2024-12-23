@@ -735,8 +735,8 @@ promotionBackgroundDeleteUrl = req.body.promotionBackgroundDeleteUrl || null;
         body: formDataA,
       });
       const dataA = await responseA.json();
-      fighterAImage = dataA.data.url;
-      fighterAImageDeleteUrl = dataA.data.delete_url;
+      fighterAImage = dataA?.data?.url;
+      fighterAImageDeleteUrl = dataA?.data?.delete_url;
     }
 
     if (req.files.fighterBImage) {
@@ -747,8 +747,8 @@ promotionBackgroundDeleteUrl = req.body.promotionBackgroundDeleteUrl || null;
         body: formDataB,
       });
       const dataB = await responseB.json();
-      fighterBImage = dataB.data.url;
-      fighterBImageDeleteUrl = dataB.data.delete_url;
+      fighterBImage = dataB?.data?.url;
+      fighterBImageDeleteUrl = dataB?.data?.delete_url;
     }
     
 
@@ -769,8 +769,8 @@ promotionBackgroundDeleteUrl = req.body.promotionBackgroundDeleteUrl || null;
       );
 
       const dataBackground = await responseBackground.json();
-      promotionBackground = dataBackground.data.url;
-      promotionBackgroundDeleteUrl = dataBackground.data.delete_url;
+      promotionBackground = dataBackground?.data?.url;
+      promotionBackgroundDeleteUrl = dataBackground?.data?.delete_url;
     }
 
 
