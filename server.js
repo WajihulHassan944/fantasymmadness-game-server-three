@@ -186,7 +186,7 @@ app.post('/editShadow', upload.fields([{ name: 'fighterAImage' }, { name: 'fight
       if (req.files.fighterAImage) {
         const formDataA = new FormData();
         formDataA.append('image', req.files.fighterAImage[0].buffer.toString('base64'));
-        const responseA = await fetch('https://api.imgbb.com/1/upload?key=d762e8061c3f1635b35b16d5cd01919c', {
+        const responseA = await fetch('https://api.imgbb.com/1/upload?key=acfd928b2864b7a4a28acbffa4f9efad', {
           method: 'POST',
           body: formDataA,
         });
@@ -198,7 +198,7 @@ app.post('/editShadow', upload.fields([{ name: 'fighterAImage' }, { name: 'fight
       if (req.files.fighterBImage) {
         const formDataB = new FormData();
         formDataB.append('image', req.files.fighterBImage[0].buffer.toString('base64'));
-        const responseB = await fetch('https://api.imgbb.com/1/upload?key=d762e8061c3f1635b35b16d5cd01919c', {
+        const responseB = await fetch('https://api.imgbb.com/1/upload?key=acfd928b2864b7a4a28acbffa4f9efad', {
           method: 'POST',
           body: formDataB,
         });
@@ -219,7 +219,7 @@ app.post('/editShadow', upload.fields([{ name: 'fighterAImage' }, { name: 'fight
     if (req.files.promotionBackground) {
       const formDataBackground = new FormData();
       formDataBackground.append('image', req.files.promotionBackground[0].buffer.toString('base64'));
-      const responseBackground = await fetch('https://api.imgbb.com/1/upload?key=d762e8061c3f1635b35b16d5cd01919c', {
+      const responseBackground = await fetch('https://api.imgbb.com/1/upload?key=acfd928b2864b7a4a28acbffa4f9efad', {
         method: 'POST',
         body: formDataBackground,
       });
@@ -730,7 +730,7 @@ promotionBackgroundDeleteUrl = req.body.promotionBackgroundDeleteUrl || null;
     if (req.files.fighterAImage) {
       const formDataA = new FormData();
       formDataA.append('image', req.files.fighterAImage[0].buffer.toString('base64'));
-      const responseA = await fetch('https://api.imgbb.com/1/upload?key=d762e8061c3f1635b35b16d5cd01919c', {
+      const responseA = await fetch('https://api.imgbb.com/1/upload?key=acfd928b2864b7a4a28acbffa4f9efad', {
         method: 'POST',
         body: formDataA,
       });
@@ -742,7 +742,7 @@ promotionBackgroundDeleteUrl = req.body.promotionBackgroundDeleteUrl || null;
     if (req.files.fighterBImage) {
       const formDataB = new FormData();
       formDataB.append('image', req.files.fighterBImage[0].buffer.toString('base64'));
-      const responseB = await fetch('https://api.imgbb.com/1/upload?key=d762e8061c3f1635b35b16d5cd01919c', {
+      const responseB = await fetch('https://api.imgbb.com/1/upload?key=acfd928b2864b7a4a28acbffa4f9efad', {
         method: 'POST',
         body: formDataB,
       });
@@ -761,7 +761,7 @@ promotionBackgroundDeleteUrl = req.body.promotionBackgroundDeleteUrl || null;
       );
 
       const responseBackground = await fetch(
-        'https://api.imgbb.com/1/upload?key=d762e8061c3f1635b35b16d5cd01919c',
+        'https://api.imgbb.com/1/upload?key=acfd928b2864b7a4a28acbffa4f9efad',
         {
           method: 'POST',
           body: formDataBackground,
@@ -1059,7 +1059,7 @@ app.post(
         );
 
         const responseA = await fetch(
-          'https://api.imgbb.com/1/upload?key=d762e8061c3f1635b35b16d5cd01919c',
+          'https://api.imgbb.com/1/upload?key=acfd928b2864b7a4a28acbffa4f9efad',
           { method: 'POST', body: formDataA }
         );
         const dataA = await responseA.json();
@@ -1076,7 +1076,7 @@ app.post(
         );
 
         const responseB = await fetch(
-          'https://api.imgbb.com/1/upload?key=d762e8061c3f1635b35b16d5cd01919c',
+          'https://api.imgbb.com/1/upload?key=acfd928b2864b7a4a28acbffa4f9efad',
           { method: 'POST', body: formDataB }
         );
         const dataB = await responseB.json();
@@ -1093,7 +1093,7 @@ app.post(
         );
 
         const responseBackground = await fetch(
-          'https://api.imgbb.com/1/upload?key=d762e8061c3f1635b35b16d5cd01919c',
+          'https://api.imgbb.com/1/upload?key=acfd928b2864b7a4a28acbffa4f9efad',
           { method: 'POST', body: formDataBackground }
         );
         const dataBackground = await responseBackground.json();
@@ -2031,7 +2031,7 @@ app.put('/update-profile/:userId', upload.single('image'), async (req, res) => {
       const formData = new FormData();
       formData.append('image', req.file.buffer.toString('base64'));
 
-      const response = await fetch('https://api.imgbb.com/1/upload?key=d762e8061c3f1635b35b16d5cd01919c', {
+      const response = await fetch('https://api.imgbb.com/1/upload?key=acfd928b2864b7a4a28acbffa4f9efad', {
         method: 'POST',
         body: formData,
       });
@@ -2554,7 +2554,7 @@ app.post('/upload-avatar', upload.single('image'), async (req, res) => {
   
   // Upload Avatar image
   formData.append('image', req.file.buffer.toString('base64'));
-  const response = await fetch('https://api.imgbb.com/1/upload?key=d762e8061c3f1635b35b16d5cd01919c', {
+  const response = await fetch('https://api.imgbb.com/1/upload?key=acfd928b2864b7a4a28acbffa4f9efad', {
     method: 'POST',
     body: formData,
   });
@@ -3835,7 +3835,7 @@ app.put('/update-profile-affiliate/:userId', upload.single('image'), async (req,
       const formData = new FormData();
       formData.append('image', req.file.buffer.toString('base64'));
 
-      const response = await fetch('https://api.imgbb.com/1/upload?key=d762e8061c3f1635b35b16d5cd01919c', {
+      const response = await fetch('https://api.imgbb.com/1/upload?key=acfd928b2864b7a4a28acbffa4f9efad', {
         method: 'POST',
         body: formData,
       });
@@ -3981,7 +3981,7 @@ app.post('/registerAffiliate', upload.single('image'), async (req, res) => {
       const formData = new FormData();
       formData.append('image', req.file.buffer.toString('base64'));
 
-      const response = await fetch('https://api.imgbb.com/1/upload?key=d762e8061c3f1635b35b16d5cd01919c', {
+      const response = await fetch('https://api.imgbb.com/1/upload?key=acfd928b2864b7a4a28acbffa4f9efad', {
         method: 'POST',
         body: formData,
       });
@@ -4513,7 +4513,7 @@ app.post('/addShadow', upload.fields([{ name: 'fighterAImage' }, { name: 'fighte
     const formDataA = new URLSearchParams();
     formDataA.append('image', req.files.fighterAImage[0].buffer.toString('base64'));
 
-    const responseA = await fetch('https://api.imgbb.com/1/upload?key=d762e8061c3f1635b35b16d5cd01919c', {
+    const responseA = await fetch('https://api.imgbb.com/1/upload?key=acfd928b2864b7a4a28acbffa4f9efad', {
       method: 'POST',
       body: formDataA,
     });
@@ -4528,7 +4528,7 @@ app.post('/addShadow', upload.fields([{ name: 'fighterAImage' }, { name: 'fighte
     const formDataB = new URLSearchParams();
     formDataB.append('image', req.files.fighterBImage[0].buffer.toString('base64'));
 
-    const responseB = await fetch('https://api.imgbb.com/1/upload?key=d762e8061c3f1635b35b16d5cd01919c', {
+    const responseB = await fetch('https://api.imgbb.com/1/upload?key=acfd928b2864b7a4a28acbffa4f9efad', {
       method: 'POST',
       body: formDataB,
     });
@@ -4543,7 +4543,7 @@ if (req.files.promotionBackground) {
   const formDataBackground = new URLSearchParams();
   formDataBackground.append('image', req.files.promotionBackground[0].buffer.toString('base64'));
 
-  const responseBackground = await fetch('https://api.imgbb.com/1/upload?key=d762e8061c3f1635b35b16d5cd01919c', {
+  const responseBackground = await fetch('https://api.imgbb.com/1/upload?key=acfd928b2864b7a4a28acbffa4f9efad', {
     method: 'POST',
     body: formDataBackground,
   });
@@ -5887,7 +5887,7 @@ app.post('/upload-sponsor', upload.single('image'), async (req, res) => {
     formData.append('image', req.file.buffer.toString('base64'));
 
     // Upload the image to ImgBB
-    const imgResponse = await fetch('https://api.imgbb.com/1/upload?key=d762e8061c3f1635b35b16d5cd01919c', {
+    const imgResponse = await fetch('https://api.imgbb.com/1/upload?key=acfd928b2864b7a4a28acbffa4f9efad', {
       method: 'POST',
       body: formData,
     });
@@ -6007,7 +6007,7 @@ app.put('/sponsor/:id', upload.single('image'), async (req, res) => {
       formData.append('image', req.file.buffer.toString('base64'));
 
       // Upload the new image to ImgBB
-      const imgResponse = await fetch('https://api.imgbb.com/1/upload?key=d762e8061c3f1635b35b16d5cd01919c', {
+      const imgResponse = await fetch('https://api.imgbb.com/1/upload?key=acfd928b2864b7a4a28acbffa4f9efad', {
         method: 'POST',
         body: formData,
       });
