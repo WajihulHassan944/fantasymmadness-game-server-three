@@ -1349,6 +1349,7 @@ const userSchema = new mongoose.Schema({
   preferredPaymentMethodValue: String,
   resetPasswordToken: String,
   resetPasswordExpires: Date,
+  hasSubmittedTestimonial: { type: Boolean, default: false },
   billing: {
     cardNumber: { type: String },  // Encrypted
     expirationDate: { type: String },  // Encrypted
@@ -5607,6 +5608,106 @@ app.post('/faqs/bulk', async (req, res) => {
   }
 });
 
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+const testimonialSchema = new mongoose.Schema({
+  author: String,
+  description:String,
+});
+
+const Testimonials = mongoose.model('Testimonials', testimonialSchema);
+
+
+app.delete('/all/delete/testimonials', async (req, res) => {
+  try {
+    // Delete all documents from the Faqs collection
+    const result = await Testimonials.deleteMany({});
+    res.status(200).json({
+      message: 'All Testimonials deleted successfully.',
+      deletedCount: result.deletedCount,
+    });
+  } catch (error) {
+    console.error('Error deleting Testimonials:', error);
+    res.status(500).json({ error: 'Failed to delete Testimonials from the database.' });
+  }
+});
+
+
+app.post('/testimonials', async (req, res) => {
+  const { userId, ...testimonialData } = req.body;
+
+  try {
+    // Create and save the new testimonial
+    const testimonial = new Testimonials(testimonialData);
+    await testimonial.save();
+
+    // Update the User's hasSubmittedTestimonial status
+    const user = await User.findByIdAndUpdate(
+      userId,
+      { hasSubmittedTestimonial: true },
+      { new: true }
+    );
+
+    if (!user) {
+      return res.status(404).json({ success: false, message: 'User not found' });
+    }
+
+    res.status(201).json({
+      success: true,
+      data: {
+        testimonial,
+        user,
+      },
+    });
+  } catch (error) {
+    res.status(400).json({ success: false, message: error.message });
+  }
+});
+
+app.get('/testimonials', async (req, res) => {
+  try {
+    const testimonials = await Testimonials.find();
+    res.status(200).json({ success: true, data: testimonials });
+  } catch (error) {
+    res.status(500).json({ success: false, message: error.message });
+  }
+});
+
+app.put('/testimonials/:id', async (req, res) => {
+  try {
+    const testimonials = await Testimonials.findByIdAndUpdate(req.params.id, req.body, {
+      new: true,
+      runValidators: true,
+    });
+    if (!testimonials) return res.status(404).json({ success: false, message: 'testimonials not found' });
+    res.status(200).json({ success: true, data: testimonials });
+  } catch (error) {
+    res.status(400).json({ success: false, message: error.message });
+  }
+});
+
+app.delete('/testimonials/:id', async (req, res) => {
+  try {
+    const testimonials = await Testimonials.findByIdAndDelete(req.params.id);
+    if (!testimonials) return res.status(404).json({ success: false, message: 'testimonials not found' });
+    res.status(200).json({ success: true, message: 'testimonials deleted successfully' });
+  } catch (error) {
+    res.status(400).json({ success: false, message: error.message });
+  }
+});
 
 
 
