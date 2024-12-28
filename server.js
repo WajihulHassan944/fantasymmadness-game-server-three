@@ -23,6 +23,14 @@ const xml2js = require('xml2js');
 const ALGORITHM = 'aes-256-cbc'; // AES algorithm
 const ENCRYPTION_KEY = process.env.ENCRYPTION_KEY; // Must be 32 bytes
 const IV_LENGTH = 16; // For AES, this is always 16
+const cloudinary = require('cloudinary').v2;
+
+// Configure Cloudinary with environment variables
+cloudinary.config({
+  cloud_name: process.env.CLOUDINARY_CLOUD_NAME,
+  api_key: process.env.CLOUDINARY_API_KEY,
+  api_secret: process.env.CLOUDINARY_API_SECRET,
+});
 
 // Example of generating a random IV for encryption
 const iv = crypto.randomBytes(IV_LENGTH);
@@ -1985,7 +1993,7 @@ app.post('/user/updatePayment/:id', async (req, res) => {
   }
 });
 
-
+// Update Profile API
 app.put('/update-profile/:userId', upload.single('image'), async (req, res) => {
   const { userId } = req.params;
   const {
@@ -1997,7 +2005,7 @@ app.put('/update-profile/:userId', upload.single('image'), async (req, res) => {
     shortBio,
     isNotificationsEnabled,
     isSubscribed,
-    isUSCitizen
+    isUSCitizen,
   } = req.body;
 
   try {
@@ -2017,45 +2025,46 @@ app.put('/update-profile/:userId', upload.single('image'), async (req, res) => {
 
     // Check if a new image is provided
     if (req.file) {
-      // Find the user to retrieve the previous delete URL
+      // Find the user to retrieve the previous profile details
       const user = await User.findById(userId);
       if (!user) {
-        return res.status(404).send('User not found');
+        return res.status(404).json({ message: 'User not found' });
       }
 
-      // Delete previous image from imgbb if delete URL exists
+      // Delete previous image from Cloudinary if delete URL exists
       if (user.profileDeleteUrl) {
-        await fetch(user.profileDeleteUrl, { method: 'DELETE' });
+        await cloudinary.uploader.destroy(user.profileDeleteUrl);
       }
 
-      // Upload new avatar image
-      const formData = new FormData();
-      formData.append('image', req.file.buffer.toString('base64'));
-
-      const response = await fetch('https://api.imgbb.com/1/upload?key=acfd928b2864b7a4a28acbffa4f9efad', {
-        method: 'POST',
-        body: formData,
+      // Upload new image to Cloudinary
+      const result = await new Promise((resolve, reject) => {
+        cloudinary.uploader.upload_stream(
+          { folder: 'profiles' },
+          (error, result) => {
+            if (error) return reject(error);
+            resolve(result);
+          }
+        ).end(req.file.buffer);
       });
 
-      const data = await response.json();
-      updateFields.profileUrl = data.data.url;
-      updateFields.profileDeleteUrl = data.data.delete_url;
+      updateFields.profileUrl = result.secure_url; // URL for accessing the image
+      updateFields.profileDeleteUrl = result.public_id; // Cloudinary public ID for deletion
     }
 
     // Update the user document with the specified fields
     const updatedUser = await User.findByIdAndUpdate(userId, updateFields, { new: true });
 
     if (!updatedUser) {
-      return res.status(404).send('User not found');
+      return res.status(404).json({ message: 'User not found' });
     }
 
     res.status(200).json({
       message: 'Profile updated successfully',
-      user: updatedUser
+      user: updatedUser,
     });
   } catch (error) {
     console.error('Error updating profile:', error);
-    res.status(500).send('Server error');
+    res.status(500).json({ message: 'Server error' });
   }
 });
 
