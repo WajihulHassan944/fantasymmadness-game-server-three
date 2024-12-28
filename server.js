@@ -167,105 +167,146 @@ const shadowSchema = new mongoose.Schema({
 
 const Shadow = mongoose.model('Shadow', shadowSchema);
 
-app.post('/editShadow', upload.fields([{ name: 'fighterAImage' }, { name: 'fighterBImage' }, { name: 'promotionBackground' }]), async (req, res) => {
-  const { default: fetch } = await import('node-fetch');
-  const { matchId, matchCategoryTwo, maxRounds,  matchCategory, matchName, matchFighterA, matchFighterB, matchDescription,  fighterAImageUrl, fighterBImageUrl, promotionBackgroundUrl } = req.body;
+app.post(
+  '/editShadow',
+  upload.fields([
+    { name: 'fighterAImage' },
+    { name: 'fighterBImage' },
+    { name: 'promotionBackground' },
+  ]),
+  async (req, res) => {
+    try {
+      const {
+        matchId,
+        matchCategoryTwo,
+        maxRounds,
+        matchCategory,
+        matchName,
+        matchFighterA,
+        matchFighterB,
+        matchDescription,
+        fighterAImageUrl,
+        fighterBImageUrl,
+        promotionBackgroundUrl,
+      } = req.body;
 
-  let fighterAImage, fighterBImage, fighterAImageDeleteUrl, fighterBImageDeleteUrl, promotionBackgroundUrls, promotionBackgroundDeleteUrl;
+      let fighterAImage,
+        fighterBImage,
+        fighterAImageDeleteUrl,
+        fighterBImageDeleteUrl,
+        promotionBackgroundUrls,
+        promotionBackgroundDeleteUrl;
 
-  try {
-    // Check if matchId is provided and valid
-    if (!matchId) {
-      return res.status(400).json({ error: 'matchId is required' });
-    }
-
-    // Fetch the existing match by matchId
-    const existingMatch = await Shadow.findById(matchId);
-    if (!existingMatch) {
-      return res.status(404).json({ error: 'Match not found' });
-    }
-
-    // Use the image URLs directly if they are provided
-    if (fighterAImageUrl && fighterBImageUrl) {
-      fighterAImage = fighterAImageUrl;
-      fighterBImage = fighterBImageUrl;
-    } else {
-      // Handle image uploads if URLs are not provided
-      if (req.files.fighterAImage) {
-        const formDataA = new FormData();
-        formDataA.append('image', req.files.fighterAImage[0].buffer.toString('base64'));
-        const responseA = await fetch('https://api.imgbb.com/1/upload?key=acfd928b2864b7a4a28acbffa4f9efad', {
-          method: 'POST',
-          body: formDataA,
-        });
-        const dataA = await responseA.json();
-        fighterAImage = dataA.data.url;
-        fighterAImageDeleteUrl = dataA.data.delete_url;
+      // Validate matchId
+      if (!matchId) {
+        return res.status(400).json({ error: 'matchId is required' });
       }
 
-      if (req.files.fighterBImage) {
-        const formDataB = new FormData();
-        formDataB.append('image', req.files.fighterBImage[0].buffer.toString('base64'));
-        const responseB = await fetch('https://api.imgbb.com/1/upload?key=acfd928b2864b7a4a28acbffa4f9efad', {
-          method: 'POST',
-          body: formDataB,
-        });
-        const dataB = await responseB.json();
-        fighterBImage = dataB.data.url;
-        fighterBImageDeleteUrl = dataB.data.delete_url;
+      // Fetch the existing match by matchId
+      const existingMatch = await Shadow.findById(matchId);
+      if (!existingMatch) {
+        return res.status(404).json({ error: 'Match not found' });
       }
-    }
 
+      // Use provided image URLs or handle uploads
+      if (fighterAImageUrl) {
+        fighterAImage = fighterAImageUrl;
+      } else if (req.files.fighterAImage) {
+        // Upload fighter A image to Cloudinary
+        const resultA = await new Promise((resolve, reject) => {
+          cloudinary.uploader.upload_stream(
+            { folder: 'shadow/fighterA' },
+            (error, result) => {
+              if (error) return reject(error);
+              resolve(result);
+            }
+          ).end(req.files.fighterAImage[0].buffer);
+        });
 
+        fighterAImage = resultA.secure_url;
+        fighterAImageDeleteUrl = resultA.public_id;
 
-    // Use the image URLs directly if they are provided
-    if (promotionBackgroundUrl) {
-      promotionBackgroundUrls = promotionBackgroundUrl;
-    } else {
+        // Delete the old image
+        if (existingMatch.fighterAImageDeleteUrl) {
+          await cloudinary.uploader.destroy(existingMatch.fighterAImageDeleteUrl);
+        }
+      }
 
-    // Handle promotionBackground image upload
-    if (req.files.promotionBackground) {
-      const formDataBackground = new FormData();
-      formDataBackground.append('image', req.files.promotionBackground[0].buffer.toString('base64'));
-      const responseBackground = await fetch('https://api.imgbb.com/1/upload?key=acfd928b2864b7a4a28acbffa4f9efad', {
-        method: 'POST',
-        body: formDataBackground,
+      if (fighterBImageUrl) {
+        fighterBImage = fighterBImageUrl;
+      } else if (req.files.fighterBImage) {
+        // Upload fighter B image to Cloudinary
+        const resultB = await new Promise((resolve, reject) => {
+          cloudinary.uploader.upload_stream(
+            { folder: 'shadow/fighterB' },
+            (error, result) => {
+              if (error) return reject(error);
+              resolve(result);
+            }
+          ).end(req.files.fighterBImage[0].buffer);
+        });
+
+        fighterBImage = resultB.secure_url;
+        fighterBImageDeleteUrl = resultB.public_id;
+
+        // Delete the old image
+        if (existingMatch.fighterBImageDeleteUrl) {
+          await cloudinary.uploader.destroy(existingMatch.fighterBImageDeleteUrl);
+        }
+      }
+
+      if (promotionBackgroundUrl) {
+        promotionBackgroundUrls = promotionBackgroundUrl;
+      } else if (req.files.promotionBackground) {
+        // Upload promotion background image to Cloudinary
+        const resultBackground = await new Promise((resolve, reject) => {
+          cloudinary.uploader.upload_stream(
+            { folder: 'shadow/promotionBackground' },
+            (error, result) => {
+              if (error) return reject(error);
+              resolve(result);
+            }
+          ).end(req.files.promotionBackground[0].buffer);
+        });
+
+        promotionBackgroundUrls = resultBackground.secure_url;
+        promotionBackgroundDeleteUrl = resultBackground.public_id;
+
+        // Delete the old background image
+        if (existingMatch.promotionBackgroundDeleteUrl) {
+          await cloudinary.uploader.destroy(existingMatch.promotionBackgroundDeleteUrl);
+        }
+      }
+
+      // Update the match object
+      existingMatch.matchCategory = matchCategory || existingMatch.matchCategory;
+      existingMatch.matchName = matchName || existingMatch.matchName;
+      existingMatch.matchFighterA = matchFighterA || existingMatch.matchFighterA;
+      existingMatch.matchFighterB = matchFighterB || existingMatch.matchFighterB;
+      existingMatch.matchDescription = matchDescription || existingMatch.matchDescription;
+      existingMatch.maxRounds = maxRounds || existingMatch.maxRounds;
+      existingMatch.matchCategoryTwo = matchCategoryTwo || existingMatch.matchCategoryTwo;
+
+      if (fighterAImage) existingMatch.fighterAImage = fighterAImage;
+      if (fighterBImage) existingMatch.fighterBImage = fighterBImage;
+      if (fighterAImageDeleteUrl) existingMatch.fighterAImageDeleteUrl = fighterAImageDeleteUrl;
+      if (fighterBImageDeleteUrl) existingMatch.fighterBImageDeleteUrl = fighterBImageDeleteUrl;
+      if (promotionBackgroundUrls) existingMatch.promotionBackground = promotionBackgroundUrls;
+      if (promotionBackgroundDeleteUrl) existingMatch.promotionBackgroundDeleteUrl = promotionBackgroundDeleteUrl;
+
+      // Save the updated match
+      const updatedMatch = await existingMatch.save();
+
+      res.status(200).json({
+        message: 'Match updated successfully',
+        matchId: updatedMatch._id,
       });
-      const dataBackground = await responseBackground.json();
-      promotionBackgroundUrls = dataBackground.data.url;            // Store Promotion Background image URL
-      promotionBackgroundDeleteUrl = dataBackground.data.delete_url; // Store Promotion Background delete URL
+    } catch (error) {
+      console.error('Error updating match:', error);
+      res.status(500).json({ error: 'An error occurred while updating the match' });
     }
-    }
-
-
-
-
-    // Update the match object
-    existingMatch.matchCategory = matchCategory || existingMatch.matchCategory;
-    existingMatch.matchName = matchName || existingMatch.matchName;
-    existingMatch.matchFighterA = matchFighterA || existingMatch.matchFighterA;
-    existingMatch.matchFighterB = matchFighterB || existingMatch.matchFighterB;
-    existingMatch.matchDescription = matchDescription || existingMatch.matchDescription;
-    existingMatch.maxRounds = maxRounds || existingMatch.maxRounds;
-    existingMatch.matchCategoryTwo = matchCategoryTwo || existingMatch.matchCategoryTwo;
-
-    if (fighterAImage) existingMatch.fighterAImage = fighterAImage;
-    if (fighterBImage) existingMatch.fighterBImage = fighterBImage;
-    if (fighterAImageDeleteUrl) existingMatch.fighterAImageDeleteUrl = fighterAImageDeleteUrl;
-    if (fighterBImageDeleteUrl) existingMatch.fighterBImageDeleteUrl = fighterBImageDeleteUrl;
-    if (promotionBackgroundUrls) existingMatch.promotionBackground = promotionBackgroundUrls;
-    if (promotionBackgroundDeleteUrl) existingMatch.promotionBackgroundDeleteUrl = promotionBackgroundDeleteUrl;
-
-    // Save the updated match to the database
-    const updatedMatch = await existingMatch.save();
-
-    // Respond with success and the updated match ID
-    res.status(200).json({ message: 'Match updated successfully', matchId: updatedMatch._id });
-  } catch (error) {
-    console.error('Error updating match:', error);
-    res.status(500).json({ error: 'An error occurred while updating the match' });
   }
-});
+);
 
 
 app.post('/finishShadow/:matchId', async (req, res) => {
@@ -712,107 +753,96 @@ app.delete('/api/matches/:id', async (req, res) => {
     res.status(500).json({ message: 'Server error', error });
   }
 });
+app.post(
+  '/addMatch',
+  upload.fields([{ name: 'fighterAImage' }, { name: 'fighterBImage' }, { name: 'promotionBackground' }]),
+  async (req, res) => {
+    try {
+      const {
+        BoxingMatch,
+        MMAMatch,
+        matchCategoryTwo,
+        shadowFightId,
+        maxRounds,
+        affiliateId,
+        matchBy,
+        profit,
+        amountOverPotBudget,
+        matchCategory,
+        matchName,
+        matchFighterA,
+        matchFighterB,
+        matchDescription,
+        matchVideoUrl,
+        matchDate,
+        matchTime,
+        matchTokens,
+        matchStatus,
+        pot,
+        matchType,
+      } = req.body;
 
-app.post('/addMatch', upload.fields([{ name: 'fighterAImage' }, { name: 'fighterBImage' }, { name: 'promotionBackground' }]), async (req, res) => {
-  const { default: fetch } = await import('node-fetch');
-  const { BoxingMatch, MMAMatch, matchCategoryTwo, shadowFightId, maxRounds, affiliateId, matchBy, profit, amountOverPotBudget, matchCategory, matchName, matchFighterA, matchFighterB, matchDescription, matchVideoUrl, matchDate, matchTime, matchTokens, matchStatus, pot, matchType, fighterAImageUrl, fighterBImageUrl } = req.body;
+      // Upload images to Cloudinary
+      const uploadToCloudinary = (fileBuffer, folder) =>
+        new Promise((resolve, reject) => {
+          cloudinary.uploader.upload_stream(
+            { folder },
+            (error, result) => {
+              if (error) return reject(error);
+              resolve(result);
+            }
+          ).end(fileBuffer);
+        });
 
-  // Declare variables for dynamic values
-  let fighterAImage,
-  fighterBImage,
-  fighterAImageDeleteUrl,
-  fighterBImageDeleteUrl,
-  promotionBackground,
-  promotionBackgroundDeleteUrl;
+      let fighterAImage, fighterBImage, promotionBackground;
+      let fighterAImageDeleteUrl, fighterBImageDeleteUrl, promotionBackgroundDeleteUrl;
 
-// Assign promotion background values based on req.body
-promotionBackground = req.body.promotionBackground || null;
-promotionBackgroundDeleteUrl = req.body.promotionBackgroundDeleteUrl || null;
+      if (req.files.fighterAImage) {
+        const resultA = await uploadToCloudinary(req.files.fighterAImage[0].buffer, 'fighter_images');
+        fighterAImage = resultA.secure_url;
+        fighterAImageDeleteUrl = resultA.public_id;
+      }
 
-  // Use the image URLs directly if they are provided
-  if (fighterAImageUrl && fighterBImageUrl) {
-    fighterAImage = fighterAImageUrl;
-    fighterBImage = fighterBImageUrl;
-  } else {
-    // Handle image uploads if URLs are not provided
-    if (req.files.fighterAImage) {
-      const formDataA = new FormData();
-      formDataA.append('image', req.files.fighterAImage[0].buffer.toString('base64'));
-      const responseA = await fetch('https://api.imgbb.com/1/upload?key=acfd928b2864b7a4a28acbffa4f9efad', {
-        method: 'POST',
-        body: formDataA,
-      });
-      const dataA = await responseA.json();
-      fighterAImage = dataA?.data?.url;
-      fighterAImageDeleteUrl = dataA?.data?.delete_url;
-    }
+      if (req.files.fighterBImage) {
+        const resultB = await uploadToCloudinary(req.files.fighterBImage[0].buffer, 'fighter_images');
+        fighterBImage = resultB.secure_url;
+        fighterBImageDeleteUrl = resultB.public_id;
+      }
 
-    if (req.files.fighterBImage) {
-      const formDataB = new FormData();
-      formDataB.append('image', req.files.fighterBImage[0].buffer.toString('base64'));
-      const responseB = await fetch('https://api.imgbb.com/1/upload?key=acfd928b2864b7a4a28acbffa4f9efad', {
-        method: 'POST',
-        body: formDataB,
-      });
-      const dataB = await responseB.json();
-      fighterBImage = dataB?.data?.url;
-      fighterBImageDeleteUrl = dataB?.data?.delete_url;
-    }
-    
+      if (req.files.promotionBackground) {
+        const resultBackground = await uploadToCloudinary(req.files.promotionBackground[0].buffer, 'promotion_backgrounds');
+        promotionBackground = resultBackground.secure_url;
+        promotionBackgroundDeleteUrl = resultBackground.public_id;
+      }
 
-    // Handle promotion background upload
-    if (req.files.promotionBackground && !promotionBackground) {
-      const formDataBackground = new URLSearchParams();
-      formDataBackground.append(
-        'image',
-        req.files.promotionBackground[0].buffer.toString('base64')
-      );
-
-      const responseBackground = await fetch(
-        'https://api.imgbb.com/1/upload?key=acfd928b2864b7a4a28acbffa4f9efad',
-        {
-          method: 'POST',
-          body: formDataBackground,
-        }
-      );
-
-      const dataBackground = await responseBackground.json();
-      promotionBackground = dataBackground?.data?.url;
-      promotionBackgroundDeleteUrl = dataBackground?.data?.delete_url;
-    }
-
-
-  }
-// Create a new match object
-const matchData = {
-  matchCategory,
-  matchName,
-  matchFighterA,
-  matchFighterB,
-  matchDescription,
-  matchVideoUrl,
-  matchDate,
-  matchTime,
-  matchTokens,
-  matchStatus,
-  pot,
-  fighterAImage,
-  fighterBImage,
-  matchType,
-  affiliateId,
-  matchBy,
-  profit,
-  amountOverPotBudget,
-  maxRounds,
-  shadowFightId,
-  matchCategoryTwo,
-  fighterAImageDeleteUrl, // Save the delete URL for Fighter A
-  fighterBImageDeleteUrl,
-
-  promotionBackground,
-  promotionBackgroundDeleteUrl,
- 
-};
+      // Create match data object
+      const matchData = {
+        matchCategory,
+        matchName,
+        matchFighterA,
+        matchFighterB,
+        matchDescription,
+        matchVideoUrl,
+        matchDate,
+        matchTime,
+        matchTokens,
+        matchStatus,
+        pot,
+        matchType,
+        affiliateId,
+        matchBy,
+        profit,
+        amountOverPotBudget,
+        maxRounds,
+        shadowFightId,
+        matchCategoryTwo,
+        fighterAImage,
+        fighterBImage,
+        fighterAImageDeleteUrl,
+        fighterBImageDeleteUrl,
+        promotionBackground,
+        promotionBackgroundDeleteUrl,
+      };
 
 // Conditionally append BoxingMatch and MMAMatch only if they have values
 if (BoxingMatch) {
@@ -1004,8 +1034,12 @@ const nonRegisteredUserMailPromises = nonRegisteredUsers.map(user => {
 
   // Respond with success and the saved match ID
   res.status(200).json({ message: 'Match Added Successfully and Notifications Sent', matchId: savedMatch._id });
-});
-
+} catch (error) {
+  console.error('Error adding match:', error);
+  res.status(500).json({ message: 'Server error', error: error.message });
+}
+}
+);
 app.post(
   '/editMatch',
   upload.fields([
@@ -1014,7 +1048,6 @@ app.post(
     { name: 'promotionBackground' },
   ]),
   async (req, res) => {
-    const { default: fetch } = await import('node-fetch');
     const {
       matchId,
       matchCategoryTwo,
@@ -1060,53 +1093,50 @@ app.post(
 
       // Handle image uploads for Fighter A
       if (req.files.fighterAImage) {
-        const formDataA = new FormData();
-        formDataA.append(
-          'image',
-          req.files.fighterAImage[0].buffer.toString('base64')
-        );
+        const resultA = await new Promise((resolve, reject) => {
+          cloudinary.uploader.upload_stream(
+            { folder: 'fighterAImages' },
+            (error, result) => {
+              if (error) return reject(error);
+              resolve(result);
+            }
+          ).end(req.files.fighterAImage[0].buffer);
+        });
 
-        const responseA = await fetch(
-          'https://api.imgbb.com/1/upload?key=acfd928b2864b7a4a28acbffa4f9efad',
-          { method: 'POST', body: formDataA }
-        );
-        const dataA = await responseA.json();
-        fighterAImage = dataA.data.url;
-        fighterAImageDeleteUrl = dataA.data.delete_url;
+        fighterAImage = resultA.secure_url;
+        fighterAImageDeleteUrl = resultA.public_id;
       }
 
       // Handle image uploads for Fighter B
       if (req.files.fighterBImage) {
-        const formDataB = new FormData();
-        formDataB.append(
-          'image',
-          req.files.fighterBImage[0].buffer.toString('base64')
-        );
+        const resultB = await new Promise((resolve, reject) => {
+          cloudinary.uploader.upload_stream(
+            { folder: 'fighterBImages' },
+            (error, result) => {
+              if (error) return reject(error);
+              resolve(result);
+            }
+          ).end(req.files.fighterBImage[0].buffer);
+        });
 
-        const responseB = await fetch(
-          'https://api.imgbb.com/1/upload?key=acfd928b2864b7a4a28acbffa4f9efad',
-          { method: 'POST', body: formDataB }
-        );
-        const dataB = await responseB.json();
-        fighterBImage = dataB.data.url;
-        fighterBImageDeleteUrl = dataB.data.delete_url;
+        fighterBImage = resultB.secure_url;
+        fighterBImageDeleteUrl = resultB.public_id;
       }
 
       // Handle promotion background upload
       if (req.files.promotionBackground) {
-        const formDataBackground = new URLSearchParams();
-        formDataBackground.append(
-          'image',
-          req.files.promotionBackground[0].buffer.toString('base64')
-        );
+        const resultBackground = await new Promise((resolve, reject) => {
+          cloudinary.uploader.upload_stream(
+            { folder: 'promotionBackgrounds' },
+            (error, result) => {
+              if (error) return reject(error);
+              resolve(result);
+            }
+          ).end(req.files.promotionBackground[0].buffer);
+        });
 
-        const responseBackground = await fetch(
-          'https://api.imgbb.com/1/upload?key=acfd928b2864b7a4a28acbffa4f9efad',
-          { method: 'POST', body: formDataBackground }
-        );
-        const dataBackground = await responseBackground.json();
-        promotionBackground = dataBackground.data.url;
-        promotionBackgroundDeleteUrl = dataBackground.data.delete_url;
+        promotionBackground = resultBackground.secure_url;
+        promotionBackgroundDeleteUrl = resultBackground.public_id;
       } else if (promotionBackgroundUrl) {
         // Use the existing promotion background URL if provided
         promotionBackground = promotionBackgroundUrl;
@@ -2559,28 +2589,45 @@ app.get('/user/:email', async (req, res) => {
 
 
 app.post('/upload-avatar', upload.single('image'), async (req, res) => {
-  const formData = new FormData();
-  const { default: fetch } = await import('node-fetch');
-  
-  // Upload Avatar image
-  formData.append('image', req.file.buffer.toString('base64'));
-  const response = await fetch('https://api.imgbb.com/1/upload?key=acfd928b2864b7a4a28acbffa4f9efad', {
-    method: 'POST',
-    body: formData,
-  });
-  
-  const data = await response.json();
-  const avatarUrl = data.data.url;
-  const deleteUrl = data.data.delete_url; // Get the delete URL
-  
-  // Update user profile with avatar URL and delete URL
-  const { email } = req.body;
-  await User.findOneAndUpdate(
-    { email },
-    { profileUrl: avatarUrl, profileDeleteUrl: deleteUrl }
-  );
+  try {
+    const { email } = req.body;
 
-  res.status(200).send('Avatar uploaded and saved successfully');
+    if (!req.file) {
+      return res.status(400).json({ message: 'No image file provided' });
+    }
+
+    // Find the user to retrieve the previous avatar details
+    const user = await User.findOne({ email });
+    if (!user) {
+      return res.status(404).json({ message: 'User not found' });
+    }
+
+    // Delete the previous avatar from Cloudinary if it exists
+    if (user.profileDeleteUrl) {
+      await cloudinary.uploader.destroy(user.profileDeleteUrl);
+    }
+
+    // Upload the new avatar to Cloudinary
+    const result = await new Promise((resolve, reject) => {
+      cloudinary.uploader.upload_stream(
+        { folder: 'avatars' },
+        (error, result) => {
+          if (error) return reject(error);
+          resolve(result);
+        }
+      ).end(req.file.buffer);
+    });
+
+    // Update the user with the new avatar URL and public ID
+    user.profileUrl = result.secure_url; // New avatar URL
+    user.profileDeleteUrl = result.public_id; // Cloudinary public ID for deletion
+    await user.save();
+
+    res.status(200).json({ message: 'Avatar uploaded and saved successfully', profileUrl: user.profileUrl });
+  } catch (error) {
+    console.error('Error uploading avatar:', error);
+    res.status(500).json({ message: 'Server error' });
+  }
 });
 
 
@@ -3812,7 +3859,6 @@ app.post('/affiliate/:affiliateId/join', async (req, res) => {
     return res.status(500).json({ message: 'Error joining the league', error });
   }
 });
-
 app.put('/update-profile-affiliate/:userId', upload.single('image'), async (req, res) => {
   const { userId } = req.params;
   const { firstName, lastName, playerName, phone, zipCode, shortBio } = req.body;
@@ -3836,23 +3882,24 @@ app.put('/update-profile-affiliate/:userId', upload.single('image'), async (req,
         return res.status(404).send('Affiliate not found');
       }
 
-      // Delete previous image from imgbb if delete URL exists
+      // Delete the previous image from Cloudinary if delete URL exists
       if (affiliate.profileDeleteUrl) {
-        await fetch(affiliate.profileDeleteUrl, { method: 'DELETE' });
+        await cloudinary.uploader.destroy(affiliate.profileDeleteUrl);
       }
 
-      // Upload new avatar image
-      const formData = new FormData();
-      formData.append('image', req.file.buffer.toString('base64'));
-
-      const response = await fetch('https://api.imgbb.com/1/upload?key=acfd928b2864b7a4a28acbffa4f9efad', {
-        method: 'POST',
-        body: formData,
+      // Upload new avatar image to Cloudinary
+      const result = await new Promise((resolve, reject) => {
+        cloudinary.uploader.upload_stream(
+          { folder: 'affiliates' },
+          (error, result) => {
+            if (error) return reject(error);
+            resolve(result);
+          }
+        ).end(req.file.buffer);
       });
 
-      const data = await response.json();
-      updateFields.profileUrl = data.data.url;
-      updateFields.profileDeleteUrl = data.data.delete_url;
+      updateFields.profileUrl = result.secure_url;
+      updateFields.profileDeleteUrl = result.public_id;
     }
 
     // Update the affiliate document with the specified fields
@@ -3871,6 +3918,7 @@ app.put('/update-profile-affiliate/:userId', upload.single('image'), async (req,
     res.status(500).send('Server error');
   }
 });
+
 // Delete Affiliate API
 app.delete('/affiliatetodelete/:id', async (req, res) => {
   const { id } = req.params;
@@ -3960,7 +4008,6 @@ app.post('/affiliates/:id/verify', async (req, res) => {
   }
 });
 
-
 app.post('/registerAffiliate', upload.single('image'), async (req, res) => {
   try {
     const {
@@ -3988,17 +4035,18 @@ app.post('/registerAffiliate', upload.single('image'), async (req, res) => {
     let profileUrl = '';
     let profileDeleteUrl = '';
     if (req.file) {
-      const formData = new FormData();
-      formData.append('image', req.file.buffer.toString('base64'));
-
-      const response = await fetch('https://api.imgbb.com/1/upload?key=acfd928b2864b7a4a28acbffa4f9efad', {
-        method: 'POST',
-        body: formData,
+      const result = await new Promise((resolve, reject) => {
+        cloudinary.uploader.upload_stream(
+          { folder: 'affiliates' },
+          (error, result) => {
+            if (error) return reject(error);
+            resolve(result);
+          }
+        ).end(req.file.buffer);
       });
 
-      const data = await response.json();
-      profileUrl = data.data.url;
-      profileDeleteUrl = data.data.delete_url; // Capture delete URL
+      profileUrl = result.secure_url;
+      profileDeleteUrl = result.public_id;
     }
 
     // Create new user with hashed password
@@ -4512,160 +4560,165 @@ app.get('/youtubeVideos', async (req, res) => {
 
 
 
-
-app.post('/addShadow', upload.fields([{ name: 'fighterAImage' }, { name: 'fighterBImage' }, { name: 'promotionBackground' }]), async (req, res) => {
-  const { default: fetch } = await import('node-fetch');
-
-  let fighterAImageUrl, fighterBImageUrl, fighterAImageDeleteUrl, fighterBImageDeleteUrl , promotionBackgroundUrl , promotionBackgroundDeleteUrl;
-
-  // Upload Fighter A image
-  if (req.files.fighterAImage) {
-    const formDataA = new URLSearchParams();
-    formDataA.append('image', req.files.fighterAImage[0].buffer.toString('base64'));
-
-    const responseA = await fetch('https://api.imgbb.com/1/upload?key=acfd928b2864b7a4a28acbffa4f9efad', {
-      method: 'POST',
-      body: formDataA,
-    });
-
-    const dataA = await responseA.json();
-    fighterAImageUrl = dataA.data.url;            // Store Fighter A image URL
-    fighterAImageDeleteUrl = dataA.data.delete_url; // Store Fighter A delete URL
-  }
-
-  // Upload Fighter B image
-  if (req.files.fighterBImage) {
-    const formDataB = new URLSearchParams();
-    formDataB.append('image', req.files.fighterBImage[0].buffer.toString('base64'));
-
-    const responseB = await fetch('https://api.imgbb.com/1/upload?key=acfd928b2864b7a4a28acbffa4f9efad', {
-      method: 'POST',
-      body: formDataB,
-    });
-
-    const dataB = await responseB.json();
-    fighterBImageUrl = dataB.data.url;            // Store Fighter B image URL
-    fighterBImageDeleteUrl = dataB.data.delete_url; // Store Fighter B delete URL
-  }
-
-// Upload Promotion Background image
-if (req.files.promotionBackground) {
-  const formDataBackground = new URLSearchParams();
-  formDataBackground.append('image', req.files.promotionBackground[0].buffer.toString('base64'));
-
-  const responseBackground = await fetch('https://api.imgbb.com/1/upload?key=acfd928b2864b7a4a28acbffa4f9efad', {
-    method: 'POST',
-    body: formDataBackground,
-  });
-
-  const dataBackground = await responseBackground.json();
-  promotionBackgroundUrl = dataBackground.data.url;            // Store Promotion Background image URL
-  promotionBackgroundDeleteUrl = dataBackground.data.delete_url; // Store Promotion Background delete URL
-}
-
-
-
-  const { matchCategoryTwo, maxRounds, matchCategory, matchName, matchFighterA, matchFighterB, matchDescription, matchVideoUrl, matchType } = req.body;
-
-  // Save the match details to the database
-  const newMatch = new Shadow({
-    matchCategory,
-    matchCategoryTwo,
-    matchName,
-    matchFighterA,
-    matchFighterB,
-    matchDescription,
-    matchVideoUrl,
-    fighterAImage: fighterAImageUrl,
-    fighterBImage: fighterBImageUrl,
-    fighterAImageDeleteUrl,
-    fighterBImageDeleteUrl,
-    promotionBackground: promotionBackgroundUrl,
-    promotionBackgroundDeleteUrl,
-    matchType,
-    maxRounds,
-  });
-
-  await newMatch.save();
-
-  if (req.body.notify === 'true' || req.body.notify === true) {
-
-
-  const users = await Affiliate.find();
-
-  const mailPromises = users.map(user => {
-    const mailOptions = {
-      from: 'Fantasymmadness2@gmail.com',
-      to: user.email,
-      subject: 'Fantasy MMAdness - New Fight Announcement',
-      html: `
-  <table width="100%" cellpadding="0" cellspacing="0" border="0" style="width:100%; max-width:600px; margin:auto;">
-    <!-- Logo Section -->
-    <tr>
-      <td align="center" style="padding: 15px 0;">
-        <img src="https://i.ibb.co/mF88zvd/Image-5-removebg-preview.png" alt="Fantasy mmadness Logo" style="width:100px;" />
-        <h2 style="margin: 0; color: #191164; font-family: 'New York', Charter, Georgia, serif;">Fantasy mmadness</h2>
-      </td>
-    </tr>
-    
-    <!-- Greeting Section -->
-    <tr>
-      <td style="padding: 10px 0;">
-        <p style="font-size: 16px; font-family: Arial, sans-serif; color: #333;">Dear ${user.firstName} ${user.lastName},</p>
-        <p style="font-size: 16px; font-family: Arial, sans-serif; color: #333;">We're thrilled to announce that a new Shadow Fight has been added to your dashboard, ready for promotion.</p>
-        <p style="font-size: 16px; font-family: Arial, sans-serif; color: #333;"><strong>Fight Name:</strong> ${matchName}</p>
-      </td>
-    </tr>
-    
-    <!-- Affiliate Call-to-Action Section -->
-    <tr>
-      <td align="center" style="padding: 20px; background-color:#f8f8f8;">
-        <h2 style="color: #191164; font-family: 'Impact', fantasy, sans-serif;">Take the Lead!</h2>
-        <p style="font-size: 17px; font-family: 'Comic Sans MS', fantasy, sans-serif; color: #555;">
-          The new Shadow Fight is now available for promotion. Share the excitement with your audience, build anticipation, and engage them in this thrilling event. 
-        </p>
-        <p style="font-size: 17px; font-family: 'Comic Sans MS', fantasy, sans-serif; color: #555;">
-          Boost your league’s activity by encouraging fans to participate, and don’t miss the opportunity to expand your reach and earn rewards.
-        </p>
-      </td>
-    </tr>
-
-    <!-- Match Details Section -->
-    <tr>
-      <td style="padding: 10px;">
-        <p style="font-size: 16px; font-family: Arial, sans-serif; color: #333;"><strong>Max Rounds:</strong> ${maxRounds}</p>
-        <p style="font-size: 16px; font-family: Arial, sans-serif; color: #333;"><strong>Match Type:</strong> ${matchType}</p>
-        <p style="font-size: 16px; font-family: Arial, sans-serif; color: #333;">
-          Now is the time to activate your followers and get them involved. Start promoting the fight today, and keep the excitement growing in your community!
-        </p>
-      </td>
-    </tr>
-
-    <!-- Footer Section -->
-    <tr>
-      <td align="center" style="padding: 15px 0;">
-        <img src="https://i.ibb.co/mF88zvd/Image-5-removebg-preview.png" alt="Fantasy mmadness Logo" style="width:70px;" />
-        <p><a href="https://fantasymmadness.com" style="font-family: Arial, sans-serif; color: #191164; text-decoration: none;">https://fantasymmadness.com</a></p>
-      </td>
-    </tr>
-  </table>
-`,
-
-};
-
-    return transporter.sendMail(mailOptions);
-  });
-
+app.post('/addShadow', upload.fields([
+  { name: 'fighterAImage' },
+  { name: 'fighterBImage' },
+  { name: 'promotionBackground' },
+]), async (req, res) => {
   try {
-    await Promise.all(mailPromises);
-    console.log('Emails sent successfully');
+    let fighterAImageUrl, fighterBImageUrl, promotionBackgroundUrl;
+    let fighterAImageDeleteUrl, fighterBImageDeleteUrl, promotionBackgroundDeleteUrl;
+
+    // Helper function to upload to Cloudinary
+    const uploadToCloudinary = (fileBuffer, folder) => {
+      return new Promise((resolve, reject) => {
+        cloudinary.uploader.upload_stream(
+          { folder },
+          (error, result) => {
+            if (error) return reject(error);
+            resolve(result);
+          }
+        ).end(fileBuffer);
+      });
+    };
+
+    // Upload Fighter A Image
+    if (req.files.fighterAImage) {
+      const result = await uploadToCloudinary(req.files.fighterAImage[0].buffer, 'fighters');
+      fighterAImageUrl = result.secure_url;
+      fighterAImageDeleteUrl = result.public_id;
+    }
+
+    // Upload Fighter B Image
+    if (req.files.fighterBImage) {
+      const result = await uploadToCloudinary(req.files.fighterBImage[0].buffer, 'fighters');
+      fighterBImageUrl = result.secure_url;
+      fighterBImageDeleteUrl = result.public_id;
+    }
+
+    // Upload Promotion Background Image
+    if (req.files.promotionBackground) {
+      const result = await uploadToCloudinary(req.files.promotionBackground[0].buffer, 'promotions');
+      promotionBackgroundUrl = result.secure_url;
+      promotionBackgroundDeleteUrl = result.public_id;
+    }
+
+    const {
+      matchCategoryTwo,
+      maxRounds,
+      matchCategory,
+      matchName,
+      matchFighterA,
+      matchFighterB,
+      matchDescription,
+      matchVideoUrl,
+      matchType,
+    } = req.body;
+
+    // Save match details to the database
+    const newMatch = new Shadow({
+      matchCategory,
+      matchCategoryTwo,
+      matchName,
+      matchFighterA,
+      matchFighterB,
+      matchDescription,
+      matchVideoUrl,
+      fighterAImage: fighterAImageUrl,
+      fighterBImage: fighterBImageUrl,
+      fighterAImageDeleteUrl,
+      fighterBImageDeleteUrl,
+      promotionBackground: promotionBackgroundUrl,
+      promotionBackgroundDeleteUrl,
+      matchType,
+      maxRounds,
+    });
+
+    await newMatch.save();
+
+    if (req.body.notify === 'true' || req.body.notify === true) {
+      const users = await Affiliate.find();
+
+      const mailPromises = users.map((user) => {
+        const mailOptions = {
+          from: 'Fantasymmadness2@gmail.com',
+          to: user.email,
+          subject: 'Fantasy MMAdness - New Fight Announcement',
+          html: `
+          <table width="100%" cellpadding="0" cellspacing="0" border="0" style="width:100%; max-width:600px; margin:auto;">
+            <!-- Logo Section -->
+            <tr>
+              <td align="center" style="padding: 15px 0;">
+                <img src="https://i.ibb.co/mF88zvd/Image-5-removebg-preview.png" alt="Fantasy mmadness Logo" style="width:100px;" />
+                <h2 style="margin: 0; color: #191164; font-family: 'New York', Charter, Georgia, serif;">Fantasy mmadness</h2>
+              </td>
+            </tr>
+            
+            <!-- Greeting Section -->
+            <tr>
+              <td style="padding: 10px 0;">
+                <p style="font-size: 16px; font-family: Arial, sans-serif; color: #333;">Dear ${user.firstName} ${user.lastName},</p>
+                <p style="font-size: 16px; font-family: Arial, sans-serif; color: #333;">We're thrilled to announce that a new Shadow Fight has been added to your dashboard, ready for promotion.</p>
+                <p style="font-size: 16px; font-family: Arial, sans-serif; color: #333;"><strong>Fight Name:</strong> ${matchName}</p>
+              </td>
+            </tr>
+            
+            <!-- Affiliate Call-to-Action Section -->
+            <tr>
+              <td align="center" style="padding: 20px; background-color:#f8f8f8;">
+                <h2 style="color: #191164; font-family: 'Impact', fantasy, sans-serif;">Take the Lead!</h2>
+                <p style="font-size: 17px; font-family: 'Comic Sans MS', fantasy, sans-serif; color: #555;">
+                  The new Shadow Fight is now available for promotion. Share the excitement with your audience, build anticipation, and engage them in this thrilling event. 
+                </p>
+                <p style="font-size: 17px; font-family: 'Comic Sans MS', fantasy, sans-serif; color: #555;">
+                  Boost your league’s activity by encouraging fans to participate, and don’t miss the opportunity to expand your reach and earn rewards.
+                </p>
+              </td>
+            </tr>
+        
+            <!-- Match Details Section -->
+            <tr>
+              <td style="padding: 10px;">
+                <p style="font-size: 16px; font-family: Arial, sans-serif; color: #333;"><strong>Max Rounds:</strong> ${maxRounds}</p>
+                <p style="font-size: 16px; font-family: Arial, sans-serif; color: #333;"><strong>Match Type:</strong> ${matchType}</p>
+                <p style="font-size: 16px; font-family: Arial, sans-serif; color: #333;">
+                  Now is the time to activate your followers and get them involved. Start promoting the fight today, and keep the excitement growing in your community!
+                </p>
+              </td>
+            </tr>
+        
+            <!-- Footer Section -->
+            <tr>
+              <td align="center" style="padding: 15px 0;">
+                <img src="https://i.ibb.co/mF88zvd/Image-5-removebg-preview.png" alt="Fantasy mmadness Logo" style="width:70px;" />
+                <p><a href="https://fantasymmadness.com" style="font-family: Arial, sans-serif; color: #191164; text-decoration: none;">https://fantasymmadness.com</a></p>
+              </td>
+            </tr>
+          </table>
+        `,
+        };
+
+        return transporter.sendMail(mailOptions);
+      });
+
+      try {
+        await Promise.all(mailPromises);
+        console.log('Emails sent successfully');
+      } catch (error) {
+        console.error('Error sending emails:', error);
+      }
+    } else {
+      console.log('Notification skipped because notify is set to false');
+    }
+
+    res.status(200).json({
+      message: 'Match Added Successfully and Notifications Sent',
+      matchId: newMatch._id,
+    });
   } catch (error) {
-    console.error('Error sending emails:', error);
+    console.error('Error adding shadow match:', error);
+    res.status(500).send('Server error');
   }
-} else {
-  console.log('Notification skipped because notify is set to false');
-}
-  res.status(200).json({ message: 'Match Added Successfully and Notifications Sent', matchId: newMatch._id });
 });
 
 
@@ -5978,53 +6031,51 @@ app.delete('/all/delete/sponsors', async (req, res) => {
 
 
 
-
 // POST route to upload sponsor
 app.post('/upload-sponsor', upload.single('image'), async (req, res) => {
   try {
     const { name, description, websiteLink, instaLink, email } = req.body; // Extract sponsor data
- const existingSponsor = await Sponsors.findOne({ email });
- if (existingSponsor) {
-   return res.status(400).json({ message: 'Sponsor with this email already exists.' });
- }
 
+    // Check if the sponsor already exists
+    const existingSponsor = await Sponsors.findOne({ email });
+    if (existingSponsor) {
+      return res.status(400).json({ message: 'Sponsor with this email already exists.' });
+    }
+
+    // Ensure image is provided
     if (!req.file) {
       return res.status(400).json({ error: 'Image is required' });
     }
 
-    // Prepare the image for uploading
-    const formData = new FormData();
-    formData.append('image', req.file.buffer.toString('base64'));
-
-    // Upload the image to ImgBB
-    const imgResponse = await fetch('https://api.imgbb.com/1/upload?key=acfd928b2864b7a4a28acbffa4f9efad', {
-      method: 'POST',
-      body: formData,
+    // Upload image to Cloudinary
+    let imageUrl = '';
+    let imageDeleteUrl = '';
+    const result = await new Promise((resolve, reject) => {
+      cloudinary.uploader.upload_stream(
+        { folder: 'sponsors' },
+        (error, result) => {
+          if (error) return reject(error);
+          resolve(result);
+        }
+      ).end(req.file.buffer);
     });
 
-    const imgData = await imgResponse.json();
+    imageUrl = result.secure_url;
+    imageDeleteUrl = result.public_id;
 
-    if (!imgData.success) {
-      return res.status(500).json({ error: 'Image upload failed', details: imgData });
-    }
-
-    const imageUrl = imgData.data.url;
-    const deleteUrl = imgData.data.delete_url;
-
-    // Save the sponsor data to MongoDB
+    // Save sponsor details in the database
     const newSponsor = new Sponsors({
       name,
       description,
       email,
       image: imageUrl,
-      imageDeleteUrl: deleteUrl,
+      imageDeleteUrl: imageDeleteUrl,
       websiteLink,
       instaLink,
     });
 
     await newSponsor.save();
 
-    // Prepare the email content
     const emailContent = `
       <table width="100%" cellpadding="0" cellspacing="0" border="0" style="width:100%; max-width:600px; margin:auto;">
         <tr>
@@ -6072,7 +6123,6 @@ app.post('/upload-sponsor', upload.single('image'), async (req, res) => {
       </table>
     `;
 
-    // Send the email
     await transporter.sendMail({
       from: '"Fantasy Madness" <Fantasymmadness2@gmail.com>',
       to: email,
@@ -6087,6 +6137,7 @@ app.post('/upload-sponsor', upload.single('image'), async (req, res) => {
   }
 });
 
+
 // Get all News articles
 app.get('/sponsors', async (req, res) => {
   try {
@@ -6096,7 +6147,6 @@ app.get('/sponsors', async (req, res) => {
     res.status(500).json({ success: false, message: error.message });
   }
 });
-
 // PUT route to update a sponsor by ID
 app.put('/sponsor/:id', upload.single('image'), async (req, res) => {
   try {
@@ -6112,33 +6162,28 @@ app.put('/sponsor/:id', upload.single('image'), async (req, res) => {
 
     // Check if a new image is uploaded
     if (req.file) {
-      // Prepare the image for uploading
-      const formData = new FormData();
-      formData.append('image', req.file.buffer.toString('base64'));
-
-      // Upload the new image to ImgBB
-      const imgResponse = await fetch('https://api.imgbb.com/1/upload?key=acfd928b2864b7a4a28acbffa4f9efad', {
-        method: 'POST',
-        body: formData,
+      // Upload the new image to Cloudinary
+      const result = await new Promise((resolve, reject) => {
+        cloudinary.uploader.upload_stream(
+          { folder: 'sponsors' },
+          (error, result) => {
+            if (error) return reject(error);
+            resolve(result);
+          }
+        ).end(req.file.buffer);
       });
 
-      const imgData = await imgResponse.json();
+      const newImageUrl = result.secure_url;
+      const newPublicId = result.public_id;
 
-      if (!imgData.success) {
-        return res.status(500).json({ error: 'Image upload failed', details: imgData });
-      }
-
-      const newImageUrl = imgData.data.url;
-      const newDeleteUrl = imgData.data.delete_url;
-
-      // Delete the old image from ImgBB
+      // Delete the old image from Cloudinary if it exists
       if (sponsor.imageDeleteUrl) {
-        await fetch(sponsor.imageDeleteUrl, { method: 'DELETE' });
+        await cloudinary.uploader.destroy(sponsor.imageDeleteUrl);
       }
 
       // Add new image details to the update data
       updatedData.image = newImageUrl;
-      updatedData.imageDeleteUrl = newDeleteUrl;
+      updatedData.imageDeleteUrl = newPublicId;
     }
 
     // Update the sponsor in the database
