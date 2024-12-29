@@ -482,6 +482,7 @@ const matchSchema = new mongoose.Schema({
   matchFighterA: String,
   matchFighterB: String,
   matchDescription: String,
+  notificationSent: { type: Boolean, default: false },
   matchBy: { type: String, enum: ['admin', 'affiliate'], default: 'admin' },
   matchStatus: { type: String, enum: ['Finished', 'Ongoing'], default: 'Ongoing' },
   matchReward: { type: String, enum: ['Rewarded', 'NotRewarded'], default: 'NotRewarded' },
@@ -2334,6 +2335,107 @@ app.post('/contact-us-fantasymmadness', (req, res) => {
       res.status(500).json({ error: 'Failed to send emails.' });
     });
 });
+
+app.post('/notify', async (req, res) => {
+  const {
+    matchId,
+    matchCategory,
+    matchCategoryTwo,
+    matchName,
+    matchFighterA,
+    matchFighterB,
+    matchDescription,
+    matchTokens,
+    pot,
+    matchType,
+    maxRounds,
+  } = req.body;
+
+  try {
+    // Find the match by ID
+    const match = await Match.findById(matchId);
+    if (!match) {
+      return res.status(404).json({ message: 'Match not found' });
+    }
+
+    // Check if notification has already been sent
+    if (match.notificationSent) {
+      return res.status(400).json({ message: 'Notification already sent for this match' });
+    }
+
+    // Fetch all users
+    const users = await User.find({});
+    if (!users || users.length === 0) {
+      return res.status(404).json({ message: 'No users found' });
+    }
+
+    // Send emails to all users
+    const emailPromises = users.map((user) => {
+      const emailHtml = `
+        <table width="100%" cellpadding="0" cellspacing="0" border="0" style="width:100%; max-width:600px; margin:auto;">
+          <tr>
+            <td align="center" style="padding: 15px 0;">
+              <img src="https://i.ibb.co/mF88zvd/Image-5-removebg-preview.png" alt="Fantasy Madness Logo" style="width:100px;" />
+              <h2 style="margin: 0; color: #191164; font-family: 'New York', Charter, Georgia, serif;">Fantasy Madness</h2>
+            </td>
+          </tr>
+          <tr>
+            <td style="padding: 20px; font-family: Arial, sans-serif; color: #333;">
+              <p style="font-size: 16px;">Hello ${user.fullName || 'User'},</p>
+              <p style="font-size: 16px; color: #555;">
+                A new match has been scheduled! Here are the details:
+              </p>
+              <p style="font-size: 16px;"><strong>Match:</strong> ${matchFighterA} vs. ${matchFighterB}</p>
+              <p style="font-size: 16px;"><strong>Category:</strong> ${matchCategory} / ${matchCategoryTwo}</p>
+              <p style="font-size: 16px;"><strong>Description:</strong> ${matchDescription}</p>
+              <p style="font-size: 16px;"><strong>Tokens Required:</strong> ${matchTokens}</p>
+              <p style="font-size: 16px; color: #555;">
+                Visit <a href="https://fantasymmadness.com" style="color: #191164;">Fantasy Madness</a> to join the action!
+              </p>
+            </td>
+          </tr>
+          <tr>
+            <td align="center" style="padding: 20px 0;">
+              <img src="https://i.ibb.co/mF88zvd/Image-5-removebg-preview.png" alt="Fantasy Madness Logo" style="width:70px;" />
+              <p><a href="https://fantasymmadness.com" style="font-family: Arial, sans-serif; color: #191164; text-decoration: none;">https://fantasymmadness.com</a></p>
+              <div style="padding-top: 10px;">
+                <a href="https://www.facebook.com/share/2pzYV9XdQpAU7n6p/?mibextid=LQQJ4d" style="margin: 0 5px;">
+                  <img src="https://i.ibb.co/G9wVH2g/facebook-removebg-preview-two.png" alt="Facebook" style="width:35px; height:35px;" />
+                </a>
+                <a href="https://www.instagram.com/fantasymmadness" style="margin: 0 5px;">
+                  <img src="https://i.ibb.co/tKj4px0/insta-removebg-preview-two.png" alt="Instagram" style="width:35px; height:35px;" />
+                </a>
+                <a href="https://x.com/davis_kell51697" style="margin: 0 5px;">
+                  <img src="https://i.ibb.co/T0cvy2Q/twitter-removebg-preview-two.png" alt="Twitter" style="width:35px; height:35px;" />
+                </a>
+              </div>
+            </td>
+          </tr>
+        </table>
+      `;
+
+      return transporter.sendMail({
+        from: '"Fantasy Madness" <Fantasymmadness2@gmail.com>',
+        to: user.email,
+        subject: `Upcoming Match: ${matchName}`,
+        html: emailHtml,
+      });
+    });
+
+    await Promise.all(emailPromises);
+
+    // Update the match's notificationSent field to true
+    match.notificationSent = true;
+    await match.save();
+
+    res.status(200).json({ message: 'Notifications sent successfully' });
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ message: 'Error sending notifications', error });
+  }
+});
+
+
 app.post('/send-emails-to-all-users', async (req, res) => {
   const { emails, subject, message } = req.body;
 
