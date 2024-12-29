@@ -2335,32 +2335,12 @@ app.post('/contact-us-fantasymmadness', (req, res) => {
       res.status(500).json({ error: 'Failed to send emails.' });
     });
 });
-
-app.post('/notify', async (req, res) => {
-  const {
-    matchId,
-    matchCategory,
-    matchCategoryTwo,
-    matchName,
-    matchFighterA,
-    matchFighterB,
-    matchDescription,
-    matchTokens,
-    pot,
-    matchType,
-    maxRounds,
-  } = req.body;
-
+app.get('/notify', async (req, res) => {
   try {
-    // Find the match by ID
-    const match = await Match.findById(matchId);
-    if (!match) {
-      return res.status(404).json({ message: 'Match not found' });
-    }
-
-    // Check if notification has already been sent
-    if (match.notificationSent) {
-      return res.status(400).json({ message: 'Notification already sent for this match' });
+    // Fetch all matches
+    const matches = await Match.find({});
+    if (!matches || matches.length === 0) {
+      return res.status(404).json({ message: 'No matches found' });
     }
 
     // Fetch all users
@@ -2369,31 +2349,67 @@ app.post('/notify', async (req, res) => {
       return res.status(404).json({ message: 'No users found' });
     }
 
-    // Send emails to all users
-    const emailPromises = users.map((user) => {
-      const emailHtml = `
-        <table width="100%" cellpadding="0" cellspacing="0" border="0" style="width:100%; max-width:600px; margin:auto;">
-          <tr>
-            <td align="center" style="padding: 15px 0;">
-              <img src="https://i.ibb.co/mF88zvd/Image-5-removebg-preview.png" alt="Fantasy Madness Logo" style="width:100px;" />
-              <h2 style="margin: 0; color: #191164; font-family: 'New York', Charter, Georgia, serif;">Fantasy Madness</h2>
-            </td>
-          </tr>
-          <tr>
-            <td style="padding: 20px; font-family: Arial, sans-serif; color: #333;">
-              <p style="font-size: 16px;">Hello ${user.fullName || 'User'},</p>
-              <p style="font-size: 16px; color: #555;">
-                A new match has been scheduled! Here are the details:
-              </p>
-              <p style="font-size: 16px;"><strong>Match:</strong> ${matchFighterA} vs. ${matchFighterB}</p>
-              <p style="font-size: 16px;"><strong>Category:</strong> ${matchCategory} / ${matchCategoryTwo}</p>
-              <p style="font-size: 16px;"><strong>Description:</strong> ${matchDescription}</p>
-              <p style="font-size: 16px;"><strong>Tokens Required:</strong> ${matchTokens}</p>
-              <p style="font-size: 16px; color: #555;">
-                Visit <a href="https://fantasymmadness.com" style="color: #191164;">Fantasy Madness</a> to join the action!
-              </p>
-            </td>
-          </tr>
+    // Fetch all affiliates
+    const affiliates = await Affiliate.find({});
+    if (!affiliates || affiliates.length === 0) {
+      return res.status(404).json({ message: 'No affiliates found' });
+    }
+
+    const emailPromises = [];
+    for (const match of matches) {
+      // Skip if notification already sent
+      if (match.notificationSent) continue;
+
+      if (match.matchType === 'SHADOW') {
+        const affiliate = affiliates.find((a) => a._id.toString() === match.affiliateId?.toString());
+        if (affiliate) {
+          const usersJoinedIds = affiliate.usersJoined.map((user) => user.userId);
+
+          // Filter eligible users
+          const eligibleUsers = users.filter(
+            (user) => usersJoinedIds.includes(user._id.toString()) && parseInt(user.tokens, 10) >= match.matchTokens
+          );
+
+          // Users who submitted predictions
+          const predictionUsers = match.userPredictions
+            .filter((prediction) => prediction.predictionStatus === 'submitted')
+            .map((prediction) => prediction.userId);
+
+          // Combine eligible users and prediction users
+          const allEligibleUsers = [...new Set([...eligibleUsers.map((user) => user._id.toString()), ...predictionUsers])];
+
+          // Required users based on match tokens and pot
+          const requiredUsers = match.pot / match.matchTokens;
+
+          // Check eligibility
+          if (allEligibleUsers.length >= requiredUsers) {
+            // Prepare and send emails to all users
+            emailPromises.push(
+              ...users.map(async (user) => {
+                const emailHtml = `
+                  <table width="100%" cellpadding="0" cellspacing="0" border="0" style="width:100%; max-width:600px; margin:auto;">
+                    <tr>
+                      <td align="center" style="padding: 15px 0;">
+                        <img src="https://i.ibb.co/mF88zvd/Image-5-removebg-preview.png" alt="Fantasy Madness Logo" style="width:100px;" />
+                        <h2 style="margin: 0; color: #191164; font-family: 'New York', Charter, Georgia, serif;">Fantasy Madness</h2>
+                      </td>
+                    </tr>
+                    <tr>
+                      <td style="padding: 20px; font-family: Arial, sans-serif; color: #333;">
+                        <p style="font-size: 16px;">Hello ${user.fullName || 'User'},</p>
+                        <p style="font-size: 16px; color: #555;">
+                          A new match has been scheduled! Here are the details:
+                        </p>
+                        <p style="font-size: 16px;"><strong>Match:</strong> ${match.matchFighterA} vs. ${match.matchFighterB}</p>
+                        <p style="font-size: 16px;"><strong>Category:</strong> ${match.matchCategory} / ${match.matchCategoryTwo}</p>
+                        <p style="font-size: 16px;"><strong>Description:</strong> ${match.matchDescription}</p>
+                        <p style="font-size: 16px;"><strong>Tokens Required:</strong> ${match.matchTokens}</p>
+                        <p style="font-size: 16px; color: #555;">
+                          Visit <a href="https://fantasymmadness.com" style="color: #191164;">Fantasy Madness</a> to join the action!
+                        </p>
+                      </td>
+                    </tr>
+                    
           <tr>
             <td align="center" style="padding: 20px 0;">
               <img src="https://i.ibb.co/mF88zvd/Image-5-removebg-preview.png" alt="Fantasy Madness Logo" style="width:70px;" />
@@ -2411,27 +2427,33 @@ app.post('/notify', async (req, res) => {
               </div>
             </td>
           </tr>
-        </table>
-      `;
+                  </table>
+                `;
 
-      return transporter.sendMail({
-        from: '"Fantasy Madness" <Fantasymmadness2@gmail.com>',
-        to: user.email,
-        subject: `Upcoming Match: ${matchName}`,
-        html: emailHtml,
-      });
-    });
+                await transporter.sendMail({
+                  from: '"Fantasy Madness" <Fantasymmadness2@gmail.com>',
+                  to: user.email,
+                  subject: `Upcoming Match: ${match.matchName}`,
+                  html: emailHtml,
+                });
+              })
+            );
 
+            // Mark notification as sent
+            match.notificationSent = true;
+            await match.save();
+          }
+        }
+      }
+    }
+
+    // Send all emails
     await Promise.all(emailPromises);
 
-    // Update the match's notificationSent field to true
-    match.notificationSent = true;
-    await match.save();
-
-    res.status(200).json({ message: 'Notifications sent successfully' });
+    res.status(200).json({ message: 'Notifications processed successfully' });
   } catch (error) {
     console.error(error);
-    res.status(500).json({ message: 'Error sending notifications', error });
+    res.status(500).json({ message: 'Error processing notifications', error });
   }
 });
 
