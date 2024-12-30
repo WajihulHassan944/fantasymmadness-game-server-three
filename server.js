@@ -2328,7 +2328,7 @@ app.post('/contact-us-fantasymmadness', (req, res) => {
     .then(([adminInfo, userInfo]) => {
       console.log('Admin email sent:', adminInfo.response);
       console.log('User email sent:', userInfo.response);
-      res.status(200).json({ message: 'Emails sent successfully.' });
+      res.status(200).json({ message: 'Email successfully sent .' });
     })
     .catch(error => {
       console.error('Error sending emails:', error);
