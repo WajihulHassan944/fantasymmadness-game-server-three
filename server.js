@@ -785,15 +785,15 @@ app.post(
         matchStatus,
         pot,
         matchType,
-        fighterAImage: fighterAImageUrl,
-        fighterAImageDeleteUrl: fighterAImageDeleteUrlFromReq,
-        fighterBImage: fighterBImageUrl,
-        fighterBImageDeleteUrl: fighterBImageDeleteUrlFromReq,
-        promotionBackground: promotionBackgroundUrl,
-        promotionBackgroundDeleteUrl: promotionBackgroundDeleteUrlFromReq
+        fighterAImageUrl,
+        fighterAImageDeleteUrlFromReq,
+        fighterBImageUrl,
+        fighterBImageDeleteUrlFromReq,
+        promotionBackgroundUrl,
+        promotionBackgroundDeleteUrlFromReq
       } = req.body;
 
-      // Upload images to Cloudinary if files are provided
+      // Upload images to Cloudinary if files are provided; otherwise, use URLs from req.body
       const uploadToCloudinary = (fileBuffer, folder) =>
         new Promise((resolve, reject) => {
           cloudinary.uploader.upload_stream(
@@ -805,13 +805,13 @@ app.post(
           ).end(fileBuffer);
         });
 
-      let fighterAImage = fighterAImageUrl;
-      let fighterBImage = fighterBImageUrl;
-      let promotionBackground = promotionBackgroundUrl;
-      
-      let fighterAImageDeleteUrl = fighterAImageDeleteUrlFromReq;
-      let fighterBImageDeleteUrl = fighterBImageDeleteUrlFromReq;
-      let promotionBackgroundDeleteUrl = promotionBackgroundDeleteUrlFromReq;
+      let fighterAImage = fighterAImageUrl || null;
+      let fighterBImage = fighterBImageUrl || null;
+      let promotionBackground = promotionBackgroundUrl || null;
+
+      let fighterAImageDeleteUrl = fighterAImageDeleteUrlFromReq || null;
+      let fighterBImageDeleteUrl = fighterBImageDeleteUrlFromReq || null;
+      let promotionBackgroundDeleteUrl = promotionBackgroundDeleteUrlFromReq || null;
 
       if (req.files.fighterAImage) {
         const resultA = await uploadToCloudinary(req.files.fighterAImage[0].buffer, 'fighter_images');
