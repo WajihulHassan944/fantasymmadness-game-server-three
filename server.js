@@ -753,10 +753,13 @@ app.delete('/api/matches/:id', async (req, res) => {
   } catch (error) {
     res.status(500).json({ message: 'Server error', error });
   }
-});
-app.post(
+});app.post(
   '/addMatch',
-  upload.fields([{ name: 'fighterAImage' }, { name: 'fighterBImage' }, { name: 'promotionBackground' }]),
+  upload.fields([
+    { name: 'fighterAImage' },
+    { name: 'fighterBImage' },
+    { name: 'promotionBackground' }
+  ]),
   async (req, res) => {
     try {
       const {
@@ -781,9 +784,15 @@ app.post(
         matchStatus,
         pot,
         matchType,
+        fighterAImage: fighterAImageUrl,
+        fighterAImageDeleteUrl: fighterAImageDeleteUrlFromReq,
+        fighterBImage: fighterBImageUrl,
+        fighterBImageDeleteUrl: fighterBImageDeleteUrlFromReq,
+        promotionBackground: promotionBackgroundUrl,
+        promotionBackgroundDeleteUrl: promotionBackgroundDeleteUrlFromReq
       } = req.body;
 
-      // Upload images to Cloudinary
+      // Upload images to Cloudinary if files are provided
       const uploadToCloudinary = (fileBuffer, folder) =>
         new Promise((resolve, reject) => {
           cloudinary.uploader.upload_stream(
@@ -795,8 +804,13 @@ app.post(
           ).end(fileBuffer);
         });
 
-      let fighterAImage, fighterBImage, promotionBackground;
-      let fighterAImageDeleteUrl, fighterBImageDeleteUrl, promotionBackgroundDeleteUrl;
+      let fighterAImage = fighterAImageUrl;
+      let fighterBImage = fighterBImageUrl;
+      let promotionBackground = promotionBackgroundUrl;
+      
+      let fighterAImageDeleteUrl = fighterAImageDeleteUrlFromReq;
+      let fighterBImageDeleteUrl = fighterBImageDeleteUrlFromReq;
+      let promotionBackgroundDeleteUrl = promotionBackgroundDeleteUrlFromReq;
 
       if (req.files.fighterAImage) {
         const resultA = await uploadToCloudinary(req.files.fighterAImage[0].buffer, 'fighter_images');
@@ -842,21 +856,21 @@ app.post(
         fighterAImageDeleteUrl,
         fighterBImageDeleteUrl,
         promotionBackground,
-        promotionBackgroundDeleteUrl,
+        promotionBackgroundDeleteUrl
       };
 
-// Conditionally append BoxingMatch and MMAMatch only if they have values
-if (BoxingMatch) {
-  matchData.BoxingMatch = JSON.parse(BoxingMatch);
-}
+      // Conditionally append BoxingMatch and MMAMatch only if they have values
+      if (BoxingMatch) {
+        matchData.BoxingMatch = JSON.parse(BoxingMatch);
+      }
 
-if (MMAMatch) {
-  matchData.MMAMatch = JSON.parse(MMAMatch);
-}
+      if (MMAMatch) {
+        matchData.MMAMatch = JSON.parse(MMAMatch);
+      }
 
-// Save the match details to the database
-const newMatch = new Match(matchData);
-  const savedMatch = await newMatch.save(); // Save the match and get the saved match
+      // Save the match details to the database
+      const newMatch = new Match(matchData);
+      const savedMatch = await newMatch.save();
 
   // Now that match is saved, store affiliateId and matchId in the Shadow schema
   const shadowFight = await Shadow.findById(shadowFightId);
