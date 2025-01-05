@@ -903,7 +903,7 @@ app.post(
     <!-- Logo Section -->
     <tr>
       <td align="center" style="padding: 15px 0;">
-        <img src="https://i.ibb.co/mF88zvd/Image-5-removebg-preview.png" alt="Fantasy mmadness Logo" style="width:100px;" />
+        <img src="https://res.cloudinary.com/daflot6fo/image/upload/v1736067511/mlzrncax6dhtscgcu2si.webp" alt="Fantasy mmadness Logo" style="width:100px;" />
         <h2 style="margin: 0; color: #191164; font-family: 'New York', Charter, Georgia, serif;">Fantasy mmadness</h2>
       </td>
     </tr>
@@ -973,7 +973,7 @@ app.post(
     <!-- Footer Section -->
     <tr>
       <td align="center" style="padding: 15px 0;">
-        <img src="https://i.ibb.co/mF88zvd/Image-5-removebg-preview.png" alt="Fantasy mmadness Logo" style="width:70px;" />
+        <img src="https://res.cloudinary.com/daflot6fo/image/upload/v1736067511/mlzrncax6dhtscgcu2si.webp" alt="Fantasy mmadness Logo" style="width:70px;" />
         <p><a href="https://fantasymmadness.com" style="font-family: Arial, sans-serif; color: #191164; text-decoration: none;">https://fantasymmadness.com</a></p>
       </td>
     </tr>
@@ -1008,7 +1008,7 @@ const nonRegisteredUserMailPromises = nonRegisteredUsers.map(user => {
       <table width="100%" cellpadding="0" cellspacing="0" border="0" style="width:100%; max-width:600px; margin:auto;">
         <tr>
           <td align="center" style="padding: 15px 0;">
-            <img src="https://i.ibb.co/mF88zvd/Image-5-removebg-preview.png" alt="Fantasy mmadness Logo" style="width:100px;" />
+            <img src="https://res.cloudinary.com/daflot6fo/image/upload/v1736067511/mlzrncax6dhtscgcu2si.webp" alt="Fantasy mmadness Logo" style="width:100px;" />
             <h2 style="margin: 0; color: #191164; font-family: 'New York', Charter, Georgia, serif;">Fantasy mmadness</h2>
           </td>
         </tr>
@@ -1024,7 +1024,7 @@ const nonRegisteredUserMailPromises = nonRegisteredUsers.map(user => {
         </tr>
         <tr>
           <td align="center" style="padding: 15px 0;">
-            <img src="https://i.ibb.co/mF88zvd/Image-5-removebg-preview.png" alt="Fantasy mmadness Logo" style="width:70px;" />
+            <img src="https://res.cloudinary.com/daflot6fo/image/upload/v1736067511/mlzrncax6dhtscgcu2si.webp" alt="Fantasy mmadness Logo" style="width:70px;" />
             <p><a href="https://fantasymmadness.com" style="font-family: Arial, sans-serif; color: #191164; text-decoration: none;">https://fantasymmadness.com</a></p>
           </td>
         </tr>
@@ -1446,7 +1446,7 @@ app.post('/admin/add-user', async (req, res) => {
       isNotificationsEnabled: true,
       isSubscribed: true,
       isAgreed: true,
-      profileUrl: "https://i.ibb.co/mF88zvd/Image-5-removebg-preview.png",
+      profileUrl: "https://res.cloudinary.com/daflot6fo/image/upload/v1736067511/mlzrncax6dhtscgcu2si.webp",
     });
 
     await newUser.save();
@@ -1460,7 +1460,7 @@ app.post('/admin/add-user', async (req, res) => {
         <table width="100%" cellpadding="0" cellspacing="0" border="0" style="width:100%; max-width:600px; margin:auto;">
           <tr>
             <td align="center" style="padding: 15px 0;">
-              <img src="https://i.ibb.co/mF88zvd/Image-5-removebg-preview.png" alt="Fantasy Madness Logo" style="width:100px;" />
+              <img src="https://res.cloudinary.com/daflot6fo/image/upload/v1736067511/mlzrncax6dhtscgcu2si.webp" alt="Fantasy Madness Logo" style="width:100px;" />
               <h2 style="margin: 0; color: #191164; font-family: 'New York', Charter, Georgia, serif;">Fantasy Madness</h2>
             </td>
           </tr>
@@ -1489,7 +1489,7 @@ app.post('/admin/add-user', async (req, res) => {
 
           <tr>
         <td align="center" style="padding: 20px 0;">
-          <img src="https://i.ibb.co/mF88zvd/Image-5-removebg-preview.png" alt="Fantasy Madness Logo" style="width:70px;" />
+          <img src="https://res.cloudinary.com/daflot6fo/image/upload/v1736067511/mlzrncax6dhtscgcu2si.webp" alt="Fantasy Madness Logo" style="width:70px;" />
           <p><a href="https://fantasymmadness.com" style="font-family: Arial, sans-serif; color: #191164; text-decoration: none;">https://fantasymmadness.com</a></p>   
           <div style="padding-top: 10px;">
             <!-- Social Icons -->
@@ -1519,7 +1519,7 @@ app.post('/admin/add-user', async (req, res) => {
       <table width="100%" cellpadding="0" cellspacing="0" border="0" style="width:100%; max-width:600px; margin:auto;">
         <tr>
           <td align="center" style="padding: 15px 0;">
-            <img src="https://i.ibb.co/mF88zvd/Image-5-removebg-preview.png" alt="Fantasy Madness Logo" style="width:100px;" />
+            <img src="https://res.cloudinary.com/daflot6fo/image/upload/v1736067511/mlzrncax6dhtscgcu2si.webp" alt="Fantasy Madness Logo" style="width:100px;" />
             <h2 style="margin: 0; color: #191164; font-family: 'New York', Charter, Georgia, serif;">Fantasy Madness</h2>
           </td>
         </tr>
@@ -1542,7 +1542,7 @@ app.post('/admin/add-user', async (req, res) => {
   
           <tr>
         <td align="center" style="padding: 20px 0;">
-          <img src="https://i.ibb.co/mF88zvd/Image-5-removebg-preview.png" alt="Fantasy Madness Logo" style="width:70px;" />
+          <img src="https://res.cloudinary.com/daflot6fo/image/upload/v1736067511/mlzrncax6dhtscgcu2si.webp" alt="Fantasy Madness Logo" style="width:70px;" />
           <p><a href="https://fantasymmadness.com" style="font-family: Arial, sans-serif; color: #191164; text-decoration: none;">https://fantasymmadness.com</a></p>   
           <div style="padding-top: 10px;">
             <!-- Social Icons -->
@@ -1879,7 +1879,7 @@ app.post('/google-login', async (req, res) => {
           <!-- Logo Section -->
           <tr>
             <td align="center" style="padding: 15px 0;">
-              <img src="https://i.ibb.co/mF88zvd/Image-5-removebg-preview.png" alt="Fantasy Madness Logo" style="width:100px;" />
+              <img src="https://res.cloudinary.com/daflot6fo/image/upload/v1736067511/mlzrncax6dhtscgcu2si.webp" alt="Fantasy Madness Logo" style="width:100px;" />
               <h2 style="margin: 0; color: #191164; font-family: 'New York', Charter, Georgia, serif;">Fantasy Madness</h2>
             </td>
           </tr>
@@ -1900,7 +1900,7 @@ app.post('/google-login', async (req, res) => {
           <!-- Footer Section -->
           <tr>
             <td align="center" style="padding: 15px 0;">
-              <img src="https://i.ibb.co/mF88zvd/Image-5-removebg-preview.png" alt="Fantasy Madness Logo" style="width:70px;" />
+              <img src="https://res.cloudinary.com/daflot6fo/image/upload/v1736067511/mlzrncax6dhtscgcu2si.webp" alt="Fantasy Madness Logo" style="width:70px;" />
               <p><a href="https://fantasymmadness.com" style="font-family: Arial, sans-serif; color: #191164; text-decoration: none;">https://fantasymmadness.com</a></p>
             </td>
           </tr>
@@ -1938,7 +1938,7 @@ app.post('/google-login', async (req, res) => {
         <table width="100%" cellpadding="0" cellspacing="0" border="0" style="width:100%; max-width:600px; margin:auto;">
           <tr>
             <td align="center" style="padding: 15px 0;">
-              <img src="https://i.ibb.co/mF88zvd/Image-5-removebg-preview.png" alt="Fantasy Madness Logo" style="width:100px;" />
+              <img src="https://res.cloudinary.com/daflot6fo/image/upload/v1736067511/mlzrncax6dhtscgcu2si.webp" alt="Fantasy Madness Logo" style="width:100px;" />
               <h2 style="margin: 0; color: #191164; font-family: 'New York', Charter, Georgia, serif;">Fantasy Madness</h2>
             </td>
           </tr>
@@ -1954,7 +1954,7 @@ app.post('/google-login', async (req, res) => {
 
           <tr>
             <td align="center" style="padding: 15px 0;">
-              <img src="https://i.ibb.co/mF88zvd/Image-5-removebg-preview.png" alt="Fantasy Madness Logo" style="width:70px;" />
+              <img src="https://res.cloudinary.com/daflot6fo/image/upload/v1736067511/mlzrncax6dhtscgcu2si.webp" alt="Fantasy Madness Logo" style="width:70px;" />
               <p><a href="https://fantasymmadness.com" style="font-family: Arial, sans-serif; color: #191164; text-decoration: none;">https://fantasymmadness.com</a></p>
             </td>
           </tr>
@@ -2234,7 +2234,7 @@ app.post('/contact-us-fantasymmadness', (req, res) => {
       <!-- Header Section -->
       <tr>
         <td align="center" style="padding: 15px 0;">
-          <img src="https://i.ibb.co/mF88zvd/Image-5-removebg-preview.png" alt="Fantasy Madness Logo" style="width:100px;" />
+          <img src="https://res.cloudinary.com/daflot6fo/image/upload/v1736067511/mlzrncax6dhtscgcu2si.webp" alt="Fantasy Madness Logo" style="width:100px;" />
           <h2 style="margin: 0; color: #191164; font-family: 'New York', Charter, Georgia, serif;">Fantasy Madness</h2>
         </td>
       </tr>
@@ -2253,7 +2253,7 @@ app.post('/contact-us-fantasymmadness', (req, res) => {
       <!-- Footer Section with Social Icons -->
       <tr>
         <td align="center" style="padding: 20px 0;">
-          <img src="https://i.ibb.co/mF88zvd/Image-5-removebg-preview.png" alt="Fantasy Madness Logo" style="width:70px;" />
+          <img src="https://res.cloudinary.com/daflot6fo/image/upload/v1736067511/mlzrncax6dhtscgcu2si.webp" alt="Fantasy Madness Logo" style="width:70px;" />
           <p><a href="https://fantasymmadness.com" style="font-family: Arial, sans-serif; color: #191164; text-decoration: none;">https://fantasymmadness.com</a></p>
           <div style="padding-top: 10px;">
             <!-- Social Icons -->
@@ -2278,7 +2278,7 @@ app.post('/contact-us-fantasymmadness', (req, res) => {
       <!-- Header Section -->
       <tr>
        <td align="center" style="padding: 15px 0;">
-          <img src="https://i.ibb.co/mF88zvd/Image-5-removebg-preview.png" alt="Fantasy Madness Logo" style="width:100px;" />
+          <img src="https://res.cloudinary.com/daflot6fo/image/upload/v1736067511/mlzrncax6dhtscgcu2si.webp" alt="Fantasy Madness Logo" style="width:100px;" />
           <h2 style="margin: 0; color: #191164; font-family: 'New York', Charter, Georgia, serif;">Fantasy Madness</h2>
         </td>
      </tr>
@@ -2299,7 +2299,7 @@ app.post('/contact-us-fantasymmadness', (req, res) => {
       <!-- Footer Section with Social Icons -->
       <tr>
         <td align="center" style="padding: 20px 0;">
-          <img src="https://i.ibb.co/mF88zvd/Image-5-removebg-preview.png" alt="Fantasy Madness Logo" style="width:70px;" />
+          <img src="https://res.cloudinary.com/daflot6fo/image/upload/v1736067511/mlzrncax6dhtscgcu2si.webp" alt="Fantasy Madness Logo" style="width:70px;" />
           <p><a href="https://fantasymmadness.com" style="font-family: Arial, sans-serif; color: #191164; text-decoration: none;">https://fantasymmadness.com</a></p>
           <div style="padding-top: 10px;">
             <!-- Social Icons -->
@@ -2405,7 +2405,7 @@ app.get('/notify', async (req, res) => {
                   <table width="100%" cellpadding="0" cellspacing="0" border="0" style="width:100%; max-width:600px; margin:auto;">
                     <tr>
                       <td align="center" style="padding: 15px 0;">
-                        <img src="https://i.ibb.co/mF88zvd/Image-5-removebg-preview.png" alt="Fantasy Madness Logo" style="width:100px;" />
+                        <img src="https://res.cloudinary.com/daflot6fo/image/upload/v1736067511/mlzrncax6dhtscgcu2si.webp" alt="Fantasy Madness Logo" style="width:100px;" />
                         <h2 style="margin: 0; color: #191164; font-family: 'New York', Charter, Georgia, serif;">Fantasy Madness</h2>
                       </td>
                     </tr>
@@ -2427,7 +2427,7 @@ app.get('/notify', async (req, res) => {
                     
           <tr>
             <td align="center" style="padding: 20px 0;">
-              <img src="https://i.ibb.co/mF88zvd/Image-5-removebg-preview.png" alt="Fantasy Madness Logo" style="width:70px;" />
+              <img src="https://res.cloudinary.com/daflot6fo/image/upload/v1736067511/mlzrncax6dhtscgcu2si.webp" alt="Fantasy Madness Logo" style="width:70px;" />
               <p><a href="https://fantasymmadness.com" style="font-family: Arial, sans-serif; color: #191164; text-decoration: none;">https://fantasymmadness.com</a></p>
               <div style="padding-top: 10px;">
                 <a href="https://www.facebook.com/share/2pzYV9XdQpAU7n6p/?mibextid=LQQJ4d" style="margin: 0 5px;">
@@ -2520,7 +2520,7 @@ app.post('/register', async (req, res) => {
           <!-- Logo Section -->
           <tr>
             <td align="center" style="padding: 15px 0;">
-              <img src="https://i.ibb.co/mF88zvd/Image-5-removebg-preview.png" alt="Fantasy Madness Logo" style="width:100px;" />
+              <img src="https://res.cloudinary.com/daflot6fo/image/upload/v1736067511/mlzrncax6dhtscgcu2si.webp" alt="Fantasy Madness Logo" style="width:100px;" />
               <h2 style="margin: 0; color: #191164; font-family: 'New York', Charter, Georgia, serif;">Fantasy Madness</h2>
             </td>
           </tr>
@@ -2541,7 +2541,7 @@ app.post('/register', async (req, res) => {
           <!-- Footer Section -->
           <tr>
             <td align="center" style="padding: 15px 0;">
-              <img src="https://i.ibb.co/mF88zvd/Image-5-removebg-preview.png" alt="Fantasy Madness Logo" style="width:70px;" />
+              <img src="https://res.cloudinary.com/daflot6fo/image/upload/v1736067511/mlzrncax6dhtscgcu2si.webp" alt="Fantasy Madness Logo" style="width:70px;" />
               <p><a href="https://fantasymmadness.com" style="font-family: Arial, sans-serif; color: #191164; text-decoration: none;">https://fantasymmadness.com</a></p>
             </td>
           </tr>
@@ -2892,7 +2892,7 @@ app.get('/api/cron-job', async (req, res) => {
               <!-- Logo Section -->
               <tr>
                 <td align="center" style="padding: 15px 0;">
-                  <img src="https://i.ibb.co/mF88zvd/Image-5-removebg-preview.png" alt="Fantasy mmadness Logo" style="width:100px;" />
+                  <img src="https://res.cloudinary.com/daflot6fo/image/upload/v1736067511/mlzrncax6dhtscgcu2si.webp" alt="Fantasy mmadness Logo" style="width:100px;" />
                   <h2 style="margin: 0; color: #191164; font-family: 'New York', Charter, Georgia, serif;">Fantasy mmadness</h2>
                 </td>
               </tr>
@@ -2933,7 +2933,7 @@ app.get('/api/cron-job', async (req, res) => {
               <!-- Footer Section -->
               <tr>
                 <td align="center" style="padding: 15px 0;">
-                  <img src="https://i.ibb.co/mF88zvd/Image-5-removebg-preview.png" alt="Fantasy mmadness Logo" style="width:70px;" />
+                  <img src="https://res.cloudinary.com/daflot6fo/image/upload/v1736067511/mlzrncax6dhtscgcu2si.webp" alt="Fantasy mmadness Logo" style="width:70px;" />
                   <p><a href="https://fantasymmadness.com" style="font-family: Arial, sans-serif; color: #191164; text-decoration: none;">https://fantasymmadness.com</a></p>
                 </td>
               </tr>
@@ -3197,7 +3197,7 @@ app.post('/admin/add-affiliate', async (req, res) => {
       isNotificationsEnabled: true,
       isSubscribed: true,
       isAgreed: true,
-      profileUrl: "https://i.ibb.co/mF88zvd/Image-5-removebg-preview.png",
+      profileUrl: "https://res.cloudinary.com/daflot6fo/image/upload/v1736067511/mlzrncax6dhtscgcu2si.webp",
     });
 
     await newAffiliate.save();
@@ -3211,7 +3211,7 @@ app.post('/admin/add-affiliate', async (req, res) => {
         <table width="100%" cellpadding="0" cellspacing="0" border="0" style="width:100%; max-width:600px; margin:auto;">
           <tr>
             <td align="center" style="padding: 15px 0;">
-              <img src="https://i.ibb.co/mF88zvd/Image-5-removebg-preview.png" alt="Fantasy Madness Logo" style="width:100px;" />
+              <img src="https://res.cloudinary.com/daflot6fo/image/upload/v1736067511/mlzrncax6dhtscgcu2si.webp" alt="Fantasy Madness Logo" style="width:100px;" />
               <h2 style="margin: 0; color: #191164; font-family: 'New York', Charter, Georgia, serif;">Fantasy Madness</h2>
             </td>
           </tr>
@@ -3240,7 +3240,7 @@ app.post('/admin/add-affiliate', async (req, res) => {
 
           <tr>
         <td align="center" style="padding: 20px 0;">
-          <img src="https://i.ibb.co/mF88zvd/Image-5-removebg-preview.png" alt="Fantasy Madness Logo" style="width:70px;" />
+          <img src="https://res.cloudinary.com/daflot6fo/image/upload/v1736067511/mlzrncax6dhtscgcu2si.webp" alt="Fantasy Madness Logo" style="width:70px;" />
           <p><a href="https://fantasymmadness.com" style="font-family: Arial, sans-serif; color: #191164; text-decoration: none;">https://fantasymmadness.com</a></p>   
           <div style="padding-top: 10px;">
             <!-- Social Icons -->
@@ -3270,7 +3270,7 @@ app.post('/admin/add-affiliate', async (req, res) => {
       <table width="100%" cellpadding="0" cellspacing="0" border="0" style="width:100%; max-width:600px; margin:auto;">
         <tr>
           <td align="center" style="padding: 15px 0;">
-            <img src="https://i.ibb.co/mF88zvd/Image-5-removebg-preview.png" alt="Fantasy Madness Logo" style="width:100px;" />
+            <img src="https://res.cloudinary.com/daflot6fo/image/upload/v1736067511/mlzrncax6dhtscgcu2si.webp" alt="Fantasy Madness Logo" style="width:100px;" />
             <h2 style="margin: 0; color: #191164; font-family: 'New York', Charter, Georgia, serif;">Fantasy Madness</h2>
           </td>
         </tr>
@@ -3293,7 +3293,7 @@ app.post('/admin/add-affiliate', async (req, res) => {
   
           <tr>
         <td align="center" style="padding: 20px 0;">
-          <img src="https://i.ibb.co/mF88zvd/Image-5-removebg-preview.png" alt="Fantasy Madness Logo" style="width:70px;" />
+          <img src="https://res.cloudinary.com/daflot6fo/image/upload/v1736067511/mlzrncax6dhtscgcu2si.webp" alt="Fantasy Madness Logo" style="width:70px;" />
           <p><a href="https://fantasymmadness.com" style="font-family: Arial, sans-serif; color: #191164; text-decoration: none;">https://fantasymmadness.com</a></p>   
           <div style="padding-top: 10px;">
             <!-- Social Icons -->
@@ -3363,7 +3363,7 @@ app.post('/affiliate-google-login', async (req, res) => {
           <table width="100%" cellpadding="0" cellspacing="0" border="0" style="width:100%; max-width:600px; margin:auto;">
             <tr>
               <td align="center" style="padding: 15px 0;">
-                <img src="https://i.ibb.co/mF88zvd/Image-5-removebg-preview.png" alt="Fantasy Madness Logo" style="width:100px;" />
+                <img src="https://res.cloudinary.com/daflot6fo/image/upload/v1736067511/mlzrncax6dhtscgcu2si.webp" alt="Fantasy Madness Logo" style="width:100px;" />
                 <h2 style="margin: 0; color: #191164; font-family: 'New York', Charter, Georgia, serif;">Fantasy Madness</h2>
               </td>
             </tr>
@@ -3382,7 +3382,7 @@ app.post('/affiliate-google-login', async (req, res) => {
 
             <tr>
               <td align="center" style="padding: 15px 0;">
-                <img src="https://i.ibb.co/mF88zvd/Image-5-removebg-preview.png" alt="Fantasy Madness Logo" style="width:70px;" />
+                <img src="https://res.cloudinary.com/daflot6fo/image/upload/v1736067511/mlzrncax6dhtscgcu2si.webp" alt="Fantasy Madness Logo" style="width:70px;" />
                 <p><a href="https://fantasymmadness.com" style="font-family: Arial, sans-serif; color: #191164; text-decoration: none;">https://fantasymmadness.com</a></p>
               </td>
             </tr>
@@ -3403,7 +3403,7 @@ app.post('/affiliate-google-login', async (req, res) => {
           <table width="100%" cellpadding="0" cellspacing="0" border="0" style="width:100%; max-width:600px; margin:auto;">
             <tr>
               <td align="center" style="padding: 15px 0;">
-                <img src="https://i.ibb.co/mF88zvd/Image-5-removebg-preview.png" alt="Fantasy Madness Logo" style="width:100px;" />
+                <img src="https://res.cloudinary.com/daflot6fo/image/upload/v1736067511/mlzrncax6dhtscgcu2si.webp" alt="Fantasy Madness Logo" style="width:100px;" />
                 <h2 style="margin: 0; color: #191164; font-family: 'New York', Charter, Georgia, serif;">Fantasy Madness</h2>
               </td>
             </tr>
@@ -3436,7 +3436,7 @@ app.post('/affiliate-google-login', async (req, res) => {
 
             <tr>
               <td align="center" style="padding: 15px 0;">
-                <img src="https://i.ibb.co/mF88zvd/Image-5-removebg-preview.png" alt="Fantasy Madness Logo" style="width:70px;" />
+                <img src="https://res.cloudinary.com/daflot6fo/image/upload/v1736067511/mlzrncax6dhtscgcu2si.webp" alt="Fantasy Madness Logo" style="width:70px;" />
                 <p><a href="https://fantasymmadness.com" style="font-family: Arial, sans-serif; color: #191164; text-decoration: none;">https://fantasymmadness.com</a></p>
               </td>
             </tr>
@@ -3472,7 +3472,7 @@ app.post('/affiliate-google-login', async (req, res) => {
         <table width="100%" cellpadding="0" cellspacing="0" border="0" style="width:100%; max-width:600px; margin:auto;">
           <tr>
             <td align="center" style="padding: 15px 0;">
-              <img src="https://i.ibb.co/mF88zvd/Image-5-removebg-preview.png" alt="Fantasy Madness Logo" style="width:100px;" />
+              <img src="https://res.cloudinary.com/daflot6fo/image/upload/v1736067511/mlzrncax6dhtscgcu2si.webp" alt="Fantasy Madness Logo" style="width:100px;" />
               <h2 style="margin: 0; color: #191164; font-family: 'New York', Charter, Georgia, serif;">Fantasy Madness</h2>
             </td>
           </tr>
@@ -3497,7 +3497,7 @@ app.post('/affiliate-google-login', async (req, res) => {
 
           <tr>
             <td align="center" style="padding: 15px 0;">
-              <img src="https://i.ibb.co/mF88zvd/Image-5-removebg-preview.png" alt="Fantasy Madness Logo" style="width:70px;" />
+              <img src="https://res.cloudinary.com/daflot6fo/image/upload/v1736067511/mlzrncax6dhtscgcu2si.webp" alt="Fantasy Madness Logo" style="width:70px;" />
               <p><a href="https://fantasymmadness.com" style="font-family: Arial, sans-serif; color: #191164; text-decoration: none;">https://fantasymmadness.com</a></p>
             </td>
           </tr>
@@ -3864,7 +3864,7 @@ const sendUserEmail = async (user, affiliate) => {
         <!-- Logo Section -->
         <tr>
           <td align="center" style="padding: 15px 0;">
-            <img src="https://i.ibb.co/mF88zvd/Image-5-removebg-preview.png" alt="Fantasy Madness Logo" style="width:100px;" />
+            <img src="https://res.cloudinary.com/daflot6fo/image/upload/v1736067511/mlzrncax6dhtscgcu2si.webp" alt="Fantasy Madness Logo" style="width:100px;" />
             <h2 style="margin: 0; color: #191164; font-family: 'New York', Charter, Georgia, serif;">Fantasy Madness</h2>
           </td>
         </tr>
@@ -3896,7 +3896,7 @@ const sendUserEmail = async (user, affiliate) => {
         <!-- Footer Section -->
         <tr>
           <td align="center" style="padding: 15px 0;">
-            <img src="https://i.ibb.co/mF88zvd/Image-5-removebg-preview.png" alt="Fantasy Madness Logo" style="width:70px;" />
+            <img src="https://res.cloudinary.com/daflot6fo/image/upload/v1736067511/mlzrncax6dhtscgcu2si.webp" alt="Fantasy Madness Logo" style="width:70px;" />
             <p><a href="https://fantasymmadness.com" style="font-family: Arial, sans-serif; color: #191164; text-decoration: none;">https://fantasymmadness.com</a></p>
           </td>
         </tr>
@@ -3918,7 +3918,7 @@ const sendAffiliateEmail = async (affiliate, user) => {
         <!-- Logo Section -->
         <tr>
           <td align="center" style="padding: 15px 0;">
-            <img src="https://i.ibb.co/mF88zvd/Image-5-removebg-preview.png" alt="Fantasy Madness Logo" style="width:100px;" />
+            <img src="https://res.cloudinary.com/daflot6fo/image/upload/v1736067511/mlzrncax6dhtscgcu2si.webp" alt="Fantasy Madness Logo" style="width:100px;" />
             <h2 style="margin: 0; color: #191164; font-family: 'New York', Charter, Georgia, serif;">Fantasy Madness</h2>
           </td>
         </tr>
@@ -3950,7 +3950,7 @@ const sendAffiliateEmail = async (affiliate, user) => {
         <!-- Footer Section -->
         <tr>
           <td align="center" style="padding: 15px 0;">
-            <img src="https://i.ibb.co/mF88zvd/Image-5-removebg-preview.png" alt="Fantasy Madness Logo" style="width:70px;" />
+            <img src="https://res.cloudinary.com/daflot6fo/image/upload/v1736067511/mlzrncax6dhtscgcu2si.webp" alt="Fantasy Madness Logo" style="width:70px;" />
             <p><a href="https://fantasymmadness.com" style="font-family: Arial, sans-serif; color: #191164; text-decoration: none;">https://fantasymmadness.com</a></p>
           </td>
         </tr>
@@ -4221,7 +4221,7 @@ app.post('/registerAffiliate', upload.single('image'), async (req, res) => {
         <table width="100%" cellpadding="0" cellspacing="0" border="0" style="width:100%; max-width:600px; margin:auto;">
           <tr>
             <td align="center" style="padding: 15px 0;">
-              <img src="https://i.ibb.co/mF88zvd/Image-5-removebg-preview.png" alt="Fantasy Madness Logo" style="width:100px;" />
+              <img src="https://res.cloudinary.com/daflot6fo/image/upload/v1736067511/mlzrncax6dhtscgcu2si.webp" alt="Fantasy Madness Logo" style="width:100px;" />
               <h2 style="margin: 0; color: #191164; font-family: 'New York', Charter, Georgia, serif;">Fantasy Madness</h2>
             </td>
           </tr>
@@ -4257,7 +4257,7 @@ app.post('/registerAffiliate', upload.single('image'), async (req, res) => {
 
           <tr>
             <td align="center" style="padding: 15px 0;">
-              <img src="https://i.ibb.co/mF88zvd/Image-5-removebg-preview.png" alt="Fantasy Madness Logo" style="width:70px;" />
+              <img src="https://res.cloudinary.com/daflot6fo/image/upload/v1736067511/mlzrncax6dhtscgcu2si.webp" alt="Fantasy Madness Logo" style="width:70px;" />
               <p><a href="https://fantasymmadness.com" style="font-family: Arial, sans-serif; color: #191164; text-decoration: none;">https://fantasymmadness.com</a></p>
             </td>
           </tr>
@@ -4788,7 +4788,7 @@ app.post('/addShadow', upload.fields([
             <!-- Logo Section -->
             <tr>
               <td align="center" style="padding: 15px 0;">
-                <img src="https://i.ibb.co/mF88zvd/Image-5-removebg-preview.png" alt="Fantasy mmadness Logo" style="width:100px;" />
+                <img src="https://res.cloudinary.com/daflot6fo/image/upload/v1736067511/mlzrncax6dhtscgcu2si.webp" alt="Fantasy mmadness Logo" style="width:100px;" />
                 <h2 style="margin: 0; color: #191164; font-family: 'New York', Charter, Georgia, serif;">Fantasy mmadness</h2>
               </td>
             </tr>
@@ -4829,7 +4829,7 @@ app.post('/addShadow', upload.fields([
             <!-- Footer Section -->
             <tr>
               <td align="center" style="padding: 15px 0;">
-                <img src="https://i.ibb.co/mF88zvd/Image-5-removebg-preview.png" alt="Fantasy mmadness Logo" style="width:70px;" />
+                <img src="https://res.cloudinary.com/daflot6fo/image/upload/v1736067511/mlzrncax6dhtscgcu2si.webp" alt="Fantasy mmadness Logo" style="width:70px;" />
                 <p><a href="https://fantasymmadness.com" style="font-family: Arial, sans-serif; color: #191164; text-decoration: none;">https://fantasymmadness.com</a></p>
               </td>
             </tr>
@@ -5556,7 +5556,7 @@ app.post('/redusers', async (req, res) => {
         <!-- Logo Section -->
         <tr>
           <td align="center" style="padding: 15px 0;">
-            <img src="https://i.ibb.co/mF88zvd/Image-5-removebg-preview.png" alt="Fantasy Madness Logo" style="width:100px;" />
+            <img src="https://res.cloudinary.com/daflot6fo/image/upload/v1736067511/mlzrncax6dhtscgcu2si.webp" alt="Fantasy Madness Logo" style="width:100px;" />
             <h2 style="margin: 0; color: #191164; font-family: 'New York', Charter, Georgia, serif;">Fantasy Madness</h2>
           </td>
         </tr>
@@ -5577,7 +5577,7 @@ app.post('/redusers', async (req, res) => {
         <!-- Footer Section -->
         <tr>
           <td align="center" style="padding: 15px 0;">
-            <img src="https://i.ibb.co/mF88zvd/Image-5-removebg-preview.png" alt="Fantasy Madness Logo" style="width:70px;" />
+            <img src="https://res.cloudinary.com/daflot6fo/image/upload/v1736067511/mlzrncax6dhtscgcu2si.webp" alt="Fantasy Madness Logo" style="width:70px;" />
             <p><a href="https://fantasymmadness.com" style="font-family: Arial, sans-serif; color: #191164; text-decoration: none;">https://fantasymmadness.com</a></p>
           </td>
         </tr>
@@ -5977,7 +5977,7 @@ app.post('/news', async (req, res) => {
               <table width="100%" cellpadding="0" cellspacing="0" border="0" style="width:100%; max-width:600px; margin:auto;">
                 <tr>
                   <td align="center" style="padding: 15px 0;">
-                    <img src="https://i.ibb.co/mF88zvd/Image-5-removebg-preview.png" alt="Fantasy mmadness Logo" style="width:100px;" />
+                    <img src="https://res.cloudinary.com/daflot6fo/image/upload/v1736067511/mlzrncax6dhtscgcu2si.webp" alt="Fantasy mmadness Logo" style="width:100px;" />
                     <h2 style="margin: 0; color: #191164; font-family: 'New York', Charter, Georgia, serif;">Fantasy mmadness</h2>
                   </td>
                 </tr>
@@ -5996,7 +5996,7 @@ app.post('/news', async (req, res) => {
                      <!-- Footer Section with Social Icons -->
       <tr>
         <td align="center" style="padding: 20px 0;">
-          <img src="https://i.ibb.co/mF88zvd/Image-5-removebg-preview.png" alt="Fantasy Madness Logo" style="width:70px;" />
+          <img src="https://res.cloudinary.com/daflot6fo/image/upload/v1736067511/mlzrncax6dhtscgcu2si.webp" alt="Fantasy Madness Logo" style="width:70px;" />
           <p><a href="https://fantasymmadness.com" style="font-family: Arial, sans-serif; color: #191164; text-decoration: none;">https://fantasymmadness.com</a></p>
                    <p>If you no longer wish to receive updates, you can <a href="${unsubscribeUrl}" style="color: #d20a0a; text-decoration: none;">unsubscribe</a>.</p>
            
@@ -6219,7 +6219,7 @@ app.post('/upload-sponsor', upload.single('image'), async (req, res) => {
       <table width="100%" cellpadding="0" cellspacing="0" border="0" style="width:100%; max-width:600px; margin:auto;">
         <tr>
           <td align="center" style="padding: 15px 0;">
-            <img src="https://i.ibb.co/mF88zvd/Image-5-removebg-preview.png" alt="Fantasy Madness Logo" style="width:100px;" />
+            <img src="https://res.cloudinary.com/daflot6fo/image/upload/v1736067511/mlzrncax6dhtscgcu2si.webp" alt="Fantasy Madness Logo" style="width:100px;" />
             <h2 style="margin: 0; color: #191164; font-family: 'New York', Charter, Georgia, serif;">Fantasy Madness</h2>
           </td>
         </tr>
@@ -6244,7 +6244,7 @@ app.post('/upload-sponsor', upload.single('image'), async (req, res) => {
         </tr>
         <tr>
           <td align="center" style="padding: 20px 0;">
-            <img src="https://i.ibb.co/mF88zvd/Image-5-removebg-preview.png" alt="Fantasy Madness Logo" style="width:70px;" />
+            <img src="https://res.cloudinary.com/daflot6fo/image/upload/v1736067511/mlzrncax6dhtscgcu2si.webp" alt="Fantasy Madness Logo" style="width:70px;" />
             <p><a href="https://fantasymmadness.com" style="font-family: Arial, sans-serif; color: #191164; text-decoration: none;">https://fantasymmadness.com</a></p>   
             <div style="padding-top: 10px;">
               <a href="https://www.facebook.com/share/2pzYV9XdQpAU7n6p/?mibextid=LQQJ4d" style="margin: 0 5px;">
