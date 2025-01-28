@@ -1418,6 +1418,186 @@ const userSchema = new mongoose.Schema({
 
 const User = mongoose.model('User', userSchema);
 
+app.post('/admin/add-tokens-won', async (req, res) => {
+  const { email } = req.body;
+
+  if (!email) {
+    return res.status(400).json({ message: 'Email is required.' });
+  }
+
+  try {
+    // Check if User already exists
+    const existingUser = await User.findOne({ email });
+
+    if (existingUser) {
+      // User found, add 200 tokens
+      existingUser.tokens = (parseInt(existingUser.tokens) + 200).toString();
+      await existingUser.save();
+
+      // Notify User and Admin
+      await transporter.sendMail({
+        from: '"Fantasy Mmadness" <Fantasymmadness2@gmail.com>',
+        to: email,
+        subject: '200 Tokens Added!',
+        html: `
+          <table width="100%" cellpadding="0" cellspacing="0" border="0" style="width:100%; max-width:600px; margin:auto;">
+            <tr>
+              <td align="center" style="padding: 15px 0;">
+                <img src="https://res.cloudinary.com/daflot6fo/image/upload/v1736068036/bywcrrcqmcyczdyhjmdv.png" alt="Fantasy Madness Logo" style="width:100px;" />
+                <h2 style="margin: 0; color: #191164; font-family: 'New York', Charter, Georgia, serif;">Fantasy Madness</h2>
+              </td>
+            </tr>
+            <tr>
+              <td style="padding: 10px 0;">
+                <p style="font-size: 16px; font-family: Arial, sans-serif; color: #333;">Dear User,</p>
+                <p style="font-size: 16px; font-family: Arial, sans-serif; color: #333;">
+                  You have received 200 tokens added to your account! Your new token balance is ${existingUser.tokens}.
+                </p>
+                <p style="font-size: 16px; font-family: Arial, sans-serif; color: #333;">
+                  If you have any questions, feel free to reach out to us!
+                </p>
+              </td>
+            </tr>
+            <tr>
+              <td align="center" style="padding: 20px 0;">
+                <img src="https://res.cloudinary.com/daflot6fo/image/upload/v1736068036/bywcrrcqmcyczdyhjmdv.png" alt="Fantasy Madness Logo" style="width:70px;" />
+                <p><a href="https://fantasymmadness.com" style="font-family: Arial, sans-serif; color: #191164; text-decoration: none;">https://fantasymmadness.com</a></p>
+              </td>
+            </tr>
+          </table>
+        `,
+      });
+
+      await transporter.sendMail({
+        from: '"Fantasy Madness" <Fantasymmadness2@gmail.com>',
+        to: 'wajih786hassan@gmail.com', // Replace with admin email
+        subject: 'Tokens Added to User',
+        html: `
+          <table width="100%" cellpadding="0" cellspacing="0" border="0" style="width:100%; max-width:600px; margin:auto;">
+            <tr>
+              <td align="center" style="padding: 15px 0;">
+                <img src="https://res.cloudinary.com/daflot6fo/image/upload/v1736068036/bywcrrcqmcyczdyhjmdv.png" alt="Fantasy Madness Logo" style="width:100px;" />
+                <h2 style="margin: 0; color: #191164; font-family: 'New York', Charter, Georgia, serif;">Fantasy Madness</h2>
+              </td>
+            </tr>
+            <tr>
+              <td style="padding: 10px 0;">
+                <p style="font-size: 16px; font-family: Arial, sans-serif; color: #333;">
+                  200 tokens have been successfully added to the user with the email: ${email}.
+                </p>
+              </td>
+            </tr>
+            <tr>
+              <td align="center" style="padding: 20px 0;">
+                <img src="https://res.cloudinary.com/daflot6fo/image/upload/v1736068036/bywcrrcqmcyczdyhjmdv.png" alt="Fantasy Madness Logo" style="width:70px;" />
+                <p><a href="https://fantasymmadness.com" style="font-family: Arial, sans-serif; color: #191164; text-decoration: none;">https://fantasymmadness.com</a></p>
+              </td>
+            </tr>
+          </table>
+        `,
+      });
+
+      return res.status(200).json({ message: 'Tokens added successfully, emails sent.' });
+    } else {
+      // User not found, create new user with 200 tokens
+      const firstName = email.split('@')[0]; // Extract the first part of the email for the name
+      const password = firstName; // Use the first part of the email as the password
+      const hashedPassword = await bcrypt.hash(password, 10);
+
+      const newUser = new User({
+        firstName,
+        email,
+        password: hashedPassword,
+        tokens: '200',
+        verified: true,
+        isNotificationsEnabled: true,
+        isSubscribed: true,
+        isAgreed: true,
+        profileUrl: "https://res.cloudinary.com/daflot6fo/image/upload/v1736068036/bywcrrcqmcyczdyhjmdv.png",
+      });
+
+      await newUser.save();
+
+      // Notify the new user
+      await transporter.sendMail({
+        from: '"Fantasy Madness" <Fantasymmadness2@gmail.com>',
+        to: email,
+        subject: 'Welcome to Fantasy Madness!',
+        html: `
+          <table width="100%" cellpadding="0" cellspacing="0" border="0" style="width:100%; max-width:600px; margin:auto;">
+            <tr>
+              <td align="center" style="padding: 15px 0;">
+                <img src="https://res.cloudinary.com/daflot6fo/image/upload/v1736068036/bywcrrcqmcyczdyhjmdv.png" alt="Fantasy Madness Logo" style="width:100px;" />
+                <h2 style="margin: 0; color: #191164; font-family: 'New York', Charter, Georgia, serif;">Fantasy Madness</h2>
+              </td>
+            </tr>
+            <tr>
+              <td style="padding: 10px 0;">
+                <p style="font-size: 16px; font-family: Arial, sans-serif; color: #333;">Dear ${firstName},</p>
+                <p style="font-size: 16px; font-family: Arial, sans-serif; color: #333;">
+                  You have been successfully added to Fantasy Madness with 200 tokens. Below are your login credentials:
+                </p>
+                <ul style="font-size: 16px; font-family: Arial, sans-serif; color: #333;">
+                  <li><strong>Email:</strong> ${email}</li>
+                  <li><strong>Password:</strong> ${password}</li>
+                </ul>
+                <p style="font-size: 16px; font-family: Arial, sans-serif; color: #333;">
+                  Please log in at <a href="https://fantasymmadness.com/login" style="color: #191164; text-decoration: none;">https://fantasymmadness.com/login</a> to explore your account!
+                </p>
+              </td>
+            </tr>
+            <tr>
+              <td align="center" style="padding: 20px 0;">
+                <img src="https://res.cloudinary.com/daflot6fo/image/upload/v1736068036/bywcrrcqmcyczdyhjmdv.png" alt="Fantasy Madness Logo" style="width:70px;" />
+                <p><a href="https://fantasymmadness.com" style="font-family: Arial, sans-serif; color: #191164; text-decoration: none;">https://fantasymmadness.com</a></p>
+              </td>
+            </tr>
+          </table>
+        `,
+      });
+
+      // Notify the admin
+      await transporter.sendMail({
+        from: '"Fantasy Madness" <Fantasymmadness2@gmail.com>',
+        to: 'Fantasymmadness2@gmail.com', // Replace with admin email
+        subject: 'New User Created and Tokens Added',
+        html: `
+          <table width="100%" cellpadding="0" cellspacing="0" border="0" style="width:100%; max-width:600px; margin:auto;">
+            <tr>
+              <td align="center" style="padding: 15px 0;">
+                <img src="https://res.cloudinary.com/daflot6fo/image/upload/v1736068036/bywcrrcqmcyczdyhjmdv.png" alt="Fantasy Madness Logo" style="width:100px;" />
+                <h2 style="margin: 0; color: #191164; font-family: 'New York', Charter, Georgia, serif;">Fantasy Madness</h2>
+              </td>
+            </tr>
+            <tr>
+              <td style="padding: 10px 0;">
+                <p style="font-size: 16px; font-family: Arial, sans-serif; color: #333;">
+                  A new user has been created with the email: ${email} and 200 tokens have been added.
+                </p>
+              </td>
+            </tr>
+            <tr>
+              <td align="center" style="padding: 20px 0;">
+                <img src="https://res.cloudinary.com/daflot6fo/image/upload/v1736068036/bywcrrcqmcyczdyhjmdv.png" alt="Fantasy Madness Logo" style="width:70px;" />
+                <p><a href="https://fantasymmadness.com" style="font-family: Arial, sans-serif; color: #191164; text-decoration: none;">https://fantasymmadness.com</a></p>
+              </td>
+            </tr>
+          </table>
+        `,
+      });
+
+      return res.status(201).json({ message: 'User created and tokens added, emails sent.' });
+    }
+
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ message: 'An error occurred while adding tokens or creating the User.' });
+  }
+});
+
+
+
+
 
 app.post('/admin/add-user', async (req, res) => {
   const { firstName, lastName, email, password } = req.body;
