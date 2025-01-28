@@ -43,7 +43,9 @@ const allowedOrigins = [
   'http://localhost:3000',
   'https://www.fantasymmadness.com',
   'https://fantasymmadness.com', // Add this line
-  'http://18.212.65.201:3000'
+  'http://18.212.65.201:3000',
+  'https://www.betcombatsports.com/',
+  'https://betcombatsports.com/'
 ];
 
 app.use(cors({
