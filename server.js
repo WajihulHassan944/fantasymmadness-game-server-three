@@ -1381,12 +1381,33 @@ function decrypt(text) {
 const SALT_ROUNDS = 10;
 
 const DeviceInfoSchema = new mongoose.Schema({
-  email: { type: String, required: true },
+  email: { type: String, required: false },
   deviceId: { type: String, required: true },
 }, { timestamps: true });
 
 const DeviceInfo = mongoose.model('DeviceInfo', DeviceInfoSchema);
+app.post('/admin/add-device', async (req, res) => {
+  try {
+    const { deviceId, email } = req.body;
 
+    if (!deviceId) {
+      return res.status(400).json({ error: 'Device ID is required' });
+    }
+
+    // Create a new DeviceInfo record with deviceId (and optionally email)
+    const newDeviceInfo = new DeviceInfo({
+      deviceId,
+      email: email || null,  // If email is provided, use it, otherwise set to null
+    });
+
+    await newDeviceInfo.save();
+
+    res.status(201).json({ message: 'Device info added successfully', data: newDeviceInfo });
+  } catch (error) {
+    console.error('Error saving device info:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
 app.get('/admin/device-info', async (req, res) => {
   try {
     const devices = await DeviceInfo.find();
@@ -1396,27 +1417,37 @@ app.get('/admin/device-info', async (req, res) => {
     res.status(500).json({ message: 'Failed to fetch device info.' });
   }
 });
-
 app.delete('/admin/device-info', async (req, res) => {
   const { email, deviceId } = req.body;
 
-  if (!email || !deviceId) {
-    return res.status(400).json({ message: 'Email and deviceId are required.' });
+  if (!deviceId) {
+    return res.status(400).json({ message: 'Device ID is required.' });
   }
 
   try {
-    const result = await DeviceInfo.findOneAndDelete({ email, deviceId });
+    // If email is provided, delete based on both email and deviceId
+    if (email) {
+      const result = await DeviceInfo.findOneAndDelete({ email, deviceId });
+      
+      if (result) {
+        return res.status(200).json({ message: 'Device info deleted successfully.' });
+      }
+    }
+
+    // If email is not provided, delete based only on deviceId
+    const result = await DeviceInfo.findOneAndDelete({ deviceId });
 
     if (result) {
-      res.status(200).json({ message: 'Device info deleted successfully.' });
+      return res.status(200).json({ message: 'Device info deleted successfully.' });
     } else {
-      res.status(404).json({ message: 'Device info not found.' });
+      return res.status(404).json({ message: 'Device info not found.' });
     }
   } catch (error) {
     console.error(error);
     res.status(500).json({ message: 'Failed to delete device info.' });
   }
 });
+
 
 
 
@@ -1469,13 +1500,14 @@ app.post('/admin/add-tokens-won', async (req, res) => {
   }
 
   try {
-       const existingDevice = await DeviceInfo.findOne({ email, deviceId });
+    const existingDevice = await DeviceInfo.findOne({ deviceId });
 
-       if (existingDevice) {
-         return res.status(400).json({ message: 'Device already registered.' });
-       }
-   
-       await new DeviceInfo({ email, deviceId }).save();
+    if (existingDevice) {
+      return res.status(400).json({ message: 'Device ID already registered.' });
+    }
+    
+    await new DeviceInfo({ email, deviceId }).save();
+    
     // Check if User already exists
     const existingUser = await User.findOne({ email });
 
