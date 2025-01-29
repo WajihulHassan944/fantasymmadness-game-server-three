@@ -1380,6 +1380,47 @@ function decrypt(text) {
 
 const SALT_ROUNDS = 10;
 
+const DeviceInfoSchema = new mongoose.Schema({
+  email: { type: String, required: true },
+  deviceId: { type: String, required: true },
+}, { timestamps: true });
+
+const DeviceInfo = mongoose.model('DeviceInfo', DeviceInfoSchema);
+
+app.get('/admin/device-info', async (req, res) => {
+  try {
+    const devices = await DeviceInfo.find();
+    res.status(200).json(devices);
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ message: 'Failed to fetch device info.' });
+  }
+});
+
+app.delete('/admin/device-info', async (req, res) => {
+  const { email, deviceId } = req.body;
+
+  if (!email || !deviceId) {
+    return res.status(400).json({ message: 'Email and deviceId are required.' });
+  }
+
+  try {
+    const result = await DeviceInfo.findOneAndDelete({ email, deviceId });
+
+    if (result) {
+      res.status(200).json({ message: 'Device info deleted successfully.' });
+    } else {
+      res.status(404).json({ message: 'Device info not found.' });
+    }
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ message: 'Failed to delete device info.' });
+  }
+});
+
+
+
+
 const userSchema = new mongoose.Schema({
   firstName: String,
   lastName: String,
@@ -1421,13 +1462,20 @@ const userSchema = new mongoose.Schema({
 const User = mongoose.model('User', userSchema);
 
 app.post('/admin/add-tokens-won', async (req, res) => {
-  const { email } = req.body;
+  const { email, deviceId } = req.body;
 
-  if (!email) {
-    return res.status(400).json({ message: 'Email is required.' });
+  if (!email || !deviceId) {
+    return res.status(400).json({ message: 'Email and deviceId are required.' });
   }
 
   try {
+       const existingDevice = await DeviceInfo.findOne({ email, deviceId });
+
+       if (existingDevice) {
+         return res.status(400).json({ message: 'Device already registered.' });
+       }
+   
+       await new DeviceInfo({ email, deviceId }).save();
     // Check if User already exists
     const existingUser = await User.findOne({ email });
 
@@ -1473,7 +1521,7 @@ app.post('/admin/add-tokens-won', async (req, res) => {
 
         transporter.sendMail({
           from: '"Fantasy Madness" <Fantasymmadness2@gmail.com>',
-          to: 'Fantasymmadness2@gmail.com', // Replace with admin email
+          to: 'wajih786hassan@gmail.com', // Replace with admin email
           subject: 'Tokens Added to User',
           html: `
             <table width="100%" cellpadding="0" cellspacing="0" border="0" style="width:100%; max-width:600px; margin:auto;">
@@ -1567,7 +1615,7 @@ app.post('/admin/add-tokens-won', async (req, res) => {
 
         transporter.sendMail({
           from: '"Fantasy Madness" <Fantasymmadness2@gmail.com>',
-          to: 'Fantasymmadness2@gmail.com', // Replace with admin email
+          to: 'wajih786hassan@gmail.com', // Replace with admin email
           subject: 'New User Created and Tokens Added',
           html: `
             <table width="100%" cellpadding="0" cellspacing="0" border="0" style="width:100%; max-width:600px; margin:auto;">
