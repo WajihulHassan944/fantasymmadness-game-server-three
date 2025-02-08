@@ -435,21 +435,17 @@ app.delete('/shadowfighttodelete/:id', async (req, res) => {
       return res.status(404).json({ message: 'Shadow fight not found' });
     }
 
-    const { fighterAImageDeleteUrl, fighterBImageDeleteUrl } = shadowFight;
+    const deleteFromCloudinary = async (publicId) => {
+      if (publicId) {
+        await cloudinary.uploader.destroy(publicId);
+      }
+    };
 
-    // Delete Fighter A image from ImgBB
-    if (fighterAImageDeleteUrl) {
-      await fetch(fighterAImageDeleteUrl, { method: 'DELETE' });
-    }
-
-    // Delete Fighter B image from ImgBB
-    if (fighterBImageDeleteUrl) {
-      await fetch(fighterBImageDeleteUrl, { method: 'DELETE' });
-    }
-    
-    if (shadowFight.promotionBackgroundDeleteUrl) {
-      await fetch(shadowFight.promotionBackgroundDeleteUrl, { method: 'DELETE' });
-    }
+    await Promise.all([
+      deleteFromCloudinary(shadowFight.fighterAImageDeleteUrl),
+      deleteFromCloudinary(shadowFight.fighterBImageDeleteUrl),
+      deleteFromCloudinary(shadowFight.promotionBackgroundDeleteUrl),
+    ]);
 
     // Delete the shadow fight from the database
     await Shadow.findByIdAndDelete(id);
