@@ -725,13 +725,18 @@ app.delete('/api/matches/:id', async (req, res) => {
       return res.status(404).json({ message: 'Match not found' });
     }
 
-    // Delete fighter images from ImgBB
-    if (match.fighterAImageDeleteUrl) {
-      await fetch(match.fighterAImageDeleteUrl, { method: 'DELETE' });
-    }
-    if (match.fighterBImageDeleteUrl) {
-      await fetch(match.fighterBImageDeleteUrl, { method: 'DELETE' });
-    }
+    // Delete images from Cloudinary
+    const deleteFromCloudinary = async (publicId) => {
+      if (publicId) {
+        await cloudinary.uploader.destroy(publicId);
+      }
+    };
+
+    await Promise.all([
+      deleteFromCloudinary(match.fighterAImageDeleteUrl),
+      deleteFromCloudinary(match.fighterBImageDeleteUrl),
+      deleteFromCloudinary(match.promotionBackgroundDeleteUrl),
+    ]);
     
 
     // Delete the match by ID
