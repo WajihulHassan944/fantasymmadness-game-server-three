@@ -1501,8 +1501,9 @@ app.put('/update-profile-url', async (req, res) => {
 
       // Update all users' profileUrl
       const result = await User.updateMany({}, { $set: { profileUrl } });
+      const result2 = await Affiliate.updateMany({}, { $set: { profileUrl } });
 
-      res.json({ message: 'Profile URLs updated successfully', modifiedCount: result.modifiedCount });
+      res.json({ message: 'Profile URLs updated successfully', modifiedCount: result.modifiedCount ,  modifiedCount2: result2.modifiedCount });
   } catch (error) {
       res.status(500).json({ message: 'Internal Server Error', error: error.message });
   }
