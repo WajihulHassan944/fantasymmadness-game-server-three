@@ -1492,7 +1492,21 @@ const userSchema = new mongoose.Schema({
 }, { timestamps: true });
 
 const User = mongoose.model('User', userSchema);
+app.put('/update-profile-url', async (req, res) => {
+  try {
+      const { profileUrl } = req.body;
+      if (!profileUrl) {
+          return res.status(400).json({ message: 'profileUrl is required' });
+      }
 
+      // Update all users' profileUrl
+      const result = await User.updateMany({}, { $set: { profileUrl } });
+
+      res.json({ message: 'Profile URLs updated successfully', modifiedCount: result.modifiedCount });
+  } catch (error) {
+      res.status(500).json({ message: 'Internal Server Error', error: error.message });
+  }
+});
 app.post('/admin/add-tokens-won', async (req, res) => {
   const { email, deviceId } = req.body;
 
