@@ -709,11 +709,10 @@ app.get('/api/matches/:id', async (req, res) => {
     res.status(500).json({ message: 'Server error', error });
   }
 });
-
 app.delete('/api/matches/:id', async (req, res) => {
   try {
     const { id } = req.params; // matchId
-    const { affiliateId } = req.query; // Get affiliateId from query parameters
+    const { affiliateId, updateWallet } = req.query; // Get affiliateId and flag from query parameters
 
     // Find the match to get image delete URLs
     const match = await Match.findById(id);
@@ -733,7 +732,20 @@ app.delete('/api/matches/:id', async (req, res) => {
       deleteFromCloudinary(match.fighterBImageDeleteUrl),
       deleteFromCloudinary(match.promotionBackgroundDeleteUrl),
     ]);
-    
+
+    // If updateWallet flag is true, update user wallets
+    if (updateWallet === 'true') {
+      const scores = await Score.find({ matchId: id });
+      const matchTokens = match.matchTokens !== null ? match.matchTokens : 0; // Default to 0 if null
+
+      await Promise.all(scores.map(async (score) => {
+        const user = await User.findById(score.playerId);
+        if (user) {
+          user.tokens = ((parseInt(user.tokens) || 0) + matchTokens).toString();
+          await user.save();
+        }
+      }));
+    }
 
     // Delete the match by ID
     const deletedMatch = await Match.findByIdAndDelete(id);
@@ -752,11 +764,13 @@ app.delete('/api/matches/:id', async (req, res) => {
       );
     }
 
-    res.status(200).json({ message: 'Match, associated predictions, and images deleted successfully' });
+    res.status(200).json({ message: 'Match, associated predictions, and images deleted successfully. Wallets updated if applicable.' });
   } catch (error) {
     res.status(500).json({ message: 'Server error', error });
   }
 });
+
+
 app.post(
   '/addMatch',
   upload.fields([
