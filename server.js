@@ -1870,7 +1870,7 @@ app.post('/admin/add-tokens-won-spin-wheel', async (req, res) => {
 
         transporter.sendMail({
           from: '"Fantasy Madness" <Fantasymmadness2@gmail.com>',
-          to: 'wajih786hassan@gmail.com', // Replace with admin email
+          to: 'Fantasymmadness2@gmail.com', // Replace with admin email
           subject: 'Tokens Added to User',
           html: `
             <table width="100%" cellpadding="0" cellspacing="0" border="0" style="width:100%; max-width:600px; margin:auto;">
@@ -1964,7 +1964,7 @@ app.post('/admin/add-tokens-won-spin-wheel', async (req, res) => {
 
         transporter.sendMail({
           from: '"Fantasy Madness" <Fantasymmadness2@gmail.com>',
-          to: 'wajih786hassan@gmail.com', // Replace with admin email
+          to: 'Fantasymmadness2@gmail.com', // Replace with admin email
           subject: 'New User Created and Tokens Added',
           html: `
             <table width="100%" cellpadding="0" cellspacing="0" border="0" style="width:100%; max-width:600px; margin:auto;">
