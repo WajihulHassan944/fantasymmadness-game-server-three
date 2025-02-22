@@ -182,10 +182,8 @@ app.post('/compare-matches', async (req, res) => {
               match.matchName === shadow.matchName &&
               match.matchFighterA === shadow.matchFighterA &&
               match.matchFighterB === shadow.matchFighterB &&
-              match.matchDescription === shadow.matchDescription &&
-              match.fighterAImage === shadow.fighterAImage &&
-              match.fighterBImage === shadow.fighterBImage
-          );
+              match.matchDescription === shadow.matchDescription
+              );
 
           if (isMatchFound) {
               await Match.findByIdAndUpdate(match._id, { shadowTemplatesAdditionStatus: true });
