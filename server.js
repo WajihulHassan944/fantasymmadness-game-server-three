@@ -1130,6 +1130,7 @@ app.post(
       fighterAImageUrl,
       fighterBImageUrl,
       promotionBackgroundUrl,
+      addToShadow,
     } = req.body;
 
     let fighterAImage,
@@ -1208,6 +1209,7 @@ app.post(
 
       // Update the match object
       existingMatch.matchCategory = matchCategory || existingMatch.matchCategory;
+      existingMatch.shadowTemplatesAdditionStatus = addToShadow === 'true' || addToShadow === true ? true : existingMatch.shadowTemplatesAdditionStatus;
       existingMatch.matchName = matchName || existingMatch.matchName;
       existingMatch.matchFighterA =
         matchFighterA || existingMatch.matchFighterA;
