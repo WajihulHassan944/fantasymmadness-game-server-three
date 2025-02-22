@@ -5317,15 +5317,29 @@ app.get('/youtubeVideos', async (req, res) => {
 });
 
 
-
 app.post('/addShadow', upload.fields([
   { name: 'fighterAImage' },
   { name: 'fighterBImage' },
   { name: 'promotionBackground' },
 ]), async (req, res) => {
   try {
-    let fighterAImageUrl, fighterBImageUrl, promotionBackgroundUrl;
-    let fighterAImageDeleteUrl, fighterBImageDeleteUrl, promotionBackgroundDeleteUrl;
+    const {
+      matchCategoryTwo,
+      maxRounds,
+      matchCategory,
+      matchName,
+      matchFighterA,
+      matchFighterB,
+      matchDescription,
+      matchVideoUrl,
+      matchType,
+      fighterAImageUrl,
+      fighterAImageDeleteUrlFromReq,
+      fighterBImageUrl,
+      fighterBImageDeleteUrlFromReq,
+      promotionBackgroundUrl,
+      promotionBackgroundDeleteUrlFromReq
+    } = req.body;
 
     // Helper function to upload to Cloudinary
     const uploadToCloudinary = (fileBuffer, folder) => {
@@ -5340,40 +5354,32 @@ app.post('/addShadow', upload.fields([
       });
     };
 
-    // Upload Fighter A Image
+    let fighterAImage = fighterAImageUrl || null;
+    let fighterBImage = fighterBImageUrl || null;
+    let promotionBackground = promotionBackgroundUrl || null;
+
+    let fighterAImageDeleteUrl = fighterAImageDeleteUrlFromReq || null;
+    let fighterBImageDeleteUrl = fighterBImageDeleteUrlFromReq || null;
+    let promotionBackgroundDeleteUrl = promotionBackgroundDeleteUrlFromReq || null;
+
     if (req.files.fighterAImage) {
-      const result = await uploadToCloudinary(req.files.fighterAImage[0].buffer, 'fighters');
-      fighterAImageUrl = result.secure_url;
-      fighterAImageDeleteUrl = result.public_id;
+      const resultA = await uploadToCloudinary(req.files.fighterAImage[0].buffer, 'fighters');
+      fighterAImage = resultA.secure_url;
+      fighterAImageDeleteUrl = resultA.public_id;
     }
 
-    // Upload Fighter B Image
     if (req.files.fighterBImage) {
-      const result = await uploadToCloudinary(req.files.fighterBImage[0].buffer, 'fighters');
-      fighterBImageUrl = result.secure_url;
-      fighterBImageDeleteUrl = result.public_id;
+      const resultB = await uploadToCloudinary(req.files.fighterBImage[0].buffer, 'fighters');
+      fighterBImage = resultB.secure_url;
+      fighterBImageDeleteUrl = resultB.public_id;
     }
 
-    // Upload Promotion Background Image
     if (req.files.promotionBackground) {
-      const result = await uploadToCloudinary(req.files.promotionBackground[0].buffer, 'promotions');
-      promotionBackgroundUrl = result.secure_url;
-      promotionBackgroundDeleteUrl = result.public_id;
+      const resultBackground = await uploadToCloudinary(req.files.promotionBackground[0].buffer, 'promotions');
+      promotionBackground = resultBackground.secure_url;
+      promotionBackgroundDeleteUrl = resultBackground.public_id;
     }
 
-    const {
-      matchCategoryTwo,
-      maxRounds,
-      matchCategory,
-      matchName,
-      matchFighterA,
-      matchFighterB,
-      matchDescription,
-      matchVideoUrl,
-      matchType,
-    } = req.body;
-
-    // Save match details to the database
     const newMatch = new Shadow({
       matchCategory,
       matchCategoryTwo,
@@ -5382,11 +5388,11 @@ app.post('/addShadow', upload.fields([
       matchFighterB,
       matchDescription,
       matchVideoUrl,
-      fighterAImage: fighterAImageUrl,
-      fighterBImage: fighterBImageUrl,
+      fighterAImage,
+      fighterBImage,
       fighterAImageDeleteUrl,
       fighterBImageDeleteUrl,
-      promotionBackground: promotionBackgroundUrl,
+      promotionBackground,
       promotionBackgroundDeleteUrl,
       matchType,
       maxRounds,
