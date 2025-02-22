@@ -168,6 +168,36 @@ const shadowSchema = new mongoose.Schema({
 
 
 const Shadow = mongoose.model('Shadow', shadowSchema);
+app.post('/compare-matches', async (req, res) => {
+  try {
+      const matches = await Match.find({ shadowTemplatesAdditionStatus: false });
+      const shadows = await Shadow.find();
+
+      let updatedCount = 0;
+
+      for (const match of matches) {
+          const isMatchFound = shadows.some(shadow =>
+              match.matchCategory === shadow.matchCategory &&
+              match.matchCategoryTwo === shadow.matchCategoryTwo &&
+              match.matchName === shadow.matchName &&
+              match.matchFighterA === shadow.matchFighterA &&
+              match.matchFighterB === shadow.matchFighterB &&
+              match.matchDescription === shadow.matchDescription &&
+              match.fighterAImage === shadow.fighterAImage &&
+              match.fighterBImage === shadow.fighterBImage
+          );
+
+          if (isMatchFound) {
+              await Match.findByIdAndUpdate(match._id, { shadowTemplatesAdditionStatus: true });
+              updatedCount++;
+          }
+      }
+
+      res.json({ message: 'Comparison complete', updatedMatches: updatedCount });
+  } catch (error) {
+      res.status(500).json({ error: 'Internal server error', details: error.message });
+  }
+});
 
 app.post(
   '/editShadow',
@@ -480,6 +510,7 @@ const matchSchema = new mongoose.Schema({
   matchFighterA: String,
   matchFighterB: String,
   matchDescription: String,
+  shadowTemplatesAdditionStatus: { type: Boolean, default: false },
   notificationSent: { type: Boolean, default: false },
   matchBy: { type: String, enum: ['admin', 'affiliate'], default: 'admin' },
   matchStatus: { type: String, enum: ['Finished', 'Ongoing'], default: 'Ongoing' },
@@ -885,7 +916,9 @@ app.post(
       if (MMAMatch) {
         matchData.MMAMatch = JSON.parse(MMAMatch);
       }
-
+      if (req.body.addToShadow === 'true' || req.body.addToShadow === true) {
+        matchData.shadowTemplatesAdditionStatus = true;
+    }
       // Save the match details to the database
       const newMatch = new Match(matchData);
       const savedMatch = await newMatch.save();
