@@ -511,6 +511,7 @@ const matchSchema = new mongoose.Schema({
   shadowTemplatesAdditionStatus: { type: Boolean, default: false },
   notificationSent: { type: Boolean, default: false },
   matchBy: { type: String, enum: ['admin', 'affiliate'], default: 'admin' },
+  matchShadowStatus: { type: String, enum: ['active', 'inactive'], default: 'inactive' },
   matchStatus: { type: String, enum: ['Finished', 'Ongoing'], default: 'Ongoing' },
   matchReward: { type: String, enum: ['Rewarded', 'NotRewarded'], default: 'NotRewarded' },
   matchVideoUrl: String,
@@ -593,6 +594,28 @@ const matchSchema = new mongoose.Schema({
 
 
 const Match = mongoose.model('Match', matchSchema);
+
+app.post('/activate-match/:matchId', async (req, res) => {
+  const { matchId } = req.params;
+
+  try {
+    const match = await Match.findById(matchId);
+    if (!match) {
+      return res.status(404).json({ message: 'Match not found' });
+    }
+
+    match.matchShadowStatus = 'active';
+    await match.save();
+
+    console.log(`Match ${matchId} status set to active.`);
+    return res.status(200).json({ message: 'Match status updated to active' });
+  } catch (error) {
+    console.error('Error updating match status:', error);
+    return res.status(500).json({ message: 'Internal server error' });
+  }
+});
+
+
 app.post('/api/matches/:matchId/promotional-video', async (req, res) => {
   const { matchId } = req.params;
   const { promotionalVideoUrl } = req.body;
