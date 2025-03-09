@@ -3282,7 +3282,6 @@ app.get("/", (req, res) =>{
   res.send("Backend server has started running successfully...");
 });
 
-
 app.delete('/usertodelete/:id', async (req, res) => {
   const { id } = req.params;
 
@@ -3304,6 +3303,14 @@ app.delete('/usertodelete/:id', async (req, res) => {
         .catch(error => {
           console.error('Error deleting image from imgbb:', error);
         });
+    }
+
+    // Remove user from all affiliate leagues
+    const affiliates = await Affiliate.find({ 'usersJoined.userId': id });
+    for (const affiliate of affiliates) {
+      affiliate.usersJoined = affiliate.usersJoined.filter(user => user.userId.toString() !== id);
+      await affiliate.save();
+      console.log(`User ${user.email} removed from Affiliate League: ${affiliate.playerName} (${affiliate._id})`);
     }
 
     // Delete the user from the database
@@ -4382,7 +4389,36 @@ app.post('/affiliate/:affiliateId/remove-user', async (req, res) => {
   }
 });
 
+app.post('/clean-affiliate-users', async (req, res) => {
+  try {
+    const affiliates = await Affiliate.find(); // Get all affiliates
+    
+    for (const affiliate of affiliates) {
+      const validUsers = [];
+      const removedUsers = [];
 
+      for (const user of affiliate.usersJoined) {
+        const userExists = await User.findById(user.userId);
+        if (userExists) {
+          validUsers.push(user); // Retain valid users
+        } else {
+          removedUsers.push(user);
+        }
+      }
+
+      // Update the affiliate with the filtered users
+      await Affiliate.findByIdAndUpdate(affiliate._id, { usersJoined: validUsers });
+      
+      if (removedUsers.length > 0) {
+        console.log(`Affiliate League: ${affiliate.playerName} (${affiliate._id}) - Removed Users:`, removedUsers.map(u => u.email));
+      }
+    }
+
+    return res.status(200).json({ message: 'Affiliate user lists cleaned successfully' });
+  } catch (error) {
+    return res.status(500).json({ message: 'Error cleaning affiliate users', error });
+  }
+});
 
 // POST API to reward tokens to the user and update matchReward status
 app.post('/api/reward-tokens-to-affiliate/:affiliateId', async (req, res) => {
