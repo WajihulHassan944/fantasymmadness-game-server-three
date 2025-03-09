@@ -595,23 +595,129 @@ const matchSchema = new mongoose.Schema({
 
 const Match = mongoose.model('Match', matchSchema);
 
-app.post('/activate-match/:matchId', async (req, res) => {
+app.post("/activate-match/:matchId", async (req, res) => {
   const { matchId } = req.params;
 
   try {
     const match = await Match.findById(matchId);
     if (!match) {
-      return res.status(404).json({ message: 'Match not found' });
+      return res.status(404).json({ message: "Match not found" });
     }
 
-    match.matchShadowStatus = 'active';
+    // Activate match
+    match.matchShadowStatus = "active";
     await match.save();
 
     console.log(`Match ${matchId} status set to active.`);
-    return res.status(200).json({ message: 'Match status updated to active' });
+
+    // Fetch users
+    const users = await User.find();
+    const nonRegisteredUsers = await Usernonregistered.find();
+
+    // Match details for email
+    const {
+      matchName,
+      matchFighterA,
+      matchFighterB,
+      fighterAImage,
+      fighterBImage,
+      matchDate,
+      matchTime,
+      maxRounds,
+      matchType,
+    } = match;
+
+    // Prepare email function
+    const sendEmail = (user, isRegistered) => {
+      return {
+        from: "Fantasymmadness2@gmail.com",
+        to: user.email,
+        subject: isRegistered ? "Fantasy MMA Madness - New Fight Alert!" : "Join Fantasy MMA Madness!",
+        html: `
+          <table width="100%" cellpadding="0" cellspacing="0" border="0" style="width:100%; max-width:600px; margin:auto;">
+            <tr>
+              <td align="center" style="padding: 15px 0;">
+                <img src="https://res.cloudinary.com/daflot6fo/image/upload/v1736068036/bywcrrcqmcyczdyhjmdv.png" alt="Fantasy MMA Madness Logo" style="width:100px;" />
+                <h2 style="margin: 0; color: #191164; font-family: 'New York', Charter, Georgia, serif;">Fantasy MMA Madness</h2>
+              </td>
+            </tr>
+            <tr>
+              <td style="padding: 10px 0;">
+                <p style="font-size: 16px; font-family: Arial, sans-serif; color: #333;">Dear ${user.firstName || user.fullName},</p>
+                <p style="font-size: 16px; font-family: Arial, sans-serif; color: #333;">
+                  ${isRegistered ? "A new fight has been added!" : "We noticed you haven’t registered yet. Join now and don’t miss out!"}
+                </p>
+                <p style="font-size: 16px; font-family: Arial, sans-serif; color: #333;">
+                  <strong>Fight:</strong> ${matchFighterA} vs ${matchFighterB}
+                </p>
+              </td>
+            </tr>
+            <tr>
+              <td align="center" style="padding: 20px; background-color:#f8f8f8;">
+                <h2 style="color: #191164; font-family: 'Impact', fantasy, sans-serif;">Get Ready for Battle!</h2>
+                <p style="font-size: 17px; font-family: 'Comic Sans MS', fantasy, sans-serif; color: #555;">
+                  Your next adrenaline-pumping challenge awaits. Enter the arena and put your prediction skills to the test!
+                </p>
+              </td>
+            </tr>
+            <tr>
+              <td>
+                <table width="100%" cellpadding="0" cellspacing="0" border="0" style="width:100%; margin:auto;">
+                  <tr>
+                    <td align="center" style="padding: 10px;">
+                      <div style="width:60px; height:60px; border-radius:50%; border:3px solid red; background-color:#fff;">
+                        <img src="${fighterAImage}" alt="${matchFighterA}" style="width:100%; height:100%; object-fit:cover; border-radius:50%;" />
+                      </div>
+                      <p style="font-size: 16px; font-family: Arial, sans-serif; color: #333; text-align:center;">${matchFighterA}</p>
+                    </td>
+                    <td align="center" style="padding: 10px;">
+                      <h1 style="margin:0; font-family: Arial, sans-serif; color: #333;">Vs</h1>
+                    </td>
+                    <td align="center" style="padding: 10px;">
+                      <div style="width:60px; height:60px; border-radius:50%; border:3px solid blue; background-color:#fff;">
+                        <img src="${fighterBImage}" alt="${matchFighterB}" style="width:100%; height:100%; object-fit:cover; border-radius:50%;" />
+                      </div>
+                      <p style="font-size: 16px; font-family: Arial, sans-serif; color: #333; text-align:center;">${matchFighterB}</p>
+                    </td>
+                  </tr>
+                </table>
+              </td>
+            </tr>
+            <tr>
+              <td style="padding: 10px;">
+                <p style="font-size: 16px; font-family: Arial, sans-serif; color: #333;"><strong>Date:</strong> ${matchDate}</p>
+                <p style="font-size: 16px; font-family: Arial, sans-serif; color: #333;">
+                  <strong>Time:</strong> ${new Date(`1970-01-01T${matchTime}:00`).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: true })} EST
+                </p>
+                <p style="font-size: 16px; font-family: Arial, sans-serif; color: #333;"><strong>Max Rounds:</strong> ${maxRounds}</p>
+                <p style="font-size: 16px; font-family: Arial, sans-serif; color: #333;"><strong>Fight Type:</strong> ${matchType}</p>
+                <p><a href="https://fantasymmadness.com/${isRegistered ? 'upcomingfights' : 'CreateAccount'}" style="font-family: Arial, sans-serif; color: #191164; text-decoration: none;">
+                  ${isRegistered ? "View Fight Details" : "Register Now"}
+                </a></p>
+              </td>
+            </tr>
+            <tr>
+              <td align="center" style="padding: 15px 0;">
+                <img src="https://res.cloudinary.com/daflot6fo/image/upload/v1736068036/bywcrrcqmcyczdyhjmdv.png" alt="Fantasy MMA Madness Logo" style="width:70px;" />
+                <p><a href="https://fantasymmadness.com" style="font-family: Arial, sans-serif; color: #191164; text-decoration: none;">fantasymmadness.com</a></p>
+              </td>
+            </tr>
+          </table>
+        `,
+      };
+    };
+
+    // Send emails
+    const registeredEmails = users.map((user) => transporter.sendMail(sendEmail(user, true)));
+    const nonRegisteredEmails = nonRegisteredUsers.map((user) => transporter.sendMail(sendEmail(user, false)));
+
+    await Promise.all([...registeredEmails, ...nonRegisteredEmails]);
+
+    console.log("Emails sent successfully to all users.");
+    return res.status(200).json({ message: "Match activated & emails sent successfully" });
   } catch (error) {
-    console.error('Error updating match status:', error);
-    return res.status(500).json({ message: 'Internal server error' });
+    console.error("Error updating match status:", error);
+    return res.status(500).json({ message: "Internal server error" });
   }
 });
 
