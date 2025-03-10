@@ -511,7 +511,7 @@ const matchSchema = new mongoose.Schema({
   shadowTemplatesAdditionStatus: { type: Boolean, default: false },
   notificationSent: { type: Boolean, default: false },
   matchBy: { type: String, enum: ['admin', 'affiliate'], default: 'admin' },
-  matchShadowStatus: { type: String, enum: ['active', 'inactive'], default: 'inactive' },
+  matchShadowStatus: { type: String, enum: ['active', 'inactive'], default: 'active' },
   matchStatus: { type: String, enum: ['Finished', 'Ongoing'], default: 'Ongoing' },
   matchReward: { type: String, enum: ['Rewarded', 'NotRewarded'], default: 'NotRewarded' },
   matchVideoUrl: String,
