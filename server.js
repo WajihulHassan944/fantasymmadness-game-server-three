@@ -595,6 +595,29 @@ const matchSchema = new mongoose.Schema({
 
 const Match = mongoose.model('Match', matchSchema);
 
+app.post("/deactivate-match/:matchId", async (req, res) => {
+  const { matchId } = req.params;
+
+  try {
+    const match = await Match.findById(matchId);
+    if (!match) {
+      return res.status(404).json({ message: "Match not found" });
+    }
+
+    // Deactivate match
+    match.matchShadowStatus = "inactive";
+    await match.save();
+
+    console.log(`Match ${matchId} status set to inactive.`);
+    res.status(200).json({ message: "Match successfully deactivated." });
+  } catch (error) {
+    console.error("Error deactivating match:", error);
+    res.status(500).json({ message: "Internal server error" });
+  }
+});
+
+
+
 app.post("/activate-match/:matchId", async (req, res) => {
   const { matchId } = req.params;
 
