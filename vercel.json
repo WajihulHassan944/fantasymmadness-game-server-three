@@ -13,6 +13,10 @@
     {
       "path": "/notify",
       "schedule": "0 0 * * *"
+    },
+    {
+      "path": "/api/update-shadow-open-status",
+      "schedule": "0 0 * * *"
     }
   ]
 }

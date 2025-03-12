@@ -513,7 +513,8 @@ const matchSchema = new mongoose.Schema({
   matchBy: { type: String, enum: ['admin', 'affiliate'], default: 'admin' },
   matchShadowStatus: { type: String, enum: ['active', 'inactive'], default: 'active' },
   matchStatus: { type: String, enum: ['Finished', 'Ongoing'], default: 'Ongoing' },
-  matchReward: { type: String, enum: ['Rewarded', 'NotRewarded'], default: 'NotRewarded' },
+matchShadowOpenStatus: { type: String, enum: ['open', 'closed'], default: 'open' },
+matchReward: { type: String, enum: ['Rewarded', 'NotRewarded'], default: 'NotRewarded' },
   matchVideoUrl: String,
   matchPromotionalVideoUrl: String,
   matchDate: Date,
@@ -588,12 +589,67 @@ const matchSchema = new mongoose.Schema({
   }],
   
   __v: Number
-});
+} , { timestamps: true });
 
 
 
 
 const Match = mongoose.model('Match', matchSchema);
+
+app.get('/api/update-shadow-open-status', async (req, res) => {
+  console.log('Cron job to update matchShadowOpenStatus started.');
+
+  try {
+    const sevenDaysAgo = new Date();
+    sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 7);
+
+    // Update only if `createdAt` exists and is older than 7 days
+    const result = await Match.updateMany(
+      { 
+        $or: [
+          { createdAt: { $exists: true, $lte: sevenDaysAgo } }, // If createdAt exists and is old
+          { createdAt: { $exists: false } } // If createdAt doesn't exist, update just in case
+        ],
+        matchShadowOpenStatus: 'open'
+      },
+      { $set: { matchShadowOpenStatus: 'closed' } }
+    );
+
+    console.log(`Updated ${result.modifiedCount} matches to closed`);
+    res.status(200).json({ message: `Updated ${result.modifiedCount} matches to closed` });
+  } catch (error) {
+    console.error('Error running cron job:', error);
+    res.status(500).json({ error: 'Internal Server Error' });
+  }
+});
+
+app.post("/update-match-shadow-open-status/:matchId", async (req, res) => {
+  const { matchId } = req.params;
+  const { status } = req.body; // Expecting "open" or "closed" from frontend
+
+  if (!["open", "closed"].includes(status)) {
+    return res.status(400).json({ message: "Invalid status. Use 'open' or 'closed'." });
+  }
+
+  try {
+    const match = await Match.findById(matchId);
+    if (!match) {
+      return res.status(404).json({ message: "Match not found" });
+    }
+
+    // Update match shadow open status
+    match.matchShadowOpenStatus = status;
+    await match.save();
+
+    console.log(`Match ${matchId} shadow open status set to ${status}.`);
+    res.status(200).json({ message: `Match shadow open status successfully set to ${status}.` });
+  } catch (error) {
+    console.error("Error updating match shadow open status:", error);
+    res.status(500).json({ message: "Internal server error" });
+  }
+});
+
+
 
 app.post("/update-match-status-shadow/:matchId", async (req, res) => {
   const { matchId } = req.params;
