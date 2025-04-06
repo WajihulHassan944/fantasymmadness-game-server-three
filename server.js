@@ -7278,7 +7278,7 @@ const blogSchema = new mongoose.Schema({
 const Blog = mongoose.model('Blog', blogSchema);
 
 
-app.post('/create-blog', upload.fields([
+app.post('/api/create-blog', upload.fields([
   { name: 'blogHeaderImage', maxCount: 1 },
   { name: 'sectionImages' } // dynamic multiple section images
 ]), async (req, res) => {
@@ -7352,7 +7352,7 @@ app.post('/create-blog', upload.fields([
 });
 
 
-app.get('/blogs', async (req, res) => {
+app.get('/api/blogs', async (req, res) => {
   try {
     const blogs = await Blog.find().sort({ createdAt: -1 });
     res.status(200).json(blogs);
@@ -7363,7 +7363,7 @@ app.get('/blogs', async (req, res) => {
 });
 
 
-app.delete('/blogs/:id', async (req, res) => {
+app.delete('/api/blogs/:id', async (req, res) => {
   try {
     const blog = await Blog.findById(req.params.id);
     if (!blog) return res.status(404).json({ error: 'Blog not found.' });
@@ -7387,7 +7387,7 @@ app.delete('/blogs/:id', async (req, res) => {
 });
 
 
-app.delete('/delete/blogs', async (req, res) => {
+app.delete('/api/delete/blogs', async (req, res) => {
   try {
     const blogs = await Blog.find();
 
