@@ -7315,6 +7315,7 @@ app.post('/api/create-blog', upload.fields([
         ).end(req.files['blogHeaderImage'][0].buffer);
       });
       blogHeaderImage = result.secure_url;
+      blogHeaderImagePublicId = result.public_id;
     }
 
     // Upload section images and map them to parsedSections
@@ -7330,6 +7331,7 @@ app.post('/api/create-blog', upload.fields([
           ).end(sectionImages[i].buffer);
         });
         parsedSections[i].image = imageUpload.secure_url;
+        parsedSections[i].imagePublicId = imageUpload.public_id;
       } else {
         console.warn(`No image found for section index ${i}`);
       }
@@ -7347,6 +7349,7 @@ app.post('/api/create-blog', upload.fields([
         metaDescription,
         header,
         blogHeaderImage,
+        blogHeaderImagePublicId,
         sections: parsedSections
       });
       await blog.save();
