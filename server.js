@@ -7373,7 +7373,6 @@ app.delete('/blogs/:id', async (req, res) => {
       await cloudinary.uploader.destroy(blog.blogHeaderImagePublicId);
     }
 
-    // Delete all section images
     for (const section of blog.sections) {
       if (section.imagePublicId) {
         await cloudinary.uploader.destroy(section.imagePublicId);
@@ -7412,6 +7411,8 @@ app.delete('/delete/blogs', async (req, res) => {
     res.status(500).json({ error: 'Internal server error while deleting blogs.' });
   }
 });
+
+
 
 
 
