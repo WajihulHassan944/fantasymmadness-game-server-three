@@ -7245,6 +7245,183 @@ app.delete('/sponsor/:id', async (req, res) => {
 
 
 
+
+
+
+
+
+// Blogs of fantasy mmadness
+const blogSchema = new mongoose.Schema({
+  metaTitle: String,
+  metaDescription: String,
+  header: String,
+  blogHeaderImage: String,
+  blogHeaderImagePublicId: String, // For deletion
+
+  sections: [
+    {
+      title: String,
+      content: String,
+      image: String,
+      imagePublicId: String, // For deletion
+      headings: [
+        {
+          title: String,
+          content: String
+        }
+      ]
+    }
+  ]
+}, { timestamps: true });
+
+
+const Blog = mongoose.model('Blog', blogSchema);
+
+
+app.post('/create-blog', upload.fields([
+  { name: 'blogHeaderImage', maxCount: 1 },
+  { name: 'sectionImages' } // dynamic multiple section images
+]), async (req, res) => {
+  try {
+    const {
+      metaTitle,
+      metaDescription,
+      header,
+      sections // JSON.stringify-ed array of section objects
+    } = req.body;
+
+    const parsedSections = JSON.parse(sections || '[]');
+
+    // Upload blogHeaderImage if provided
+    let blogHeaderImage = '';
+    if (req.files['blogHeaderImage']) {
+      const result = await new Promise((resolve, reject) => {
+        cloudinary.uploader.upload_stream(
+          { folder: 'blogs/header' },
+          (error, result) => {
+            if (error) return reject(error);
+            resolve(result);
+          }
+        ).end(req.files['blogHeaderImage'][0].buffer);
+      });
+      blogHeaderImage = result.secure_url;
+    }
+
+    // Upload section images dynamically and map to their section
+    const sectionImages = req.files['sectionImages'] || [];
+
+    for (let i = 0; i < parsedSections.length; i++) {
+      if (sectionImages[i]) {
+        const imageUpload = await new Promise((resolve, reject) => {
+          cloudinary.uploader.upload_stream(
+            { folder: 'blogs/sections' },
+            (error, result) => {
+              if (error) return reject(error);
+              resolve(result);
+            }
+          ).end(sectionImages[i].buffer);
+        });
+
+        parsedSections[i].image = imageUpload.secure_url;
+      }
+    }
+
+    // Check if blog already exists
+    let blog = await Blog.findOne({ metaTitle });
+
+    if (blog) {
+      blog.sections.push(...parsedSections); // Append all new sections
+      await blog.save();
+    } else {
+      blog = new Blog({
+        metaTitle,
+        metaDescription,
+        header,
+        blogHeaderImage,
+        sections: parsedSections
+      });
+      await blog.save();
+    }
+
+    res.status(201).json({ message: 'Blog created/updated successfully', blog });
+
+  } catch (error) {
+    console.error('Error creating blog:', error);
+    res.status(500).json({ error: 'Internal server error while creating blog.' });
+  }
+});
+
+
+app.get('/blogs', async (req, res) => {
+  try {
+    const blogs = await Blog.find().sort({ createdAt: -1 });
+    res.status(200).json(blogs);
+  } catch (err) {
+    console.error('Error fetching blogs:', err);
+    res.status(500).json({ error: 'Internal server error while fetching blogs.' });
+  }
+});
+
+
+app.delete('/blogs/:id', async (req, res) => {
+  try {
+    const blog = await Blog.findById(req.params.id);
+    if (!blog) return res.status(404).json({ error: 'Blog not found.' });
+
+    // Delete blog header image
+    if (blog.blogHeaderImagePublicId) {
+      await cloudinary.uploader.destroy(blog.blogHeaderImagePublicId);
+    }
+
+    // Delete all section images
+    for (const section of blog.sections) {
+      if (section.imagePublicId) {
+        await cloudinary.uploader.destroy(section.imagePublicId);
+      }
+    }
+
+    await Blog.findByIdAndDelete(req.params.id);
+    res.status(200).json({ message: 'Blog deleted successfully.' });
+  } catch (err) {
+    console.error('Error deleting blog:', err);
+    res.status(500).json({ error: 'Internal server error while deleting blog.' });
+  }
+});
+
+
+app.delete('/delete/blogs', async (req, res) => {
+  try {
+    const blogs = await Blog.find();
+
+    for (const blog of blogs) {
+      if (blog.blogHeaderImagePublicId) {
+        await cloudinary.uploader.destroy(blog.blogHeaderImagePublicId);
+      }
+
+      for (const section of blog.sections) {
+        if (section.imagePublicId) {
+          await cloudinary.uploader.destroy(section.imagePublicId);
+        }
+      }
+    }
+
+    await Blog.deleteMany();
+    res.status(200).json({ message: 'All blogs deleted successfully.' });
+  } catch (err) {
+    console.error('Error deleting all blogs:', err);
+    res.status(500).json({ error: 'Internal server error while deleting blogs.' });
+  }
+});
+
+
+
+
+
+
+
+
+
+
 // Start server
 const server = app.listen(PORT, () => {
   console.log(`Server started on port ${PORT}`);
