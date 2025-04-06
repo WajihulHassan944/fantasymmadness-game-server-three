@@ -7277,22 +7277,32 @@ const blogSchema = new mongoose.Schema({
 
 const Blog = mongoose.model('Blog', blogSchema);
 
-
 app.post('/api/create-blog', upload.fields([
   { name: 'blogHeaderImage', maxCount: 1 },
-  { name: 'sectionImages' } // dynamic multiple section images
+  { name: 'sectionImages' } // multiple section images
 ]), async (req, res) => {
   try {
     const {
       metaTitle,
       metaDescription,
       header,
-      sections // JSON.stringify-ed array of section objects
+      sections // stringified JSON array
     } = req.body;
 
-    const parsedSections = JSON.parse(sections || '[]');
+    // Parse sections safely
+    let parsedSections = [];
+    try {
+      parsedSections = JSON.parse(sections || '[]');
+    } catch (e) {
+      console.error('Invalid JSON in sections:', sections);
+      return res.status(400).json({ error: 'Invalid sections format.' });
+    }
 
-    // Upload blogHeaderImage if provided
+    console.log('Parsed Sections:', parsedSections.length);
+    const sectionImages = req.files['sectionImages'] || [];
+    console.log('Received sectionImages:', sectionImages.length);
+
+    // Upload blogHeaderImage if present
     let blogHeaderImage = '';
     if (req.files['blogHeaderImage']) {
       const result = await new Promise((resolve, reject) => {
@@ -7307,11 +7317,9 @@ app.post('/api/create-blog', upload.fields([
       blogHeaderImage = result.secure_url;
     }
 
-    // Upload section images dynamically and map to their section
-    const sectionImages = req.files['sectionImages'] || [];
-
+    // Upload section images and map them to parsedSections
     for (let i = 0; i < parsedSections.length; i++) {
-      if (sectionImages[i]) {
+      if (sectionImages[i]?.buffer) {
         const imageUpload = await new Promise((resolve, reject) => {
           cloudinary.uploader.upload_stream(
             { folder: 'blogs/sections' },
@@ -7321,16 +7329,17 @@ app.post('/api/create-blog', upload.fields([
             }
           ).end(sectionImages[i].buffer);
         });
-
         parsedSections[i].image = imageUpload.secure_url;
+      } else {
+        console.warn(`No image found for section index ${i}`);
       }
     }
 
-    // Check if blog already exists
+    // Check if blog exists
     let blog = await Blog.findOne({ metaTitle });
 
     if (blog) {
-      blog.sections.push(...parsedSections); // Append all new sections
+      blog.sections.push(...parsedSections);
       await blog.save();
     } else {
       blog = new Blog({
@@ -7346,7 +7355,8 @@ app.post('/api/create-blog', upload.fields([
     res.status(201).json({ message: 'Blog created/updated successfully', blog });
 
   } catch (error) {
-    console.error('Error creating blog:', error);
+    console.error('Error creating blog:', error.message);
+    console.error(error.stack);
     res.status(500).json({ error: 'Internal server error while creating blog.' });
   }
 });
