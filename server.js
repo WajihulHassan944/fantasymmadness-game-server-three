@@ -7399,30 +7399,40 @@ app.delete('/api/blogs/:id', async (req, res) => {
   }
 });
 
-
 app.delete('/api/delete/blogs', async (req, res) => {
   try {
     const blogs = await Blog.find();
 
+    const deletedHeaderImages = [];
+    const deletedSectionImages = [];
+
     for (const blog of blogs) {
       if (blog.blogHeaderImagePublicId) {
         await cloudinary.uploader.destroy(blog.blogHeaderImagePublicId);
+        deletedHeaderImages.push(blog.blogHeaderImagePublicId);
       }
 
       for (const section of blog.sections) {
         if (section.imagePublicId) {
           await cloudinary.uploader.destroy(section.imagePublicId);
+          deletedSectionImages.push(section.imagePublicId);
         }
       }
     }
 
     await Blog.deleteMany();
-    res.status(200).json({ message: 'All blogs deleted successfully.' });
+
+    res.status(200).json({
+      message: 'All blogs and associated images deleted successfully.',
+      deletedHeaderImages,
+      deletedSectionImages
+    });
   } catch (err) {
     console.error('Error deleting all blogs:', err);
     res.status(500).json({ error: 'Internal server error while deleting blogs.' });
   }
 });
+
 
 
 
