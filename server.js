@@ -7368,7 +7368,6 @@ app.delete('/blogs/:id', async (req, res) => {
     const blog = await Blog.findById(req.params.id);
     if (!blog) return res.status(404).json({ error: 'Blog not found.' });
 
-    // Delete blog header image
     if (blog.blogHeaderImagePublicId) {
       await cloudinary.uploader.destroy(blog.blogHeaderImagePublicId);
     }
