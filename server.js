@@ -7375,6 +7375,22 @@ app.get('/api/blogs', async (req, res) => {
   }
 });
 
+app.get('/api/blogs/:id', async (req, res) => {
+  try {
+    const blogId = req.params.id;
+    const blog = await Blog.findById(blogId);
+
+    if (!blog) {
+      return res.status(404).json({ error: 'Blog not found.' });
+    }
+
+    res.status(200).json(blog);
+  } catch (err) {
+    console.error('Error fetching blog by ID:', err);
+    res.status(500).json({ error: 'Internal server error while fetching the blog.' });
+  }
+});
+
 
 app.delete('/api/blogs/:id', async (req, res) => {
   try {
