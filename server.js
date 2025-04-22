@@ -2475,7 +2475,81 @@ app.post('/resetPassword-user/:token', async (req, res) => {
   }
 });
 
+app.post('/api/authorize-net/test-transaction', async (req, res) => {
+  const { cardNumber, expirationDate, cardCode, email } = req.body;
 
+  const payload = {
+    $: { 'xmlns': 'AnetApi/xml/v1/schema/AnetApiSchema.xsd' },
+    merchantAuthentication: {
+      name: process.env.AUTHORIZE_NET_API_LOGIN_ID,
+      transactionKey: process.env.AUTHORIZE_NET_TRANSACTION_KEY,
+    },
+    transactionRequest: {
+      transactionType: 'authCaptureTransaction',
+      amount: '0.01', // Tiny test charge
+      payment: {
+        creditCard: {
+          cardNumber: cardNumber,
+          expirationDate: expirationDate,
+          cardCode: cardCode,
+        },
+      },
+      order: {
+        invoiceNumber: `TEST-${new Date().getTime()}`,
+        description: 'Test transaction',
+      },
+      customer: {
+        email: email,
+      },
+      billTo: {
+        firstName: 'Test',
+        lastName: 'User',
+        address: '123 Test Ave',
+        city: 'Testville',
+        state: 'CA',
+        zip: '90001',
+        country: 'US',
+      },
+    },
+  };
+
+  const xmlPayload = builder.buildObject(payload);
+
+  try {
+    const response = await axios.post('https://api.authorize.net/xml/v1/request.api', xmlPayload, {
+      headers: { 'Content-Type': 'application/xml' },
+    });
+
+    xml2js.parseString(response.data, (err, result) => {
+      if (err) {
+        return res.status(500).json({ message: 'Error parsing response', error: err.message });
+      }
+
+      const transactionResponse = result?.createTransactionResponse?.transactionResponse?.[0];
+      const responseCode = transactionResponse?.responseCode?.[0];
+
+      if (responseCode === '1') {
+        return res.status(200).json({
+          message: 'Test transaction successful',
+          transactionId: transactionResponse.transId?.[0],
+          authCode: transactionResponse.authCode?.[0],
+        });
+      } else {
+        const errorMessage = transactionResponse?.messages?.[0]?.message?.[0]?.description || 'Unknown error';
+        return res.status(400).json({
+          message: 'Test transaction failed',
+          details: errorMessage,
+        });
+      }
+    });
+  } catch (error) {
+    console.error('Authorize.Net Test Error:', error?.response?.data || error.message);
+    return res.status(500).json({
+      message: 'Error sending test transaction',
+      error: error?.response?.data || error.message,
+    });
+  }
+});
 
 
 app.post('/api/authorize-net/first-payment', async (req, res) => {
