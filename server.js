@@ -2516,7 +2516,7 @@ app.post('/api/authorize-net/test-transaction', async (req, res) => {
   const xmlPayload = builder.buildObject(payload);
 
   try {
-    const response = await axios.post('https://api.authorize.net/xml/v1/request.api', xmlPayload, {
+    const response = await axios.post('https://apitest.authorize.net/xml/v1/request.api', xmlPayload, {
       headers: { 'Content-Type': 'application/xml' },
     });
 
