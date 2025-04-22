@@ -2572,7 +2572,11 @@ app.post('/api/authorize-net/first-payment', async (req, res) => {
           });
       } else {
         // Transaction failed, handle the failure case
-        const errorMessage = transactionResponse?.messages?.[0]?.message?.[0]?.description || 'Unknown error';
+        const errorMessage =
+        transactionResponse?.errors?.[0]?.error?.[0]?.errorText ||
+        transactionResponse?.messages?.[0]?.message?.[0]?.description ||
+        'Unknown error';
+      
         console.log('Authorize.Net transaction failed:', errorMessage);
         return res.status(400).json({
           message: 'Payment failed',
