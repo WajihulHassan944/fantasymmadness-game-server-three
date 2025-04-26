@@ -45,7 +45,9 @@ const allowedOrigins = [
   'https://fantasymmadness.com', // Add this line
   'http://18.212.65.201:3000',
   'https://www.betcombatsports.com',
-  'https://betcombatsports.com'
+  'https://betcombatsports.com',
+  'https://betfmma.vercel.app',
+  'https://www.betfmma.vercel.app'
 ];
 
 app.use(cors({
