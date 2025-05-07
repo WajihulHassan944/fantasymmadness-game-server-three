@@ -3423,6 +3423,29 @@ app.post('/register', async (req, res) => {
 
     await newUser.save();
 
+    if (req.body.referrerId) {
+      try {
+        const referrer = await User.findById(req.body.referrerId);
+        if (referrer) {
+          // Create a referral record
+          await Referral.create({
+            referrer: referrer._id,
+            referredUser: newUser._id,
+            rewarded: true // optional: immediately reward or use verification to trigger
+          });
+    
+          // Award 3 tokens to referrer
+          const currentTokens = parseInt(referrer.tokens ?? "0", 10);
+          referrer.tokens = (currentTokens + 3).toString();
+          await referrer.save();
+        }
+      } catch (err) {
+        console.error('Referral processing error:', err);
+      }
+    }
+
+
+
     setTimeout(async () => {
       // Find the user again to ensure the data is still available
       const user = await User.findOne({ email });
@@ -7456,6 +7479,67 @@ app.delete('/api/delete/blogs', async (req, res) => {
 
 
 
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+const referralSchema = new mongoose.Schema({
+  referrer: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true },
+  referredUser: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true },
+  rewarded: { type: Boolean, default: false },
+  createdAt: { type: Date, default: Date.now }
+});
+
+const Referral = mongoose.model('Referral', referralSchema);
+
+app.post('/api/referrals', async (req, res) => {
+  try {
+    const referral = await Referral.create(req.body);
+    res.status(201).json(referral);
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to create referral' });
+  }
+});
+
+app.get('/api/referrals', async (req, res) => {
+  try {
+    const referrals = await Referral.find().populate('referrer referredUser');
+    res.status(200).json(referrals);
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to fetch referrals' });
+  }
+});
+
+app.get('/api/referrals/:id', async (req, res) => {
+  try {
+    const referral = await Referral.findById(req.params.id).populate('referrer referredUser');
+    if (!referral) return res.status(404).send('Referral not found');
+    res.status(200).json(referral);
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to fetch referral' });
+  }
+});
+
+app.delete('/api/referrals/:id', async (req, res) => {
+  try {
+    await Referral.findByIdAndDelete(req.params.id);
+    res.status(204).send();
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to delete referral' });
+  }
+});
 
 
 
