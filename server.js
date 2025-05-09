@@ -6522,18 +6522,21 @@ app.delete('/redusers/:email', async (req, res) => {
 
 
 
-
 const siteStatsSchema = new mongoose.Schema({
-  totalClicks: { type: Number, default: 0 },
-  allClicks: { type: Number, default: 0 },
-  trackedDevices: { type: [String], default: [] }, // Array to store unique device IDs
-  clicksByDate: { 
-    type: Map, 
-    of: Number, 
-    default: new Map() // Map to store dates and their respective click counts
+  totalClicks: { type: Number, default: 0 }, 
+  allClicks: { type: Number, default: 0 },   
+  trackedDevices: { type: [String], default: [] }, 
+  clicksByDate: {                            
+    type: Map,
+    of: Number,
+    default: new Map(),
+  },
+  allClicksByDate: {                        
+    type: Map,
+    of: Number,
+    default: new Map(),
   },
 });
-
 const SiteStats = mongoose.model('SiteStats', siteStatsSchema);
 app.post('/track-click', async (req, res) => {
   const { deviceId } = req.body;
@@ -6552,21 +6555,22 @@ app.post('/track-click', async (req, res) => {
         allClicks: 0,
         trackedDevices: [],
         clicksByDate: new Map(),
+        allClicksByDate: new Map(),
       });
     }
 
     // Always increment allClicks
     stats.allClicks += 1;
+    stats.allClicksByDate.set(today, (stats.allClicksByDate.get(today) || 0) + 1);
 
     let isNewDevice = false;
 
     if (!stats.trackedDevices.includes(deviceId)) {
       stats.totalClicks += 1;
       stats.trackedDevices.push(deviceId);
+      stats.clicksByDate.set(today, (stats.clicksByDate.get(today) || 0) + 1);
       isNewDevice = true;
     }
-
-    stats.clicksByDate.set(today, (stats.clicksByDate.get(today) || 0) + 1);
 
     await stats.save();
 
@@ -6574,7 +6578,8 @@ app.post('/track-click', async (req, res) => {
       message: isNewDevice ? 'Click tracked (unique)' : 'Click tracked (repeat)',
       totalClicks: stats.totalClicks,
       allClicks: stats.allClicks,
-      clicksByDate: Object.fromEntries(stats.clicksByDate)
+      clicksByDate: Object.fromEntries(stats.clicksByDate),
+      allClicksByDate: Object.fromEntries(stats.allClicksByDate),
     });
 
   } catch (error) {
