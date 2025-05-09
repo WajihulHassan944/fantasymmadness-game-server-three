@@ -6604,10 +6604,8 @@ app.get('/get-total-clicks', async (req, res) => {
 
 app.post('/reset-stats', async (req, res) => {
   try {
-    // Delete the stats document(s)
     await SiteStats.deleteMany({});
     
-    // Respond with a success message
     res.status(200).send({ message: 'All site stats have been reset successfully.' });
   } catch (error) {
     console.error('Error resetting stats:', error);
@@ -6616,6 +6614,41 @@ app.post('/reset-stats', async (req, res) => {
 });
 
 
+app.post('/reset-unique-visitors', async (req, res) => {
+  try {
+    const stats = await SiteStats.findOne({});
+    if (!stats) return res.status(404).send({ message: 'No stats found.' });
+
+    stats.totalClicks = 0;
+    stats.trackedDevices = [];
+    stats.clicksByDate = new Map();
+
+    await stats.save();
+
+    res.status(200).send({ message: 'Unique visitor stats reset successfully.' });
+  } catch (error) {
+    console.error('Error resetting unique visitors:', error);
+    res.status(500).send({ message: 'Error resetting unique visitor stats.' });
+  }
+});
+
+
+app.post('/reset-all-visitors', async (req, res) => {
+  try {
+    const stats = await SiteStats.findOne({});
+    if (!stats) return res.status(404).send({ message: 'No stats found.' });
+
+    stats.allClicks = 0;
+    stats.allClicksByDate = new Map();
+
+    await stats.save();
+
+    res.status(200).send({ message: 'All visitor stats reset successfully.' });
+  } catch (error) {
+    console.error('Error resetting all visitors:', error);
+    res.status(500).send({ message: 'Error resetting all visitor stats.' });
+  }
+});
 
 
 
