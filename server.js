@@ -6525,6 +6525,7 @@ app.delete('/redusers/:email', async (req, res) => {
 
 const siteStatsSchema = new mongoose.Schema({
   totalClicks: { type: Number, default: 0 },
+  allClicks: { type: Number, default: 0 },
   trackedDevices: { type: [String], default: [] }, // Array to store unique device IDs
   clicksByDate: { 
     type: Map, 
@@ -6542,43 +6543,40 @@ app.post('/track-click', async (req, res) => {
   }
 
   try {
-    const today = new Date().toISOString().split('T')[0]; // Get current date in YYYY-MM-DD format
+    const today = new Date().toISOString().split('T')[0];
 
-    // Find the stats document (assuming there's only one)
     let stats = await SiteStats.findOne({});
-
     if (!stats) {
-      // Create a new stats document if it doesn't exist
       stats = await SiteStats.create({
         totalClicks: 0,
+        allClicks: 0,
         trackedDevices: [],
         clicksByDate: new Map(),
       });
     }
 
-    // Check if the device ID is already tracked
-    if (stats.trackedDevices.includes(deviceId)) {
-      return res.status(200).send({ 
-        message: 'Device already tracked', 
-        totalClicks: stats.totalClicks, 
-        clicksByDate: Object.fromEntries(stats.clicksByDate) // Convert Map to plain object for response
-      });
+    // Always increment allClicks
+    stats.allClicks += 1;
+
+    let isNewDevice = false;
+
+    if (!stats.trackedDevices.includes(deviceId)) {
+      stats.totalClicks += 1;
+      stats.trackedDevices.push(deviceId);
+      isNewDevice = true;
     }
 
-    // Add the device ID and increment the total clicks
-    stats.totalClicks += 1;
-    stats.trackedDevices.push(deviceId);
-
-    // Increment the click count for today
     stats.clicksByDate.set(today, (stats.clicksByDate.get(today) || 0) + 1);
 
     await stats.save();
 
     res.status(200).send({ 
-      message: 'Click tracked', 
-      totalClicks: stats.totalClicks, 
-      clicksByDate: Object.fromEntries(stats.clicksByDate) // Convert Map to plain object for response
+      message: isNewDevice ? 'Click tracked (unique)' : 'Click tracked (repeat)',
+      totalClicks: stats.totalClicks,
+      allClicks: stats.allClicks,
+      clicksByDate: Object.fromEntries(stats.clicksByDate)
     });
+
   } catch (error) {
     console.error('Error tracking click:', error);
     res.status(500).send({ message: 'Error tracking click' });
