@@ -7191,7 +7191,12 @@ app.post('/upload-sponsor', upload.single('image'), async (req, res) => {
     });
 
     await newSponsor.save();
-
+  
+    const notification = new Notification({
+      title: `New Sponsor added: ${newSponsor.name}`,
+    });
+    await notification.save();
+  
     const emailContent = `
       <table width="100%" cellpadding="0" cellspacing="0" border="0" style="width:100%; max-width:600px; margin:auto;">
         <tr>
@@ -7307,6 +7312,11 @@ app.put('/sponsor/:id', upload.single('image'), async (req, res) => {
       new: true,
       runValidators: true,
     });
+    
+    const notification = new Notification({
+      title: `Sponsor updated: ${updatedSponsor.name}`,
+    });
+    await notification.save();
 
     res.status(200).json({ success: true, data: updatedSponsor });
   } catch (error) {
@@ -7329,6 +7339,10 @@ app.delete('/sponsor/:id', async (req, res) => {
       }
     }
 
+    const notification = new Notification({
+      title: `Sponsor deleted: ${sponsor.name}`,
+    });
+    await notification.save();
     res.status(200).json({ success: true, message: 'Sponsor deleted successfully' });
   } catch (error) {
     console.error('Error deleting sponsor:', error);
