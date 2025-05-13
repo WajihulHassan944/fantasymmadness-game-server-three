@@ -7324,25 +7324,26 @@ app.put('/sponsor/:id', upload.single('image'), async (req, res) => {
     res.status(400).json({ success: false, message: error.message });
   }
 });
-
-// DELETE route to delete a sponsor
 app.delete('/sponsor/:id', async (req, res) => {
   try {
     const sponsor = await Sponsors.findByIdAndDelete(req.params.id);
     if (!sponsor) return res.status(404).json({ success: false, message: 'Sponsor not found' });
 
-    // Delete the image from ImgBB
+    // Delete the image from Cloudinary using public_id
     if (sponsor.imageDeleteUrl) {
-      const deleteResponse = await fetch(sponsor.imageDeleteUrl, { method: 'GET' });
-      if (!deleteResponse.ok) {
-        console.warn('Failed to delete image from ImgBB:', await deleteResponse.text());
+      try {
+        await cloudinary.uploader.destroy(sponsor.imageDeleteUrl);
+      } catch (err) {
+        console.warn('Failed to delete image from Cloudinary:', err.message);
       }
     }
 
+    // Save notification
     const notification = new Notification({
       title: `Sponsor deleted: ${sponsor.name}`,
     });
     await notification.save();
+
     res.status(200).json({ success: true, message: 'Sponsor deleted successfully' });
   } catch (error) {
     console.error('Error deleting sponsor:', error);
