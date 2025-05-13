@@ -2764,7 +2764,11 @@ app.post('/google-login', async (req, res) => {
       });
 
       await user.save();
-
+const notification = new Notification({
+      title: `User Signed Up: ${user.firstName}`,
+    });
+    await notification.save();
+    
       // Send welcome email to the new user
       await transporter.sendMail({
         from: 'Fantasymmadness2@gmail.com',
@@ -3423,6 +3427,12 @@ app.post('/register', async (req, res) => {
 
     await newUser.save();
 
+    const notification = new Notification({
+      title: `New User Signed Up: ${newUser.firstName}`,
+    });
+    await notification.save();
+
+
     if (req.body.referrerId) {
       try {
         const referrer = await User.findById(req.body.referrerId);
@@ -3532,18 +3542,13 @@ app.delete('/usertodelete/:id', async (req, res) => {
       return res.status(404).json({ message: 'User not found' });
     }
 
-    // Delete profile image from imgbb if a delete URL exists
-    if (user.profileDeleteUrl) {
-      await fetch(user.profileDeleteUrl, { method: 'DELETE' })
-        .then(response => {
-          if (!response.ok) {
-            console.warn('Failed to delete profile image from imgbb');
-          }
-        })
-        .catch(error => {
-          console.error('Error deleting image from imgbb:', error);
-        });
-    }
+ if (user.profileDeleteUrl) {
+  try {
+    await cloudinary.uploader.destroy(user.profileDeleteUrl);
+  } catch (error) {
+    console.error('Error deleting profile image from Cloudinary:', error.message);
+  }
+}
 
     // Remove user from all affiliate leagues
     const affiliates = await Affiliate.find({ 'usersJoined.userId': id });
@@ -3555,7 +3560,10 @@ app.delete('/usertodelete/:id', async (req, res) => {
 
     // Delete the user from the database
     await User.findByIdAndDelete(id);
-
+ const notification = new Notification({
+      title: `User deleted: ${user.firstName}`,
+    });
+    await notification.save();
     res.status(200).json({ message: 'User and profile image deleted successfully' });
   } catch (error) {
     console.error('Error deleting user:', error);
@@ -4218,6 +4226,11 @@ app.post('/affiliate-google-login', async (req, res) => {
 
       await affiliate.save();
 
+const notification = new Notification({
+      title: `Affiliate Signed Up: ${affiliate.firstName}`,
+    });
+    await notification.save();
+    
 
 
       // Send welcome email to the affiliate
@@ -4965,22 +4978,25 @@ app.delete('/affiliatetodelete/:id', async (req, res) => {
       return res.status(404).json({ message: 'Affiliate not found' });
     }
 
-    // Delete profile image from imgbb if a delete URL exists
     if (affiliate.profileDeleteUrl) {
       await fetch(affiliate.profileDeleteUrl, { method: 'DELETE' })
         .then(response => {
           if (!response.ok) {
-            console.warn('Failed to delete affiliate profile image from imgbb');
+            console.warn('Failed to delete affiliate profile image ');
           }
         })
         .catch(error => {
-          console.error('Error deleting image from imgbb:', error);
+          console.error('Error deleting image :', error);
         });
     }
 
     // Delete the affiliate from the database
     await Affiliate.findByIdAndDelete(id);
-
+const notification = new Notification({
+      title: `Affiliate Removed: ${affiliate.firstName}`,
+    });
+    await notification.save();
+   
     res.status(200).json({ message: 'Affiliate and profile image deleted successfully' });
   } catch (error) {
     console.error('Error deleting affiliate:', error);
@@ -5105,6 +5121,10 @@ app.post('/registerAffiliate', upload.single('image'), async (req, res) => {
     // Save the new user to the database
     await newUser.save();
 
+const notification = new Notification({
+      title: `Affiliate Signed Up: ${newUser.firstName}`,
+    });
+    await notification.save();
     const approvalLink = `https://fantasymmadness-game-server-three.vercel.app/approveAffiliate/${newUser._id}`;
 
     // Send email notification to the admin
