@@ -6683,11 +6683,17 @@ app.delete('/all/delete/faqs', async (req, res) => {
     res.status(500).json({ error: 'Failed to delete FAQs from the database.' });
   }
 });
-
 app.post('/faqs', async (req, res) => {
   try {
     const faq = new Faqs(req.body);
     await faq.save();
+
+    // Create a notification when a new FAQ is added
+    const notification = new Notification({
+      title: `New FAQ Added: ${faq.title}`,
+    });
+    await notification.save();
+
     res.status(201).json({ success: true, data: faq });
   } catch (error) {
     res.status(400).json({ success: false, message: error.message });
@@ -7576,6 +7582,61 @@ app.delete('/api/referrals/:id', async (req, res) => {
     res.status(500).json({ error: 'Failed to delete referral' });
   }
 });
+
+
+
+
+
+
+
+// admin notifications
+const notificationSchema = new mongoose.Schema({
+  title: { type: String, required: true },
+  read: { type: Boolean, default: false },
+}, { timestamps: true });
+
+const Notification = mongoose.model('Notification', notificationSchema);
+
+// GET all notifications
+app.get('/api/notifications', async (req, res) => {
+  try {
+    const notifications = await Notification.find().sort({ createdAt: -1 });
+    res.status(200).json(notifications);
+  } catch (error) {
+    res.status(500).json({ message: 'Error fetching notifications' });
+  }
+});
+
+// DELETE a notification by ID
+app.delete('/api/notifications/:id', async (req, res) => {
+  try {
+    const { id } = req.params;
+    const deleted = await Notification.findByIdAndDelete(id);
+    if (!deleted) return res.status(404).json({ message: 'Notification not found' });
+    res.status(200).json({ message: 'Notification deleted' });
+  } catch (error) {
+    res.status(500).json({ message: 'Error deleting notification' });
+  }
+});
+
+// PATCH - mark notification as read (automatically sets read to true)
+app.patch('/api/notifications/:id/read', async (req, res) => {
+  try {
+    const { id } = req.params;
+
+    const updated = await Notification.findByIdAndUpdate(
+      id,
+      { read: true },
+      { new: true }
+    );
+
+    if (!updated) return res.status(404).json({ message: 'Notification not found' });
+    res.status(200).json(updated);
+  } catch (error) {
+    res.status(500).json({ message: 'Error updating read status' });
+  }
+});
+
 
 
 
