@@ -4979,16 +4979,12 @@ app.delete('/affiliatetodelete/:id', async (req, res) => {
     }
 
     if (affiliate.profileDeleteUrl) {
-      await fetch(affiliate.profileDeleteUrl, { method: 'DELETE' })
-        .then(response => {
-          if (!response.ok) {
-            console.warn('Failed to delete affiliate profile image ');
-          }
-        })
-        .catch(error => {
-          console.error('Error deleting image :', error);
-        });
-    }
+  try {
+    await cloudinary.uploader.destroy(affiliate.profileDeleteUrl);
+  } catch (error) {
+    console.error('Error deleting affiliate profile image from Cloudinary:', error.message);
+  }
+}
 
     // Delete the affiliate from the database
     await Affiliate.findByIdAndDelete(id);
