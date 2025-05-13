@@ -5762,34 +5762,35 @@ app.post('/addShadow', upload.fields([
 });
 
 
-
 app.get('/dashboard-counts', async (req, res) => {
   try {
-    // Fetch counts using Mongoose's countDocuments method
+    // Fetch entity counts
     const affiliatesCount = await Affiliate.countDocuments({});
     const matchesCount = await Match.countDocuments({});
     const usersCount = await User.countDocuments({});
     const shadowTemplatesCount = await Shadow.countDocuments({});
-    
+
     // Fetch total clicks from SiteStats
     const stats = await SiteStats.findOne({});
     const totalClicks = stats ? stats.totalClicks : 0;
 
-    // Send response with all counts, including total clicks
+    // Count unread notifications
+    const unreadNotificationsCount = await Notification.countDocuments({ read: false });
+
+    // Send response
     res.json({
       affiliatesCount,
       matchesCount,
       usersCount,
       shadowTemplatesCount,
-      totalClicks // Include total clicks in the response
+      totalClicks,
+      unreadNotificationsCount
     });
   } catch (error) {
     console.error('Error fetching dashboard counts:', error);
     res.status(500).json({ error: 'Failed to fetch counts' });
   }
 });
-
-
 
 
 
