@@ -6921,6 +6921,12 @@ app.post('/news', async (req, res) => {
     const news = new News(req.body);
     await news.save();
 
+    const notification = new Notification({
+      title: `New News Added: ${news.title}`,
+    });
+    await notification.save();
+
+
     // Check if notifications are enabled in the request
     if (req.body.notify === 'true' || req.body.notify === true) {
       // Fetch all users with isSubscribed set to true
@@ -7046,6 +7052,12 @@ app.put('/news/:id', async (req, res) => {
       runValidators: true,
     });
     if (!news) return res.status(404).json({ success: false, message: 'News article not found' });
+
+    const notification = new Notification({
+      title: `News Updated: ${news.title}`,
+    });
+    await notification.save();
+
     res.status(200).json({ success: true, data: news });
   } catch (error) {
     res.status(400).json({ success: false, message: error.message });
@@ -7057,6 +7069,11 @@ app.delete('/news/:id', async (req, res) => {
   try {
     const news = await News.findByIdAndDelete(req.params.id);
     if (!news) return res.status(404).json({ success: false, message: 'News article not found' });
+    
+    const notification = new Notification({
+      title: `News Deleted: ${news.title}`,
+    });
+    await notification.save();
     res.status(200).json({ success: true, message: 'News article deleted successfully' });
   } catch (error) {
     res.status(400).json({ success: false, message: error.message });
