@@ -6715,7 +6715,15 @@ app.put('/faqs/:id', async (req, res) => {
       new: true,
       runValidators: true,
     });
+
     if (!faq) return res.status(404).json({ success: false, message: 'FAQ not found' });
+
+    // Create a notification for FAQ update
+    const notification = new Notification({
+      title: `FAQ Updated: ${faq.title}`,
+    });
+    await notification.save();
+
     res.status(200).json({ success: true, data: faq });
   } catch (error) {
     res.status(400).json({ success: false, message: error.message });
@@ -6726,11 +6734,19 @@ app.delete('/faqs/:id', async (req, res) => {
   try {
     const faq = await Faqs.findByIdAndDelete(req.params.id);
     if (!faq) return res.status(404).json({ success: false, message: 'FAQ not found' });
+
+    // Create a notification for FAQ deletion
+    const notification = new Notification({
+      title: `FAQ Deleted: ${faq.title}`,
+    });
+    await notification.save();
+
     res.status(200).json({ success: true, message: 'FAQ deleted successfully' });
   } catch (error) {
     res.status(400).json({ success: false, message: error.message });
   }
 });
+
 
 app.post('/faqs/bulk', async (req, res) => {
   const faqs = req.body; // Expecting an array of FAQ objects in the request body
