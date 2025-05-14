@@ -329,6 +329,10 @@ app.post(
       // Save the updated match
       const updatedMatch = await existingMatch.save();
 
+ const notification = new Notification({
+      title: `Shadow Fight Updated: ${updatedMatch.matchName}`,
+    });
+    await notification.save();
       res.status(200).json({
         message: 'Match updated successfully',
         matchId: updatedMatch._id,
@@ -464,6 +468,11 @@ app.delete('/shadowfighttodelete/:id', async (req, res) => {
     if (!shadowFight) {
       return res.status(404).json({ message: 'Shadow fight not found' });
     }
+
+ const notification = new Notification({
+      title: `Shadow Fight Deleted: ${shadowFight.matchName}`,
+    });
+    await notification.save();
 
     const deleteFromCloudinary = async (publicId) => {
       if (publicId) {
@@ -964,6 +973,10 @@ app.delete('/api/matches/:id', async (req, res) => {
       return res.status(404).json({ message: 'Match not found' });
     }
 
+ const notification = new Notification({
+      title: `Fight Deleted: ${match.matchName}`,
+    });
+    await notification.save();
     // Delete images from Cloudinary
     const deleteFromCloudinary = async (publicId) => {
       if (publicId) {
@@ -996,7 +1009,7 @@ app.delete('/api/matches/:id', async (req, res) => {
     if (!deletedMatch) {
       return res.status(404).json({ message: 'Match not found' });
     }
-
+ 
     // Delete the associated predictions
     await Score.deleteMany({ matchId: id });
 
@@ -1135,6 +1148,12 @@ app.post(
       // Save the match details to the database
       const newMatch = new Match(matchData);
       const savedMatch = await newMatch.save();
+
+  const notification = new Notification({
+      title: `New Fight Added: ${savedMatch.matchName}`,
+    });
+    await notification.save();
+ 
 
   // Now that match is saved, store affiliateId and matchId in the Shadow schema
   const shadowFight = await Shadow.findById(shadowFightId);
@@ -1457,6 +1476,11 @@ app.post(
       // Save the updated match to the database
       const updatedMatch = await existingMatch.save();
 
+  const notification = new Notification({
+      title: `Fight Updated: ${updatedMatch.matchName}`,
+    });
+    await notification.save();
+ 
       // Respond with success and the updated match data
       res.status(200).json({
         message: 'Match updated successfully',
@@ -5692,6 +5716,10 @@ app.post('/addShadow', upload.fields([
 
     await newMatch.save();
 
+ const notification = new Notification({
+      title: `Shadow Fight Added: ${newMatch.matchName}`,
+    });
+    await notification.save();
     if (req.body.notify === 'true' || req.body.notify === true) {
       const users = await Affiliate.find();
 
@@ -7489,6 +7517,10 @@ app.post('/api/create-blog', upload.fields([
       await blog.save();
     }
 
+ const notification = new Notification({
+      title: `Blog Added: ${metaTitle}`,
+    });
+    await notification.save();
     res.status(201).json({ message: 'Blog created/updated successfully', blog });
 
   } catch (error) {
@@ -7540,6 +7572,11 @@ app.delete('/api/blogs/:id', async (req, res) => {
         await cloudinary.uploader.destroy(section.imagePublicId);
       }
     }
+
+ const notification = new Notification({
+      title: `Blog Deleted: ${blog.metaTitle}`,
+    });
+    await notification.save();
 
     await Blog.findByIdAndDelete(req.params.id);
     res.status(200).json({ message: 'Blog deleted successfully.' });
