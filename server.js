@@ -4790,7 +4790,7 @@ const sendUserEmail = async (user, affiliate) => {
   const mailOptions = {
     from: '"Fantasy Madness" <Fantasymmadness2@gmail.com>',
     to: user.email,
-    subject: `Thank You for Joining ${affiliate.playerName}'s League!`,
+    subject: `Thank You for Joining ${affiliate.firstName}'s League!`,
     html: `
       <table width="100%" cellpadding="0" cellspacing="0" border="0" style="width:100%; max-width:600px; margin:auto;">
         <!-- Logo Section -->
@@ -4806,7 +4806,7 @@ const sendUserEmail = async (user, affiliate) => {
           <td style="padding: 10px 0;">
             <p style="font-size: 16px; font-family: Arial, sans-serif; color: #333;">Dear ${user.firstName},</p>
             <p style="font-size: 16px; font-family: Arial, sans-serif; color: #333;">
-              Thank you for joining <strong>${affiliate.playerName}</strong>'s league!
+              Thank you for joining <strong>${affiliate.firstName}</strong>'s league!
             </p>
             <p style="font-size: 16px; font-family: Arial, sans-serif; color: #333;">
               We are thrilled to have you on board. Stay tuned for more exciting updates and matches ahead!
@@ -4818,7 +4818,7 @@ const sendUserEmail = async (user, affiliate) => {
         <tr>
           <td align="center" style="padding: 20px; background-color:#f8f8f8;">
             <img src="${affiliate.profileUrl}" alt="Affiliate Profile" style="width:60px; height:60px; border-radius:50%; border:3px solid #191164;" />
-            <h3 style="color: #191164; font-family: 'Impact', fantasy, sans-serif;">${affiliate.playerName}'s League</h3>
+            <h3 style="color: #191164; font-family: 'Impact', fantasy, sans-serif;">${affiliate.firstName}'s League</h3>
             <p style="font-size: 17px; font-family: 'Comic Sans MS', fantasy, sans-serif; color: #555;">
               Get ready for the ultimate competition! We’re excited to see you in action.
             </p>
@@ -4872,7 +4872,7 @@ const sendAffiliateEmail = async (affiliate, user) => {
         <tr>
           <td align="center" style="padding: 20px; background-color:#f8f8f8;">
             <img src="${affiliate.profileUrl}" alt="Affiliate Profile" style="width:60px; height:60px; border-radius:50%; border:3px solid #191164;" />
-            <h3 style="color: #191164; font-family: 'Impact', fantasy, sans-serif;">${affiliate.playerName}'s League</h3>
+            <h3 style="color: #191164; font-family: 'Impact', fantasy, sans-serif;">${affiliate.firstName}'s League</h3>
             <p style="font-size: 17px; font-family: 'Comic Sans MS', fantasy, sans-serif; color: #555;">
               Keep building your team and prepare for thrilling challenges ahead!
             </p>
