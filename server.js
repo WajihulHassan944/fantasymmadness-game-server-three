@@ -4054,6 +4054,10 @@ verified: { type: Boolean, default: false },
   preferredPaymentMethodValue: String, 
   resetPasswordToken: String,
   resetPasswordExpires: Date,
+  rewardTitle: String,
+rewardImageUrl: String,
+rewardImageDeleteUrl: String,
+
   usersJoined: [{
     userId: { type: mongoose.Schema.Types.ObjectId, ref: 'User' }, // User who joined
     email: String,  // Email of the user who joined
@@ -4067,6 +4071,61 @@ verified: { type: Boolean, default: false },
 }, { timestamps: true });
 
 const Affiliate = mongoose.model('Affiliate', affiliateSchema);
+
+
+app.post('/upload-affiliate-reward', upload.single('image'), async (req, res) => {
+  try {
+    const { affiliateId, rewardTitle } = req.body;
+
+    if (!affiliateId) {
+      return res.status(400).json({ message: 'Affiliate ID is required' });
+    }
+
+    if (!req.file) {
+      return res.status(400).json({ message: 'No image file provided' });
+    }
+
+    const affiliate = await Affiliate.findById(affiliateId);
+    if (!affiliate) {
+      return res.status(404).json({ message: 'Affiliate not found' });
+    }
+
+    // Delete old reward image from Cloudinary if exists
+    if (affiliate.rewardImageDeleteUrl) {
+      await cloudinary.uploader.destroy(affiliate.rewardImageDeleteUrl);
+    }
+
+    // Upload new reward image to Cloudinary
+    const result = await new Promise((resolve, reject) => {
+      cloudinary.uploader.upload_stream(
+        { folder: 'affiliate_rewards' },
+        (error, result) => {
+          if (error) return reject(error);
+          resolve(result);
+        }
+      ).end(req.file.buffer);
+    });
+
+    // Update affiliate reward fields
+    affiliate.rewardTitle = rewardTitle;
+    affiliate.rewardImageUrl = result.secure_url;
+    affiliate.rewardImageDeleteUrl = result.public_id;
+    await affiliate.save();
+
+    res.status(200).json({
+      message: 'Reward info uploaded and saved successfully',
+      rewardTitle: affiliate.rewardTitle,
+      rewardImageUrl: affiliate.rewardImageUrl
+    });
+  } catch (error) {
+    console.error('Error uploading reward image:', error);
+    res.status(500).json({ message: 'Server error' });
+  }
+});
+
+
+
+
 
 app.post('/admin/add-affiliate', async (req, res) => {
   const { firstName, lastName, email, password } = req.body;
