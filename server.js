@@ -6717,7 +6717,7 @@ app.get('/get-total-clicks', async (req, res) => {
 app.get('/get-all-time-clicks', async (req, res) => {
   
   try {
-    const stats = await SiteStats.findOne({ });
+    const stats = await SiteStats.find({ });
 
     if (!stats) {
       return res.status(404).send({ message: `No stats found.` });
