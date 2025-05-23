@@ -6625,25 +6625,28 @@ app.delete('/redusers/:email', async (req, res) => {
 
 
 
-
 const siteStatsSchema = new mongoose.Schema({
-  totalClicks: { type: Number, default: 0 }, 
-  allClicks: { type: Number, default: 0 },   
-  trackedDevices: { type: [String], default: [] }, 
-  clicksByDate: {                            
+  domain: { type: String, required: true },  // New: Track by domain
+  totalClicks: { type: Number, default: 0 },
+  allClicks: { type: Number, default: 0 },
+  trackedDevices: { type: [String], default: [] },
+  clicksByDate: {
     type: Map,
     of: Number,
     default: new Map(),
   },
-  allClicksByDate: {                        
+  allClicksByDate: {
     type: Map,
     of: Number,
     default: new Map(),
   },
 });
+
 const SiteStats = mongoose.model('SiteStats', siteStatsSchema);
+
 app.post('/track-click', async (req, res) => {
-  const { deviceId } = req.body;
+  const { deviceId, domain } = req.body;
+  const targetDomain = domain || "https://fantasymmadness.com/"; // default fallback
 
   if (!deviceId) {
     return res.status(400).send({ message: 'Device ID is required' });
@@ -6652,9 +6655,10 @@ app.post('/track-click', async (req, res) => {
   try {
     const today = new Date().toISOString().split('T')[0];
 
-    let stats = await SiteStats.findOne({});
+    let stats = await SiteStats.findOne({ domain: targetDomain });
     if (!stats) {
       stats = await SiteStats.create({
+        domain: targetDomain,
         totalClicks: 0,
         allClicks: 0,
         trackedDevices: [],
@@ -6663,7 +6667,6 @@ app.post('/track-click', async (req, res) => {
       });
     }
 
-    // Always increment allClicks
     stats.allClicks += 1;
     stats.allClicksByDate.set(today, (stats.allClicksByDate.get(today) || 0) + 1);
 
@@ -6693,12 +6696,16 @@ app.post('/track-click', async (req, res) => {
 });
 
 
-
 app.get('/get-total-clicks', async (req, res) => {
+  const domain = req.query.domain || "https://fantasymmadness.com/";
+
   try {
-    // Find the single document storing site stats
-    const stats = await SiteStats.findOne({});
-    
+    const stats = await SiteStats.findOne({ domain });
+
+    if (!stats) {
+      return res.status(404).send({ message: `No stats found for domain ${domain}.` });
+    }
+
     res.status(200).send({ stats });
   } catch (error) {
     console.error('Error fetching total clicks:', error);
@@ -6719,9 +6726,11 @@ app.post('/reset-stats', async (req, res) => {
 
 
 app.post('/reset-unique-visitors', async (req, res) => {
+  const domain = req.body.domain || "https://fantasymmadness.com/";
+
   try {
-    const stats = await SiteStats.findOne({});
-    if (!stats) return res.status(404).send({ message: 'No stats found.' });
+    const stats = await SiteStats.findOne({ domain });
+    if (!stats) return res.status(404).send({ message: `No stats found for domain ${domain}.` });
 
     stats.totalClicks = 0;
     stats.trackedDevices = [];
@@ -6729,31 +6738,49 @@ app.post('/reset-unique-visitors', async (req, res) => {
 
     await stats.save();
 
-    res.status(200).send({ message: 'Unique visitor stats reset successfully.' });
+    res.status(200).send({ message: `Unique visitor stats reset for domain ${domain}.` });
   } catch (error) {
     console.error('Error resetting unique visitors:', error);
     res.status(500).send({ message: 'Error resetting unique visitor stats.' });
   }
 });
 
-
 app.post('/reset-all-visitors', async (req, res) => {
+  const domain = req.body.domain || "https://fantasymmadness.com/";
+
   try {
-    const stats = await SiteStats.findOne({});
-    if (!stats) return res.status(404).send({ message: 'No stats found.' });
+    const stats = await SiteStats.findOne({ domain });
+    if (!stats) return res.status(404).send({ message: `No stats found for domain ${domain}.` });
 
     stats.allClicks = 0;
     stats.allClicksByDate = new Map();
 
     await stats.save();
 
-    res.status(200).send({ message: 'All visitor stats reset successfully.' });
+    res.status(200).send({ message: `All visitor stats reset for domain ${domain}.` });
   } catch (error) {
     console.error('Error resetting all visitors:', error);
     res.status(500).send({ message: 'Error resetting all visitor stats.' });
   }
 });
 
+app.post('/assign-default-domain', async (req, res) => {
+  const defaultDomain = "https://fantasymmadness.com/";
+
+  try {
+    const result = await SiteStats.updateMany(
+      { domain: { $exists: false } },
+      { $set: { domain: defaultDomain } }
+    );
+
+    res.status(200).send({
+      message: `Domain assigned to ${result.modifiedCount} documents.`,
+    });
+  } catch (error) {
+    console.error('Error assigning default domain:', error);
+    res.status(500).send({ message: 'Failed to assign domain.' });
+  }
+});
 
 
 
