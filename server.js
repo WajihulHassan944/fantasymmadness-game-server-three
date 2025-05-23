@@ -43,11 +43,12 @@ const allowedOrigins = [
   'http://localhost:3000',
   'https://www.fantasymmadness.com',
   'https://fantasymmadness.com', // Add this line
-  'http://18.212.65.201:3000',
   'https://www.betcombatsports.com',
   'https://betcombatsports.com',
-  'https://betfmma.vercel.app',
-  'https://www.betfmma.vercel.app'
+  'https://www.betfantasymadness.com',
+   'https://betfantasymadness.com',
+   'https://www.betfmma.com/',
+   'https://betfmma.com/'
 ];
 
 app.use(cors({
@@ -6713,6 +6714,21 @@ app.get('/get-total-clicks', async (req, res) => {
   }
 });
 
+app.get('/get-all-time-clicks', async (req, res) => {
+  
+  try {
+    const stats = await SiteStats.findOne({ });
+
+    if (!stats) {
+      return res.status(404).send({ message: `No stats found.` });
+    }
+
+    res.status(200).send({ stats });
+  } catch (error) {
+    console.error('Error fetching total clicks:', error);
+    res.status(500).send({ message: 'Error fetching total clicks' });
+  }
+});
 app.post('/reset-stats', async (req, res) => {
   try {
     await SiteStats.deleteMany({});
