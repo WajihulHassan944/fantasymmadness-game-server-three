@@ -47,8 +47,8 @@ const allowedOrigins = [
   'https://betcombatsports.com',
   'https://www.betfantasymadness.com',
    'https://betfantasymadness.com',
-   'https://www.betfmma.com/',
-   'https://betfmma.com/'
+   'https://www.betfmma.com',
+   'https://betfmma.com'
 ];
 
 app.use(cors({
