@@ -1,6 +1,7 @@
 const express = require('express');
 const mongoose = require('mongoose');
 const bodyParser = require('body-parser');
+const moment = require('moment');
 const app = express();
 const { ObjectId } = require('mongodb');
 const Pusher = require('pusher');
@@ -7876,14 +7877,26 @@ const pusher = new Pusher({
   useTLS: true,
 });
 
-// --- Send message to group chat ---
 app.post('/api/messages/send', async (req, res) => {
-  const { senderId, senderName, text, time, date, profileUrl } = req.body;
+  const {
+    senderId,
+    senderName,
+    text,
+    profileUrl,
+    time = moment().format('hh:mm A'),
+    date = moment().format('YYYY-MM-DD'),
+  } = req.body;
 
   try {
-    const newMessage = await Message.create({ senderId, senderName, text, time, date,profileUrl });
+    const newMessage = await Message.create({
+      senderId,
+      senderName,
+      text,
+      time,
+      date,
+      profileUrl
+    });
 
-    // Real-time broadcast
     pusher.trigger('chatroom', 'new-message', {
       message: newMessage,
     });
@@ -7894,12 +7907,19 @@ app.post('/api/messages/send', async (req, res) => {
   }
 });
 
-// --- Get all messages, sorted by date & time ---
 app.get('/api/messages/get', async (req, res) => {
   try {
     const messages = await Message.find({}).sort({ createdAt: 1 });
 
-    res.status(200).json(messages);
+    // Group messages by 'date'
+    const messagesByDate = messages.reduce((acc, msg) => {
+      const date = msg.date;
+      if (!acc[date]) acc[date] = [];
+      acc[date].push(msg);
+      return acc;
+    }, {});
+
+    res.status(200).json(messagesByDate); // <- Return grouped structure
   } catch (err) {
     res.status(500).json({ error: 'Fetch failed', details: err.message });
   }
