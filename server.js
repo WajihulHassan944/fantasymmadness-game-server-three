@@ -7925,6 +7925,14 @@ app.get('/api/messages/get', async (req, res) => {
   }
 });
 
+app.delete('/api/messages/delete-all', async (req, res) => {
+  try {
+    await Message.deleteMany({});
+    res.status(200).json({ message: 'All messages deleted successfully.' });
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to delete messages', details: err.message });
+  }
+});
 
 
 
