@@ -7897,7 +7897,7 @@ app.post('/api/messages/send', async (req, res) => {
       profileUrl
     });
 
-    pusher.trigger('chatroom', 'new-message', {
+    pusher.trigger('Fantasy-mmadness', 'new-message', {
       message: newMessage,
     });
 
