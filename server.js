@@ -3,6 +3,7 @@ const mongoose = require('mongoose');
 const bodyParser = require('body-parser');
 const app = express();
 const { ObjectId } = require('mongodb');
+const Pusher = require('pusher');
 const cors = require("cors");
 const FormData = require('form-data');
 const multer = require('multer');
