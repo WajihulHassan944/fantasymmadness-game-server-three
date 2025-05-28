@@ -7850,6 +7850,64 @@ app.patch('/api/notifications/:id/read', async (req, res) => {
 
 
 
+
+
+
+
+const messageSchema = new mongoose.Schema({
+  senderId: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
+  senderName: String,
+  text: String,
+  time: String, // e.g., '10:45 AM'
+  date: String, // e.g., '2025-05-28'
+}, { timestamps: true });
+
+const Message = mongoose.model('Message', messageSchema);
+
+
+// --- Pusher config ---
+const pusher = new Pusher({
+  appId: process.env.PUSHER_APP_ID,
+  key: process.env.PUSHER_KEY,
+  secret: process.env.PUSHER_SECRET,
+  cluster: process.env.PUSHER_CLUSTER,
+  useTLS: true,
+});
+
+// --- Send message to group chat ---
+app.post('/api/messages/send', async (req, res) => {
+  const { senderId, senderName, text, time, date } = req.body;
+
+  try {
+    const newMessage = await Message.create({ senderId, senderName, text, time, date });
+
+    // Real-time broadcast
+    pusher.trigger('chatroom', 'new-message', {
+      message: newMessage,
+    });
+
+    res.status(201).json(newMessage);
+  } catch (err) {
+    res.status(500).json({ error: 'Message send failed', details: err.message });
+  }
+});
+
+// --- Get all messages, sorted by date & time ---
+app.get('/api/messages/get', async (req, res) => {
+  try {
+    const messages = await Message.find({}).sort({ createdAt: 1 });
+
+    res.status(200).json(messages);
+  } catch (err) {
+    res.status(500).json({ error: 'Fetch failed', details: err.message });
+  }
+});
+
+
+
+
+
+
 // Start server
 const server = app.listen(PORT, () => {
   console.log(`Server started on port ${PORT}`);
