@@ -7861,6 +7861,7 @@ const messageSchema = new mongoose.Schema({
   text: String,
   time: String, // e.g., '10:45 AM'
   date: String, // e.g., '2025-05-28'
+  profileUrl: String,
 }, { timestamps: true });
 
 const Message = mongoose.model('Message', messageSchema);
@@ -7877,10 +7878,10 @@ const pusher = new Pusher({
 
 // --- Send message to group chat ---
 app.post('/api/messages/send', async (req, res) => {
-  const { senderId, senderName, text, time, date } = req.body;
+  const { senderId, senderName, text, time, date, profileUrl } = req.body;
 
   try {
-    const newMessage = await Message.create({ senderId, senderName, text, time, date });
+    const newMessage = await Message.create({ senderId, senderName, text, time, date,profileUrl });
 
     // Real-time broadcast
     pusher.trigger('chatroom', 'new-message', {
