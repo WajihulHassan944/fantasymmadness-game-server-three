@@ -7876,7 +7876,6 @@ const pusher = new Pusher({
   cluster: process.env.PUSHER_CLUSTER,
   useTLS: true,
 });
-
 app.post('/api/messages/send', async (req, res) => {
   const {
     senderId,
@@ -7897,11 +7896,14 @@ app.post('/api/messages/send', async (req, res) => {
       profileUrl
     });
 
-    pusher.trigger('Fantasy-mmadness', 'new-message', {
+    const triggerResponse = await pusher.trigger('Fantasy-mmadness', 'new-message', {
       message: newMessage,
     });
 
-    res.status(201).json(newMessage);
+    res.status(201).json({
+      message: newMessage,
+      pusherTriggered: triggerResponse === null, // Pusher returns null on success
+    });
   } catch (err) {
     res.status(500).json({ error: 'Message send failed', details: err.message });
   }
