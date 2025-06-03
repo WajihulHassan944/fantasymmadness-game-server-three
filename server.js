@@ -7927,29 +7927,6 @@ app.get('/api/messages/get', async (req, res) => {
   }
 });
 
-app.delete('/api/messages/delete-all', async (req, res) => {
-  try {
-    await Message.deleteMany({});
-    res.status(200).json({ message: 'All messages deleted successfully.' });
-  } catch (err) {
-    res.status(500).json({ error: 'Failed to delete messages', details: err.message });
-  }
-});
-
-app.delete('/api/messages/:id', async (req, res) => {
-  try {
-    const { id } = req.params;
-    const deletedMessage = await Message.findByIdAndDelete(id);
-
-    if (!deletedMessage) {
-      return res.status(404).json({ error: 'Message not found' });
-    }
-
-    res.status(200).json({ message: 'Message deleted successfully', deletedMessage });
-  } catch (err) {
-    res.status(500).json({ error: 'Failed to delete message', details: err.message });
-  }
-});
 
 app.put('/api/messages/:id', async (req, res) => {
   try {
@@ -7970,9 +7947,46 @@ app.put('/api/messages/:id', async (req, res) => {
       return res.status(404).json({ error: 'Message not found' });
     }
 
+    await pusher.trigger('Fantasy-mmadness', 'message-updated', {
+      message: updatedMessage,
+    });
+
     res.status(200).json({ message: 'Message updated successfully', updatedMessage });
   } catch (err) {
     res.status(500).json({ error: 'Failed to update message', details: err.message });
+  }
+});
+
+app.delete('/api/messages/:id', async (req, res) => {
+  try {
+    const { id } = req.params;
+    const deletedMessage = await Message.findByIdAndDelete(id);
+
+    if (!deletedMessage) {
+      return res.status(404).json({ error: 'Message not found' });
+    }
+
+    await pusher.trigger('Fantasy-mmadness', 'message-deleted', {
+      messageId: deletedMessage._id,
+    });
+
+    res.status(200).json({ message: 'Message deleted successfully', deletedMessage });
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to delete message', details: err.message });
+  }
+});
+
+app.delete('/api/messages/delete-all', async (req, res) => {
+  try {
+    await Message.deleteMany({});
+
+    await pusher.trigger('Fantasy-mmadness', 'all-messages-deleted', {
+      message: 'All messages have been deleted',
+    });
+
+    res.status(200).json({ message: 'All messages deleted successfully.' });
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to delete messages', details: err.message });
   }
 });
 
