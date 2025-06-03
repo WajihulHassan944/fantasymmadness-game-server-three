@@ -7957,7 +7957,7 @@ app.put('/api/messages/:id', async (req, res) => {
   }
 });
 
-app.delete('/api/messages/:id', async (req, res) => {
+app.delete('/api/message-to-del/:id', async (req, res) => {
   try {
     const { id } = req.params;
     const deletedMessage = await Message.findByIdAndDelete(id);
