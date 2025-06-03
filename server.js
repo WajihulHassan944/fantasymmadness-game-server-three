@@ -7936,6 +7936,46 @@ app.delete('/api/messages/delete-all', async (req, res) => {
   }
 });
 
+app.delete('/api/messages/:id', async (req, res) => {
+  try {
+    const { id } = req.params;
+    const deletedMessage = await Message.findByIdAndDelete(id);
+
+    if (!deletedMessage) {
+      return res.status(404).json({ error: 'Message not found' });
+    }
+
+    res.status(200).json({ message: 'Message deleted successfully', deletedMessage });
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to delete message', details: err.message });
+  }
+});
+
+app.put('/api/messages/:id', async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { text } = req.body;
+
+    if (!text || text.trim() === '') {
+      return res.status(400).json({ error: 'Text is required for update' });
+    }
+
+    const updatedMessage = await Message.findByIdAndUpdate(
+      id,
+      { text },
+      { new: true }
+    );
+
+    if (!updatedMessage) {
+      return res.status(404).json({ error: 'Message not found' });
+    }
+
+    res.status(200).json({ message: 'Message updated successfully', updatedMessage });
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to update message', details: err.message });
+  }
+});
+
 
 
 
