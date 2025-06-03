@@ -7967,7 +7967,7 @@ app.delete('/api/message-to-del/:id', async (req, res) => {
     }
 
     await pusher.trigger('Fantasy-mmadness', 'message-deleted', {
-      messageId: deletedMessage._id,
+      messageId: id,
     });
 
     res.status(200).json({ message: 'Message deleted successfully', deletedMessage });
