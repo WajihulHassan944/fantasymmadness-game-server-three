@@ -50,7 +50,13 @@ const allowedOrigins = [
   'https://www.betfantasymadness.com',
    'https://betfantasymadness.com',
    'https://www.betfmma.com',
-   'https://betfmma.com'
+   'https://betfmma.com',
+   'https://combatdoorgym.com',
+   'https://www.combatdoorgym.com',
+   'https://z7neckbrace.online',
+   'https://www.z7neckbrace.online',
+   'https://suckapunch.online',
+   'https://www.suckapunch.online'
 ];
 
 app.use(cors({
