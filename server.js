@@ -2797,6 +2797,30 @@ app.post('/google-login', async (req, res) => {
       });
 
       await user.save();
+
+// Handle referral if referrerId is present
+if (req.body.referrerId && req.body.referrerId !== user._id.toString()) {
+  try {
+    const referrer = await User.findById(req.body.referrerId);
+    const alreadyReferred = await Referral.findOne({ referredUser: user._id });
+
+    if (referrer && !alreadyReferred) {
+      await Referral.create({
+        referrer: referrer._id,
+        referredUser: user._id,
+        rewarded: true,
+      });
+
+      const currentTokens = parseInt(referrer.tokens ?? "0", 10);
+      referrer.tokens = (currentTokens + 3).toString();
+      await referrer.save();
+    }
+  } catch (err) {
+    console.error('Referral processing error (Google Login):', err);
+  }
+}
+
+
 const notification = new Notification({
       title: `User Signed Up: ${user.firstName}`,
     });
