@@ -3466,26 +3466,27 @@ app.post('/register', async (req, res) => {
     await notification.save();
 
 
-    if (req.body.referrerId) {
-      try {
-        const referrer = await User.findById(req.body.referrerId);
-        if (referrer) {
-          // Create a referral record
-          await Referral.create({
-            referrer: referrer._id,
-            referredUser: newUser._id,
-            rewarded: true // optional: immediately reward or use verification to trigger
-          });
-    
-          // Award 3 tokens to referrer
-          const currentTokens = parseInt(referrer.tokens ?? "0", 10);
-          referrer.tokens = (currentTokens + 3).toString();
-          await referrer.save();
-        }
-      } catch (err) {
-        console.error('Referral processing error:', err);
-      }
+if (req.body.referrerId && req.body.referrerId !== newUser._id.toString()) {
+  try {
+    const referrer = await User.findById(req.body.referrerId);
+    const alreadyReferred = await Referral.findOne({ referredUser: newUser._id });
+
+    if (referrer && !alreadyReferred) {
+      await Referral.create({
+        referrer: referrer._id,
+        referredUser: newUser._id,
+        rewarded: true,
+      });
+
+      // Award 3 tokens to the referrer
+      const currentTokens = parseInt(referrer.tokens ?? "0", 10);
+      referrer.tokens = (currentTokens + 3).toString();
+      await referrer.save();
     }
+  } catch (err) {
+    console.error('Referral processing error:', err);
+  }
+}
 
 
 
@@ -7766,13 +7767,60 @@ app.post('/api/referrals', async (req, res) => {
     res.status(500).json({ error: 'Failed to create referral' });
   }
 });
-
 app.get('/api/referrals', async (req, res) => {
   try {
-    const referrals = await Referral.find().populate('referrer referredUser');
-    res.status(200).json(referrals);
+    const leaderboard = await Referral.aggregate([
+      {
+        $group: {
+          _id: "$referrer",
+          referralsCount: { $sum: 1 },
+          referredUserIds: { $push: "$referredUser" }
+        }
+      },
+      {
+        $sort: { referralsCount: -1 }
+      },
+      {
+        $lookup: {
+          from: "users",
+          localField: "_id",
+          foreignField: "_id",
+          as: "referrerDetails"
+        }
+      },
+      {
+        $unwind: "$referrerDetails"
+      },
+      {
+        $lookup: {
+          from: "users",
+          localField: "referredUserIds",
+          foreignField: "_id",
+          as: "referredUsers"
+        }
+      },
+      {
+        $project: {
+          _id: 0,
+          referrer: {
+            _id: "$referrerDetails._id",
+            name: "$referrerDetails.name",
+            email: "$referrerDetails.email" // or other fields you want
+          },
+          referralsCount: 1,
+          referredUsers: {
+            _id: 1,
+            name: 1,
+            email: 1 // or whichever fields you prefer
+          }
+        }
+      }
+    ]);
+
+    res.status(200).json(leaderboard);
   } catch (err) {
-    res.status(500).json({ error: 'Failed to fetch referrals' });
+    console.error(err);
+    res.status(500).json({ error: 'Failed to fetch leaderboard' });
   }
 });
 
