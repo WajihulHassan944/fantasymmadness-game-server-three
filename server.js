@@ -7783,14 +7783,6 @@ const referralSchema = new mongoose.Schema({
 
 const Referral = mongoose.model('Referral', referralSchema);
 
-app.post('/api/referrals', async (req, res) => {
-  try {
-    const referral = await Referral.create(req.body);
-    res.status(201).json(referral);
-  } catch (err) {
-    res.status(500).json({ error: 'Failed to create referral' });
-  }
-});
 app.get('/api/referrals', async (req, res) => {
   try {
     const leaderboard = await Referral.aggregate([
@@ -7812,9 +7804,7 @@ app.get('/api/referrals', async (req, res) => {
           as: "referrerDetails"
         }
       },
-      {
-        $unwind: "$referrerDetails"
-      },
+      { $unwind: "$referrerDetails" },
       {
         $lookup: {
           from: "users",
@@ -7828,14 +7818,20 @@ app.get('/api/referrals', async (req, res) => {
           _id: 0,
           referrer: {
             _id: "$referrerDetails._id",
-            name: "$referrerDetails.name",
-            email: "$referrerDetails.email" // or other fields you want
+            firstName: "$referrerDetails.firstName",
+            lastName: "$referrerDetails.lastName"
           },
           referralsCount: 1,
           referredUsers: {
-            _id: 1,
-            name: 1,
-            email: 1 // or whichever fields you prefer
+            $map: {
+              input: "$referredUsers",
+              as: "user",
+              in: {
+                _id: "$$user._id",
+                firstName: "$$user.firstName",
+                lastName: "$$user.lastName"
+              }
+            }
           }
         }
       }
