@@ -4771,7 +4771,7 @@ app.post('/affiliate/:affiliateId/remove-user', async (req, res) => {
           <td style="padding: 20px; font-family: Arial, sans-serif; color: #333;">
             <p style="font-size: 16px;">Hello ${affiliate.firstName},</p>
             <p style="font-size: 16px; color: #555;">
-              This is to inform you that <strong>${user.fullName || user.username || user.email}</strong> has left your league on Fantasy MMA Madness.
+              This is to inform you that <strong>${user.firstName || user.lastName }</strong> has left your league on Fantasy MMA Madness.
             </p>
           </td>
         </tr>
