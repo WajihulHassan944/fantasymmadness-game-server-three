@@ -4730,34 +4730,87 @@ app.post('/confirm-payment-affiliate', async (req, res) => {
 
 app.post('/affiliate/:affiliateId/remove-user', async (req, res) => {
   const { affiliateId } = req.params;
-  const { userId } = req.body; // UserId comes from the request body
+  const { userId } = req.body;
 
   try {
     const affiliate = await Affiliate.findById(affiliateId);
+    const user = await User.findById(userId);
 
     if (!affiliate) {
       return res.status(404).json({ message: 'Affiliate not found' });
     }
 
-    // Check if user is part of the league
-    const userExists = affiliate.usersJoined.some(user => user.userId.toString() === userId.toString());
+    if (!user) {
+      return res.status(404).json({ message: 'User not found' });
+    }
+
+    const userExists = affiliate.usersJoined.some(joined => joined.userId.toString() === userId.toString());
 
     if (!userExists) {
       return res.status(400).json({ message: 'User not found in this league' });
     }
 
-    // Remove the user from usersJoined array using $pull
+    // Remove user from affiliate
     await Affiliate.findByIdAndUpdate(
       affiliateId,
-      { $pull: { usersJoined: { userId: userId } } },  // Pull removes the user from the array
-      { new: true }  // Return the updated document
+      { $pull: { usersJoined: { userId: userId } } },
+      { new: true }
     );
 
-    return res.status(200).json({ message: 'User successfully removed from the league' });
+    // Prepare and send email to affiliate
+    const emailHtml = `
+      <table width="100%" cellpadding="0" cellspacing="0" border="0" style="width:100%; max-width:600px; margin:auto;">
+        <tr>
+          <td align="center" style="padding: 15px 0;">
+            <img src="https://res.cloudinary.com/daflot6fo/image/upload/v1736068036/bywcrrcqmcyczdyhjmdv.png" alt="Fantasy Madness Logo" style="width:100px;" />
+            <h2 style="margin: 0; color: #191164; font-family: 'New York', Charter, Georgia, serif;">Fantasy Madness</h2>
+          </td>
+        </tr>
+        
+        <tr>
+          <td style="padding: 20px; font-family: Arial, sans-serif; color: #333;">
+            <p style="font-size: 16px;">Hello ${affiliate.firstName},</p>
+            <p style="font-size: 16px; color: #555;">
+              This is to inform you that <strong>${user.fullName || user.username || user.email}</strong> has left your league on Fantasy MMA Madness.
+            </p>
+          </td>
+        </tr>
+
+        <tr>
+          <td align="center" style="padding: 20px 0;">
+            <img src="https://res.cloudinary.com/daflot6fo/image/upload/v1736068036/bywcrrcqmcyczdyhjmdv.png" alt="Fantasy Madness Logo" style="width:70px;" />
+            <p><a href="https://fantasymmadness.com" style="font-family: Arial, sans-serif; color: #191164; text-decoration: none;">https://fantasymmadness.com</a></p>
+            <div style="padding-top: 10px;">
+              <a href="https://www.facebook.com/share/2pzYV9XdQpAU7n6p/?mibextid=LQQJ4d" style="margin: 0 5px;">
+                <img src="https://i.ibb.co/G9wVH2g/facebook-removebg-preview-two.png" alt="Facebook" style="width:35px; height:35px;" />
+              </a>
+              <a href="https://www.instagram.com/fantasymmadness" style="margin: 0 5px;">
+                <img src="https://i.ibb.co/tKj4px0/insta-removebg-preview-two.png" alt="Instagram" style="width:35px; height:35px;" />
+              </a>
+              <a href="https://x.com/davis_kell51697" style="margin: 0 5px;">
+                <img src="https://i.ibb.co/T0cvy2Q/twitter-removebg-preview-two.png" alt="Twitter" style="width:35px; height:35px;" />
+              </a>
+            </div>
+          </td>
+        </tr>
+      </table>
+    `;
+
+    await transporter.sendMail({
+      from: '"Fantasy MMA Madness" <Fantasymmadness2@gmail.com>',
+      to: affiliate.email,
+      subject: 'A User Has Left Your League',
+      html: emailHtml,
+    });
+
+    return res.status(200).json({ message: 'User removed and email sent to affiliate' });
+
   } catch (error) {
+    console.error('Error in remove-user route:', error);
     return res.status(500).json({ message: 'Error removing user from the league', error });
   }
 });
+
 
 app.post('/clean-affiliate-users', async (req, res) => {
   try {
