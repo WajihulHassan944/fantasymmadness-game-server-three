@@ -2,6 +2,8 @@ const express = require('express');
 const mongoose = require('mongoose');
 const bodyParser = require('body-parser');
 const moment = require('moment');
+const Parser = require('rss-parser');
+const parser = new Parser();
 const app = express();
 const { ObjectId } = require('mongodb');
 const Pusher = require('pusher');
@@ -7265,17 +7267,47 @@ app.get('/unsubscribe-user/:userId', async (req, res) => {
 
 
 
-
-// Get all News articles
 app.get('/news', async (req, res) => {
   try {
-    const newsArticles = await News.find();
-    res.status(200).json({ success: true, data: newsArticles });
+    // Fetch from database
+    const dbArticles = await News.find().sort({ createdAt: -1 });
+
+    // Fetch from RSS feed
+    const feed = await parser.parseURL('https://rss.app/feeds/_6ePdUiq5QyfSygcS.xml');
+    const rssArticles = feed.items.map(item => ({
+      title: item.title,
+      description: item.contentSnippet || item.content || item.description,
+      link: item.link,
+      pubDate: item.pubDate,
+      image: item.enclosure?.url || item.media?.content?.url || null,
+      creator: item.creator || null,
+      source: 'rss'
+    }));
+
+    // Optionally add a source flag to DB articles too
+    const formattedDbArticles = dbArticles.map(article => ({
+      _id: article._id,
+      title: article.title,
+      description: article.description,
+      link: article.link,
+      pubDate: article.pubDate,
+      image: article.image,
+      creator: article.creator,
+      source: 'database'
+    }));
+
+    // Combine both
+    const allArticles = [...formattedDbArticles, ...rssArticles];
+
+    // Optional: Sort by date (descending)
+    allArticles.sort((a, b) => new Date(b.pubDate) - new Date(a.pubDate));
+
+    res.status(200).json({ success: true, data: allArticles });
   } catch (error) {
-    res.status(500).json({ success: false, message: error.message });
+    console.error('Error loading news:', error.message);
+    res.status(500).json({ success: false, message: 'Failed to load news.' });
   }
 });
-
 // Update a News article by ID
 app.put('/news/:id', async (req, res) => {
   try {
