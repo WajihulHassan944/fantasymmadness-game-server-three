@@ -7684,21 +7684,21 @@ app.post('/api/create-blog', upload.fields([
     const sectionImages = req.files['sectionImages'] || [];
     console.log('Received sectionImages:', sectionImages.length);
 
-    // Upload blogHeaderImage if present
     let blogHeaderImage = '';
-    if (req.files['blogHeaderImage']) {
-      const result = await new Promise((resolve, reject) => {
-        cloudinary.uploader.upload_stream(
-          { folder: 'blogs/header' },
-          (error, result) => {
-            if (error) return reject(error);
-            resolve(result);
-          }
-        ).end(req.files['blogHeaderImage'][0].buffer);
-      });
-      blogHeaderImage = result.secure_url;
-      blogHeaderImagePublicId = result.public_id;
-    }
+let blogHeaderImagePublicId = ''; // ✅ Declare this at the top
+if (req.files['blogHeaderImage']) {
+  const result = await new Promise((resolve, reject) => {
+    cloudinary.uploader.upload_stream(
+      { folder: 'blogs/header' },
+      (error, result) => {
+        if (error) return reject(error);
+        resolve(result);
+      }
+    ).end(req.files['blogHeaderImage'][0].buffer);
+  });
+  blogHeaderImage = result.secure_url;
+  blogHeaderImagePublicId = result.public_id;
+}
 
     // Upload section images and map them to parsedSections
     for (let i = 0; i < parsedSections.length; i++) {
