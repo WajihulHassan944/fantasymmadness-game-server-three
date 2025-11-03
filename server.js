@@ -3399,75 +3399,66 @@ app.post('/send-emails-to-all-users', async (req, res) => {
 
 
 app.post('/register', async (req, res) => {
-  const { firstName, lastName, playerName, email, phone, password, zipCode,
-    isNotificationsEnabled,
-    isSubscribed,
-    isUSCitizen,
-    isAgreed } = req.body;
-
   try {
+    console.log("Incoming /register request body:", req.body);
+
+    const {
+      firstName,
+      lastName,
+      playerName,
+      email,
+      phone,
+      password,
+      zipCode,
+      isNotificationsEnabled,
+      isSubscribed,
+      isUSCitizen,
+      isAgreed,
+      referrerId
+    } = req.body;
+
+    // Basic input validation to prevent malformed requests
+    if (!email || !password || !firstName || !lastName) {
+      console.warn("Missing required fields:", { email, password, firstName, lastName });
+      return res.status(400).json({ error: "Missing required fields" });
+    }
+
     // Check if email exists in Redusers
-    const redListedUser = await Redusers.findOne({ email });
+    const redListedUser = await Redusers.findOne({ email }).lean();
     if (redListedUser) {
-      // Send email notification if user is on red list
+      console.log(`Blocked registration for redlisted email: ${email}`);
+
       const mailOptions = {
         from: 'Fantasymmadness2@gmail.com',
         to: email,
         subject: 'Registration Blocked',
         html: `
-        <table width="100%" cellpadding="0" cellspacing="0" border="0" style="width:100%; max-width:600px; margin:auto;">
-          <!-- Logo Section -->
-          <tr>
-            <td align="center" style="padding: 15px 0;">
-              <img src="https://res.cloudinary.com/daflot6fo/image/upload/v1736068036/bywcrrcqmcyczdyhjmdv.png" alt="Fantasy Madness Logo" style="width:100px;" />
-              <h2 style="margin: 0; color: #191164; font-family: 'New York', Charter, Georgia, serif;">Fantasy Madness</h2>
-            </td>
-          </tr>
-          
-          <!-- Greeting Section -->
-          <tr>
-            <td style="padding: 10px 0;">
-              <p style="font-size: 16px; font-family: Arial, sans-serif; color: #333;">Dear ${firstName},</p>
-              <p style="font-size: 16px; font-family: Arial, sans-serif; color: #333;">
-                Due to violations of our terms and conditions, your account is flagged, and registration is blocked on Fantasy Madness. 
-              </p>
-              <p style="font-size: 16px; font-family: Arial, sans-serif; color: #333;">
-                If you believe this is a mistake, please contact our support team.
-              </p>
-            </td>
-          </tr>
-
-          <!-- Footer Section -->
-          <tr>
-            <td align="center" style="padding: 15px 0;">
-              <img src="https://res.cloudinary.com/daflot6fo/image/upload/v1736068036/bywcrrcqmcyczdyhjmdv.png" alt="Fantasy Madness Logo" style="width:70px;" />
-              <p><a href="https://fantasymmadness.com" style="font-family: Arial, sans-serif; color: #191164; text-decoration: none;">https://fantasymmadness.com</a></p>
-            </td>
-          </tr>
-        </table>
-      `,
+          <h2>Fantasy Madness</h2>
+          <p>Dear ${firstName || "User"}, your registration has been blocked due to redlist status.</p>
+        `,
       };
 
-      transporter.sendMail(mailOptions, (error, info) => {
-        if (error) {
-          console.error('Error sending email notification:', error);
-        } else {
-          console.log('Notification email sent successfully:', info.response);
-        }
-      });
+      try {
+        await transporter.sendMail(mailOptions);
+        console.log('Redlist email notification sent successfully.');
+      } catch (err) {
+        console.error('Error sending redlist email:', err);
+      }
 
-      return res.status(403).send('Registration blocked due to red list status.');
+      return res.status(403).json({ error: 'Registration blocked due to red list status.' });
     }
 
-    // Check if email already exists in the User collection
-    const existingUser = await User.findOne({ email });
+    // Check if email already exists
+    const existingUser = await User.findOne({ email }).lean();
     if (existingUser) {
-      return res.status(400).send('Email already registered');
+      console.log(`Duplicate registration attempt: ${email}`);
+      return res.status(400).json({ error: 'Email already registered' });
     }
 
-    // Generate a verification token
+    // Generate verification token
     const verificationToken = crypto.randomBytes(20).toString('hex');
 
+    const hashedPassword = await bcrypt.hash(password, 10);
     const newUser = new User({
       firstName,
       lastName,
@@ -3481,90 +3472,76 @@ app.post('/register', async (req, res) => {
       isAgreed,
       verified: false,
       verificationToken,
-      password: await bcrypt.hash(password, 10),
+      password: hashedPassword,
     });
 
     await newUser.save();
+    console.log(`✅ User created successfully: ${email}`);
 
-    const notification = new Notification({
-      title: `New User Signed Up: ${newUser.firstName}`,
-    });
-    await notification.save();
+    // Notification
+    await new Notification({ title: `New User Signed Up: ${newUser.firstName}` }).save();
 
-
-if (req.body.referrerId && req.body.referrerId !== newUser._id.toString()) {
-  try {
-    const referrer = await User.findById(req.body.referrerId);
-    const alreadyReferred = await Referral.findOne({ referredUser: newUser._id });
-
-    if (referrer && !alreadyReferred) {
-      await Referral.create({
-        referrer: referrer._id,
-        referredUser: newUser._id,
-        rewarded: true,
-      });
-
-      // Award 3 tokens to the referrer
-      const currentTokens = parseInt(referrer.tokens ?? "0", 10);
-      referrer.tokens = (currentTokens + 3).toString();
-      await referrer.save();
+    // Handle referral safely
+    if (referrerId && referrerId !== newUser._id.toString()) {
+      try {
+        const referrer = await User.findById(referrerId);
+        const alreadyReferred = await Referral.findOne({ referredUser: newUser._id });
+        if (referrer && !alreadyReferred) {
+          await Referral.create({
+            referrer: referrer._id,
+            referredUser: newUser._id,
+            rewarded: true,
+          });
+          const currentTokens = parseInt(referrer.tokens ?? "0", 10);
+          referrer.tokens = (currentTokens + 3).toString();
+          await referrer.save();
+          console.log(`🎁 3 tokens awarded to referrer: ${referrer.email}`);
+        }
+      } catch (err) {
+        console.error('Referral processing error:', err);
+      }
     }
-  } catch (err) {
-    console.error('Referral processing error:', err);
-  }
-}
 
-
-
+    // Schedule verification timeout cleanup
     setTimeout(async () => {
-      // Find the user again to ensure the data is still available
-      const user = await User.findOne({ email });
-
-      if (user && !user.verified) {
-        // Send failure notification email
-        console.log('Attempting to send failure email...');
-        const failureMailOptions = {
-          from: 'Fantasymmadness2@gmail.com',
-          to: email,
-          subject: 'Verification Failed',
-          html: `<p>Dear ${user.firstName},</p>
-                 <p>You have failed to verify your email within the required time. Your registration has been canceled.</p>
-                 <p>If this was a mistake, please register again.</p>`,
-        };
-
-        transporter.sendMail(failureMailOptions, (error, info) => {
-          if (error) {
-            console.error('Error sending failure email:', error);
-          } else {
-            console.log('Failure email sent successfully:', info.response);
-          }
-        });
-
-        // Delete the user after sending the email
-        await User.deleteOne({ email });
-        console.log(`User with email ${email} deleted due to unverified account.`);
+      try {
+        const user = await User.findOne({ email });
+        if (user && !user.verified) {
+          console.log(`Deleting unverified user: ${email}`);
+          await transporter.sendMail({
+            from: 'Fantasymmadness2@gmail.com',
+            to: email,
+            subject: 'Verification Failed',
+            html: `<p>Dear ${user.firstName}, your registration was removed due to unverified email.</p>`,
+          });
+          await User.deleteOne({ email });
+        }
+      } catch (err) {
+        console.error('Error during verification timeout cleanup:', err);
       }
     }, 120000);
 
     // Send verification email
     const verificationLink = `https://fantasymmadness-game-server-three.vercel.app/verify-email?token=${verificationToken}`;
-    const mailOptions = {
-      from: 'Fantasymmadness2@gmail.com',
-      to: email,
-      subject: 'Email Verification',
-      html: `<p>Thank you for registering with us. Please click the link below to verify your email address:</p>
-             <a href="${verificationLink}">Verify Email</a>`,
-    };
-
-    transporter.sendMail(mailOptions, (error, info) => {
-      if (error) {
-        return res.status(500).send('Error sending verification email');
-      } else {
-        res.status(200).send('Registration successful! Please check your email to verify your account.');
-      }
-    });
+    try {
+      await transporter.sendMail({
+        from: 'Fantasymmadness2@gmail.com',
+        to: email,
+        subject: 'Email Verification',
+        html: `<p>Click below to verify your email:</p>
+               <a href="${verificationLink}">Verify Email</a>`,
+      });
+      console.log(`Verification email sent to: ${email}`);
+      return res.status(200).json({
+        message: 'Registration successful! Please check your email to verify your account.',
+      });
+    } catch (err) {
+      console.error('Error sending verification email:', err);
+      return res.status(500).json({ error: 'Error sending verification email' });
+    }
   } catch (error) {
-    res.status(500).send('Error during registration');
+    console.error("Unhandled registration error:", error);
+    return res.status(500).json({ error: 'Error during registration' });
   }
 });
 
