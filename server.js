@@ -19,7 +19,7 @@ const client = new OAuth2Client(process.env.GOOGLE_CLIENT_ID);
 const accessToken = process.env.ZENPAYMENTS_ACCESS_TOKEN;
 const terminalId = process.env.ZENPAYMENTS_TERMINAL_ID;
 const { promisify } = require('util');
-
+require('dotenv').config();
 const axios = require('axios');
 const fetch = require('node-fetch');
 const xml2js = require('xml2js');
@@ -522,6 +522,10 @@ app.get('/shadow', async (req, res) => {
 
 
 const matchSchema = new mongoose.Schema({
+  // Optional game-mode metadata. Existing records and APIs remain fully compatible.
+  gameMode: String,
+  predictionFormat: String,
+  scoringRuleVersion: String,
   matchCategory: String, // 'boxing' or 'mma'
   matchCategoryTwo: String,
   affiliateId: String,
@@ -8123,6 +8127,2339 @@ app.delete('/api/messages/delete-all', async (req, res) => {
     res.status(200).json({ message: 'All messages deleted successfully.' });
   } catch (err) {
     res.status(500).json({ error: 'Failed to delete messages', details: err.message });
+  }
+});
+
+
+
+
+
+// ============================================================================
+// PRO WRESTLING GAME MODE
+// Additive implementation: existing MMA/boxing routes and collections remain
+// untouched. Pro Wrestling reuses the existing User, Affiliate and wallet token
+// records while keeping its contest, prediction and settlement data isolated.
+// ============================================================================
+
+const {
+  WRESTLING_STAT_KEYS,
+  WRESTLING_WINNER_VALUES,
+  DEFAULT_WRESTLING_SCORING_RULE,
+  DEFAULT_WRESTLING_PAYOUT_RULE,
+  normalizeWrestlingStats,
+  normalizeScoringRule,
+  normalizePayoutRule,
+  calculateProWrestlingScore,
+  rankWrestlingPredictions,
+  calculatePayoutDistribution,
+  canTransitionWrestlingStatus,
+  isWrestlingPredictionLocked,
+  validateWrestlingPredictionPayload,
+} = require('./pro-wrestling-core');
+
+const PRO_WRESTLING_GAME_MODE = 'PRO_WRESTLING';
+const PRO_WRESTLING_PREDICTION_FORMAT = 'FULL_MATCH';
+const PRO_WRESTLING_MATCH_STATUSES = [
+  'DRAFT',
+  'OPEN',
+  'LOCKED',
+  'LIVE',
+  'SCORING',
+  'FINALIZED',
+  'CANCELLED',
+  'NO_CONTEST',
+];
+const PRO_WRESTLING_ENTRY_STATUSES = [
+  'JOINED',
+  'PREDICTION_SUBMITTED',
+  'LOCKED',
+  'SETTLED',
+  'REFUNDED',
+];
+const PRO_WRESTLING_PREDICTION_STATUSES = [
+  'DRAFT',
+  'SUBMITTED',
+  'LOCKED',
+  'SCORED',
+  'SETTLED',
+  'REFUNDED',
+];
+
+const wrestlingActionStatsSchema = new mongoose.Schema({
+  HP: { type: Number, min: 0, default: 0 },
+  BP: { type: Number, min: 0, default: 0 },
+  K: { type: Number, min: 0, default: 0 },
+  PM: { type: Number, min: 0, default: 0 },
+  FM: { type: Number, min: 0, default: 0 },
+}, { _id: false });
+
+const wrestlingCompetitorSchema = new mongoose.Schema({
+  wrestlerId: { type: mongoose.Schema.Types.ObjectId, ref: 'ProWrestler' },
+  displayName: { type: String, required: true, trim: true },
+  image: String,
+  promotion: String,
+}, { _id: false });
+
+const proWrestlerSchema = new mongoose.Schema({
+  displayName: { type: String, required: true, trim: true },
+  slug: { type: String, required: true, unique: true, lowercase: true, trim: true },
+  profileImage: String,
+  profileImageDeleteUrl: String,
+  bannerImage: String,
+  bannerImageDeleteUrl: String,
+  promotion: String,
+  country: String,
+  height: String,
+  weight: String,
+  wrestlingStyle: String,
+  signatureMoves: [{ type: String, trim: true }],
+  finishingMoves: [{ type: String, trim: true }],
+  careerRecord: {
+    wins: { type: Number, min: 0, default: 0 },
+    losses: { type: Number, min: 0, default: 0 },
+    draws: { type: Number, min: 0, default: 0 },
+    noContests: { type: Number, min: 0, default: 0 },
+  },
+  historicalStatistics: {
+    matches: { type: Number, min: 0, default: 0 },
+    HP: { type: Number, min: 0, default: 0 },
+    BP: { type: Number, min: 0, default: 0 },
+    K: { type: Number, min: 0, default: 0 },
+    PM: { type: Number, min: 0, default: 0 },
+    FM: { type: Number, min: 0, default: 0 },
+  },
+  biography: String,
+  active: { type: Boolean, default: true },
+  featured: { type: Boolean, default: false },
+  seo: {
+    title: String,
+    description: String,
+    keywords: [String],
+  },
+  createdBy: { type: mongoose.Schema.Types.ObjectId, ref: 'Admin' },
+  updatedBy: { type: mongoose.Schema.Types.ObjectId, ref: 'Admin' },
+}, { timestamps: true });
+proWrestlerSchema.index({ active: 1, displayName: 1 });
+proWrestlerSchema.index({ featured: -1, displayName: 1 });
+
+const proWrestlingScoringRuleSchema = new mongoose.Schema({
+  ruleId: { type: String, required: true, unique: true, uppercase: true, trim: true },
+  name: { type: String, required: true },
+  active: { type: Boolean, default: true },
+  config: { type: mongoose.Schema.Types.Mixed, required: true },
+  createdBy: { type: mongoose.Schema.Types.ObjectId, ref: 'Admin' },
+  updatedBy: { type: mongoose.Schema.Types.ObjectId, ref: 'Admin' },
+}, { timestamps: true });
+
+const proWrestlingPayoutRuleSchema = new mongoose.Schema({
+  ruleId: { type: String, required: true, unique: true, uppercase: true, trim: true },
+  name: { type: String, required: true },
+  active: { type: Boolean, default: true },
+  config: { type: mongoose.Schema.Types.Mixed, required: true },
+  createdBy: { type: mongoose.Schema.Types.ObjectId, ref: 'Admin' },
+  updatedBy: { type: mongoose.Schema.Types.ObjectId, ref: 'Admin' },
+}, { timestamps: true });
+
+const proWrestlingMatchSchema = new mongoose.Schema({
+  gameMode: { type: String, enum: [PRO_WRESTLING_GAME_MODE], default: PRO_WRESTLING_GAME_MODE, index: true },
+  predictionFormat: { type: String, enum: [PRO_WRESTLING_PREDICTION_FORMAT], default: PRO_WRESTLING_PREDICTION_FORMAT },
+  scoringRuleVersion: { type: String, default: DEFAULT_WRESTLING_SCORING_RULE.ruleId },
+  payoutRuleVersion: { type: String, default: DEFAULT_WRESTLING_PAYOUT_RULE.ruleId },
+  scoringRules: { type: mongoose.Schema.Types.Mixed, required: true },
+  payoutRules: { type: mongoose.Schema.Types.Mixed, required: true },
+  eventName: { type: String, required: true, trim: true },
+  promotionName: { type: String, trim: true },
+  matchTitle: { type: String, required: true, trim: true },
+  slug: { type: String, required: true, unique: true, lowercase: true, trim: true },
+  matchFormat: {
+    type: String,
+    enum: ['SINGLES', 'TAG_TEAM', 'TRIPLE_THREAT', 'FATAL_FOUR_WAY'],
+    default: 'SINGLES',
+  },
+  competitorA: { type: wrestlingCompetitorSchema, required: true },
+  competitorB: { type: wrestlingCompetitorSchema, required: true },
+  matchDate: { type: Date, required: true, index: true },
+  matchTime: String,
+  lockAt: { type: Date, required: true, index: true },
+  entryFeeTokens: { type: Number, min: 0, default: 0 },
+  basePot: { type: Number, min: 0, default: 0 },
+  currentPot: { type: Number, min: 0, default: 0 },
+  minimumParticipants: { type: Number, min: 0, default: 0 },
+  maximumParticipants: { type: Number, min: 0, default: 0 },
+  participantCount: { type: Number, min: 0, default: 0 },
+  autoCancelIfMinimumNotMet: { type: Boolean, default: true },
+  status: { type: String, enum: PRO_WRESTLING_MATCH_STATUSES, default: 'DRAFT', index: true },
+  officialStats: {
+    competitorA: { type: wrestlingActionStatsSchema, default: () => ({}) },
+    competitorB: { type: wrestlingActionStatsSchema, default: () => ({}) },
+  },
+  officialWinner: { type: String, enum: [...WRESTLING_WINNER_VALUES, 'NO_CONTEST', null], default: null },
+  finishType: {
+    type: String,
+    enum: ['PINFALL', 'SUBMISSION', 'DQ', 'COUNT_OUT', 'DRAW', 'NO_CONTEST', 'OTHER', null],
+    default: null,
+  },
+  statsVersion: { type: Number, min: 0, default: 0 },
+  description: String,
+  bannerImage: String,
+  bannerImageDeleteUrl: String,
+  featured: { type: Boolean, default: false },
+  publicVisible: { type: Boolean, default: true },
+  affiliateId: { type: mongoose.Schema.Types.ObjectId, ref: 'Affiliate' },
+  affiliateCommissionPercentage: { type: Number, min: 0, max: 100, default: 0 },
+  referralCode: String,
+  seo: {
+    title: String,
+    description: String,
+    keywords: [String],
+  },
+  settlement: {
+    status: {
+      type: String,
+      enum: ['NOT_STARTED', 'PROCESSING', 'PAID', 'REFUNDED'],
+      default: 'NOT_STARTED',
+    },
+    winnerCount: { type: Number, min: 0, default: 0 },
+    grossPot: { type: Number, min: 0, default: 0 },
+    platformFeeTokens: { type: Number, min: 0, default: 0 },
+    affiliateCommissionTokens: { type: Number, min: 0, default: 0 },
+    playerPayoutTokens: { type: Number, min: 0, default: 0 },
+    completedAt: Date,
+  },
+  publishedAt: Date,
+  lockedAt: Date,
+  liveStartedAt: Date,
+  scoringStartedAt: Date,
+  finalizedAt: Date,
+  cancelledAt: Date,
+  cancellationReason: String,
+  startingSoonNotificationSent: { type: Boolean, default: false },
+  liveNotificationSent: { type: Boolean, default: false },
+  createdBy: { type: mongoose.Schema.Types.ObjectId, ref: 'Admin' },
+  updatedBy: { type: mongoose.Schema.Types.ObjectId, ref: 'Admin' },
+}, { timestamps: true });
+proWrestlingMatchSchema.index({ status: 1, matchDate: 1 });
+proWrestlingMatchSchema.index({ publicVisible: 1, featured: -1, matchDate: 1 });
+proWrestlingMatchSchema.index({ affiliateId: 1, status: 1 });
+
+const proWrestlingEntrySchema = new mongoose.Schema({
+  gameMode: { type: String, default: PRO_WRESTLING_GAME_MODE },
+  matchId: { type: mongoose.Schema.Types.ObjectId, ref: 'ProWrestlingMatch', required: true, index: true },
+  userId: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true, index: true },
+  affiliateId: { type: mongoose.Schema.Types.ObjectId, ref: 'Affiliate' },
+  referralCode: String,
+  entryFeeTokens: { type: Number, min: 0, required: true },
+  status: { type: String, enum: PRO_WRESTLING_ENTRY_STATUSES, default: 'JOINED' },
+  idempotencyKey: { type: String, required: true, unique: true },
+  userSnapshot: {
+    displayName: String,
+    profileUrl: String,
+  },
+  joinedAt: { type: Date, default: Date.now },
+  lockedAt: Date,
+  settledAt: Date,
+  refundedAt: Date,
+  rank: { type: Number, min: 1 },
+  payoutAmount: { type: Number, min: 0, default: 0 },
+}, { timestamps: true });
+proWrestlingEntrySchema.index({ matchId: 1, userId: 1 }, { unique: true });
+proWrestlingEntrySchema.index({ userId: 1, createdAt: -1 });
+
+const proWrestlingPredictionSchema = new mongoose.Schema({
+  gameMode: { type: String, default: PRO_WRESTLING_GAME_MODE },
+  matchId: { type: mongoose.Schema.Types.ObjectId, ref: 'ProWrestlingMatch', required: true, index: true },
+  userId: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true, index: true },
+  competitorA: { type: wrestlingActionStatsSchema, required: true },
+  competitorB: { type: wrestlingActionStatsSchema, required: true },
+  winnerPrediction: { type: String, enum: WRESTLING_WINNER_VALUES, required: true },
+  predictionStatus: { type: String, enum: PRO_WRESTLING_PREDICTION_STATUSES, default: 'DRAFT' },
+  submittedAt: Date,
+  lockedAt: Date,
+  score: { type: Number, default: 0 },
+  scoreBreakdown: { type: mongoose.Schema.Types.Mixed },
+  normalizedError: { type: Number, default: 0 },
+  exactPredictionCount: { type: Number, default: 0 },
+  finisherError: { type: Number, default: 0 },
+  rank: { type: Number, min: 1 },
+  previousRank: { type: Number, min: 1 },
+  payoutAmount: { type: Number, min: 0, default: 0 },
+  scoringRuleVersion: String,
+}, { timestamps: true });
+proWrestlingPredictionSchema.index({ matchId: 1, userId: 1 }, { unique: true });
+proWrestlingPredictionSchema.index({ matchId: 1, rank: 1 });
+proWrestlingPredictionSchema.index({ userId: 1, createdAt: -1 });
+
+const proWrestlingWalletLedgerSchema = new mongoose.Schema({
+  accountType: { type: String, enum: ['USER', 'AFFILIATE', 'PLATFORM'], default: 'USER' },
+  userId: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
+  affiliateId: { type: mongoose.Schema.Types.ObjectId, ref: 'Affiliate' },
+  matchId: { type: mongoose.Schema.Types.ObjectId, ref: 'ProWrestlingMatch', index: true },
+  entryId: { type: mongoose.Schema.Types.ObjectId, ref: 'ProWrestlingEntry' },
+  type: {
+    type: String,
+    enum: ['WRESTLING_ENTRY', 'WRESTLING_WINNING', 'WRESTLING_REFUND', 'WRESTLING_AFFILIATE_COMMISSION', 'WRESTLING_PLATFORM_FEE', 'WRESTLING_ADMIN_ADJUSTMENT'],
+    required: true,
+  },
+  amount: { type: Number, required: true },
+  balanceBefore: Number,
+  balanceAfter: Number,
+  idempotencyKey: { type: String, required: true, unique: true },
+  status: { type: String, enum: ['COMPLETED', 'FAILED'], default: 'COMPLETED' },
+  metadata: { type: mongoose.Schema.Types.Mixed },
+}, { timestamps: true });
+proWrestlingWalletLedgerSchema.index({ userId: 1, createdAt: -1 });
+proWrestlingWalletLedgerSchema.index({ affiliateId: 1, createdAt: -1 });
+
+const proWrestlingAuditLogSchema = new mongoose.Schema({
+  adminId: { type: mongoose.Schema.Types.ObjectId, ref: 'Admin' },
+  action: { type: String, required: true, index: true },
+  entityType: { type: String, required: true, index: true },
+  entityId: { type: String, required: true, index: true },
+  before: { type: mongoose.Schema.Types.Mixed },
+  after: { type: mongoose.Schema.Types.Mixed },
+  reason: String,
+  ipAddress: String,
+}, { timestamps: true });
+proWrestlingAuditLogSchema.index({ entityType: 1, entityId: 1, createdAt: -1 });
+
+const proWrestlingNotificationSchema = new mongoose.Schema({
+  userId: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true, index: true },
+  matchId: { type: mongoose.Schema.Types.ObjectId, ref: 'ProWrestlingMatch', index: true },
+  gameMode: { type: String, default: PRO_WRESTLING_GAME_MODE },
+  type: {
+    type: String,
+    enum: ['CONTEST_PUBLISHED', 'STARTING_SOON', 'ENTRY_CONFIRMED', 'PREDICTION_SUBMITTED', 'PREDICTION_LOCKED', 'MATCH_LIVE', 'RANK_CHANGED', 'RESULT_FINALIZED', 'WINNINGS_CREDITED', 'ENTRY_REFUNDED'],
+    required: true,
+  },
+  title: { type: String, required: true },
+  message: { type: String, required: true },
+  read: { type: Boolean, default: false },
+  metadata: { type: mongoose.Schema.Types.Mixed },
+}, { timestamps: true });
+proWrestlingNotificationSchema.index({ userId: 1, read: 1, createdAt: -1 });
+
+const ProWrestler = mongoose.models.ProWrestler || mongoose.model('ProWrestler', proWrestlerSchema);
+const ProWrestlingScoringRule = mongoose.models.ProWrestlingScoringRule || mongoose.model('ProWrestlingScoringRule', proWrestlingScoringRuleSchema);
+const ProWrestlingPayoutRule = mongoose.models.ProWrestlingPayoutRule || mongoose.model('ProWrestlingPayoutRule', proWrestlingPayoutRuleSchema);
+const ProWrestlingMatch = mongoose.models.ProWrestlingMatch || mongoose.model('ProWrestlingMatch', proWrestlingMatchSchema);
+const ProWrestlingEntry = mongoose.models.ProWrestlingEntry || mongoose.model('ProWrestlingEntry', proWrestlingEntrySchema);
+const ProWrestlingPrediction = mongoose.models.ProWrestlingPrediction || mongoose.model('ProWrestlingPrediction', proWrestlingPredictionSchema);
+const ProWrestlingWalletLedger = mongoose.models.ProWrestlingWalletLedger || mongoose.model('ProWrestlingWalletLedger', proWrestlingWalletLedgerSchema);
+const ProWrestlingAuditLog = mongoose.models.ProWrestlingAuditLog || mongoose.model('ProWrestlingAuditLog', proWrestlingAuditLogSchema);
+const ProWrestlingNotification = mongoose.models.ProWrestlingNotification || mongoose.model('ProWrestlingNotification', proWrestlingNotificationSchema);
+
+const wrestlingHttpError = (status, message, code, details) => {
+  const error = new Error(message);
+  error.status = status;
+  error.code = code;
+  error.details = details;
+  return error;
+};
+
+const isProWrestlingEnabled = () => String(process.env.PRO_WRESTLING_ENABLED || 'true').toLowerCase() !== 'false';
+
+const requireProWrestlingEnabled = (req, res, next) => {
+  if (!isProWrestlingEnabled()) {
+    return res.status(503).json({
+      message: 'Pro Wrestling game mode is currently disabled.',
+      code: 'PRO_WRESTLING_DISABLED',
+    });
+  }
+  return next();
+};
+
+const verifyAdminToken = (req, res, next) => {
+  const authHeader = req.headers.authorization;
+  const token = authHeader && authHeader.startsWith('Bearer ') ? authHeader.slice(7) : null;
+  if (!token) return res.status(401).json({ message: 'Admin authentication is required.' });
+
+  try {
+    req.admin = jwt.verify(token, process.env.JWT_SECRET_ADMIN);
+    return next();
+  } catch (error) {
+    return res.status(403).json({ message: 'Invalid or expired admin token.' });
+  }
+};
+
+const verifyWrestlingCronOrAdmin = (req, res, next) => {
+  const authHeader = req.headers.authorization || '';
+  const bearer = authHeader.startsWith('Bearer ') ? authHeader.slice(7) : '';
+  if (process.env.CRON_SECRET && bearer === process.env.CRON_SECRET) {
+    req.admin = { id: null, cron: true };
+    return next();
+  }
+  return verifyAdminToken(req, res, next);
+};
+
+const wrestlingRequestIp = (req) => String(req.headers['x-forwarded-for'] || req.socket?.remoteAddress || '').split(',')[0].trim();
+
+const wrestlingPlainObject = (value) => {
+  if (!value) return value;
+  if (typeof value.toObject === 'function') return value.toObject({ depopulate: true });
+  return JSON.parse(JSON.stringify(value));
+};
+
+const wrestlingSlugify = (value) => String(value || '')
+  .toLowerCase()
+  .trim()
+  .replace(/[^a-z0-9]+/g, '-')
+  .replace(/^-+|-+$/g, '')
+  .slice(0, 100);
+
+const wrestlingArray = (value) => {
+  if (Array.isArray(value)) return value;
+  if (typeof value === 'string') {
+    try {
+      const parsed = JSON.parse(value);
+      if (Array.isArray(parsed)) return parsed;
+    } catch (error) {
+      return value.split(',').map((item) => item.trim()).filter(Boolean);
+    }
+  }
+  return [];
+};
+
+const wrestlingObject = (value, fallback = {}) => {
+  if (value && typeof value === 'object') return value;
+  if (typeof value === 'string') {
+    try {
+      const parsed = JSON.parse(value);
+      return parsed && typeof parsed === 'object' ? parsed : fallback;
+    } catch (error) {
+      return fallback;
+    }
+  }
+  return fallback;
+};
+
+const wrestlingBoolean = (value, fallback = false) => {
+  if (value === undefined || value === null || value === '') return fallback;
+  if (typeof value === 'boolean') return value;
+  return ['true', '1', 'yes', 'on'].includes(String(value).toLowerCase());
+};
+
+const wrestlingNumber = (value, fallback = 0) => {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : fallback;
+};
+
+const wrestlingTokenBalance = (value) => {
+  const parsed = Number.parseInt(String(value || '0'), 10);
+  return Number.isFinite(parsed) ? Math.max(0, parsed) : 0;
+};
+
+const applyWrestlingSession = (query, session) => (session ? query.session(session) : query);
+
+const uploadWrestlingImage = (file, folder) => {
+  if (!file || !file.buffer) return Promise.resolve(null);
+  return new Promise((resolve, reject) => {
+    const stream = cloudinary.uploader.upload_stream(
+      { folder, resource_type: 'image' },
+      (error, result) => {
+        if (error) return reject(error);
+        return resolve({ url: result.secure_url, deleteUrl: result.public_id });
+      },
+    );
+    stream.end(file.buffer);
+  });
+};
+
+const safeWrestlingTrigger = async (eventName, payload) => {
+  try {
+    if (typeof pusher !== 'undefined' && pusher) {
+      await pusher.trigger('Fantasy-mmadness-wrestling', eventName, payload);
+    }
+  } catch (error) {
+    console.error('Pro Wrestling Pusher event failed:', error.message);
+  }
+};
+
+const writeWrestlingAudit = async ({ req, adminId, action, entityType, entityId, before, after, reason, session }) => {
+  const values = [{
+    adminId: adminId || req?.admin?.id || null,
+    action,
+    entityType,
+    entityId: String(entityId),
+    before: wrestlingPlainObject(before),
+    after: wrestlingPlainObject(after),
+    reason: reason || null,
+    ipAddress: req ? wrestlingRequestIp(req) : null,
+  }];
+  return ProWrestlingAuditLog.create(values, session ? { session } : undefined);
+};
+
+const handleWrestlingError = (res, error) => {
+  console.error('Pro Wrestling API error:', error);
+  if (error && error.code === 11000) {
+    return res.status(409).json({ message: 'A record with the same unique identity already exists.', code: 'DUPLICATE_RECORD' });
+  }
+  return res.status(error.status || 500).json({
+    message: error.message || 'Pro Wrestling request failed.',
+    code: error.code || 'PRO_WRESTLING_ERROR',
+    details: error.details,
+  });
+};
+
+const runWrestlingTransaction = async (work) => {
+  const session = await mongoose.startSession();
+  try {
+    let result;
+    try {
+      await session.withTransaction(async () => {
+        result = await work(session);
+      });
+      return result;
+    } catch (error) {
+      const unsupported = /Transaction numbers are only allowed|replica set|transactions are not supported/i.test(String(error.message || ''));
+      if (unsupported && String(process.env.PRO_WRESTLING_ALLOW_NON_TRANSACTIONAL || '').toLowerCase() === 'true') {
+        console.warn('Running Pro Wrestling wallet operation without a MongoDB transaction because PRO_WRESTLING_ALLOW_NON_TRANSACTIONAL=true.');
+        return work(null);
+      }
+      throw error;
+    }
+  } finally {
+    await session.endSession();
+  }
+};
+
+const ensureWrestlingDefaultRules = async () => {
+  const scoring = normalizeScoringRule(DEFAULT_WRESTLING_SCORING_RULE);
+  const payout = normalizePayoutRule(DEFAULT_WRESTLING_PAYOUT_RULE);
+  await Promise.all([
+    ProWrestlingScoringRule.findOneAndUpdate(
+      { ruleId: scoring.ruleId },
+      { $setOnInsert: { ruleId: scoring.ruleId, name: scoring.name, active: true, config: scoring } },
+      { upsert: true, new: true },
+    ),
+    ProWrestlingPayoutRule.findOneAndUpdate(
+      { ruleId: payout.ruleId },
+      { $setOnInsert: { ruleId: payout.ruleId, name: payout.name, active: true, config: payout } },
+      { upsert: true, new: true },
+    ),
+  ]);
+};
+
+mongoose.connection.once('open', () => {
+  ensureWrestlingDefaultRules().catch((error) => console.error('Unable to seed Pro Wrestling rules:', error.message));
+});
+
+const getWrestlingScoringRule = async (ruleId) => {
+  const requestedRuleId = ruleId ? String(ruleId).toUpperCase() : null;
+  const normalizedRuleId = requestedRuleId || DEFAULT_WRESTLING_SCORING_RULE.ruleId;
+  const record = await ProWrestlingScoringRule.findOne({ ruleId: normalizedRuleId, active: true }).lean();
+  if (!record && requestedRuleId) {
+    throw wrestlingHttpError(404, `Active wrestling scoring rule ${requestedRuleId} was not found.`, 'SCORING_RULE_NOT_FOUND');
+  }
+  return normalizeScoringRule(record?.config || DEFAULT_WRESTLING_SCORING_RULE);
+};
+
+const getWrestlingPayoutRule = async (ruleId) => {
+  const requestedRuleId = ruleId ? String(ruleId).toUpperCase() : null;
+  const normalizedRuleId = requestedRuleId || DEFAULT_WRESTLING_PAYOUT_RULE.ruleId;
+  const record = await ProWrestlingPayoutRule.findOne({ ruleId: normalizedRuleId, active: true }).lean();
+  if (!record && requestedRuleId) {
+    throw wrestlingHttpError(404, `Active wrestling payout rule ${requestedRuleId} was not found.`, 'PAYOUT_RULE_NOT_FOUND');
+  }
+  return normalizePayoutRule(record?.config || DEFAULT_WRESTLING_PAYOUT_RULE);
+};
+
+const uniqueWrestlingSlug = async (Model, candidate, existingId) => {
+  const base = wrestlingSlugify(candidate) || `wrestling-${Date.now()}`;
+  let slug = base;
+  let suffix = 1;
+  while (await Model.exists({ slug, ...(existingId ? { _id: { $ne: existingId } } : {}) })) {
+    slug = `${base}-${suffix}`;
+    suffix += 1;
+  }
+  return slug;
+};
+
+const resolveWrestlingCompetitor = async (input, wrestlerId) => {
+  const source = wrestlingObject(input, {});
+  const id = wrestlerId || source.wrestlerId || source.id;
+  let wrestler = null;
+  if (id && mongoose.isValidObjectId(id)) wrestler = await ProWrestler.findById(id).lean();
+  const displayName = String(source.displayName || source.name || wrestler?.displayName || '').trim();
+  if (!displayName) throw wrestlingHttpError(400, 'Both wrestling competitors require a display name.', 'COMPETITOR_NAME_REQUIRED');
+  return {
+    wrestlerId: wrestler?._id || (mongoose.isValidObjectId(id) ? id : undefined),
+    displayName,
+    image: source.image || source.profileImage || wrestler?.profileImage || '',
+    promotion: source.promotion || wrestler?.promotion || '',
+  };
+};
+
+const publicWrestlingMatch = (match, options = {}) => {
+  const document = wrestlingPlainObject(match);
+  const revealStats = options.revealStats || ['LIVE', 'SCORING', 'FINALIZED'].includes(document.status);
+  if (!revealStats) {
+    delete document.officialStats;
+    delete document.officialWinner;
+    delete document.finishType;
+  }
+  delete document.createdBy;
+  delete document.updatedBy;
+  if (!options.includeRules) {
+    delete document.scoringRules;
+    delete document.payoutRules;
+  }
+  return document;
+};
+
+const createWrestlingNotification = async ({ userId, matchId, type, title, message, metadata, session }) => {
+  if (!userId) return null;
+  const documents = [{ userId, matchId, type, title, message, metadata }];
+  return ProWrestlingNotification.create(documents, session ? { session } : undefined);
+};
+
+const notifyWrestlingEntrants = async ({ match, type, title, message, metadata, session }) => {
+  const query = ProWrestlingEntry.find({ matchId: match._id }).select('userId');
+  const entries = await applyWrestlingSession(query, session).lean();
+  if (!entries.length) return 0;
+  const documents = entries.map((entry) => ({
+    userId: entry.userId,
+    matchId: match._id,
+    type,
+    title,
+    message,
+    metadata,
+  }));
+  await ProWrestlingNotification.insertMany(documents, session ? { session } : undefined);
+  return documents.length;
+};
+
+const lockWrestlingMatch = async (match, session) => {
+  if (!match || match.status !== 'OPEN') return match;
+  match.status = 'LOCKED';
+  match.lockedAt = new Date();
+  await match.save(session ? { session } : undefined);
+  await Promise.all([
+    ProWrestlingEntry.updateMany(
+      { matchId: match._id, status: { $in: ['JOINED', 'PREDICTION_SUBMITTED'] } },
+      { $set: { status: 'LOCKED', lockedAt: match.lockedAt } },
+      session ? { session } : undefined,
+    ),
+    ProWrestlingPrediction.updateMany(
+      { matchId: match._id, predictionStatus: 'SUBMITTED' },
+      { $set: { predictionStatus: 'LOCKED', lockedAt: match.lockedAt } },
+      session ? { session } : undefined,
+    ),
+  ]);
+  await notifyWrestlingEntrants({
+    match,
+    type: 'PREDICTION_LOCKED',
+    title: 'Wrestling predictions locked',
+    message: `${match.matchTitle} is now locked. Your submitted predictions are final.`,
+    session,
+  });
+  return match;
+};
+
+const autoLockWrestlingMatches = async () => {
+  const now = new Date();
+  const dueMatches = await ProWrestlingMatch.find({ status: 'OPEN', lockAt: { $lte: now } }).limit(100);
+  let locked = 0;
+  for (const match of dueMatches) {
+    if (match.minimumParticipants > match.participantCount && match.autoCancelIfMinimumNotMet) continue;
+    await runWrestlingTransaction(async (session) => {
+      const fresh = await applyWrestlingSession(ProWrestlingMatch.findById(match._id), session);
+      if (fresh?.status === 'OPEN') {
+        await lockWrestlingMatch(fresh, session);
+        locked += 1;
+      }
+    });
+  }
+  return locked;
+};
+
+const adjustWrestlingUserTokens = async ({ userId, delta, session }) => {
+  const user = await applyWrestlingSession(User.findById(userId), session);
+  if (!user) throw wrestlingHttpError(404, 'User not found.', 'USER_NOT_FOUND');
+  const balanceBefore = wrestlingTokenBalance(user.tokens);
+  const balanceAfter = balanceBefore + Number(delta);
+  if (balanceAfter < 0) throw wrestlingHttpError(400, 'Insufficient fight-wallet tokens.', 'INSUFFICIENT_TOKENS', { balance: balanceBefore });
+  user.tokens = String(balanceAfter);
+  await user.save(session ? { session } : undefined);
+  return { user, balanceBefore, balanceAfter };
+};
+
+const adjustWrestlingAffiliateTokens = async ({ affiliateId, delta, session }) => {
+  const affiliate = await applyWrestlingSession(Affiliate.findById(affiliateId), session);
+  if (!affiliate) throw wrestlingHttpError(404, 'Affiliate not found.', 'AFFILIATE_NOT_FOUND');
+  const balanceBefore = wrestlingTokenBalance(affiliate.tokens);
+  const balanceAfter = balanceBefore + Number(delta);
+  if (balanceAfter < 0) throw wrestlingHttpError(400, 'Affiliate token adjustment would produce a negative balance.', 'INVALID_AFFILIATE_BALANCE');
+  affiliate.tokens = String(balanceAfter);
+  await affiliate.save(session ? { session } : undefined);
+  return { affiliate, balanceBefore, balanceAfter };
+};
+
+const recalculateWrestlingScores = async (match, session) => {
+  const predictionQuery = ProWrestlingPrediction.find({
+    matchId: match._id,
+    predictionStatus: { $in: ['SUBMITTED', 'LOCKED', 'SCORED', 'SETTLED'] },
+  });
+  const predictions = await applyWrestlingSession(predictionQuery, session).lean();
+  const actualResult = {
+    competitorA: normalizeWrestlingStats(match.officialStats?.competitorA),
+    competitorB: normalizeWrestlingStats(match.officialStats?.competitorB),
+    officialWinner: match.officialWinner,
+  };
+
+  const calculated = predictions.map((prediction) => {
+    const breakdown = calculateProWrestlingScore(prediction, actualResult, match.scoringRules);
+    return {
+      id: String(prediction._id),
+      predictionId: prediction._id,
+      userId: prediction.userId,
+      submittedAt: prediction.submittedAt || prediction.createdAt,
+      previousRank: prediction.rank,
+      totalScore: breakdown.totalScore,
+      normalizedError: breakdown.normalizedError,
+      exactPredictionCount: breakdown.exactPredictionCount,
+      finisherError: breakdown.finisherError,
+      breakdown,
+    };
+  });
+  const ranked = rankWrestlingPredictions(calculated);
+
+  if (ranked.length) {
+    const predictionOperations = ranked.map((row) => ({
+      updateOne: {
+        filter: { _id: row.predictionId },
+        update: {
+          $set: {
+            previousRank: row.previousRank || row.rank,
+            rank: row.rank,
+            score: row.totalScore,
+            normalizedError: row.normalizedError,
+            exactPredictionCount: row.exactPredictionCount,
+            finisherError: row.finisherError,
+            scoreBreakdown: row.breakdown,
+            scoringRuleVersion: match.scoringRuleVersion,
+            predictionStatus: match.status === 'FINALIZED' ? 'SETTLED' : 'SCORED',
+          },
+        },
+      },
+    }));
+    const entryOperations = ranked.map((row) => ({
+      updateOne: {
+        filter: { matchId: match._id, userId: row.userId, status: { $ne: 'REFUNDED' } },
+        update: { $set: { rank: row.rank } },
+      },
+    }));
+
+    await Promise.all([
+      ProWrestlingPrediction.bulkWrite(predictionOperations, session ? { session } : undefined),
+      ProWrestlingEntry.bulkWrite(entryOperations, session ? { session } : undefined),
+    ]);
+
+    const rankChanges = ranked.filter((row) => row.previousRank && row.previousRank !== row.rank);
+    if (rankChanges.length) {
+      const notifications = rankChanges.map((row) => ({
+        userId: row.userId,
+        matchId: match._id,
+        type: 'RANK_CHANGED',
+        title: 'Your Pro Wrestling rank changed',
+        message: `You moved from #${row.previousRank} to #${row.rank} in ${match.matchTitle}.`,
+        metadata: { previousRank: row.previousRank, rank: row.rank, score: row.totalScore },
+      }));
+      await ProWrestlingNotification.insertMany(notifications, session ? { session } : undefined);
+    }
+  }
+
+  return ranked;
+};
+
+const refundWrestlingMatch = async ({ matchId, status, reason, req, adminId }) => runWrestlingTransaction(async (session) => {
+  const match = await applyWrestlingSession(ProWrestlingMatch.findById(matchId), session);
+  if (!match) throw wrestlingHttpError(404, 'Wrestling match not found.', 'MATCH_NOT_FOUND');
+  if (match.status === 'FINALIZED') throw wrestlingHttpError(409, 'A finalized contest cannot be refunded.', 'MATCH_ALREADY_FINALIZED');
+  if (match.settlement?.status === 'REFUNDED') return match;
+
+  const before = wrestlingPlainObject(match);
+  const entries = await applyWrestlingSession(ProWrestlingEntry.find({ matchId: match._id, status: { $ne: 'REFUNDED' } }), session);
+  for (const entry of entries) {
+    const idempotencyKey = `wrestling:refund:${match._id}:${entry.userId}`;
+    const existingLedger = await applyWrestlingSession(ProWrestlingWalletLedger.findOne({ idempotencyKey }), session).lean();
+    if (!existingLedger && entry.entryFeeTokens > 0) {
+      const balance = await adjustWrestlingUserTokens({ userId: entry.userId, delta: entry.entryFeeTokens, session });
+      await ProWrestlingWalletLedger.create([{
+        accountType: 'USER',
+        userId: entry.userId,
+        matchId: match._id,
+        entryId: entry._id,
+        type: 'WRESTLING_REFUND',
+        amount: entry.entryFeeTokens,
+        balanceBefore: balance.balanceBefore,
+        balanceAfter: balance.balanceAfter,
+        idempotencyKey,
+        metadata: { reason },
+      }], session ? { session } : undefined);
+    }
+    entry.status = 'REFUNDED';
+    entry.refundedAt = new Date();
+    entry.payoutAmount = 0;
+    entry.rank = undefined;
+    await entry.save(session ? { session } : undefined);
+    await createWrestlingNotification({
+      userId: entry.userId,
+      matchId: match._id,
+      type: 'ENTRY_REFUNDED',
+      title: 'Wrestling contest entry refunded',
+      message: `${entry.entryFeeTokens} token${entry.entryFeeTokens === 1 ? '' : 's'} were returned for ${match.matchTitle}.`,
+      metadata: { reason },
+      session,
+    });
+  }
+
+  await ProWrestlingPrediction.updateMany(
+    { matchId: match._id },
+    { $set: { predictionStatus: 'REFUNDED', payoutAmount: 0 }, $unset: { rank: '', previousRank: '' } },
+    session ? { session } : undefined,
+  );
+
+  match.status = status;
+  match.cancelledAt = new Date();
+  match.cancellationReason = reason;
+  match.settlement = {
+    ...(wrestlingPlainObject(match.settlement) || {}),
+    status: 'REFUNDED',
+    winnerCount: 0,
+    grossPot: match.currentPot,
+    platformFeeTokens: 0,
+    affiliateCommissionTokens: 0,
+    playerPayoutTokens: 0,
+    completedAt: new Date(),
+  };
+  await match.save(session ? { session } : undefined);
+  await writeWrestlingAudit({
+    req,
+    adminId,
+    action: status === 'NO_CONTEST' ? 'WRESTLING_MATCH_NO_CONTEST_REFUND' : 'WRESTLING_MATCH_CANCEL_REFUND',
+    entityType: 'ProWrestlingMatch',
+    entityId: match._id,
+    before,
+    after: match,
+    reason,
+    session,
+  });
+  await safeWrestlingTrigger('match-refunded', { matchId: String(match._id), status, reason });
+  return match;
+});
+
+// --------------------------------------------------------------------------
+// Public Pro Wrestling discovery endpoints
+// --------------------------------------------------------------------------
+
+app.get('/api/wrestling/health', requireProWrestlingEnabled, async (req, res) => {
+  try {
+    await ensureWrestlingDefaultRules();
+    res.status(200).json({
+      enabled: true,
+      gameMode: PRO_WRESTLING_GAME_MODE,
+      predictionFormat: PRO_WRESTLING_PREDICTION_FORMAT,
+      statCategories: WRESTLING_STAT_KEYS,
+      statuses: PRO_WRESTLING_MATCH_STATUSES,
+    });
+  } catch (error) {
+    handleWrestlingError(res, error);
+  }
+});
+
+app.get('/api/wrestling/config', requireProWrestlingEnabled, async (req, res) => {
+  try {
+    const [scoringRules, payoutRules] = await Promise.all([
+      ProWrestlingScoringRule.find({ active: true }).sort({ createdAt: 1 }).lean(),
+      ProWrestlingPayoutRule.find({ active: true }).sort({ createdAt: 1 }).lean(),
+    ]);
+    res.json({
+      gameMode: PRO_WRESTLING_GAME_MODE,
+      predictionFormat: PRO_WRESTLING_PREDICTION_FORMAT,
+      categories: normalizeScoringRule(scoringRules[0]?.config || DEFAULT_WRESTLING_SCORING_RULE).categories,
+      scoringRules: scoringRules.map((rule) => ({ ruleId: rule.ruleId, name: rule.name })),
+      payoutRules: payoutRules.map((rule) => ({ ruleId: rule.ruleId, name: rule.name })),
+    });
+  } catch (error) {
+    handleWrestlingError(res, error);
+  }
+});
+
+const listWrestlingMatches = async (req, res) => {
+  try {
+    await autoLockWrestlingMatches();
+    const page = Math.max(1, Number.parseInt(req.query.page || '1', 10));
+    const limit = Math.min(100, Math.max(1, Number.parseInt(req.query.limit || '20', 10)));
+    const query = { publicVisible: true };
+    if (req.query.status) {
+      const statuses = String(req.query.status).split(',').map((value) => value.trim().toUpperCase()).filter((value) => PRO_WRESTLING_MATCH_STATUSES.includes(value));
+      if (statuses.length) query.status = { $in: statuses };
+    } else {
+      query.status = { $ne: 'DRAFT' };
+    }
+    if (req.query.featured !== undefined) query.featured = wrestlingBoolean(req.query.featured);
+    if (req.query.affiliateId && mongoose.isValidObjectId(req.query.affiliateId)) query.affiliateId = req.query.affiliateId;
+    if (req.query.upcoming === 'true') query.matchDate = { $gte: new Date() };
+    if (req.query.search) {
+      const search = String(req.query.search).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+      query.$or = [
+        { eventName: { $regex: search, $options: 'i' } },
+        { matchTitle: { $regex: search, $options: 'i' } },
+        { 'competitorA.displayName': { $regex: search, $options: 'i' } },
+        { 'competitorB.displayName': { $regex: search, $options: 'i' } },
+      ];
+    }
+
+    const [matches, total] = await Promise.all([
+      ProWrestlingMatch.find(query)
+        .sort({ featured: -1, matchDate: 1, createdAt: -1 })
+        .skip((page - 1) * limit)
+        .limit(limit)
+        .lean(),
+      ProWrestlingMatch.countDocuments(query),
+    ]);
+    res.json({
+      data: matches.map((match) => publicWrestlingMatch(match)),
+      pagination: { page, limit, total, totalPages: Math.max(1, Math.ceil(total / limit)) },
+    });
+  } catch (error) {
+    handleWrestlingError(res, error);
+  }
+};
+app.get('/api/wrestling/matches', requireProWrestlingEnabled, listWrestlingMatches);
+app.get('/api/wrestling/contests', requireProWrestlingEnabled, listWrestlingMatches);
+
+const getWrestlingMatch = async (req, res) => {
+  try {
+    await autoLockWrestlingMatches();
+    const identifier = req.params.matchId || req.params.contestId;
+    const query = mongoose.isValidObjectId(identifier) ? { _id: identifier } : { slug: identifier };
+    const match = await ProWrestlingMatch.findOne({ ...query, publicVisible: true }).lean();
+    if (!match) throw wrestlingHttpError(404, 'Wrestling match not found.', 'MATCH_NOT_FOUND');
+    res.json(publicWrestlingMatch(match, { includeRules: true }));
+  } catch (error) {
+    handleWrestlingError(res, error);
+  }
+};
+app.get('/api/wrestling/matches/:matchId', requireProWrestlingEnabled, getWrestlingMatch);
+app.get('/api/wrestling/contests/:contestId', requireProWrestlingEnabled, getWrestlingMatch);
+
+app.get('/api/wrestling/wrestlers', requireProWrestlingEnabled, async (req, res) => {
+  try {
+    const page = Math.max(1, Number.parseInt(req.query.page || '1', 10));
+    const limit = Math.min(100, Math.max(1, Number.parseInt(req.query.limit || '24', 10)));
+    const query = { active: true };
+    if (req.query.featured !== undefined) query.featured = wrestlingBoolean(req.query.featured);
+    if (req.query.search) {
+      const search = String(req.query.search).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+      query.$or = [
+        { displayName: { $regex: search, $options: 'i' } },
+        { promotion: { $regex: search, $options: 'i' } },
+        { wrestlingStyle: { $regex: search, $options: 'i' } },
+      ];
+    }
+    const [data, total] = await Promise.all([
+      ProWrestler.find(query).sort({ featured: -1, displayName: 1 }).skip((page - 1) * limit).limit(limit).lean(),
+      ProWrestler.countDocuments(query),
+    ]);
+    res.json({ data, pagination: { page, limit, total, totalPages: Math.max(1, Math.ceil(total / limit)) } });
+  } catch (error) {
+    handleWrestlingError(res, error);
+  }
+});
+
+app.get('/api/wrestling/wrestlers/:idOrSlug', requireProWrestlingEnabled, async (req, res) => {
+  try {
+    const identifier = req.params.idOrSlug;
+    const query = mongoose.isValidObjectId(identifier) ? { _id: identifier } : { slug: identifier };
+    const wrestler = await ProWrestler.findOne(query).lean();
+    if (!wrestler) throw wrestlingHttpError(404, 'Wrestler not found.', 'WRESTLER_NOT_FOUND');
+    const recentMatches = await ProWrestlingMatch.find({
+      $or: [{ 'competitorA.wrestlerId': wrestler._id }, { 'competitorB.wrestlerId': wrestler._id }],
+      publicVisible: true,
+      status: { $ne: 'DRAFT' },
+    }).sort({ matchDate: -1 }).limit(10).lean();
+    res.json({ wrestler, recentMatches: recentMatches.map((match) => publicWrestlingMatch(match)) });
+  } catch (error) {
+    handleWrestlingError(res, error);
+  }
+});
+
+// --------------------------------------------------------------------------
+// Player entry, prediction, live scoring, results and history
+// --------------------------------------------------------------------------
+
+const joinWrestlingMatch = async (req, res) => {
+  try {
+    const matchId = req.params.matchId || req.params.contestId;
+    if (!mongoose.isValidObjectId(matchId)) throw wrestlingHttpError(400, 'Invalid wrestling match ID.', 'INVALID_MATCH_ID');
+    const userId = req.user.id;
+    const deterministicKey = `wrestling:join:${matchId}:${userId}`;
+    const requestedKey = String(req.headers['idempotency-key'] || req.body?.idempotencyKey || deterministicKey).slice(0, 180);
+
+    const existing = await ProWrestlingEntry.findOne({ matchId, userId }).lean();
+    if (existing) return res.status(200).json({ entry: existing, idempotent: true });
+
+    const result = await runWrestlingTransaction(async (session) => {
+      const match = await applyWrestlingSession(ProWrestlingMatch.findById(matchId), session);
+      if (!match) throw wrestlingHttpError(404, 'Wrestling match not found.', 'MATCH_NOT_FOUND');
+      if (match.status !== 'OPEN' || isWrestlingPredictionLocked(match)) {
+        throw wrestlingHttpError(409, 'This wrestling contest is not open for entry.', 'CONTEST_NOT_OPEN');
+      }
+      if (match.maximumParticipants > 0 && match.participantCount >= match.maximumParticipants) {
+        throw wrestlingHttpError(409, 'This wrestling contest has reached its participant limit.', 'CONTEST_FULL');
+      }
+
+      const duplicate = await applyWrestlingSession(ProWrestlingEntry.findOne({ matchId, userId }), session).lean();
+      if (duplicate) return { entry: duplicate, idempotent: true };
+
+      const balance = await adjustWrestlingUserTokens({ userId, delta: -match.entryFeeTokens, session });
+      const affiliateId = match.affiliateId || (mongoose.isValidObjectId(req.body?.affiliateId) ? req.body.affiliateId : null);
+      const entryDocuments = await ProWrestlingEntry.create([{
+        matchId: match._id,
+        userId,
+        affiliateId,
+        referralCode: req.body?.referralCode || match.referralCode || null,
+        entryFeeTokens: match.entryFeeTokens,
+        status: 'JOINED',
+        idempotencyKey: requestedKey,
+        userSnapshot: {
+          displayName: balance.user.playerName || `${balance.user.firstName || ''} ${balance.user.lastName || ''}`.trim(),
+          profileUrl: balance.user.profileUrl,
+        },
+      }], session ? { session } : undefined);
+      const entry = entryDocuments[0];
+
+      await ProWrestlingWalletLedger.create([{
+        accountType: 'USER',
+        userId,
+        matchId: match._id,
+        entryId: entry._id,
+        type: 'WRESTLING_ENTRY',
+        amount: -match.entryFeeTokens,
+        balanceBefore: balance.balanceBefore,
+        balanceAfter: balance.balanceAfter,
+        idempotencyKey: `wrestling:ledger:${requestedKey}`,
+        metadata: { gameMode: PRO_WRESTLING_GAME_MODE },
+      }], session ? { session } : undefined);
+
+      match.participantCount += 1;
+      match.currentPot += match.entryFeeTokens;
+      await match.save(session ? { session } : undefined);
+
+      if (affiliateId) {
+        const affiliate = await applyWrestlingSession(Affiliate.findById(affiliateId), session);
+        if (affiliate && !affiliate.usersJoined.some((item) => String(item.userId) === String(userId))) {
+          affiliate.usersJoined.push({ userId, email: balance.user.email, joinedAt: new Date() });
+          await affiliate.save(session ? { session } : undefined);
+        }
+      }
+
+      await createWrestlingNotification({
+        userId,
+        matchId: match._id,
+        type: 'ENTRY_CONFIRMED',
+        title: 'Wrestling contest entry confirmed',
+        message: `You entered ${match.matchTitle} for ${match.entryFeeTokens} token${match.entryFeeTokens === 1 ? '' : 's'}.`,
+        session,
+      });
+      return { entry: wrestlingPlainObject(entry), match: publicWrestlingMatch(match), balance: balance.balanceAfter };
+    });
+
+    await safeWrestlingTrigger('contest-entry', { matchId, userId, participantCount: result.match?.participantCount });
+    return res.status(result.idempotent ? 200 : 201).json(result);
+  } catch (error) {
+    const existing = await ProWrestlingEntry.findOne({ matchId: req.params.matchId || req.params.contestId, userId: req.user?.id }).lean().catch(() => null);
+    if (error.code === 11000 && existing) return res.status(200).json({ entry: existing, idempotent: true });
+    return handleWrestlingError(res, error);
+  }
+};
+app.post('/api/wrestling/matches/:matchId/join', requireProWrestlingEnabled, verifyToken, joinWrestlingMatch);
+app.post('/api/wrestling/contests/:contestId/join', requireProWrestlingEnabled, verifyToken, joinWrestlingMatch);
+
+app.get('/api/wrestling/matches/:matchId/my-entry', requireProWrestlingEnabled, verifyToken, async (req, res) => {
+  try {
+    const entry = await ProWrestlingEntry.findOne({ matchId: req.params.matchId, userId: req.user.id }).lean();
+    if (!entry) throw wrestlingHttpError(404, 'You have not entered this wrestling contest.', 'ENTRY_NOT_FOUND');
+    const prediction = await ProWrestlingPrediction.findOne({ matchId: req.params.matchId, userId: req.user.id }).lean();
+    res.json({ entry, prediction });
+  } catch (error) {
+    handleWrestlingError(res, error);
+  }
+});
+
+const saveWrestlingPrediction = async (req, res) => {
+  try {
+    const matchId = req.params.matchId;
+    const userId = req.user.id;
+    const match = await ProWrestlingMatch.findById(matchId);
+    if (!match) throw wrestlingHttpError(404, 'Wrestling match not found.', 'MATCH_NOT_FOUND');
+    if (isWrestlingPredictionLocked(match)) throw wrestlingHttpError(409, 'Predictions are locked for this wrestling contest.', 'PREDICTIONS_LOCKED');
+
+    const entry = await ProWrestlingEntry.findOne({ matchId, userId });
+    if (!entry) throw wrestlingHttpError(403, 'Join the wrestling contest before submitting predictions.', 'ENTRY_REQUIRED');
+    if (!['JOINED', 'PREDICTION_SUBMITTED'].includes(entry.status)) {
+      throw wrestlingHttpError(409, 'This contest entry can no longer be edited.', 'ENTRY_LOCKED');
+    }
+
+    const payload = {
+      competitorA: normalizeWrestlingStats(req.body.competitorA || req.body.wrestlerA),
+      competitorB: normalizeWrestlingStats(req.body.competitorB || req.body.wrestlerB),
+      winnerPrediction: String(req.body.winnerPrediction || '').toUpperCase(),
+    };
+    const errors = validateWrestlingPredictionPayload(payload);
+    if (errors.length) throw wrestlingHttpError(400, 'Invalid wrestling prediction payload.', 'INVALID_PREDICTION', errors);
+
+    const requestedStatus = String(req.body.predictionStatus || 'SUBMITTED').toUpperCase();
+    const predictionStatus = requestedStatus === 'DRAFT' ? 'DRAFT' : 'SUBMITTED';
+    const now = new Date();
+    const prediction = await ProWrestlingPrediction.findOneAndUpdate(
+      { matchId, userId },
+      {
+        $set: {
+          ...payload,
+          predictionStatus,
+          submittedAt: predictionStatus === 'SUBMITTED' ? now : undefined,
+          scoringRuleVersion: match.scoringRuleVersion,
+        },
+        $setOnInsert: { gameMode: PRO_WRESTLING_GAME_MODE },
+      },
+      { upsert: true, new: true, runValidators: true },
+    );
+
+    entry.status = predictionStatus === 'SUBMITTED' ? 'PREDICTION_SUBMITTED' : 'JOINED';
+    await entry.save();
+
+    if (predictionStatus === 'SUBMITTED') {
+      await createWrestlingNotification({
+        userId,
+        matchId,
+        type: 'PREDICTION_SUBMITTED',
+        title: 'Wrestling prediction submitted',
+        message: `Your predictions for ${match.matchTitle} are saved and can be edited until lock time.`,
+      });
+    }
+    res.status(req.method === 'POST' ? 201 : 200).json({ prediction, lockAt: match.lockAt });
+  } catch (error) {
+    handleWrestlingError(res, error);
+  }
+};
+app.post('/api/wrestling/matches/:matchId/prediction', requireProWrestlingEnabled, verifyToken, saveWrestlingPrediction);
+app.put('/api/wrestling/matches/:matchId/prediction', requireProWrestlingEnabled, verifyToken, saveWrestlingPrediction);
+
+app.get('/api/wrestling/matches/:matchId/prediction', requireProWrestlingEnabled, verifyToken, async (req, res) => {
+  try {
+    const prediction = await ProWrestlingPrediction.findOne({ matchId: req.params.matchId, userId: req.user.id }).lean();
+    if (!prediction) throw wrestlingHttpError(404, 'No wrestling prediction found for this user and match.', 'PREDICTION_NOT_FOUND');
+    res.json(prediction);
+  } catch (error) {
+    handleWrestlingError(res, error);
+  }
+});
+
+app.get('/api/wrestling/matches/:matchId/live', requireProWrestlingEnabled, async (req, res) => {
+  try {
+    const match = await ProWrestlingMatch.findById(req.params.matchId).lean();
+    if (!match) throw wrestlingHttpError(404, 'Wrestling match not found.', 'MATCH_NOT_FOUND');
+    if (!['LIVE', 'SCORING', 'FINALIZED'].includes(match.status)) {
+      return res.status(409).json({ message: 'Live wrestling statistics are not available yet.', status: match.status });
+    }
+    let myPosition = null;
+    const authHeader = req.headers.authorization;
+    if (authHeader?.startsWith('Bearer ')) {
+      try {
+        const decoded = jwt.verify(authHeader.slice(7), process.env.JWT_SECRET);
+        myPosition = await ProWrestlingPrediction.findOne({ matchId: match._id, userId: decoded.id })
+          .select('score rank previousRank scoreBreakdown predictionStatus')
+          .lean();
+      } catch (error) {
+        myPosition = null;
+      }
+    }
+    res.json({
+      match: publicWrestlingMatch(match, { revealStats: true, includeRules: true }),
+      statsVersion: match.statsVersion,
+      myPosition,
+      pollAfterSeconds: 15,
+    });
+  } catch (error) {
+    handleWrestlingError(res, error);
+  }
+});
+
+app.get('/api/wrestling/matches/:matchId/leaderboard', requireProWrestlingEnabled, async (req, res) => {
+  try {
+    const match = await ProWrestlingMatch.findById(req.params.matchId).lean();
+    if (!match) throw wrestlingHttpError(404, 'Wrestling match not found.', 'MATCH_NOT_FOUND');
+    if (!['LIVE', 'SCORING', 'FINALIZED'].includes(match.status)) {
+      return res.json({ matchId: match._id, status: match.status, data: [], pagination: { page: 1, limit: 50, total: 0, totalPages: 1 } });
+    }
+    const page = Math.max(1, Number.parseInt(req.query.page || '1', 10));
+    const limit = Math.min(100, Math.max(1, Number.parseInt(req.query.limit || '50', 10)));
+    const query = { matchId: match._id, rank: { $exists: true } };
+    const [predictions, total] = await Promise.all([
+      ProWrestlingPrediction.find(query).sort({ rank: 1 }).skip((page - 1) * limit).limit(limit).lean(),
+      ProWrestlingPrediction.countDocuments(query),
+    ]);
+    const userIds = predictions.map((prediction) => prediction.userId);
+    const users = await User.find({ _id: { $in: userIds } }).select('firstName lastName playerName profileUrl').lean();
+    const userMap = new Map(users.map((user) => [String(user._id), user]));
+    const data = predictions.map((prediction) => {
+      const user = userMap.get(String(prediction.userId));
+      return {
+        playerId: prediction.userId,
+        playerName: user?.playerName || `${user?.firstName || ''} ${user?.lastName || ''}`.trim() || 'Fantasy player',
+        profileUrl: user?.profileUrl || null,
+        score: prediction.score,
+        rank: prediction.rank,
+        previousRank: prediction.previousRank,
+        rankMovement: prediction.previousRank ? prediction.previousRank - prediction.rank : 0,
+        exactPredictionCount: prediction.exactPredictionCount,
+        payoutAmount: match.status === 'FINALIZED' ? prediction.payoutAmount : undefined,
+      };
+    });
+    res.json({ matchId: match._id, status: match.status, data, pagination: { page, limit, total, totalPages: Math.max(1, Math.ceil(total / limit)) } });
+  } catch (error) {
+    handleWrestlingError(res, error);
+  }
+});
+
+app.get('/api/wrestling/matches/:matchId/results', requireProWrestlingEnabled, async (req, res) => {
+  try {
+    const match = await ProWrestlingMatch.findById(req.params.matchId).lean();
+    if (!match) throw wrestlingHttpError(404, 'Wrestling match not found.', 'MATCH_NOT_FOUND');
+    if (!['SCORING', 'FINALIZED'].includes(match.status)) {
+      throw wrestlingHttpError(409, 'Official wrestling results are not available yet.', 'RESULTS_NOT_AVAILABLE');
+    }
+    let myResult = null;
+    const authHeader = req.headers.authorization;
+    if (authHeader?.startsWith('Bearer ')) {
+      try {
+        const decoded = jwt.verify(authHeader.slice(7), process.env.JWT_SECRET);
+        myResult = await ProWrestlingPrediction.findOne({ matchId: match._id, userId: decoded.id }).lean();
+      } catch (error) {
+        myResult = null;
+      }
+    }
+    res.json({ match: publicWrestlingMatch(match, { revealStats: true, includeRules: true }), myResult });
+  } catch (error) {
+    handleWrestlingError(res, error);
+  }
+});
+
+app.get('/api/users/me/wrestling-history', requireProWrestlingEnabled, verifyToken, async (req, res) => {
+  try {
+    const page = Math.max(1, Number.parseInt(req.query.page || '1', 10));
+    const limit = Math.min(100, Math.max(1, Number.parseInt(req.query.limit || '20', 10)));
+    const entryQuery = { userId: req.user.id };
+    if (req.query.status) entryQuery.status = String(req.query.status).toUpperCase();
+    const [entries, total] = await Promise.all([
+      ProWrestlingEntry.find(entryQuery).sort({ createdAt: -1 }).skip((page - 1) * limit).limit(limit).lean(),
+      ProWrestlingEntry.countDocuments(entryQuery),
+    ]);
+    const matchIds = entries.map((entry) => entry.matchId);
+    const [matches, predictions] = await Promise.all([
+      ProWrestlingMatch.find({ _id: { $in: matchIds } }).lean(),
+      ProWrestlingPrediction.find({ userId: req.user.id, matchId: { $in: matchIds } }).lean(),
+    ]);
+    const matchMap = new Map(matches.map((match) => [String(match._id), match]));
+    const predictionMap = new Map(predictions.map((prediction) => [String(prediction.matchId), prediction]));
+    const data = entries.map((entry) => ({
+      entry,
+      match: publicWrestlingMatch(matchMap.get(String(entry.matchId)) || {}, { revealStats: true }),
+      prediction: predictionMap.get(String(entry.matchId)) || null,
+    }));
+    res.json({ data, pagination: { page, limit, total, totalPages: Math.max(1, Math.ceil(total / limit)) } });
+  } catch (error) {
+    handleWrestlingError(res, error);
+  }
+});
+
+app.get('/api/users/me/wrestling-wallet-ledger', requireProWrestlingEnabled, verifyToken, async (req, res) => {
+  try {
+    const page = Math.max(1, Number.parseInt(req.query.page || '1', 10));
+    const limit = Math.min(100, Math.max(1, Number.parseInt(req.query.limit || '30', 10)));
+    const query = { accountType: 'USER', userId: req.user.id };
+    if (req.query.matchId && mongoose.isValidObjectId(req.query.matchId)) query.matchId = req.query.matchId;
+    if (req.query.type) query.type = String(req.query.type).toUpperCase();
+    const [data, total] = await Promise.all([
+      ProWrestlingWalletLedger.find(query).sort({ createdAt: -1 }).skip((page - 1) * limit).limit(limit).lean(),
+      ProWrestlingWalletLedger.countDocuments(query),
+    ]);
+    res.json({ data, pagination: { page, limit, total, totalPages: Math.max(1, Math.ceil(total / limit)) } });
+  } catch (error) {
+    handleWrestlingError(res, error);
+  }
+});
+
+app.get('/api/users/me/wrestling-notifications', requireProWrestlingEnabled, verifyToken, async (req, res) => {
+  try {
+    const limit = Math.min(100, Math.max(1, Number.parseInt(req.query.limit || '50', 10)));
+    const query = { userId: req.user.id };
+    if (req.query.unread === 'true') query.read = false;
+    const notifications = await ProWrestlingNotification.find(query).sort({ createdAt: -1 }).limit(limit).lean();
+    res.json(notifications);
+  } catch (error) {
+    handleWrestlingError(res, error);
+  }
+});
+
+app.patch('/api/users/me/wrestling-notifications/:id/read', requireProWrestlingEnabled, verifyToken, async (req, res) => {
+  try {
+    const notification = await ProWrestlingNotification.findOneAndUpdate(
+      { _id: req.params.id, userId: req.user.id },
+      { $set: { read: true } },
+      { new: true },
+    );
+    if (!notification) throw wrestlingHttpError(404, 'Wrestling notification not found.', 'NOTIFICATION_NOT_FOUND');
+    res.json(notification);
+  } catch (error) {
+    handleWrestlingError(res, error);
+  }
+});
+
+// --------------------------------------------------------------------------
+// Admin wrestler, contest, scoring, settlement, migration and analytics APIs
+// --------------------------------------------------------------------------
+
+app.get('/api/admin/wrestling/wrestlers', requireProWrestlingEnabled, verifyAdminToken, async (req, res) => {
+  try {
+    const page = Math.max(1, Number.parseInt(req.query.page || '1', 10));
+    const limit = Math.min(100, Math.max(1, Number.parseInt(req.query.limit || '50', 10)));
+    const query = {};
+    if (req.query.active !== undefined) query.active = wrestlingBoolean(req.query.active);
+    if (req.query.search) {
+      const search = String(req.query.search).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+      query.$or = [
+        { displayName: { $regex: search, $options: 'i' } },
+        { promotion: { $regex: search, $options: 'i' } },
+        { wrestlingStyle: { $regex: search, $options: 'i' } },
+      ];
+    }
+    const [data, total] = await Promise.all([
+      ProWrestler.find(query).sort({ active: -1, featured: -1, displayName: 1 }).skip((page - 1) * limit).limit(limit).lean(),
+      ProWrestler.countDocuments(query),
+    ]);
+    res.json({ data, pagination: { page, limit, total, totalPages: Math.max(1, Math.ceil(total / limit)) } });
+  } catch (error) {
+    handleWrestlingError(res, error);
+  }
+});
+
+app.post('/api/admin/wrestling/wrestlers', requireProWrestlingEnabled, verifyAdminToken, upload.fields([{ name: 'profileImage', maxCount: 1 }, { name: 'bannerImage', maxCount: 1 }]), async (req, res) => {
+  try {
+    const profileUpload = await uploadWrestlingImage(req.files?.profileImage?.[0], 'fantasy-mmadness/pro-wrestling/wrestlers');
+    const bannerUpload = await uploadWrestlingImage(req.files?.bannerImage?.[0], 'fantasy-mmadness/pro-wrestling/wrestlers');
+    const slug = await uniqueWrestlingSlug(ProWrestler, req.body.slug || req.body.displayName);
+    const wrestler = await ProWrestler.create({
+      displayName: req.body.displayName,
+      slug,
+      profileImage: profileUpload?.url || req.body.profileImageUrl || req.body.profileImage,
+      profileImageDeleteUrl: profileUpload?.deleteUrl,
+      bannerImage: bannerUpload?.url || req.body.bannerImageUrl || req.body.bannerImage,
+      bannerImageDeleteUrl: bannerUpload?.deleteUrl,
+      promotion: req.body.promotion,
+      country: req.body.country,
+      height: req.body.height,
+      weight: req.body.weight,
+      wrestlingStyle: req.body.wrestlingStyle,
+      signatureMoves: wrestlingArray(req.body.signatureMoves),
+      finishingMoves: wrestlingArray(req.body.finishingMoves),
+      careerRecord: wrestlingObject(req.body.careerRecord, {}),
+      historicalStatistics: wrestlingObject(req.body.historicalStatistics, {}),
+      biography: req.body.biography,
+      active: wrestlingBoolean(req.body.active, true),
+      featured: wrestlingBoolean(req.body.featured, false),
+      seo: wrestlingObject(req.body.seo, {}),
+      createdBy: req.admin.id,
+      updatedBy: req.admin.id,
+    });
+    await writeWrestlingAudit({ req, action: 'WRESTLER_CREATED', entityType: 'ProWrestler', entityId: wrestler._id, after: wrestler });
+    res.status(201).json(wrestler);
+  } catch (error) {
+    handleWrestlingError(res, error);
+  }
+});
+
+app.put('/api/admin/wrestling/wrestlers/:id', requireProWrestlingEnabled, verifyAdminToken, upload.fields([{ name: 'profileImage', maxCount: 1 }, { name: 'bannerImage', maxCount: 1 }]), async (req, res) => {
+  try {
+    const wrestler = await ProWrestler.findById(req.params.id);
+    if (!wrestler) throw wrestlingHttpError(404, 'Wrestler not found.', 'WRESTLER_NOT_FOUND');
+    const before = wrestlingPlainObject(wrestler);
+    const profileUpload = await uploadWrestlingImage(req.files?.profileImage?.[0], 'fantasy-mmadness/pro-wrestling/wrestlers');
+    const bannerUpload = await uploadWrestlingImage(req.files?.bannerImage?.[0], 'fantasy-mmadness/pro-wrestling/wrestlers');
+    const fields = ['displayName', 'promotion', 'country', 'height', 'weight', 'wrestlingStyle', 'biography'];
+    fields.forEach((field) => {
+      if (req.body[field] !== undefined) wrestler[field] = req.body[field];
+    });
+    if (req.body.slug || req.body.displayName) wrestler.slug = await uniqueWrestlingSlug(ProWrestler, req.body.slug || req.body.displayName, wrestler._id);
+    if (profileUpload || req.body.profileImageUrl) {
+      wrestler.profileImage = profileUpload?.url || req.body.profileImageUrl;
+      if (profileUpload?.deleteUrl) wrestler.profileImageDeleteUrl = profileUpload.deleteUrl;
+    }
+    if (bannerUpload || req.body.bannerImageUrl) {
+      wrestler.bannerImage = bannerUpload?.url || req.body.bannerImageUrl;
+      if (bannerUpload?.deleteUrl) wrestler.bannerImageDeleteUrl = bannerUpload.deleteUrl;
+    }
+    if (req.body.signatureMoves !== undefined) wrestler.signatureMoves = wrestlingArray(req.body.signatureMoves);
+    if (req.body.finishingMoves !== undefined) wrestler.finishingMoves = wrestlingArray(req.body.finishingMoves);
+    if (req.body.careerRecord !== undefined) wrestler.careerRecord = wrestlingObject(req.body.careerRecord, {});
+    if (req.body.historicalStatistics !== undefined) wrestler.historicalStatistics = wrestlingObject(req.body.historicalStatistics, {});
+    if (req.body.active !== undefined) wrestler.active = wrestlingBoolean(req.body.active);
+    if (req.body.featured !== undefined) wrestler.featured = wrestlingBoolean(req.body.featured);
+    if (req.body.seo !== undefined) wrestler.seo = wrestlingObject(req.body.seo, {});
+    wrestler.updatedBy = req.admin.id;
+    await wrestler.save();
+    await writeWrestlingAudit({ req, action: 'WRESTLER_UPDATED', entityType: 'ProWrestler', entityId: wrestler._id, before, after: wrestler, reason: req.body.reason });
+    res.json(wrestler);
+  } catch (error) {
+    handleWrestlingError(res, error);
+  }
+});
+
+app.delete('/api/admin/wrestling/wrestlers/:id', requireProWrestlingEnabled, verifyAdminToken, async (req, res) => {
+  try {
+    const wrestler = await ProWrestler.findById(req.params.id);
+    if (!wrestler) throw wrestlingHttpError(404, 'Wrestler not found.', 'WRESTLER_NOT_FOUND');
+    const before = wrestlingPlainObject(wrestler);
+    wrestler.active = false;
+    wrestler.updatedBy = req.admin.id;
+    await wrestler.save();
+    await writeWrestlingAudit({ req, action: 'WRESTLER_DEACTIVATED', entityType: 'ProWrestler', entityId: wrestler._id, before, after: wrestler, reason: req.body?.reason });
+    res.json({ message: 'Wrestler deactivated without deleting historical match data.', wrestler });
+  } catch (error) {
+    handleWrestlingError(res, error);
+  }
+});
+
+app.post('/api/admin/wrestling/matches', requireProWrestlingEnabled, verifyAdminToken, upload.single('bannerImage'), async (req, res) => {
+  try {
+    const competitorA = await resolveWrestlingCompetitor(req.body.competitorA, req.body.competitorAId);
+    const competitorB = await resolveWrestlingCompetitor(req.body.competitorB, req.body.competitorBId);
+    if (competitorA.wrestlerId && competitorB.wrestlerId && String(competitorA.wrestlerId) === String(competitorB.wrestlerId)) {
+      throw wrestlingHttpError(400, 'The two competitors must be different wrestlers.', 'DUPLICATE_COMPETITOR');
+    }
+    const scoringRules = await getWrestlingScoringRule(req.body.scoringRuleVersion);
+    const payoutRules = await getWrestlingPayoutRule(req.body.payoutRuleVersion);
+    const matchDate = new Date(req.body.matchDate);
+    const lockAt = new Date(req.body.lockAt);
+    if (Number.isNaN(matchDate.getTime()) || Number.isNaN(lockAt.getTime())) {
+      throw wrestlingHttpError(400, 'Valid matchDate and lockAt values are required.', 'INVALID_MATCH_DATES');
+    }
+    if (lockAt >= matchDate) throw wrestlingHttpError(400, 'Prediction lock time must occur before match time.', 'INVALID_LOCK_TIME');
+    const status = String(req.body.status || 'DRAFT').toUpperCase();
+    if (!['DRAFT', 'OPEN'].includes(status)) throw wrestlingHttpError(400, 'New wrestling matches can only start as DRAFT or OPEN.', 'INVALID_INITIAL_STATUS');
+    const basePot = Math.max(0, Math.round(wrestlingNumber(req.body.basePot ?? req.body.pot, 0)));
+    const minimumParticipants = Math.max(0, Math.round(wrestlingNumber(req.body.minimumParticipants, 0)));
+    const maximumParticipants = Math.max(0, Math.round(wrestlingNumber(req.body.maximumParticipants, 0)));
+    if (maximumParticipants > 0 && minimumParticipants > maximumParticipants) {
+      throw wrestlingHttpError(400, 'minimumParticipants cannot exceed maximumParticipants.', 'INVALID_PARTICIPANT_LIMITS');
+    }
+    const bannerUpload = await uploadWrestlingImage(req.file, 'fantasy-mmadness/pro-wrestling/matches');
+    const matchTitle = String(req.body.matchTitle || `${competitorA.displayName} vs ${competitorB.displayName}`).trim();
+    const slug = await uniqueWrestlingSlug(ProWrestlingMatch, req.body.slug || `${req.body.eventName}-${matchTitle}`);
+    const match = await ProWrestlingMatch.create({
+      eventName: req.body.eventName,
+      promotionName: req.body.promotionName,
+      matchTitle,
+      slug,
+      matchFormat: String(req.body.matchFormat || 'SINGLES').toUpperCase(),
+      competitorA,
+      competitorB,
+      matchDate,
+      matchTime: req.body.matchTime,
+      lockAt,
+      entryFeeTokens: Math.max(0, Math.round(wrestlingNumber(req.body.entryFeeTokens, 0))),
+      basePot,
+      currentPot: basePot,
+      minimumParticipants,
+      maximumParticipants,
+      autoCancelIfMinimumNotMet: wrestlingBoolean(req.body.autoCancelIfMinimumNotMet, true),
+      status,
+      description: req.body.description,
+      bannerImage: bannerUpload?.url || req.body.bannerImageUrl || req.body.bannerImage,
+      bannerImageDeleteUrl: bannerUpload?.deleteUrl,
+      featured: wrestlingBoolean(req.body.featured, false),
+      publicVisible: wrestlingBoolean(req.body.publicVisible, true),
+      affiliateId: mongoose.isValidObjectId(req.body.affiliateId) ? req.body.affiliateId : undefined,
+      affiliateCommissionPercentage: Math.min(100, Math.max(0, wrestlingNumber(req.body.affiliateCommissionPercentage, 0))),
+      referralCode: req.body.referralCode,
+      seo: wrestlingObject(req.body.seo, {}),
+      scoringRuleVersion: scoringRules.ruleId,
+      payoutRuleVersion: payoutRules.ruleId,
+      scoringRules,
+      payoutRules,
+      publishedAt: status === 'OPEN' ? new Date() : undefined,
+      createdBy: req.admin.id,
+      updatedBy: req.admin.id,
+    });
+    await writeWrestlingAudit({ req, action: 'WRESTLING_MATCH_CREATED', entityType: 'ProWrestlingMatch', entityId: match._id, after: match });
+    res.status(201).json(match);
+  } catch (error) {
+    handleWrestlingError(res, error);
+  }
+});
+
+app.get('/api/admin/wrestling/matches', requireProWrestlingEnabled, verifyAdminToken, async (req, res) => {
+  try {
+    const query = {};
+    if (req.query.status) query.status = { $in: String(req.query.status).split(',').map((value) => value.trim().toUpperCase()) };
+    if (req.query.search) {
+      const search = String(req.query.search).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+      query.$or = [{ eventName: { $regex: search, $options: 'i' } }, { matchTitle: { $regex: search, $options: 'i' } }];
+    }
+    const matches = await ProWrestlingMatch.find(query).sort({ createdAt: -1 }).lean();
+    res.json(matches);
+  } catch (error) {
+    handleWrestlingError(res, error);
+  }
+});
+
+app.get('/api/admin/wrestling/matches/:id', requireProWrestlingEnabled, verifyAdminToken, async (req, res) => {
+  try {
+    const match = await ProWrestlingMatch.findById(req.params.id).lean();
+    if (!match) throw wrestlingHttpError(404, 'Wrestling match not found.', 'MATCH_NOT_FOUND');
+    const [entries, predictions] = await Promise.all([
+      ProWrestlingEntry.countDocuments({ matchId: match._id }),
+      ProWrestlingPrediction.countDocuments({ matchId: match._id, predictionStatus: { $ne: 'DRAFT' } }),
+    ]);
+    res.json({ match, counts: { entries, predictions } });
+  } catch (error) {
+    handleWrestlingError(res, error);
+  }
+});
+
+app.put('/api/admin/wrestling/matches/:id', requireProWrestlingEnabled, verifyAdminToken, upload.single('bannerImage'), async (req, res) => {
+  try {
+    const match = await ProWrestlingMatch.findById(req.params.id);
+    if (!match) throw wrestlingHttpError(404, 'Wrestling match not found.', 'MATCH_NOT_FOUND');
+    if (['FINALIZED', 'CANCELLED', 'NO_CONTEST'].includes(match.status)) {
+      throw wrestlingHttpError(409, 'Closed wrestling matches cannot be edited.', 'MATCH_CLOSED');
+    }
+    const before = wrestlingPlainObject(match);
+    const protectedFields = new Set(['status', 'settlement', 'officialStats', 'officialWinner', 'participantCount', 'currentPot']);
+    const editableFields = ['eventName', 'promotionName', 'matchTitle', 'matchTime', 'description', 'referralCode'];
+    editableFields.forEach((field) => {
+      if (req.body[field] !== undefined && !protectedFields.has(field)) match[field] = req.body[field];
+    });
+    if (req.body.matchDate !== undefined) match.matchDate = new Date(req.body.matchDate);
+    if (req.body.lockAt !== undefined) match.lockAt = new Date(req.body.lockAt);
+    if (Number.isNaN(match.matchDate.getTime()) || Number.isNaN(match.lockAt.getTime()) || match.lockAt >= match.matchDate) {
+      throw wrestlingHttpError(400, 'Match and lock dates are invalid.', 'INVALID_MATCH_DATES');
+    }
+    if (match.participantCount === 0 && match.status === 'DRAFT') {
+      if (req.body.competitorA !== undefined || req.body.competitorAId) match.competitorA = await resolveWrestlingCompetitor(req.body.competitorA, req.body.competitorAId);
+      if (req.body.competitorB !== undefined || req.body.competitorBId) match.competitorB = await resolveWrestlingCompetitor(req.body.competitorB, req.body.competitorBId);
+      if (req.body.entryFeeTokens !== undefined) match.entryFeeTokens = Math.max(0, Math.round(wrestlingNumber(req.body.entryFeeTokens, 0)));
+      if (req.body.basePot !== undefined || req.body.pot !== undefined) {
+        match.basePot = Math.max(0, Math.round(wrestlingNumber(req.body.basePot ?? req.body.pot, 0)));
+        match.currentPot = match.basePot;
+      }
+      if (req.body.scoringRuleVersion) {
+        match.scoringRules = await getWrestlingScoringRule(req.body.scoringRuleVersion);
+        match.scoringRuleVersion = match.scoringRules.ruleId;
+      }
+      if (req.body.payoutRuleVersion) {
+        match.payoutRules = await getWrestlingPayoutRule(req.body.payoutRuleVersion);
+        match.payoutRuleVersion = match.payoutRules.ruleId;
+      }
+    }
+    if (req.body.minimumParticipants !== undefined) match.minimumParticipants = Math.max(0, Math.round(wrestlingNumber(req.body.minimumParticipants, 0)));
+    if (req.body.maximumParticipants !== undefined) match.maximumParticipants = Math.max(0, Math.round(wrestlingNumber(req.body.maximumParticipants, 0)));
+    if (match.maximumParticipants > 0 && match.minimumParticipants > match.maximumParticipants) {
+      throw wrestlingHttpError(400, 'minimumParticipants cannot exceed maximumParticipants.', 'INVALID_PARTICIPANT_LIMITS');
+    }
+    if (req.body.autoCancelIfMinimumNotMet !== undefined) match.autoCancelIfMinimumNotMet = wrestlingBoolean(req.body.autoCancelIfMinimumNotMet);
+    if (req.body.matchFormat !== undefined && match.status === 'DRAFT' && match.participantCount === 0) {
+      match.matchFormat = String(req.body.matchFormat).toUpperCase();
+    }
+    if (req.body.affiliateId !== undefined) {
+      if (!req.body.affiliateId) match.affiliateId = undefined;
+      else if (mongoose.isValidObjectId(req.body.affiliateId)) match.affiliateId = req.body.affiliateId;
+      else throw wrestlingHttpError(400, 'affiliateId must be a valid identifier.', 'INVALID_AFFILIATE_ID');
+    }
+    if (req.body.featured !== undefined) match.featured = wrestlingBoolean(req.body.featured);
+    if (req.body.publicVisible !== undefined) match.publicVisible = wrestlingBoolean(req.body.publicVisible);
+    if (req.body.affiliateCommissionPercentage !== undefined) match.affiliateCommissionPercentage = Math.min(100, Math.max(0, wrestlingNumber(req.body.affiliateCommissionPercentage, 0)));
+    if (req.body.seo !== undefined) match.seo = wrestlingObject(req.body.seo, {});
+    if (req.body.slug || req.body.matchTitle || req.body.eventName) match.slug = await uniqueWrestlingSlug(ProWrestlingMatch, req.body.slug || `${match.eventName}-${match.matchTitle}`, match._id);
+    const bannerUpload = await uploadWrestlingImage(req.file, 'fantasy-mmadness/pro-wrestling/matches');
+    if (bannerUpload || req.body.bannerImageUrl) {
+      match.bannerImage = bannerUpload?.url || req.body.bannerImageUrl;
+      if (bannerUpload?.deleteUrl) match.bannerImageDeleteUrl = bannerUpload.deleteUrl;
+    }
+    match.updatedBy = req.admin.id;
+    await match.save();
+    await writeWrestlingAudit({ req, action: 'WRESTLING_MATCH_UPDATED', entityType: 'ProWrestlingMatch', entityId: match._id, before, after: match, reason: req.body.reason });
+    res.json(match);
+  } catch (error) {
+    handleWrestlingError(res, error);
+  }
+});
+
+app.delete('/api/admin/wrestling/matches/:id', requireProWrestlingEnabled, verifyAdminToken, async (req, res) => {
+  try {
+    const match = await ProWrestlingMatch.findById(req.params.id);
+    if (!match) throw wrestlingHttpError(404, 'Wrestling match not found.', 'MATCH_NOT_FOUND');
+    if (match.participantCount > 0 || match.status !== 'DRAFT') {
+      throw wrestlingHttpError(409, 'Only empty draft wrestling matches can be permanently deleted. Cancel active contests instead.', 'MATCH_DELETE_BLOCKED');
+    }
+    const before = wrestlingPlainObject(match);
+    await match.deleteOne();
+    await writeWrestlingAudit({ req, action: 'WRESTLING_MATCH_DELETED', entityType: 'ProWrestlingMatch', entityId: req.params.id, before, reason: req.body?.reason });
+    res.json({ message: 'Draft wrestling match deleted.' });
+  } catch (error) {
+    handleWrestlingError(res, error);
+  }
+});
+
+app.put('/api/admin/wrestling/matches/:id/status', requireProWrestlingEnabled, verifyAdminToken, async (req, res) => {
+  try {
+    const nextStatus = String(req.body.status || '').toUpperCase();
+    if (!PRO_WRESTLING_MATCH_STATUSES.includes(nextStatus)) throw wrestlingHttpError(400, 'Invalid wrestling match status.', 'INVALID_STATUS');
+    if (['FINALIZED', 'CANCELLED', 'NO_CONTEST'].includes(nextStatus)) {
+      throw wrestlingHttpError(400, 'Use the finalize or cancel endpoints for terminal match states.', 'TERMINAL_STATUS_REQUIRES_WORKFLOW');
+    }
+    const result = await runWrestlingTransaction(async (session) => {
+      const match = await applyWrestlingSession(ProWrestlingMatch.findById(req.params.id), session);
+      if (!match) throw wrestlingHttpError(404, 'Wrestling match not found.', 'MATCH_NOT_FOUND');
+      if (!canTransitionWrestlingStatus(match.status, nextStatus)) {
+        throw wrestlingHttpError(409, `Cannot transition wrestling match from ${match.status} to ${nextStatus}.`, 'INVALID_STATUS_TRANSITION');
+      }
+      const before = wrestlingPlainObject(match);
+      if (nextStatus === 'OPEN') match.publishedAt = new Date();
+      if (nextStatus === 'LOCKED') {
+        await lockWrestlingMatch(match, session);
+      } else {
+        match.status = nextStatus;
+        if (nextStatus === 'LIVE') match.liveStartedAt = new Date();
+        if (nextStatus === 'SCORING') match.scoringStartedAt = new Date();
+        match.updatedBy = req.admin.id;
+        await match.save(session ? { session } : undefined);
+      }
+      if (nextStatus === 'LIVE') {
+        await notifyWrestlingEntrants({
+          match,
+          type: 'MATCH_LIVE',
+          title: 'Pro Wrestling match is live',
+          message: `${match.matchTitle} is live. Follow your provisional score and rank.`,
+          session,
+        });
+        match.liveNotificationSent = true;
+        await match.save(session ? { session } : undefined);
+      }
+      await writeWrestlingAudit({ req, action: 'WRESTLING_MATCH_STATUS_UPDATED', entityType: 'ProWrestlingMatch', entityId: match._id, before, after: match, reason: req.body.reason, session });
+      return match;
+    });
+    await safeWrestlingTrigger('match-status', { matchId: String(result._id), status: result.status });
+    res.json(result);
+  } catch (error) {
+    handleWrestlingError(res, error);
+  }
+});
+
+app.put('/api/admin/wrestling/matches/:id/live-stats', requireProWrestlingEnabled, verifyAdminToken, async (req, res) => {
+  try {
+    const statsA = normalizeWrestlingStats(req.body.competitorA || req.body.wrestlerA);
+    const statsB = normalizeWrestlingStats(req.body.competitorB || req.body.wrestlerB);
+    const officialWinner = req.body.officialWinner ? String(req.body.officialWinner).toUpperCase() : undefined;
+    if (officialWinner && ![...WRESTLING_WINNER_VALUES, 'NO_CONTEST'].includes(officialWinner)) {
+      throw wrestlingHttpError(400, 'officialWinner must be A, B, DRAW, or NO_CONTEST.', 'INVALID_WINNER');
+    }
+    const result = await runWrestlingTransaction(async (session) => {
+      const match = await applyWrestlingSession(ProWrestlingMatch.findById(req.params.id), session);
+      if (!match) throw wrestlingHttpError(404, 'Wrestling match not found.', 'MATCH_NOT_FOUND');
+      if (['FINALIZED', 'CANCELLED', 'NO_CONTEST'].includes(match.status)) throw wrestlingHttpError(409, 'Closed wrestling match statistics cannot be edited.', 'MATCH_CLOSED');
+      const before = wrestlingPlainObject(match);
+      match.officialStats = { competitorA: statsA, competitorB: statsB };
+      if (officialWinner) match.officialWinner = officialWinner;
+      if (req.body.finishType) match.finishType = String(req.body.finishType).toUpperCase();
+      match.statsVersion += 1;
+      if (['OPEN', 'LOCKED'].includes(match.status)) {
+        match.status = 'LIVE';
+        match.liveStartedAt = new Date();
+      }
+      match.updatedBy = req.admin.id;
+      await match.save(session ? { session } : undefined);
+      const ranked = await recalculateWrestlingScores(match, session);
+      await writeWrestlingAudit({ req, action: 'WRESTLING_LIVE_STATS_UPDATED', entityType: 'ProWrestlingMatch', entityId: match._id, before, after: match, reason: req.body.reason, session });
+      return { match, rankedCount: ranked.length };
+    });
+    await safeWrestlingTrigger('live-stats', { matchId: String(result.match._id), statsVersion: result.match.statsVersion });
+    res.json(result);
+  } catch (error) {
+    handleWrestlingError(res, error);
+  }
+});
+
+app.put('/api/admin/wrestling/matches/:id/result', requireProWrestlingEnabled, verifyAdminToken, async (req, res) => {
+  try {
+    const officialWinner = String(req.body.officialWinner || '').toUpperCase();
+    if (!WRESTLING_WINNER_VALUES.includes(officialWinner)) throw wrestlingHttpError(400, 'Official winner must be A, B, or DRAW.', 'INVALID_WINNER');
+    const result = await runWrestlingTransaction(async (session) => {
+      const match = await applyWrestlingSession(ProWrestlingMatch.findById(req.params.id), session);
+      if (!match) throw wrestlingHttpError(404, 'Wrestling match not found.', 'MATCH_NOT_FOUND');
+      if (['FINALIZED', 'CANCELLED', 'NO_CONTEST'].includes(match.status)) throw wrestlingHttpError(409, 'Closed wrestling match result cannot be edited.', 'MATCH_CLOSED');
+      const before = wrestlingPlainObject(match);
+      if (req.body.competitorA || req.body.wrestlerA) match.officialStats.competitorA = normalizeWrestlingStats(req.body.competitorA || req.body.wrestlerA);
+      if (req.body.competitorB || req.body.wrestlerB) match.officialStats.competitorB = normalizeWrestlingStats(req.body.competitorB || req.body.wrestlerB);
+      match.officialWinner = officialWinner;
+      match.finishType = String(req.body.finishType || (officialWinner === 'DRAW' ? 'DRAW' : 'OTHER')).toUpperCase();
+      match.status = 'SCORING';
+      match.scoringStartedAt = new Date();
+      match.statsVersion += 1;
+      match.updatedBy = req.admin.id;
+      await match.save(session ? { session } : undefined);
+      const ranked = await recalculateWrestlingScores(match, session);
+      await writeWrestlingAudit({ req, action: 'WRESTLING_OFFICIAL_RESULT_SET', entityType: 'ProWrestlingMatch', entityId: match._id, before, after: match, reason: req.body.reason, session });
+      return { match, rankedCount: ranked.length };
+    });
+    await safeWrestlingTrigger('official-result', { matchId: String(result.match._id), officialWinner: result.match.officialWinner });
+    res.json(result);
+  } catch (error) {
+    handleWrestlingError(res, error);
+  }
+});
+
+app.post('/api/admin/wrestling/matches/:id/recalculate', requireProWrestlingEnabled, verifyAdminToken, async (req, res) => {
+  try {
+    const result = await runWrestlingTransaction(async (session) => {
+      const match = await applyWrestlingSession(ProWrestlingMatch.findById(req.params.id), session);
+      if (!match) throw wrestlingHttpError(404, 'Wrestling match not found.', 'MATCH_NOT_FOUND');
+      if (!['LIVE', 'SCORING'].includes(match.status)) throw wrestlingHttpError(409, 'Only live or scoring wrestling matches can be recalculated.', 'INVALID_RECALCULATION_STATUS');
+      const ranked = await recalculateWrestlingScores(match, session);
+      await writeWrestlingAudit({ req, action: 'WRESTLING_SCORES_RECALCULATED', entityType: 'ProWrestlingMatch', entityId: match._id, after: { rankedCount: ranked.length }, reason: req.body.reason, session });
+      return ranked;
+    });
+    res.json({ rankedCount: result.length, leaderboard: result.map((row) => ({ userId: row.userId, rank: row.rank, score: row.totalScore })) });
+  } catch (error) {
+    handleWrestlingError(res, error);
+  }
+});
+
+app.post('/api/admin/wrestling/matches/:id/finalize', requireProWrestlingEnabled, verifyAdminToken, async (req, res) => {
+  try {
+    const result = await runWrestlingTransaction(async (session) => {
+      const match = await applyWrestlingSession(ProWrestlingMatch.findById(req.params.id), session);
+      if (!match) throw wrestlingHttpError(404, 'Wrestling match not found.', 'MATCH_NOT_FOUND');
+      if (match.settlement?.status === 'PAID' && match.status === 'FINALIZED') return { match, idempotent: true };
+      if (!['LIVE', 'SCORING', 'LOCKED'].includes(match.status)) throw wrestlingHttpError(409, 'Wrestling match is not ready for finalization.', 'INVALID_FINALIZATION_STATUS');
+      if (!WRESTLING_WINNER_VALUES.includes(match.officialWinner)) throw wrestlingHttpError(400, 'Set the official wrestling winner before finalizing.', 'OFFICIAL_WINNER_REQUIRED');
+      const before = wrestlingPlainObject(match);
+      match.status = 'SCORING';
+      match.scoringStartedAt = match.scoringStartedAt || new Date();
+      match.settlement.status = 'PROCESSING';
+      await match.save(session ? { session } : undefined);
+      await recalculateWrestlingScores(match, session);
+      const predictions = await applyWrestlingSession(ProWrestlingPrediction.find({ matchId: match._id, rank: { $exists: true } }).sort({ rank: 1 }), session);
+      if (!predictions.length) throw wrestlingHttpError(409, 'No submitted wrestling predictions are available for settlement.', 'NO_PREDICTIONS_TO_SETTLE');
+
+      const initialDistribution = calculatePayoutDistribution(match.currentPot, predictions.length, match.payoutRules);
+      const affiliateCommissionTokens = match.affiliateId
+        ? Math.floor(initialDistribution.distributablePot * (match.affiliateCommissionPercentage / 100))
+        : 0;
+      const playerPot = Math.max(0, initialDistribution.distributablePot - affiliateCommissionTokens);
+      const playerDistribution = calculatePayoutDistribution(playerPot, predictions.length, { ...match.payoutRules, platformFeePercentage: 0 });
+      const payoutByRank = new Map(playerDistribution.payouts.map((payout) => [payout.rank, payout.amount]));
+
+      for (const prediction of predictions) {
+        const payoutAmount = payoutByRank.get(prediction.rank) || 0;
+        prediction.payoutAmount = payoutAmount;
+        prediction.predictionStatus = 'SETTLED';
+        if (payoutAmount > 0) {
+          const idempotencyKey = `wrestling:payout:${match._id}:${prediction.userId}`;
+          const existingLedger = await applyWrestlingSession(ProWrestlingWalletLedger.findOne({ idempotencyKey }), session).lean();
+          if (!existingLedger) {
+            const balance = await adjustWrestlingUserTokens({ userId: prediction.userId, delta: payoutAmount, session });
+            await ProWrestlingWalletLedger.create([{
+              accountType: 'USER',
+              userId: prediction.userId,
+              matchId: match._id,
+              type: 'WRESTLING_WINNING',
+              amount: payoutAmount,
+              balanceBefore: balance.balanceBefore,
+              balanceAfter: balance.balanceAfter,
+              idempotencyKey,
+              metadata: { rank: prediction.rank, scoringRuleVersion: match.scoringRuleVersion, payoutRuleVersion: match.payoutRuleVersion },
+            }], session ? { session } : undefined);
+          }
+          await createWrestlingNotification({
+            userId: prediction.userId,
+            matchId: match._id,
+            type: 'WINNINGS_CREDITED',
+            title: 'Pro Wrestling winnings credited',
+            message: `You finished #${prediction.rank} and won ${payoutAmount} token${payoutAmount === 1 ? '' : 's'} in ${match.matchTitle}.`,
+            metadata: { rank: prediction.rank, payoutAmount },
+            session,
+          });
+        } else {
+          await createWrestlingNotification({
+            userId: prediction.userId,
+            matchId: match._id,
+            type: 'RESULT_FINALIZED',
+            title: 'Pro Wrestling result finalized',
+            message: `Your final rank in ${match.matchTitle} is #${prediction.rank}.`,
+            metadata: { rank: prediction.rank, score: prediction.score },
+            session,
+          });
+        }
+        await prediction.save(session ? { session } : undefined);
+      }
+
+      if (match.affiliateId && affiliateCommissionTokens > 0) {
+        const idempotencyKey = `wrestling:affiliate:${match._id}:${match.affiliateId}`;
+        const existingLedger = await applyWrestlingSession(ProWrestlingWalletLedger.findOne({ idempotencyKey }), session).lean();
+        if (!existingLedger) {
+          const balance = await adjustWrestlingAffiliateTokens({ affiliateId: match.affiliateId, delta: affiliateCommissionTokens, session });
+          await ProWrestlingWalletLedger.create([{
+            accountType: 'AFFILIATE',
+            affiliateId: match.affiliateId,
+            matchId: match._id,
+            type: 'WRESTLING_AFFILIATE_COMMISSION',
+            amount: affiliateCommissionTokens,
+            balanceBefore: balance.balanceBefore,
+            balanceAfter: balance.balanceAfter,
+            idempotencyKey,
+            metadata: { percentage: match.affiliateCommissionPercentage },
+          }], session ? { session } : undefined);
+        }
+      }
+
+      if (initialDistribution.platformFeeTokens > 0) {
+        const platformKey = `wrestling:platform-fee:${match._id}`;
+        const existingPlatformLedger = await applyWrestlingSession(ProWrestlingWalletLedger.findOne({ idempotencyKey: platformKey }), session).lean();
+        if (!existingPlatformLedger) {
+          await ProWrestlingWalletLedger.create([{
+            accountType: 'PLATFORM',
+            matchId: match._id,
+            type: 'WRESTLING_PLATFORM_FEE',
+            amount: initialDistribution.platformFeeTokens,
+            idempotencyKey: platformKey,
+            metadata: { percentage: match.payoutRules.platformFeePercentage || 0 },
+          }], session ? { session } : undefined);
+        }
+      }
+
+      const settledAt = new Date();
+      await ProWrestlingEntry.updateMany(
+        { matchId: match._id, status: { $ne: 'REFUNDED' } },
+        { $set: { status: 'SETTLED', settledAt, payoutAmount: 0 }, $unset: { rank: '' } },
+        session ? { session } : undefined,
+      );
+      const entrySettlementOperations = predictions.map((prediction) => ({
+        updateOne: {
+          filter: { matchId: match._id, userId: prediction.userId, status: { $ne: 'REFUNDED' } },
+          update: {
+            $set: {
+              status: 'SETTLED',
+              settledAt,
+              rank: prediction.rank,
+              payoutAmount: prediction.payoutAmount || 0,
+            },
+          },
+        },
+      }));
+      if (entrySettlementOperations.length) {
+        await ProWrestlingEntry.bulkWrite(entrySettlementOperations, session ? { session } : undefined);
+      }
+      const payoutTotal = playerDistribution.payouts.reduce((sum, payout) => sum + payout.amount, 0);
+      match.status = 'FINALIZED';
+      match.finalizedAt = new Date();
+      match.settlement = {
+        status: 'PAID',
+        winnerCount: playerDistribution.winnerCount,
+        grossPot: match.currentPot,
+        platformFeeTokens: initialDistribution.platformFeeTokens,
+        affiliateCommissionTokens,
+        playerPayoutTokens: payoutTotal,
+        completedAt: new Date(),
+      };
+      match.updatedBy = req.admin.id;
+      await match.save(session ? { session } : undefined);
+      await writeWrestlingAudit({ req, action: 'WRESTLING_MATCH_FINALIZED', entityType: 'ProWrestlingMatch', entityId: match._id, before, after: match, reason: req.body.reason, session });
+      return { match, payoutDistribution: playerDistribution, affiliateCommissionTokens, idempotent: false };
+    });
+    await safeWrestlingTrigger('match-finalized', { matchId: String(result.match._id), settlement: result.match.settlement });
+    res.json(result);
+  } catch (error) {
+    handleWrestlingError(res, error);
+  }
+});
+
+app.post('/api/admin/wrestling/matches/:id/cancel', requireProWrestlingEnabled, verifyAdminToken, async (req, res) => {
+  try {
+    const status = String(req.body.status || 'CANCELLED').toUpperCase();
+    if (!['CANCELLED', 'NO_CONTEST'].includes(status)) throw wrestlingHttpError(400, 'Cancellation status must be CANCELLED or NO_CONTEST.', 'INVALID_CANCELLATION_STATUS');
+    const reason = String(req.body.reason || (status === 'NO_CONTEST' ? 'Match declared a no contest.' : 'Match cancelled by administrator.'));
+    const match = await refundWrestlingMatch({ matchId: req.params.id, status, reason, req, adminId: req.admin.id });
+    res.json({ message: 'Wrestling contest closed and eligible entry fees refunded.', match });
+  } catch (error) {
+    handleWrestlingError(res, error);
+  }
+});
+
+app.post('/api/admin/wrestling/matches/:id/refund', requireProWrestlingEnabled, verifyAdminToken, async (req, res) => {
+  try {
+    const reason = String(req.body.reason || 'Wrestling contest entry refund issued by administrator.');
+    const match = await refundWrestlingMatch({ matchId: req.params.id, status: 'CANCELLED', reason, req, adminId: req.admin.id });
+    res.json({ message: 'Wrestling contest entry fees refunded.', match });
+  } catch (error) {
+    handleWrestlingError(res, error);
+  }
+});
+
+app.post('/api/admin/wrestling/matches/:id/notify', requireProWrestlingEnabled, verifyAdminToken, async (req, res) => {
+  try {
+    const match = await ProWrestlingMatch.findById(req.params.id).lean();
+    if (!match) throw wrestlingHttpError(404, 'Wrestling match not found.', 'MATCH_NOT_FOUND');
+    const users = await User.find({ isNotificationsEnabled: { $ne: false } }).select('_id').limit(10000).lean();
+    const documents = users.map((user) => ({
+      userId: user._id,
+      matchId: match._id,
+      type: 'CONTEST_PUBLISHED',
+      title: req.body.title || 'New Pro Wrestling contest',
+      message: req.body.message || `${match.matchTitle} is now open for predictions.`,
+      metadata: { slug: match.slug, lockAt: match.lockAt },
+    }));
+    if (documents.length) await ProWrestlingNotification.insertMany(documents);
+    await writeWrestlingAudit({ req, action: 'WRESTLING_CONTEST_NOTIFICATION_SENT', entityType: 'ProWrestlingMatch', entityId: match._id, after: { recipients: documents.length } });
+    res.json({ sent: documents.length });
+  } catch (error) {
+    handleWrestlingError(res, error);
+  }
+});
+
+app.get('/api/admin/wrestling/scoring-rules', requireProWrestlingEnabled, verifyAdminToken, async (req, res) => {
+  try {
+    res.json(await ProWrestlingScoringRule.find().sort({ createdAt: 1 }).lean());
+  } catch (error) {
+    handleWrestlingError(res, error);
+  }
+});
+
+app.post('/api/admin/wrestling/scoring-rules', requireProWrestlingEnabled, verifyAdminToken, async (req, res) => {
+  try {
+    const config = normalizeScoringRule({ ...wrestlingObject(req.body.config, req.body), ruleId: req.body.ruleId, name: req.body.name });
+    const rule = await ProWrestlingScoringRule.create({ ruleId: config.ruleId, name: config.name, active: wrestlingBoolean(req.body.active, true), config, createdBy: req.admin.id, updatedBy: req.admin.id });
+    await writeWrestlingAudit({ req, action: 'WRESTLING_SCORING_RULE_CREATED', entityType: 'ProWrestlingScoringRule', entityId: rule._id, after: rule });
+    res.status(201).json(rule);
+  } catch (error) {
+    handleWrestlingError(res, error);
+  }
+});
+
+app.put('/api/admin/wrestling/scoring-rules/:ruleId', requireProWrestlingEnabled, verifyAdminToken, async (req, res) => {
+  try {
+    const existing = await ProWrestlingScoringRule.findOne({ ruleId: String(req.params.ruleId).toUpperCase() });
+    if (!existing) throw wrestlingHttpError(404, 'Wrestling scoring rule not found.', 'SCORING_RULE_NOT_FOUND');
+    const before = wrestlingPlainObject(existing);
+    const config = normalizeScoringRule({ ...wrestlingObject(req.body.config, req.body), ruleId: existing.ruleId, name: req.body.name || existing.name });
+    existing.name = config.name;
+    existing.config = config;
+    if (req.body.active !== undefined) existing.active = wrestlingBoolean(req.body.active);
+    existing.updatedBy = req.admin.id;
+    await existing.save();
+    await writeWrestlingAudit({ req, action: 'WRESTLING_SCORING_RULE_UPDATED', entityType: 'ProWrestlingScoringRule', entityId: existing._id, before, after: existing, reason: req.body.reason });
+    res.json(existing);
+  } catch (error) {
+    handleWrestlingError(res, error);
+  }
+});
+
+app.get('/api/admin/wrestling/payout-rules', requireProWrestlingEnabled, verifyAdminToken, async (req, res) => {
+  try {
+    res.json(await ProWrestlingPayoutRule.find().sort({ createdAt: 1 }).lean());
+  } catch (error) {
+    handleWrestlingError(res, error);
+  }
+});
+
+app.post('/api/admin/wrestling/payout-rules', requireProWrestlingEnabled, verifyAdminToken, async (req, res) => {
+  try {
+    const config = normalizePayoutRule({ ...wrestlingObject(req.body.config, req.body), ruleId: req.body.ruleId, name: req.body.name });
+    const rule = await ProWrestlingPayoutRule.create({ ruleId: config.ruleId, name: config.name, active: wrestlingBoolean(req.body.active, true), config, createdBy: req.admin.id, updatedBy: req.admin.id });
+    await writeWrestlingAudit({ req, action: 'WRESTLING_PAYOUT_RULE_CREATED', entityType: 'ProWrestlingPayoutRule', entityId: rule._id, after: rule });
+    res.status(201).json(rule);
+  } catch (error) {
+    handleWrestlingError(res, error);
+  }
+});
+
+app.put('/api/admin/wrestling/payout-rules/:ruleId', requireProWrestlingEnabled, verifyAdminToken, async (req, res) => {
+  try {
+    const existing = await ProWrestlingPayoutRule.findOne({ ruleId: String(req.params.ruleId).toUpperCase() });
+    if (!existing) throw wrestlingHttpError(404, 'Wrestling payout rule not found.', 'PAYOUT_RULE_NOT_FOUND');
+    const before = wrestlingPlainObject(existing);
+    const config = normalizePayoutRule({ ...wrestlingObject(req.body.config, req.body), ruleId: existing.ruleId, name: req.body.name || existing.name });
+    existing.name = config.name;
+    existing.config = config;
+    if (req.body.active !== undefined) existing.active = wrestlingBoolean(req.body.active);
+    existing.updatedBy = req.admin.id;
+    await existing.save();
+    await writeWrestlingAudit({ req, action: 'WRESTLING_PAYOUT_RULE_UPDATED', entityType: 'ProWrestlingPayoutRule', entityId: existing._id, before, after: existing, reason: req.body.reason });
+    res.json(existing);
+  } catch (error) {
+    handleWrestlingError(res, error);
+  }
+});
+
+app.get('/api/admin/wrestling/analytics', requireProWrestlingEnabled, verifyAdminToken, async (req, res) => {
+  try {
+    const [statusCounts, totalEntries, uniqueUsers, potTotals, predictionSummary, ledgerSummary] = await Promise.all([
+      ProWrestlingMatch.aggregate([{ $group: { _id: '$status', count: { $sum: 1 } } }]),
+      ProWrestlingEntry.countDocuments(),
+      ProWrestlingEntry.distinct('userId'),
+      ProWrestlingMatch.aggregate([{ $group: { _id: null, grossPot: { $sum: '$currentPot' }, finalizedPot: { $sum: { $cond: [{ $eq: ['$status', 'FINALIZED'] }, '$currentPot', 0] } } } }]),
+      ProWrestlingPrediction.aggregate([{ $match: { rank: { $exists: true } } }, { $group: { _id: null, averageScore: { $avg: '$score' }, averageNormalizedError: { $avg: '$normalizedError' }, scoredPredictions: { $sum: 1 } } }]),
+      ProWrestlingWalletLedger.aggregate([{ $match: { status: 'COMPLETED' } }, { $group: { _id: '$type', amount: { $sum: '$amount' }, transactions: { $sum: 1 } } }]),
+    ]);
+    res.json({
+      gameMode: PRO_WRESTLING_GAME_MODE,
+      matchesByStatus: Object.fromEntries(statusCounts.map((item) => [item._id, item.count])),
+      totalEntries,
+      uniquePlayers: uniqueUsers.length,
+      pots: potTotals[0] || { grossPot: 0, finalizedPot: 0 },
+      predictions: predictionSummary[0] || { averageScore: 0, averageNormalizedError: 0, scoredPredictions: 0 },
+      wallet: Object.fromEntries(ledgerSummary.map((item) => [item._id, { amount: item.amount, transactions: item.transactions }])),
+    });
+  } catch (error) {
+    handleWrestlingError(res, error);
+  }
+});
+
+app.get('/api/admin/wrestling/audit-logs', requireProWrestlingEnabled, verifyAdminToken, async (req, res) => {
+  try {
+    const page = Math.max(1, Number.parseInt(req.query.page || '1', 10));
+    const limit = Math.min(100, Math.max(1, Number.parseInt(req.query.limit || '50', 10)));
+    const query = {};
+    if (req.query.entityType) query.entityType = req.query.entityType;
+    if (req.query.entityId) query.entityId = String(req.query.entityId);
+    if (req.query.action) query.action = req.query.action;
+    const [data, total] = await Promise.all([
+      ProWrestlingAuditLog.find(query).sort({ createdAt: -1 }).skip((page - 1) * limit).limit(limit).lean(),
+      ProWrestlingAuditLog.countDocuments(query),
+    ]);
+    res.json({ data, pagination: { page, limit, total, totalPages: Math.max(1, Math.ceil(total / limit)) } });
+  } catch (error) {
+    handleWrestlingError(res, error);
+  }
+});
+
+app.get('/api/admin/wrestling/wallet-ledger', requireProWrestlingEnabled, verifyAdminToken, async (req, res) => {
+  try {
+    const page = Math.max(1, Number.parseInt(req.query.page || '1', 10));
+    const limit = Math.min(200, Math.max(1, Number.parseInt(req.query.limit || '50', 10)));
+    const query = {};
+    if (req.query.matchId && mongoose.isValidObjectId(req.query.matchId)) query.matchId = req.query.matchId;
+    if (req.query.userId && mongoose.isValidObjectId(req.query.userId)) query.userId = req.query.userId;
+    if (req.query.affiliateId && mongoose.isValidObjectId(req.query.affiliateId)) query.affiliateId = req.query.affiliateId;
+    if (req.query.accountType) query.accountType = String(req.query.accountType).toUpperCase();
+    if (req.query.type) query.type = String(req.query.type).toUpperCase();
+    const [data, total] = await Promise.all([
+      ProWrestlingWalletLedger.find(query).sort({ createdAt: -1 }).skip((page - 1) * limit).limit(limit).lean(),
+      ProWrestlingWalletLedger.countDocuments(query),
+    ]);
+    res.json({ data, pagination: { page, limit, total, totalPages: Math.max(1, Math.ceil(total / limit)) } });
+  } catch (error) {
+    handleWrestlingError(res, error);
+  }
+});
+
+app.get('/api/admin/wrestling/matches/:id/entries', requireProWrestlingEnabled, verifyAdminToken, async (req, res) => {
+  try {
+    const page = Math.max(1, Number.parseInt(req.query.page || '1', 10));
+    const limit = Math.min(200, Math.max(1, Number.parseInt(req.query.limit || '50', 10)));
+    const query = { matchId: req.params.id };
+    if (req.query.status) query.status = String(req.query.status).toUpperCase();
+    const [entries, total] = await Promise.all([
+      ProWrestlingEntry.find(query).sort({ rank: 1, joinedAt: 1 }).skip((page - 1) * limit).limit(limit).lean(),
+      ProWrestlingEntry.countDocuments(query),
+    ]);
+    const userIds = entries.map((entry) => entry.userId);
+    const users = await User.find({ _id: { $in: userIds } }).select('firstName lastName playerName email profileUrl tokens').lean();
+    const userMap = new Map(users.map((user) => [String(user._id), user]));
+    res.json({
+      data: entries.map((entry) => ({ ...entry, user: userMap.get(String(entry.userId)) || null })),
+      pagination: { page, limit, total, totalPages: Math.max(1, Math.ceil(total / limit)) },
+    });
+  } catch (error) {
+    handleWrestlingError(res, error);
+  }
+});
+
+app.get('/api/admin/wrestling/matches/:id/predictions', requireProWrestlingEnabled, verifyAdminToken, async (req, res) => {
+  try {
+    const page = Math.max(1, Number.parseInt(req.query.page || '1', 10));
+    const limit = Math.min(200, Math.max(1, Number.parseInt(req.query.limit || '50', 10)));
+    const query = { matchId: req.params.id };
+    if (req.query.status) query.predictionStatus = String(req.query.status).toUpperCase();
+    const [predictions, total] = await Promise.all([
+      ProWrestlingPrediction.find(query).sort({ rank: 1, submittedAt: 1 }).skip((page - 1) * limit).limit(limit).lean(),
+      ProWrestlingPrediction.countDocuments(query),
+    ]);
+    const userIds = predictions.map((prediction) => prediction.userId);
+    const users = await User.find({ _id: { $in: userIds } }).select('firstName lastName playerName email profileUrl').lean();
+    const userMap = new Map(users.map((user) => [String(user._id), user]));
+    res.json({
+      data: predictions.map((prediction) => ({ ...prediction, user: userMap.get(String(prediction.userId)) || null })),
+      pagination: { page, limit, total, totalPages: Math.max(1, Math.ceil(total / limit)) },
+    });
+  } catch (error) {
+    handleWrestlingError(res, error);
+  }
+});
+
+app.put('/api/admin/wrestling/matches/:id/predictions/:userId', requireProWrestlingEnabled, verifyAdminToken, async (req, res) => {
+  try {
+    const result = await runWrestlingTransaction(async (session) => {
+      const match = await applyWrestlingSession(ProWrestlingMatch.findById(req.params.id), session);
+      if (!match) throw wrestlingHttpError(404, 'Wrestling match not found.', 'MATCH_NOT_FOUND');
+      if (['FINALIZED', 'CANCELLED', 'NO_CONTEST'].includes(match.status)) {
+        throw wrestlingHttpError(409, 'Predictions in a closed wrestling contest cannot be changed.', 'MATCH_CLOSED');
+      }
+      const prediction = await applyWrestlingSession(ProWrestlingPrediction.findOne({ matchId: match._id, userId: req.params.userId }), session);
+      if (!prediction) throw wrestlingHttpError(404, 'Wrestling prediction not found.', 'PREDICTION_NOT_FOUND');
+      const payload = {
+        competitorA: normalizeWrestlingStats(req.body.competitorA || prediction.competitorA),
+        competitorB: normalizeWrestlingStats(req.body.competitorB || prediction.competitorB),
+        winnerPrediction: String(req.body.winnerPrediction || prediction.winnerPrediction).toUpperCase(),
+      };
+      const errors = validateWrestlingPredictionPayload(payload);
+      if (errors.length) throw wrestlingHttpError(400, 'Invalid wrestling prediction payload.', 'INVALID_PREDICTION', errors);
+      const before = wrestlingPlainObject(prediction);
+      prediction.competitorA = payload.competitorA;
+      prediction.competitorB = payload.competitorB;
+      prediction.winnerPrediction = payload.winnerPrediction;
+      prediction.predictionStatus = ['LIVE', 'SCORING'].includes(match.status) ? 'SCORED' : 'SUBMITTED';
+      prediction.submittedAt = prediction.submittedAt || new Date();
+      await prediction.save(session ? { session } : undefined);
+      if (['LIVE', 'SCORING'].includes(match.status)) await recalculateWrestlingScores(match, session);
+      await writeWrestlingAudit({
+        req,
+        action: 'WRESTLING_PREDICTION_ADMIN_CORRECTED',
+        entityType: 'ProWrestlingPrediction',
+        entityId: prediction._id,
+        before,
+        after: prediction,
+        reason: req.body.reason,
+        session,
+      });
+      return prediction;
+    });
+    res.json(result);
+  } catch (error) {
+    handleWrestlingError(res, error);
+  }
+});
+
+app.post('/api/admin/wrestling/wallet-adjustment', requireProWrestlingEnabled, verifyAdminToken, async (req, res) => {
+  try {
+    const userId = req.body.userId;
+    const matchId = req.body.matchId;
+    const amount = Math.max(1, Math.round(Math.abs(wrestlingNumber(req.body.amount, 0))));
+    const direction = String(req.body.direction || 'CREDIT').toUpperCase();
+    if (!mongoose.isValidObjectId(userId)) throw wrestlingHttpError(400, 'A valid userId is required.', 'INVALID_USER_ID');
+    if (!mongoose.isValidObjectId(matchId)) throw wrestlingHttpError(400, 'A valid wrestling matchId is required.', 'INVALID_MATCH_ID');
+    if (!['CREDIT', 'DEBIT'].includes(direction)) throw wrestlingHttpError(400, 'direction must be CREDIT or DEBIT.', 'INVALID_DIRECTION');
+    if (!req.body.reason) throw wrestlingHttpError(400, 'A reason is required for wallet adjustments.', 'REASON_REQUIRED');
+    const key = String(req.headers['idempotency-key'] || req.body.idempotencyKey || `wrestling:admin-adjustment:${matchId}:${userId}:${Date.now()}`).slice(0, 180);
+    const result = await runWrestlingTransaction(async (session) => {
+      const existing = await applyWrestlingSession(ProWrestlingWalletLedger.findOne({ idempotencyKey: key }), session).lean();
+      if (existing) return { transaction: existing, idempotent: true };
+      const match = await applyWrestlingSession(ProWrestlingMatch.findById(matchId), session);
+      if (!match) throw wrestlingHttpError(404, 'Wrestling match not found.', 'MATCH_NOT_FOUND');
+      const delta = direction === 'CREDIT' ? amount : -amount;
+      const balance = await adjustWrestlingUserTokens({ userId, delta, session });
+      const documents = await ProWrestlingWalletLedger.create([{
+        accountType: 'USER',
+        userId,
+        matchId,
+        type: 'WRESTLING_ADMIN_ADJUSTMENT',
+        amount: delta,
+        balanceBefore: balance.balanceBefore,
+        balanceAfter: balance.balanceAfter,
+        idempotencyKey: key,
+        metadata: { reason: req.body.reason, adminId: req.admin.id, direction },
+      }], session ? { session } : undefined);
+      await writeWrestlingAudit({
+        req,
+        action: 'WRESTLING_WALLET_ADMIN_ADJUSTMENT',
+        entityType: 'User',
+        entityId: userId,
+        before: { tokens: balance.balanceBefore },
+        after: { tokens: balance.balanceAfter, transactionId: documents[0]._id },
+        reason: req.body.reason,
+        session,
+      });
+      return { transaction: documents[0], idempotent: false };
+    });
+    res.json(result);
+  } catch (error) {
+    handleWrestlingError(res, error);
+  }
+});
+
+app.get('/api/admin/wrestling/system-check', requireProWrestlingEnabled, verifyAdminToken, async (req, res) => {
+  try {
+    const [rules, payoutRules, indexes] = await Promise.all([
+      ProWrestlingScoringRule.countDocuments({ active: true }),
+      ProWrestlingPayoutRule.countDocuments({ active: true }),
+      Promise.all([
+        ProWrestlingMatch.collection.indexes(),
+        ProWrestlingEntry.collection.indexes(),
+        ProWrestlingPrediction.collection.indexes(),
+        ProWrestlingWalletLedger.collection.indexes(),
+      ]),
+    ]);
+    res.json({
+      enabled: isProWrestlingEnabled(),
+      databaseState: mongoose.connection.readyState,
+      activeScoringRules: rules,
+      activePayoutRules: payoutRules,
+      transactionFallbackEnabled: String(process.env.PRO_WRESTLING_ALLOW_NON_TRANSACTIONAL || '').toLowerCase() === 'true',
+      indexCounts: {
+        matches: indexes[0].length,
+        entries: indexes[1].length,
+        predictions: indexes[2].length,
+        walletLedger: indexes[3].length,
+      },
+    });
+  } catch (error) {
+    handleWrestlingError(res, error);
+  }
+});
+
+app.post('/api/admin/wrestling/migrate-existing-matches', requireProWrestlingEnabled, verifyAdminToken, async (req, res) => {
+  try {
+    const applyMigration = wrestlingBoolean(req.body.apply, false);
+    const legacyMatches = await Match.collection.find({ gameMode: { $exists: false } }, { projection: { _id: 1, matchCategory: 1, matchCategoryTwo: 1 } }).toArray();
+    const inferMode = (match) => {
+      const category = `${match.matchCategory || ''} ${match.matchCategoryTwo || ''}`.toLowerCase();
+      if (category.includes('bare')) return 'BARE_KNUCKLE';
+      if (category.includes('kick')) return 'KICKBOXING';
+      if (category.includes('box')) return 'BOXING';
+      return 'MMA';
+    };
+    const counts = {};
+    const operations = legacyMatches.map((match) => {
+      const gameMode = inferMode(match);
+      counts[gameMode] = (counts[gameMode] || 0) + 1;
+      return {
+        updateOne: {
+          filter: { _id: match._id, gameMode: { $exists: false } },
+          update: { $set: { gameMode, predictionFormat: 'ROUND_BY_ROUND', scoringRuleVersion: 'LEGACY_V1' } },
+        },
+      };
+    });
+    let migrationResult = null;
+    if (applyMigration && operations.length) migrationResult = await Match.collection.bulkWrite(operations, { ordered: false });
+    await writeWrestlingAudit({ req, action: applyMigration ? 'LEGACY_GAME_MODE_MIGRATION_APPLIED' : 'LEGACY_GAME_MODE_MIGRATION_PREVIEWED', entityType: 'Match', entityId: 'legacy-match-collection', after: { counts, records: legacyMatches.length } });
+    res.json({ dryRun: !applyMigration, records: legacyMatches.length, inferredGameModes: counts, modifiedCount: migrationResult?.modifiedCount || 0 });
+  } catch (error) {
+    handleWrestlingError(res, error);
+  }
+});
+
+const verifyWrestlingAffiliateToken = (req, res, next) => {
+  const authHeader = req.headers.authorization;
+  const token = authHeader && authHeader.startsWith('Bearer ') ? authHeader.slice(7) : null;
+  if (!token) return res.status(401).json({ message: 'Affiliate authentication is required.' });
+  try {
+    const decoded = jwt.verify(token, process.env.JWT_SECRET);
+    return Affiliate.findById(decoded.id).then((affiliate) => {
+      if (!affiliate) return res.status(403).json({ message: 'Affiliate account not found.' });
+      req.wrestlingAffiliate = affiliate;
+      return next();
+    }).catch(() => res.status(500).json({ message: 'Affiliate authentication failed.' }));
+  } catch (error) {
+    return res.status(403).json({ message: 'Invalid or expired affiliate token.' });
+  }
+};
+
+app.get('/api/affiliates/me/wrestling-summary', requireProWrestlingEnabled, verifyWrestlingAffiliateToken, async (req, res) => {
+  try {
+    const affiliateId = req.wrestlingAffiliate._id;
+    const [matches, entries, commissions] = await Promise.all([
+      ProWrestlingMatch.find({ affiliateId }).sort({ createdAt: -1 }).lean(),
+      ProWrestlingEntry.countDocuments({ affiliateId }),
+      ProWrestlingWalletLedger.find({ accountType: 'AFFILIATE', affiliateId, type: 'WRESTLING_AFFILIATE_COMMISSION' }).sort({ createdAt: -1 }).lean(),
+    ]);
+    const totalCommissionTokens = commissions.reduce((sum, item) => sum + Number(item.amount || 0), 0);
+    res.json({
+      affiliate: {
+        id: affiliateId,
+        playerName: req.wrestlingAffiliate.playerName,
+        tokens: req.wrestlingAffiliate.tokens,
+      },
+      matches: matches.map((match) => publicWrestlingMatch(match, { revealStats: true })),
+      attributedEntries: entries,
+      totalCommissionTokens,
+      commissions,
+    });
+  } catch (error) {
+    handleWrestlingError(res, error);
+  }
+});
+
+app.get('/api/admin/wrestling/docs', requireProWrestlingEnabled, verifyAdminToken, async (req, res) => {
+  res.json({
+    gameMode: PRO_WRESTLING_GAME_MODE,
+    predictionFormat: PRO_WRESTLING_PREDICTION_FORMAT,
+    lifecycle: PRO_WRESTLING_MATCH_STATUSES,
+    actionStats: WRESTLING_STAT_KEYS,
+    userFlow: ['discover', 'join', 'predict', 'lock', 'live scoring', 'leaderboard', 'results', 'wallet settlement'],
+    safeguards: ['feature flag', 'JWT authorization', 'unique contest entry', 'idempotent wallet ledger', 'MongoDB transactions', 'versioned rule snapshots', 'audit logs', 'terminal-state protection'],
+  });
+});
+
+app.get('/api/wrestling/cron/process', requireProWrestlingEnabled, verifyWrestlingCronOrAdmin, async (req, res) => {
+  try {
+    const now = new Date();
+    const dueMatches = await ProWrestlingMatch.find({ status: 'OPEN', lockAt: { $lte: now } }).limit(100).lean();
+    let locked = 0;
+    let cancelled = 0;
+    for (const due of dueMatches) {
+      if (due.minimumParticipants > due.participantCount && due.autoCancelIfMinimumNotMet) {
+        await refundWrestlingMatch({
+          matchId: due._id,
+          status: 'CANCELLED',
+          reason: 'Minimum participant requirement was not met before prediction lock.',
+          req,
+          adminId: req.admin?.id,
+        });
+        cancelled += 1;
+      } else {
+        await runWrestlingTransaction(async (session) => {
+          const match = await applyWrestlingSession(ProWrestlingMatch.findById(due._id), session);
+          if (match?.status === 'OPEN') {
+            await lockWrestlingMatch(match, session);
+            locked += 1;
+          }
+        });
+      }
+    }
+
+    const startingSoonLimit = new Date(now.getTime() + 60 * 60 * 1000);
+    const startingSoonMatches = await ProWrestlingMatch.find({
+      status: 'OPEN',
+      matchDate: { $gt: now, $lte: startingSoonLimit },
+      startingSoonNotificationSent: false,
+    });
+    let startingSoonNotifications = 0;
+    for (const match of startingSoonMatches) {
+      startingSoonNotifications += await notifyWrestlingEntrants({
+        match,
+        type: 'STARTING_SOON',
+        title: 'Pro Wrestling contest starts soon',
+        message: `${match.matchTitle} starts within one hour. Submit or review your predictions before lock time.`,
+      });
+      match.startingSoonNotificationSent = true;
+      await match.save();
+    }
+
+    res.json({ processedAt: now, locked, cancelled, startingSoonNotifications });
+  } catch (error) {
+    handleWrestlingError(res, error);
   }
 });
 
