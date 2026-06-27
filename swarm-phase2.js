@@ -627,11 +627,12 @@ function normalizeCreateJobBody(body, admin, config) {
   const jobType = String(raw.jobType || inferJobType(raw, vertical)).trim();
   if (!DEFAULT_JOB_TYPES.has(jobType)) throw httpError(400, 'INVALID_SWARM_JOB_TYPE', 'Unsupported swarm jobType.');
 
-  const mode = String(raw.mode || config.defaultMode || 'DRAFT_ONLY').trim().toUpperCase();
+  const mode = normalizeMode(raw.mode || raw.statusMode || raw.publishMode || config.defaultMode || 'DRAFT_ONLY');
   if (!DEFAULT_MODES.has(mode)) throw httpError(400, 'INVALID_SWARM_MODE', 'Unsupported swarm mode.');
 
   const priority = clamp(toInt(raw.priority, 50), 0, 100);
   const input = normalizeInput(raw);
+  const sourceEntity = normalizeSourceEntity(raw, input, vertical, jobType);
 
   return {
     vertical,
@@ -645,7 +646,7 @@ function normalizeCreateJobBody(body, admin, config) {
       role: 'admin',
       source: 'backend',
     },
-    sourceEntity: isPlainObject(raw.sourceEntity) ? raw.sourceEntity : {},
+    sourceEntity,
     input,
     scheduledAt: raw.scheduledAt,
     maxAttempts: raw.maxAttempts,
@@ -655,6 +656,84 @@ function normalizeCreateJobBody(body, admin, config) {
       submittedAt: new Date().toISOString(),
     },
   };
+}
+
+function normalizeMode(value) {
+  const raw = cleanString(value) || 'DRAFT_ONLY';
+  const normalized = raw.trim().toLowerCase().replace(/[\s-]+/g, '_');
+  const aliases = {
+    dry: 'DRY_RUN',
+    dry_run: 'DRY_RUN',
+    dryrun: 'DRY_RUN',
+    test: 'DRY_RUN',
+    shadow: 'SHADOW',
+    draft: 'DRAFT_ONLY',
+    drafts: 'DRAFT_ONLY',
+    draft_only: 'DRAFT_ONLY',
+    draftonly: 'DRAFT_ONLY',
+    draft_mode: 'DRAFT_ONLY',
+    approval: 'APPROVAL_REQUIRED',
+    approve: 'APPROVAL_REQUIRED',
+    approval_required: 'APPROVAL_REQUIRED',
+    review: 'APPROVAL_REQUIRED',
+    review_required: 'APPROVAL_REQUIRED',
+    awaiting_review: 'APPROVAL_REQUIRED',
+    auto: 'AUTOMATED',
+    automated: 'AUTOMATED',
+    automation: 'AUTOMATED',
+    publish: 'AUTOMATED',
+    auto_publish: 'AUTOMATED',
+  };
+  return aliases[normalized] || raw.trim().toUpperCase().replace(/[\s-]+/g, '_');
+}
+
+function normalizeSourceEntity(raw, input, vertical, jobType) {
+  const provided = isPlainObject(raw.sourceEntity) ? raw.sourceEntity : {};
+  const hasMeaningfulProvidedValue = Object.values(provided).some((value) => {
+    if (value === undefined || value === null) return false;
+    if (typeof value === 'string') return value.trim().length > 0;
+    return true;
+  });
+
+  if (hasMeaningfulProvidedValue) {
+    return {
+      ...provided,
+      type: cleanString(provided.type) || inferSourceEntityType(input, vertical, jobType),
+      label: cleanString(provided.label) || buildSourceEntityLabel(input, raw, vertical, jobType),
+    };
+  }
+
+  const id = cleanString(input.matchId || input.fightId || input.eventId || input.wrestlerId || input.fighterId || raw.matchId || raw.fightId || raw.eventId || raw.wrestlerId || raw.fighterId);
+  return {
+    type: inferSourceEntityType(input, vertical, jobType),
+    id: id || undefined,
+    label: buildSourceEntityLabel(input, raw, vertical, jobType),
+    origin: 'backend_default',
+  };
+}
+
+function inferSourceEntityType(input, vertical, jobType) {
+  if (cleanString(input.matchId)) return vertical === 'pro_wrestling' ? 'pro_wrestling_match' : 'combat_match';
+  if (cleanString(input.fightId)) return 'combat_fight';
+  if (cleanString(input.eventId)) return vertical === 'pro_wrestling' ? 'pro_wrestling_event' : 'combat_event';
+  if (cleanString(input.wrestlerId)) return 'pro_wrestling_wrestler';
+  if (cleanString(input.fighterId)) return 'combat_fighter';
+  if (jobType.startsWith('seo.')) return 'seo_request';
+  if (jobType.startsWith('social.')) return 'social_request';
+  if (jobType.startsWith('data.')) return 'data_request';
+  return 'manual_prompt';
+}
+
+function buildSourceEntityLabel(input, raw, vertical, jobType) {
+  const label = cleanString(raw.label)
+    || cleanString(input.title)
+    || cleanString(input.topic)
+    || cleanString(input.prompt)
+    || cleanString(input.eventName)
+    || cleanString(input.wrestlerName)
+    || cleanString(input.fighterName);
+  if (label) return label.slice(0, 180);
+  return `${vertical}:${jobType}`;
 }
 
 function inferJobType(raw, vertical) {
@@ -1109,6 +1188,8 @@ module.exports = {
     normalizeVertical,
     mapArtifactToBlog,
     normalizeCreateJobBody,
+    normalizeMode,
+    normalizeSourceEntity,
     signRequest,
     sha256Hex,
   },

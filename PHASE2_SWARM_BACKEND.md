@@ -92,3 +92,25 @@ curl -X POST https://YOUR_BACKEND_DOMAIN/api/admin/swarm/jobs \
     "input":{"topic":"Fantasy MMA weekly preview"}
   }'
 ```
+
+## 2026-06-27 Patch: manual job compatibility
+
+The backend now normalizes frontend-friendly swarm modes before sending a job to IONOS:
+
+- `draft`, `draft-only`, `draft_only` -> `DRAFT_ONLY`
+- `approval`, `review`, `approval_required` -> `APPROVAL_REQUIRED`
+- `auto`, `publish`, `automated` -> `AUTOMATED`
+- `shadow` -> `SHADOW`
+- `dry`, `test`, `dry_run` -> `DRY_RUN`
+
+Manual/free-form jobs no longer submit an empty `sourceEntity`. When the admin does not select a match, fighter, event, or wrestler, the backend automatically sends a valid source entity like:
+
+```json
+{
+  "type": "manual_prompt",
+  "label": "UFC Fight",
+  "origin": "backend_default"
+}
+```
+
+This prevents the IONOS swarm validation error `sourceEntity: Required` for normal admin prompt-based blog jobs.
