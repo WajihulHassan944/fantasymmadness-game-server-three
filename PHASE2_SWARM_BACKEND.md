@@ -114,3 +114,24 @@ Manual/free-form jobs no longer submit an empty `sourceEntity`. When the admin d
 ```
 
 This prevents the IONOS swarm validation error `sourceEntity: Required` for normal admin prompt-based blog jobs.
+
+## Phase 2 automation expansion
+
+This backend now supports the expanded Phase 1 automation swarm catalog. Admin/frontend can use the backend only; browser must not call IONOS directly.
+
+New routes:
+
+```http
+GET    /api/admin/swarm/job-types
+GET    /api/admin/swarm/catalog
+GET    /api/admin/swarm/settings
+PATCH  /api/admin/swarm/settings
+PUT    /api/admin/swarm/settings
+GET    /api/admin/swarm/dashboard
+GET    /api/admin/swarm/events
+POST   /api/admin/swarm/events/trigger
+POST   /api/admin/swarm/events/:trigger
+POST   /api/admin/swarm/automations/:jobType/run
+```
+
+Primary safety default remains `DRAFT_ONLY`; social/auto publishing remains blocked unless both backend env flags and swarm automation settings explicitly allow it.

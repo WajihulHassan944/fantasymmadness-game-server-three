@@ -37,6 +37,25 @@ assert.strictEqual(normalizedApprovalMode.mode, 'APPROVAL_REQUIRED');
 assert.strictEqual(normalizedApprovalMode.sourceEntity.type, 'pro_wrestling_match');
 assert.strictEqual(normalizedApprovalMode.sourceEntity.id, 'match-123');
 
+
+const expandedJob = _private.normalizeCreateJobBody({
+  vertical: 'combat',
+  jobType: 'seo.metadata',
+  mode: 'approval',
+  input: { matchId: 'match-456', title: 'SEO Metadata Test' },
+}, { id: 'admin-3' }, { defaultMode: 'DRAFT_ONLY' });
+assert.strictEqual(expandedJob.jobType, 'seo.metadata');
+assert.strictEqual(expandedJob.sourceEntity.type, 'combat_match');
+
+assert.strictEqual(_private.normalizeAutomationTrigger('fight-publish'), 'fight_published');
+assert.strictEqual(_private.normalizeAutomationTrigger('blog published'), 'blog_approved');
+assert.strictEqual(_private.inferVerticalForJobType('content.pro-wrestling-match-preview'), 'pro_wrestling');
+const localCatalog = _private.buildLocalAutomationCatalog();
+assert(localCatalog.jobTypes.includes('social.twitter-post'));
+assert(localCatalog.triggerMap.fight_published.includes('content.match-preview'));
+const defaultSettings = _private.buildDefaultAutomationSettings();
+assert.strictEqual(defaultSettings.automations['content.match-preview'].enabled, true);
+assert(_private.resolveEventJobTypes({ trigger: 'fight_published', settings: defaultSettings }).includes('content.match-preview'));
 assert.strictEqual(_private.normalizeMode('draft'), 'DRAFT_ONLY');
 assert.strictEqual(_private.normalizeMode('draft-only'), 'DRAFT_ONLY');
 assert.strictEqual(_private.normalizeMode('approval required'), 'APPROVAL_REQUIRED');
@@ -75,6 +94,12 @@ for (const route of [
   '/api/admin/swarm/health',
   '/api/admin/swarm/jobs',
   '/api/admin/swarm/artifacts',
+  '/api/admin/swarm/job-types',
+  '/api/admin/swarm/catalog',
+  '/api/admin/swarm/settings',
+  '/api/admin/swarm/dashboard',
+  '/api/admin/swarm/events/trigger',
+  '/api/admin/swarm/automations/:jobType/run',
   '/api/internal/swarm/webhooks/job-completed',
   '/api/internal/swarm/webhooks/job-failed',
 ]) {

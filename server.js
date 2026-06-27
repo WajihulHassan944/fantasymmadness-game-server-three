@@ -376,7 +376,28 @@ app.post('/finishShadow/:matchId', async (req, res) => {
       return res.status(404).json({ message: 'Match not found' });
     }
 
-    res.json({ message: 'Match status updated to Finished', match });
+    const swarmAutomation = await app.locals.swarmPhase2?.triggerAutomationEvent?.({
+      trigger: 'fight_result_updated',
+      vertical: 'combat',
+      sourceEntity: {
+        type: 'combat_match',
+        id: String(match._id),
+        label: match.matchName || `${match.matchFighterA || ''} vs ${match.matchFighterB || ''}`.trim(),
+      },
+      input: {
+        matchId: String(match._id),
+        matchName: match.matchName,
+        title: match.matchName,
+        fighterA: match.matchFighterA,
+        fighterB: match.matchFighterB,
+        matchStatus: match.matchStatus,
+        matchDate: match.matchDate,
+        matchTime: match.matchTime,
+      },
+      metadata: { route: '/finishMatch/:matchId', action: 'legacy-fight-result-updated' },
+      reason: 'fight-finished-in-backend',
+    }).catch((error) => ({ ok: false, warning: 'Fight finished but swarm automation event failed.', error: error.message }));
+    res.json({ message: 'Match status updated to Finished', match, automation: swarmAutomation || null });
   } catch (error) {
     console.error('Error finishing match:', error);
     res.status(500).json({ message: 'Internal server error' });
@@ -829,7 +850,30 @@ app.post("/activate-match/:matchId", async (req, res) => {
     await Promise.all([...registeredEmails, ...nonRegisteredEmails]);
 
     console.log("Emails sent successfully to all users.");
-    return res.status(200).json({ message: "Match activated & emails sent successfully" });
+    const swarmAutomation = await app.locals.swarmPhase2?.triggerAutomationEvent?.({
+      trigger: 'fight_published',
+      vertical: 'combat',
+      sourceEntity: {
+        type: 'combat_match',
+        id: String(match._id),
+        label: match.matchName || `${match.matchFighterA || ''} vs ${match.matchFighterB || ''}`.trim(),
+      },
+      input: {
+        matchId: String(match._id),
+        matchName: match.matchName,
+        title: match.matchName,
+        fighterA: match.matchFighterA,
+        fighterB: match.matchFighterB,
+        matchDate: match.matchDate,
+        matchTime: match.matchTime,
+        matchType: match.matchType,
+        maxRounds: match.maxRounds,
+        description: match.matchDescription,
+      },
+      metadata: { route: '/activate-match/:matchId', action: 'legacy-fight-published' },
+      reason: 'fight-activated-in-backend',
+    }).catch((error) => ({ ok: false, warning: 'Fight activated but swarm automation event failed.', error: error.message }));
+    return res.status(200).json({ message: "Match activated & emails sent successfully", automation: swarmAutomation || null });
   } catch (error) {
     console.error("Error updating match status:", error);
     return res.status(500).json({ message: "Internal server error" });
@@ -1350,8 +1394,32 @@ const nonRegisteredUserMailPromises = nonRegisteredUsers.map(user => {
     console.log('Notification skipped because notify is set to false');
   }
 
+  const swarmAutomation = await app.locals.swarmPhase2?.triggerAutomationEvent?.({
+    trigger: 'upcoming_event',
+    vertical: 'combat',
+    sourceEntity: {
+      type: 'combat_match',
+      id: String(savedMatch._id),
+      label: savedMatch.matchName || `${savedMatch.matchFighterA || ''} vs ${savedMatch.matchFighterB || ''}`.trim(),
+    },
+    input: {
+      matchId: String(savedMatch._id),
+      matchName: savedMatch.matchName,
+      title: savedMatch.matchName,
+      fighterA: savedMatch.matchFighterA,
+      fighterB: savedMatch.matchFighterB,
+      matchDate: savedMatch.matchDate,
+      matchTime: savedMatch.matchTime,
+      matchType: savedMatch.matchType,
+      maxRounds: savedMatch.maxRounds,
+      description: savedMatch.matchDescription,
+    },
+    metadata: { route: '/addMatch', action: 'legacy-upcoming-event-created' },
+    reason: 'combat-match-added-in-backend',
+  }).catch((error) => ({ ok: false, warning: 'Fight was added but upcoming-event automation failed.', error: error.message }));
+
   // Respond with success and the saved match ID
-  res.status(200).json({ message: 'Match Added Successfully and Notifications Sent', matchId: savedMatch._id });
+  res.status(200).json({ message: 'Match Added Successfully and Notifications Sent', matchId: savedMatch._id, automation: swarmAutomation || null });
 } catch (error) {
   console.error('Error adding match:', error);
   res.status(500).json({ message: 'Server error', error: error.message });
@@ -7727,7 +7795,20 @@ if (req.files['blogHeaderImage']) {
       title: `Blog Added: ${metaTitle}`,
     });
     await notification.save();
-    res.status(201).json({ message: 'Blog created/updated successfully', blog });
+    const swarmAutomation = await app.locals.swarmPhase2?.triggerAutomationEvent?.({
+      trigger: 'blog_approved',
+      vertical: 'combat',
+      sourceEntity: { type: 'blog', id: String(blog._id), label: blog.metaTitle || metaTitle },
+      input: {
+        blogId: String(blog._id),
+        blogTitle: blog.metaTitle || metaTitle,
+        title: blog.header || metaTitle,
+        metaDescription: blog.metaDescription,
+      },
+      metadata: { route: '/api/create-blog', action: 'manual-blog-created-or-updated' },
+      reason: 'blog-created-or-updated-in-backend',
+    }).catch((error) => ({ ok: false, warning: 'Blog was saved but blog_approved automation failed.', error: error.message }));
+    res.status(201).json({ message: 'Blog created/updated successfully', blog, automation: swarmAutomation || null });
 
   } catch (error) {
     console.error('Error creating blog:', error.message);
@@ -9480,6 +9561,22 @@ app.post('/api/admin/wrestling/wrestlers', requireProWrestlingEnabled, verifyAdm
       updatedBy: req.admin.id,
     });
     await writeWrestlingAudit({ req, action: 'WRESTLER_CREATED', entityType: 'ProWrestler', entityId: wrestler._id, after: wrestler });
+    app.locals.swarmPhase2?.triggerAutomationEvent?.({
+      trigger: 'wrestler_added',
+      vertical: 'pro_wrestling',
+      admin: req.admin,
+      sourceEntity: { type: 'pro_wrestling_wrestler', id: String(wrestler._id), label: wrestler.displayName },
+      input: {
+        wrestlerId: String(wrestler._id),
+        wrestlerName: wrestler.displayName,
+        title: wrestler.displayName,
+        promotion: wrestler.promotion,
+        wrestlingStyle: wrestler.wrestlingStyle,
+        biography: wrestler.biography,
+      },
+      metadata: { route: '/api/admin/wrestling/wrestlers', action: 'wrestler-added' },
+      reason: 'wrestler-created-in-backend',
+    }).catch((error) => console.error('Swarm wrestler added automation failed:', error.message));
     res.status(201).json(wrestler);
   } catch (error) {
     handleWrestlingError(res, error);
@@ -9757,6 +9854,27 @@ app.put('/api/admin/wrestling/matches/:id/status', requireProWrestlingEnabled, v
       return match;
     });
     await safeWrestlingTrigger('match-status', { matchId: String(result._id), status: result.status });
+    if (result.status === 'OPEN') {
+      app.locals.swarmPhase2?.triggerAutomationEvent?.({
+        trigger: 'pro_wrestling_match_published',
+        vertical: 'pro_wrestling',
+        admin: req.admin,
+        sourceEntity: { type: 'pro_wrestling_match', id: String(result._id), label: result.matchTitle || result.eventName },
+        input: {
+          matchId: String(result._id),
+          title: result.matchTitle,
+          eventName: result.eventName,
+          promotionName: result.promotionName,
+          matchDate: result.matchDate,
+          matchTime: result.matchTime,
+          competitorA: result.competitorA,
+          competitorB: result.competitorB,
+          status: result.status,
+        },
+        metadata: { route: '/api/admin/wrestling/matches/:id/status', action: 'wrestling-match-published' },
+        reason: 'pro-wrestling-match-opened-in-backend',
+      }).catch((error) => console.error('Swarm pro-wrestling publish automation failed:', error.message));
+    }
     res.json(result);
   } catch (error) {
     handleWrestlingError(res, error);
@@ -9820,6 +9938,23 @@ app.put('/api/admin/wrestling/matches/:id/result', requireProWrestlingEnabled, v
       return { match, rankedCount: ranked.length };
     });
     await safeWrestlingTrigger('official-result', { matchId: String(result.match._id), officialWinner: result.match.officialWinner });
+    app.locals.swarmPhase2?.triggerAutomationEvent?.({
+      trigger: 'pro_wrestling_result_updated',
+      vertical: 'pro_wrestling',
+      admin: req.admin,
+      sourceEntity: { type: 'pro_wrestling_match', id: String(result.match._id), label: result.match.matchTitle || result.match.eventName },
+      input: {
+        matchId: String(result.match._id),
+        title: result.match.matchTitle,
+        eventName: result.match.eventName,
+        promotionName: result.match.promotionName,
+        officialWinner: result.match.officialWinner,
+        finishType: result.match.finishType,
+        statsVersion: result.match.statsVersion,
+      },
+      metadata: { route: '/api/admin/wrestling/matches/:id/result', action: 'wrestling-result-updated' },
+      reason: 'pro-wrestling-result-set-in-backend',
+    }).catch((error) => console.error('Swarm pro-wrestling result automation failed:', error.message));
     res.json(result);
   } catch (error) {
     handleWrestlingError(res, error);
@@ -9985,6 +10120,21 @@ app.post('/api/admin/wrestling/matches/:id/finalize', requireProWrestlingEnabled
       return { match, payoutDistribution: playerDistribution, affiliateCommissionTokens, idempotent: false };
     });
     await safeWrestlingTrigger('match-finalized', { matchId: String(result.match._id), settlement: result.match.settlement });
+    app.locals.swarmPhase2?.triggerAutomationEvent?.({
+      trigger: 'contest_completed',
+      vertical: 'pro_wrestling',
+      admin: req.admin,
+      sourceEntity: { type: 'pro_wrestling_contest', id: String(result.match._id), label: result.match.matchTitle || result.match.eventName },
+      input: {
+        matchId: String(result.match._id),
+        contestId: String(result.match._id),
+        title: result.match.matchTitle,
+        eventName: result.match.eventName,
+        settlement: result.match.settlement,
+      },
+      metadata: { route: '/api/admin/wrestling/matches/:id/finalize', action: 'wrestling-contest-completed' },
+      reason: 'pro-wrestling-contest-finalized-in-backend',
+    }).catch((error) => console.error('Swarm contest completed automation failed:', error.message));
     res.json(result);
   } catch (error) {
     handleWrestlingError(res, error);
