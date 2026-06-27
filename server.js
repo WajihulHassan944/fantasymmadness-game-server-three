@@ -19,10 +19,11 @@ const client = new OAuth2Client(process.env.GOOGLE_CLIENT_ID);
 const accessToken = process.env.ZENPAYMENTS_ACCESS_TOKEN;
 const terminalId = process.env.ZENPAYMENTS_TERMINAL_ID;
 const { promisify } = require('util');
-require('dotenv').config();
+
 const axios = require('axios');
 const fetch = require('node-fetch');
 const xml2js = require('xml2js');
+const { registerSwarmPhase2Routes } = require('./swarm-phase2');
 
 const ALGORITHM = 'aes-256-cbc'; // AES algorithm
 const ENCRYPTION_KEY = process.env.ENCRYPTION_KEY; // Must be 32 bytes
@@ -39,7 +40,11 @@ cloudinary.config({
 // Example of generating a random IV for encryption
 const iv = crypto.randomBytes(IV_LENGTH);
 
-app.use(express.json());
+app.use(express.json({
+  verify: (req, res, buf) => {
+    req.rawBody = buf ? buf.toString('utf8') : '';
+  },
+}));
 
 // CORS configuration
 const allowedOrigins = [
@@ -10464,7 +10469,17 @@ app.get('/api/wrestling/cron/process', requireProWrestlingEnabled, verifyWrestli
 });
 
 
-
+// PHASE 2: Centralized IONOS swarm gateway routes. Kept isolated in swarm-phase2.js
+// so the existing backend code, models, and business rules remain authoritative.
+registerSwarmPhase2Routes({
+  app,
+  mongoose,
+  axios,
+  crypto,
+  verifyAdminToken,
+  Blog,
+  Notification,
+});
 
 
 // Start server

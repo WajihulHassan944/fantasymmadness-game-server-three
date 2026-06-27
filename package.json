@@ -7,9 +7,10 @@
     "node": ">=14.20.1"
   },
   "scripts": {
-    "test": "node pro-wrestling-core.test.js && node pro-wrestling-routes.test.js",
+    "test": "node pro-wrestling-core.test.js && node pro-wrestling-routes.test.js && node swarm-phase2.test.js",
     "start": "node server.js",
-    "test:pro-wrestling": "node pro-wrestling-core.test.js && node pro-wrestling-routes.test.js"
+    "test:pro-wrestling": "node pro-wrestling-core.test.js && node pro-wrestling-routes.test.js",
+    "test:swarm-phase2": "node swarm-phase2.test.js"
   },
   "keywords": [],
   "author": "",
@@ -22,7 +23,6 @@
     "cloudinary": "^2.5.1",
     "cors": "^2.8.5",
     "crypto": "^1.0.1",
-    "dotenv": "^17.4.2",
     "express": "^4.18.2",
     "form-data": "^4.0.0",
     "google-auth-library": "^9.14.1",
