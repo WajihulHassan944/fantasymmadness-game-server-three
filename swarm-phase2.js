@@ -9,116 +9,195 @@
  */
 
 const DEFAULT_JOB_TYPE_ARRAY = [
-  // Core content automation
   'content.article',
   'content.match-preview',
   'content.event-recap',
-  'content.event-preview',
-  'content.fight-card-article',
-  'content.fighter-profile',
-  'content.fighter-update-suggestion',
-  'content.wrestler-profile',
-  'content.pro-wrestling-match-preview',
-  'content.pro-wrestling-match-recap',
-  'content.rules-explainer',
-  'content.email-newsletter-draft',
-  'content.image-prompt',
-  'content.faq-generation',
-  'content.how-to-play-suggestion',
-  'content.landing-page-suggestion',
-  'content.old-blog-refresh',
-  'content.blog-topic-suggestions',
-
-  // SEO automation
   'seo.audit',
+  'social.draft',
+  'data.external-candidate',
+  'wrestling.scorecard-suggestion',
+  'wrestling.match-analysis',
+  'wrestling.wrestler-profile',
+  'system.health-check',
+  'content.fight-publish-blog-draft',
+  'social.fight-publish-post',
   'seo.metadata',
   'seo.schema-markup',
   'seo.sitemap-refresh',
   'seo.internal-links',
+  'content.newsletter-draft',
+  'content.fight-result-recap',
+  'social.result-post',
+  'analytics.leaderboard-summary',
+  'content.upcoming-event-preview',
+  'content.fight-card-article',
+  'social.event-promotional-posts',
+  'content.homepage-feature',
+  'content.fighter-profile',
+  'seo.fighter-refresh',
+  'content.fighter-update-suggestion',
+  'content.pro-wrestling-match-preview',
+  'content.pro-wrestling-result-recap',
+  'content.wrestler-profile',
+  'content.contest-rules-explainer',
+  'social.contest-reminder',
+  'social.winners-announcement',
+  'social.blog-approved-post',
+  'seo.blog-audit',
   'seo.related-post-linking',
+  'media.image-prompt',
+  'content.blog-newsletter-draft',
   'seo.daily-audit',
-  'seo.weekly-opportunity-report',
+  'seo.weekly-traffic-opportunity',
   'seo.missing-pages-detector',
   'seo.low-quality-page-detector',
   'seo.broken-link-detector',
-  'seo.missing-metadata-detector',
+  'seo.missing-meta-detector',
   'seo.duplicate-content-detector',
   'seo.keyword-opportunity',
-  'seo.canonical-check',
-  'seo.opengraph-twitter-card',
-  'seo.fight-event-structured-data',
-  'seo.wrestler-fighter-structured-data',
+  'data.trending-mma-topics',
+  'data.trending-wrestling-topics',
+  'content.calendar',
+  'content.blog-topic-suggestions',
+  'social.calendar',
+  'automation.draft-queue-generation',
+  'automation.settings-export',
+  'automation.prompt-management',
+  'automation.failed-job-retry-plan',
+  'analytics.agent-performance',
+  'analytics.traffic-growth-dashboard',
   'seo.content-freshness-monitor',
-
-  // Social and notification automation
-  'social.draft',
-  'social.twitter-post',
-  'social.promotional-posts',
-  'social.result-post',
-  'social.reminder-post',
-  'social.winners-announcement',
-  'social.youtube-caption',
-  'social.discord-announcement',
-  'social.content-calendar',
-  'social.admin-notification',
-
-  // Data, trend, dashboard, and queue automation
-  'data.external-candidate',
-  'data.trending-mma-topic',
-  'data.trending-pro-wrestling-topic',
-  'data.content-calendar',
-  'data.draft-queue-generation',
-  'data.competitor-gap-report',
-  'data.traffic-opportunity',
-  'data.homepage-featured-content',
-  'data.leaderboard-summary',
-
-  // Existing wrestling agents
-  'wrestling.scorecard-suggestion',
-  'wrestling.match-analysis',
-  'wrestling.wrestler-profile',
-
-  // Admin/system controls and reports
-  'automation.settings-snapshot',
-  'automation.logs-report',
-  'automation.failed-job-retry-report',
-  'automation.agent-performance-dashboard',
-  'automation.traffic-growth-dashboard',
-  'system.health-check',
+  'content.old-blog-update-suggestion',
+  'content.old-blog-refresh',
+  'content.faq',
+  'content.how-to-play',
+  'content.landing-page-suggestion',
+  'seo.canonical-checks',
+  'seo.opengraph-twitter-cards',
+  'seo.fight-event-structured-data',
+  'seo.fighter-wrestler-structured-data',
+  'social.youtube-caption-draft',
+  'social.discord-announcement-draft',
+  'notification.traffic-issues',
+  'notification.failed-automations',
+  'seo.competitor-gap-report',
 ];
 
 const DEFAULT_JOB_TYPES = new Set(DEFAULT_JOB_TYPE_ARRAY);
 
+
+const DEFAULT_SPORTS = new Set(['mma', 'boxing', 'kickboxing', 'combat', 'pro_wrestling']);
+
+const CAMPAIGN_TYPES = new Set([
+  'fight_full_campaign',
+  'fight_tonight_campaign',
+  'fight_result_campaign',
+  'boxing_fight_campaign',
+  'pro_wrestling_match_campaign',
+  'blog_promotion_campaign',
+  'contest_promotion_campaign',
+  'custom_campaign',
+]);
+
+const CAMPAIGN_SECTIONS = new Set(['content', 'seo', 'social', 'media', 'analytics', 'notification', 'data', 'admin']);
+
+const LOCAL_CAMPAIGN_PACKS = Object.freeze([
+  {
+    campaignType: 'fight_full_campaign',
+    label: 'Fight full campaign',
+    description: 'Run blog, SEO, social, newsletter, homepage, image, and traffic agents for one fight.',
+    defaultVertical: 'combat',
+    defaultSport: 'mma',
+    defaultSections: ['content', 'seo', 'social', 'media'],
+  },
+  {
+    campaignType: 'fight_tonight_campaign',
+    label: 'Promote tonight fight',
+    description: 'Run same-day fight promotion agents for a fight that needs attention now.',
+    defaultVertical: 'combat',
+    defaultSport: 'mma',
+    defaultSections: ['content', 'seo', 'social', 'media'],
+  },
+  {
+    campaignType: 'boxing_fight_campaign',
+    label: 'Boxing fight campaign',
+    description: 'Run the fight campaign pack with Boxing-specific wording, tags, SEO, and social copy.',
+    defaultVertical: 'combat',
+    defaultSport: 'boxing',
+    defaultSections: ['content', 'seo', 'social', 'media'],
+  },
+  {
+    campaignType: 'fight_result_campaign',
+    label: 'Fight result campaign',
+    description: 'Run recap, result social, and leaderboard-summary agents after a fight result update.',
+    defaultVertical: 'combat',
+    defaultSport: 'mma',
+    defaultSections: ['content', 'social', 'analytics'],
+  },
+  {
+    campaignType: 'pro_wrestling_match_campaign',
+    label: 'Pro-wrestling match campaign',
+    description: 'Run preview/recap, wrestling analysis, social, SEO, schema, and newsletter agents.',
+    defaultVertical: 'pro_wrestling',
+    defaultSport: 'pro_wrestling',
+    defaultSections: ['content', 'seo', 'social', 'media'],
+  },
+  {
+    campaignType: 'blog_promotion_campaign',
+    label: 'Blog promotion campaign',
+    description: 'Run social, SEO audit, related links, image prompt, and newsletter agents for an approved blog.',
+    defaultVertical: 'combat',
+    defaultSport: 'mma',
+    defaultSections: ['seo', 'social', 'media', 'content'],
+  },
+  {
+    campaignType: 'contest_promotion_campaign',
+    label: 'Contest promotion campaign',
+    description: 'Run contest explainer, reminder, winners announcement, and social promotion agents.',
+    defaultVertical: 'combat',
+    defaultSport: 'mma',
+    defaultSections: ['content', 'social', 'notification'],
+  },
+  {
+    campaignType: 'custom_campaign',
+    label: 'Custom campaign',
+    description: 'Run selected sections or selected automation keys as one grouped campaign.',
+    defaultVertical: 'combat',
+    defaultSport: 'mma',
+    defaultSections: ['content', 'seo', 'social'],
+  },
+]);
+
 const AUTOMATION_TRIGGER_DEFAULTS = Object.freeze({
   manual: [],
   fight_published: [
-    'content.match-preview',
-    'social.twitter-post',
+    'content.fight-publish-blog-draft',
+    'social.fight-publish-post',
     'seo.metadata',
     'seo.schema-markup',
     'seo.sitemap-refresh',
     'seo.internal-links',
-    'content.email-newsletter-draft',
+    'content.newsletter-draft',
     'seo.fight-event-structured-data',
   ],
   fight_result_updated: [
-    'content.event-recap',
+    'content.fight-result-recap',
     'social.result-post',
-    'data.leaderboard-summary',
+    'analytics.leaderboard-summary',
   ],
   upcoming_event: [
-    'content.event-preview',
+    'content.upcoming-event-preview',
     'content.fight-card-article',
-    'social.promotional-posts',
-    'data.homepage-featured-content',
+    'social.event-promotional-posts',
+    'content.homepage-feature',
     'seo.fight-event-structured-data',
   ],
   fighter_added: [
     'content.fighter-profile',
-    'seo.wrestler-fighter-structured-data',
+    'seo.fighter-wrestler-structured-data',
   ],
   fighter_updated: [
-    'seo.metadata',
+    'seo.fighter-refresh',
     'seo.content-freshness-monitor',
   ],
   fighter_record_changed: [
@@ -127,57 +206,56 @@ const AUTOMATION_TRIGGER_DEFAULTS = Object.freeze({
   pro_wrestling_match_published: [
     'content.pro-wrestling-match-preview',
     'wrestling.match-analysis',
-    'social.twitter-post',
+    'social.blog-approved-post',
     'seo.schema-markup',
   ],
   pro_wrestling_result_updated: [
-    'content.pro-wrestling-match-recap',
+    'content.pro-wrestling-result-recap',
     'social.result-post',
   ],
   wrestler_added: [
     'content.wrestler-profile',
     'wrestling.wrestler-profile',
-    'seo.wrestler-fighter-structured-data',
+    'seo.fighter-wrestler-structured-data',
   ],
   contest_created: [
-    'content.rules-explainer',
-    'social.discord-announcement',
+    'content.contest-rules-explainer',
+    'social.discord-announcement-draft',
   ],
   contest_closing_soon: [
-    'social.reminder-post',
+    'social.contest-reminder',
   ],
   contest_completed: [
     'social.winners-announcement',
   ],
   blog_approved: [
-    'social.twitter-post',
-    'seo.audit',
+    'social.blog-approved-post',
+    'seo.blog-audit',
     'seo.related-post-linking',
-    'content.image-prompt',
-    'content.email-newsletter-draft',
-    'seo.opengraph-twitter-card',
+    'media.image-prompt',
+    'content.blog-newsletter-draft',
+    'seo.opengraph-twitter-cards',
   ],
   daily_schedule: [
     'seo.daily-audit',
     'seo.missing-pages-detector',
     'seo.low-quality-page-detector',
     'seo.broken-link-detector',
-    'seo.missing-metadata-detector',
+    'seo.missing-meta-detector',
     'seo.keyword-opportunity',
-    'data.trending-mma-topic',
-    'data.trending-pro-wrestling-topic',
-    'data.draft-queue-generation',
-    'automation.agent-performance-dashboard',
+    'data.trending-mma-topics',
+    'data.trending-wrestling-topics',
+    'automation.draft-queue-generation',
+    'analytics.agent-performance',
   ],
   weekly_schedule: [
-    'seo.weekly-opportunity-report',
+    'seo.weekly-traffic-opportunity',
     'seo.duplicate-content-detector',
-    'data.content-calendar',
-    'social.content-calendar',
-    'data.competitor-gap-report',
-    'data.traffic-opportunity',
+    'content.calendar',
+    'social.calendar',
+    'seo.competitor-gap-report',
+    'analytics.traffic-growth-dashboard',
     'seo.content-freshness-monitor',
-    'automation.traffic-growth-dashboard',
   ],
 });
 
@@ -186,6 +264,9 @@ const AUTOMATION_GROUPS = Object.freeze({
   seo: 'SEO automation',
   social: 'Social automation',
   data: 'Data and traffic automation',
+  analytics: 'Analytics and dashboards',
+  media: 'Media and image prompt automation',
+  notification: 'Admin notification automation',
   wrestling: 'Pro-wrestling automation',
   automation: 'System and dashboard automation',
   system: 'System health',
@@ -224,12 +305,23 @@ function registerSwarmPhase2Routes(options) {
       admin: event?.admin,
       trigger: event?.trigger,
       vertical: event?.vertical,
+      sport: event?.sport || event?.discipline,
       mode: event?.mode,
       sourceEntity: event?.sourceEntity,
       input: event?.input || {},
       metadata: { ...(isPlainObject(event?.metadata) ? event.metadata : {}), submittedFrom: event?.submittedFrom || 'backend-hook' },
       requestedJobTypes: Array.isArray(event?.jobTypes) ? event.jobTypes : undefined,
       reason: event?.reason || 'backend-hook-triggered-automation-event',
+    }),
+    triggerCampaign: (campaign) => createSwarmCampaign({
+      config: getSwarmConfig(),
+      axios,
+      crypto,
+      mongoose,
+      models,
+      body: campaign || {},
+      admin: campaign?.admin || campaign?.requestedBy,
+      reason: campaign?.reason || 'backend-hook-triggered-campaign',
     }),
   };
 
@@ -260,9 +352,12 @@ function registerSwarmPhase2Routes(options) {
       automationEventHooksEnabled: config.automationEventHooksEnabled,
       defaultMode: config.defaultMode,
       verticals: Array.from(DEFAULT_VERTICALS),
+      sports: Array.from(DEFAULT_SPORTS),
       jobTypes: DEFAULT_JOB_TYPE_ARRAY,
       automationTriggers: Object.keys(AUTOMATION_TRIGGER_DEFAULTS),
       automationGroups: AUTOMATION_GROUPS,
+      campaignTypes: Array.from(CAMPAIGN_TYPES),
+      campaignPacks: LOCAL_CAMPAIGN_PACKS,
       reviewStatuses: Array.from(REVIEW_STATUSES),
     });
   }));
@@ -381,6 +476,106 @@ function registerSwarmPhase2Routes(options) {
     res.json({ ok: true, source: 'cache', backendCache: cache, backendEvents: recentEvents.items });
   }));
 
+  app.get('/api/admin/swarm/campaigns/packs', verifyAdminToken, asyncHandler(async (req, res) => {
+    const config = getSwarmConfig();
+    if (config.enabled && String(req.query.source || '').toLowerCase() !== 'local') {
+      try {
+        const result = await callSwarm(config, axios, crypto, 'GET', '/internal/v1/campaigns/packs');
+        return res.json({ ok: true, source: 'swarm', items: result.items || result.packs || LOCAL_CAMPAIGN_PACKS, swarm: sanitizeSwarmEnvelope(result) });
+      } catch (error) {
+        if (String(req.query.fallbackLocal || 'true').toLowerCase() === 'false') throw error;
+        return res.status(206).json({ ok: true, source: 'local', warning: 'Swarm unavailable; returned backend campaign-pack fallback.', error: summarizeError(error), items: LOCAL_CAMPAIGN_PACKS });
+      }
+    }
+    res.json({ ok: true, source: 'local', items: LOCAL_CAMPAIGN_PACKS });
+  }));
+
+  app.get('/api/admin/swarm/campaigns', verifyAdminToken, asyncHandler(async (req, res) => {
+    const config = getSwarmConfig();
+    const useCacheOnly = String(req.query.source || '').toLowerCase() === 'cache' || !config.enabled;
+    if (!useCacheOnly) {
+      try {
+        const result = await callSwarm(config, axios, crypto, 'GET', '/internal/v1/campaigns', undefined, pickQuery(req.query, ['status', 'campaignType', 'vertical', 'sport', 'page', 'limit']));
+        const items = Array.isArray(result.items) ? result.items : [];
+        await Promise.all(items.map((campaign) => upsertCampaignFromSwarm(models, campaign)));
+        return res.json({ ok: true, source: 'swarm', ...result });
+      } catch (error) {
+        if (String(req.query.fallbackCache || 'true').toLowerCase() === 'false') throw error;
+        const cache = await listLocalCampaigns(models, req.query);
+        return res.status(206).json({ ok: true, source: 'cache', warning: 'Swarm unavailable; returned backend campaign cache.', error: summarizeError(error), ...cache });
+      }
+    }
+    const cache = await listLocalCampaigns(models, req.query);
+    res.json({ ok: true, source: 'cache', ...cache });
+  }));
+
+  app.get('/api/admin/swarm/campaigns/:campaignId', verifyAdminToken, asyncHandler(async (req, res) => {
+    const config = getSwarmConfig();
+    let remoteError = null;
+    if (config.enabled && String(req.query.source || '').toLowerCase() !== 'cache') {
+      try {
+        const result = await callSwarm(config, axios, crypto, 'GET', `/internal/v1/campaigns/${encodeURIComponent(req.params.campaignId)}`);
+        const campaign = result.campaign || result.data?.campaign || result;
+        await upsertCampaignFromSwarm(models, campaign);
+      } catch (error) {
+        remoteError = summarizeError(error);
+      }
+    }
+    const local = await models.SwarmBackendCampaign.findOne({ campaignId: req.params.campaignId }).lean();
+    if (!local && remoteError) return res.status(502).json({ ok: false, code: 'SWARM_CAMPAIGN_LOOKUP_FAILED', error: remoteError });
+    if (!local) return res.status(404).json({ ok: false, code: 'SWARM_CAMPAIGN_NOT_FOUND', message: 'Campaign not found.' });
+    res.json({ ok: true, source: 'cache', campaign: serializeLocalCampaign(local), remoteError });
+  }));
+
+  app.post('/api/admin/swarm/campaigns', verifyAdminToken, requireSwarmEnabled, asyncHandler(async (req, res) => {
+    const result = await createSwarmCampaign({
+      config: getSwarmConfig(),
+      axios,
+      crypto,
+      mongoose,
+      models,
+      body: req.body || {},
+      admin: req.admin,
+      reason: req.body?.reason || 'admin-created-campaign',
+    });
+    res.status(202).json({ ok: true, ...result });
+  }));
+
+  app.post('/api/admin/swarm/campaigns/fight', verifyAdminToken, requireSwarmEnabled, asyncHandler(async (req, res) => {
+    const body = { ...(req.body || {}) };
+    const sport = normalizeSport(body.sport || body.discipline || body.combatSport || body.vertical);
+    body.sport = sport;
+    body.vertical = sport === 'pro_wrestling' ? 'pro_wrestling' : 'combat';
+    body.campaignType = body.campaignType || (sport === 'boxing' ? 'boxing_fight_campaign' : (body.tonight ? 'fight_tonight_campaign' : 'fight_full_campaign'));
+    body.includeAll = body.includeAll !== false;
+    const result = await createSwarmCampaign({
+      config: getSwarmConfig(),
+      axios,
+      crypto,
+      mongoose,
+      models,
+      body,
+      admin: req.admin,
+      reason: body.reason || 'admin-created-fight-campaign',
+    });
+    res.status(202).json({ ok: true, ...result });
+  }));
+
+  app.post('/api/admin/swarm/campaigns/fight/full', verifyAdminToken, requireSwarmEnabled, asyncHandler(async (req, res) => {
+    const result = await createSwarmCampaign({ config: getSwarmConfig(), axios, crypto, mongoose, models, body: { ...(req.body || {}), campaignType: 'fight_full_campaign', includeAll: true }, admin: req.admin, reason: 'admin-created-full-fight-campaign' });
+    res.status(202).json({ ok: true, ...result });
+  }));
+
+  app.post('/api/admin/swarm/campaigns/fight/tonight', verifyAdminToken, requireSwarmEnabled, asyncHandler(async (req, res) => {
+    const result = await createSwarmCampaign({ config: getSwarmConfig(), axios, crypto, mongoose, models, body: { ...(req.body || {}), campaignType: 'fight_tonight_campaign', includeAll: true, tonight: true }, admin: req.admin, reason: 'admin-created-tonight-fight-campaign' });
+    res.status(202).json({ ok: true, ...result });
+  }));
+
+  app.post('/api/admin/swarm/campaigns/boxing', verifyAdminToken, requireSwarmEnabled, asyncHandler(async (req, res) => {
+    const result = await createSwarmCampaign({ config: getSwarmConfig(), axios, crypto, mongoose, models, body: { ...(req.body || {}), campaignType: 'boxing_fight_campaign', sport: 'boxing', vertical: 'combat', includeAll: req.body?.includeAll !== false }, admin: req.admin, reason: 'admin-created-boxing-campaign' });
+    res.status(202).json({ ok: true, ...result });
+  }));
+
   app.get('/api/admin/swarm/events', verifyAdminToken, asyncHandler(async (req, res) => {
     const result = await listLocalAutomationEvents(models, req.query);
     res.json({ ok: true, source: 'backend', ...result });
@@ -388,6 +583,21 @@ function registerSwarmPhase2Routes(options) {
 
   const triggerAutomationEventHandler = asyncHandler(async (req, res) => {
     const trigger = normalizeAutomationTrigger(req.params.trigger || req.body?.trigger);
+    if (shouldRunEventAsCampaign(req.body)) {
+      const campaignBody = buildCampaignBodyFromEvent({ trigger, body: req.body || {}, admin: req.admin });
+      const campaignResult = await createSwarmCampaign({
+        config: getSwarmConfig(),
+        axios,
+        crypto,
+        mongoose,
+        models,
+        body: campaignBody,
+        admin: req.admin,
+        reason: req.body?.reason || 'admin-triggered-campaign-event',
+      });
+      return res.status(202).json({ ok: true, trigger, campaignMode: true, ...campaignResult });
+    }
+
     const result = await triggerAutomationEvent({
       config: getSwarmConfig(),
       axios,
@@ -397,6 +607,7 @@ function registerSwarmPhase2Routes(options) {
       admin: req.admin,
       trigger,
       vertical: req.body?.vertical,
+      sport: req.body?.sport || req.body?.discipline,
       mode: req.body?.mode,
       sourceEntity: req.body?.sourceEntity,
       input: req.body?.input || req.body?.context || {},
@@ -611,7 +822,17 @@ function registerSwarmPhase2Routes(options) {
 
     let published = null;
     let automationEvent = null;
-    if (publish && isBlogArtifact(latest)) {
+    let seoApplication = null;
+    if (publish && isSeoArtifact(latest)) {
+      seoApplication = await applySeoArtifact({ artifact: latest, Blog, admin, options: { targetBlogId: req.body?.targetBlogId, applyToBlog: req.body?.applyToBlog !== false } });
+      latest.reviewStatus = seoApplication.applied ? 'PUBLISHED' : 'APPROVED';
+      latest.publishedEntity = seoApplication.entity || latest.publishedEntity;
+      if (seoApplication.applied) latest.publishedAt = new Date();
+      await models.SwarmBackendJob.updateOne(
+        { jobId: latest.jobId },
+        { $set: { status: seoApplication.applied ? 'published' : 'approved', artifactId: latest.artifactId, publishedEntity: seoApplication.entity, updatedAt: new Date() }, $push: { statusHistory: { status: seoApplication.applied ? 'published' : 'approved', at: new Date(), reason: seoApplication.applied ? 'seo-artifact-approved-and-applied' : 'seo-artifact-approved-for-review' } } },
+      );
+    } else if (publish && isBlogArtifact(latest)) {
       published = await publishBlogArtifact({ artifact: latest, Blog, Notification, admin, mongoose, publishOptions: { updateExisting: req.body?.updateExisting === true } });
       latest.reviewStatus = 'PUBLISHED';
       latest.publishedEntity = published.entity;
@@ -650,7 +871,7 @@ function registerSwarmPhase2Routes(options) {
     }
 
     await latest.save();
-    res.json({ ok: true, artifact: serializeLocalArtifact(latest), published, automationEvent, remoteReview: sanitizeSwarmEnvelope(remoteReview) });
+    res.json({ ok: true, artifact: serializeLocalArtifact(latest), published, seoApplication, automationEvent, remoteReview: sanitizeSwarmEnvelope(remoteReview) });
   }));
 
   app.post('/api/admin/swarm/artifacts/:artifactId/reject', verifyAdminToken, asyncHandler(async (req, res) => {
@@ -673,6 +894,25 @@ function registerSwarmPhase2Routes(options) {
     );
 
     res.json({ ok: true, artifact: serializeLocalArtifact(artifact), remoteReview: sanitizeSwarmEnvelope(remoteReview) });
+  }));
+
+  app.post('/api/admin/swarm/artifacts/:artifactId/apply-seo', verifyAdminToken, asyncHandler(async (req, res) => {
+    const config = getSwarmConfig();
+    const artifact = await loadArtifactForReview({ config, axios, crypto, models, artifactId: req.params.artifactId });
+    if (!isSeoArtifact(artifact)) return res.status(400).json({ ok: false, code: 'NOT_SEO_ARTIFACT', message: 'Only SEO artifacts can be applied through this endpoint.' });
+    const admin = adminActor(req.admin);
+    const seoApplication = await applySeoArtifact({ artifact, Blog, admin, options: { targetBlogId: req.body?.targetBlogId, applyToBlog: req.body?.applyToBlog !== false } });
+    artifact.reviewStatus = seoApplication.applied ? 'PUBLISHED' : 'APPROVED';
+    artifact.reviewedBy = admin;
+    artifact.reviewedAt = new Date();
+    artifact.publishedEntity = seoApplication.entity || artifact.publishedEntity;
+    artifact.publishedAt = seoApplication.applied ? new Date() : artifact.publishedAt;
+    await artifact.save();
+    await models.SwarmBackendJob.updateOne(
+      { jobId: artifact.jobId },
+      { $set: { status: seoApplication.applied ? 'published' : 'approved', artifactId: artifact.artifactId, publishedEntity: seoApplication.entity, updatedAt: new Date() }, $push: { statusHistory: { status: seoApplication.applied ? 'published' : 'approved', at: new Date(), reason: seoApplication.applied ? 'seo-application-endpoint' : 'seo-application-no-target' } } },
+    );
+    res.json({ ok: true, artifact: serializeLocalArtifact(artifact), seoApplication });
   }));
 
   app.post('/api/admin/swarm/artifacts/:artifactId/regenerate', verifyAdminToken, requireSwarmEnabled, asyncHandler(async (req, res) => {
@@ -876,6 +1116,30 @@ function buildSwarmModels(mongoose) {
     completedAt: Date,
   }, { timestamps: true, minimize: false });
 
+  const campaignSchema = new mongoose.Schema({
+    campaignId: { type: String, index: true, unique: true, required: true },
+    campaignType: { type: String, index: true },
+    title: String,
+    vertical: { type: String, index: true },
+    sport: { type: String, index: true },
+    mode: String,
+    status: { type: String, index: true },
+    priority: Number,
+    requestedBy: Mixed,
+    sourceEntity: Mixed,
+    input: Mixed,
+    sections: [String],
+    automationKeys: [String],
+    jobIds: [String],
+    counts: Mixed,
+    callbackUrl: String,
+    backendCorrelationId: { type: String, index: true },
+    idempotencyKey: { type: String, index: true, unique: true, sparse: true },
+    metadata: Mixed,
+    swarmCampaign: Mixed,
+    error: Mixed,
+  }, { timestamps: true, minimize: false });
+
   const nonceSchema = new mongoose.Schema({
     keyId: { type: String, required: true },
     nonce: { type: String, required: true },
@@ -887,6 +1151,7 @@ function buildSwarmModels(mongoose) {
     SwarmBackendJob: mongoose.models.SwarmBackendJob || mongoose.model('SwarmBackendJob', jobSchema, 'swarm_backend_jobs'),
     SwarmBackendArtifact: mongoose.models.SwarmBackendArtifact || mongoose.model('SwarmBackendArtifact', artifactSchema, 'swarm_backend_artifacts'),
     SwarmBackendAutomationEvent: mongoose.models.SwarmBackendAutomationEvent || mongoose.model('SwarmBackendAutomationEvent', automationEventSchema, 'swarm_backend_automation_events'),
+    SwarmBackendCampaign: mongoose.models.SwarmBackendCampaign || mongoose.model('SwarmBackendCampaign', campaignSchema, 'swarm_backend_campaigns'),
     SwarmBackendWebhookNonce: mongoose.models.SwarmBackendWebhookNonce || mongoose.model('SwarmBackendWebhookNonce', nonceSchema, 'swarm_backend_webhook_nonces'),
   };
 }
@@ -977,8 +1242,9 @@ async function callSwarm(config, axios, crypto, method, path, body, query) {
 
 function normalizeCreateJobBody(body, admin, config) {
   const raw = body || {};
-  const vertical = normalizeVertical(raw.vertical || raw.gameMode || raw.domain);
-  if (!DEFAULT_VERTICALS.has(vertical)) throw httpError(400, 'INVALID_SWARM_VERTICAL', 'vertical must be combat or pro_wrestling.');
+  const sport = normalizeSport(raw.sport || raw.discipline || raw.combatSport || raw.category || raw.vertical || raw.gameMode);
+  const vertical = normalizeVertical(raw.vertical || raw.gameMode || raw.domain || sport);
+  if (!DEFAULT_VERTICALS.has(vertical)) throw httpError(400, 'INVALID_SWARM_VERTICAL', 'vertical must be combat or pro_wrestling. Use sport=boxing for Boxing campaigns.');
 
   const jobType = String(raw.jobType || inferJobType(raw, vertical)).trim();
   if (!DEFAULT_JOB_TYPES.has(jobType)) throw httpError(400, 'INVALID_SWARM_JOB_TYPE', 'Unsupported swarm jobType.');
@@ -988,10 +1254,13 @@ function normalizeCreateJobBody(body, admin, config) {
 
   const priority = clamp(toInt(raw.priority, 50), 0, 100);
   const input = normalizeInput(raw);
+  input.sport = normalizeSport(input.sport || input.discipline || sport || vertical);
+  input.discipline = input.discipline || input.sport;
   const sourceEntity = normalizeSourceEntity(raw, input, vertical, jobType);
 
   return {
     vertical,
+    sport: input.sport,
     jobType,
     mode,
     priority,
@@ -1008,6 +1277,7 @@ function normalizeCreateJobBody(body, admin, config) {
     maxAttempts: raw.maxAttempts,
     metadata: {
       ...(isPlainObject(raw.metadata) ? raw.metadata : {}),
+      sport: input.sport,
       submittedFrom: 'fantasymmadness-backend',
       submittedAt: new Date().toISOString(),
     },
@@ -1110,7 +1380,7 @@ function inferJobType(raw, vertical) {
 function normalizeInput(raw) {
   if (isPlainObject(raw.input)) return raw.input;
   const input = {};
-  ['topic', 'title', 'prompt', 'keywords', 'fighters', 'wrestlers', 'eventName', 'matchId', 'fighterA', 'fighterB', 'competitorA', 'competitorB', 'platforms'].forEach((key) => {
+  ['topic', 'title', 'prompt', 'keywords', 'fighters', 'wrestlers', 'eventName', 'matchName', 'blogTitle', 'matchId', 'fightId', 'eventId', 'blogId', 'contestId', 'fighterId', 'wrestlerId', 'fighterA', 'fighterB', 'competitorA', 'competitorB', 'platforms', 'sport', 'discipline', 'campaignId', 'campaignType', 'automationKey', 'targetOutput'].forEach((key) => {
     if (raw[key] !== undefined) input[key] = raw[key];
   });
   if (!Object.keys(input).length && raw.topicText) input.topic = raw.topicText;
@@ -1324,15 +1594,17 @@ async function listLocalArtifacts(models, query) {
 }
 
 async function getCacheStats(models) {
-  const [jobs, artifacts, awaitingReview, failedJobs, automationEvents, failedAutomationEvents] = await Promise.all([
+  const [jobs, artifacts, awaitingReview, failedJobs, automationEvents, failedAutomationEvents, campaigns, activeCampaigns] = await Promise.all([
     models.SwarmBackendJob.countDocuments(),
     models.SwarmBackendArtifact.countDocuments(),
     models.SwarmBackendArtifact.countDocuments({ reviewStatus: { $in: ['DRAFT', 'AWAITING_REVIEW'] } }),
     models.SwarmBackendJob.countDocuments({ status: { $in: ['failed', 'dead_letter', 'failed_to_submit'] } }),
     models.SwarmBackendAutomationEvent.countDocuments(),
     models.SwarmBackendAutomationEvent.countDocuments({ status: 'failed' }),
+    models.SwarmBackendCampaign.countDocuments(),
+    models.SwarmBackendCampaign.countDocuments({ status: { $in: ['created', 'queued', 'running', 'awaiting_review', 'partially_failed', 'submitting'] } }),
   ]);
-  return { jobs, artifacts, awaitingReview, failedJobs, automationEvents, failedAutomationEvents };
+  return { jobs, artifacts, awaitingReview, failedJobs, automationEvents, failedAutomationEvents, campaigns, activeCampaigns };
 }
 
 function buildLocalAutomationCatalog() {
@@ -1397,11 +1669,419 @@ function normalizeSettingsUpdateBody(body, admin) {
   };
 }
 
-async function triggerAutomationEvent({ config, axios, crypto, mongoose, models, admin, trigger, vertical, mode, sourceEntity, input, metadata, requestedJobTypes, reason }) {
+function shouldRunEventAsCampaign(body) {
+  const raw = isPlainObject(body) ? body : {};
+  return Boolean(
+    raw.campaignType
+    || raw.includeAll === true
+    || raw.allAgents === true
+    || raw.runAllAgents === true
+    || raw.runAsCampaign === true
+    || raw.allOfTheAbove === true
+    || (Array.isArray(raw.sections) && raw.sections.length > 1)
+    || (Array.isArray(raw.automationKeys) && raw.automationKeys.length > 1)
+  );
+}
+
+function buildCampaignBodyFromEvent({ trigger, body, admin }) {
+  const raw = isPlainObject(body) ? body : {};
+  const input = isPlainObject(raw.input) ? raw.input : (isPlainObject(raw.context) ? raw.context : {});
+  const sport = normalizeSport(raw.sport || raw.discipline || input.sport || input.discipline || raw.vertical || raw.gameMode);
+  const campaignType = normalizeCampaignType(raw.campaignType || inferCampaignTypeForTrigger(trigger, sport));
+  return {
+    campaignType,
+    title: cleanString(raw.title) || cleanString(input.title) || cleanString(input.matchName) || cleanString(input.eventName) || cleanString(input.blogTitle) || undefined,
+    vertical: normalizeVertical(raw.vertical || raw.gameMode || sport || inferVerticalForTrigger(trigger)),
+    sport,
+    mode: normalizeMode(raw.mode || raw.publishMode || raw.statusMode || 'APPROVAL_REQUIRED'),
+    priority: clamp(toInt(raw.priority, 70), 0, 100),
+    requestedBy: raw.requestedBy || adminActor(admin),
+    sourceEntity: normalizeEventSourceEntity(raw.sourceEntity, input, normalizeVertical(raw.vertical || sport || inferVerticalForTrigger(trigger)), trigger),
+    input: {
+      ...input,
+      sport,
+      discipline: input.discipline || sport,
+      automationTrigger: trigger,
+      campaignRequestedFrom: 'backend-event-trigger',
+    },
+    sections: normalizeCampaignSections(raw.sections),
+    automationKeys: normalizeStringArray(raw.automationKeys),
+    includeAll: raw.includeAll !== false && (raw.includeAll === true || raw.allAgents === true || raw.runAllAgents === true || raw.allOfTheAbove === true || !Array.isArray(raw.automationKeys)),
+    force: raw.force === true,
+    backendCorrelationId: cleanString(raw.backendCorrelationId) || undefined,
+    idempotencyKey: cleanString(raw.idempotencyKey) || undefined,
+    metadata: { ...(isPlainObject(raw.metadata) ? raw.metadata : {}), trigger, submittedFrom: 'fantasymmadness-backend-campaign-event' },
+  };
+}
+
+async function createSwarmCampaign({ config, axios, crypto, mongoose, models, body, admin, reason }) {
+  if (!config.enabled) throw httpError(503, 'SWARM_DISABLED', 'Swarm integration is disabled.');
+  const normalized = normalizeCreateCampaignBody(body || {}, admin, config, crypto);
+  const localEventId = `campaign_event_${new mongoose.Types.ObjectId().toString()}`;
+  let eventDoc = null;
+  try {
+    eventDoc = await models.SwarmBackendAutomationEvent.create({
+      eventId: localEventId,
+      trigger: `campaign.${normalized.campaignType}`,
+      vertical: normalized.vertical,
+      status: 'submitting',
+      requestedBy: normalized.requestedBy,
+      sourceEntity: normalized.sourceEntity,
+      input: normalized.input,
+      metadata: normalized.metadata,
+      selectedJobTypes: [],
+      createdJobs: [],
+      skippedJobs: [],
+      errors: [],
+      reason: cleanString(reason) || 'campaign-created-from-backend',
+    });
+  } catch (error) {
+    eventDoc = null;
+  }
+
+  try {
+    const result = await callSwarm(config, axios, crypto, 'POST', '/internal/v1/campaigns', normalized);
+    const campaign = result.campaign || result.data?.campaign || null;
+    const jobs = Array.isArray(result.jobs) ? result.jobs : [];
+    await upsertCampaignFromSwarm(models, campaign, {
+      campaignId: campaign?.campaignId || normalized.backendCorrelationId || normalized.idempotencyKey,
+      campaignType: normalized.campaignType,
+      title: normalized.title,
+      vertical: normalized.vertical,
+      sport: normalized.sport,
+      mode: normalized.mode,
+      status: campaign?.status || 'queued',
+      priority: normalized.priority,
+      requestedBy: normalized.requestedBy,
+      sourceEntity: normalized.sourceEntity,
+      input: normalized.input,
+      sections: normalized.sections,
+      automationKeys: normalized.automationKeys,
+      jobIds: jobs.map((job) => job.jobId).filter(Boolean),
+      counts: campaign?.counts,
+      backendCorrelationId: normalized.backendCorrelationId,
+      idempotencyKey: normalized.idempotencyKey,
+      metadata: normalized.metadata,
+    });
+    await Promise.all(jobs.map((job) => {
+      if (!job?.jobId) return null;
+      return upsertJobFromSwarm(models, {
+        jobId: job.jobId,
+        vertical: normalized.vertical,
+        jobType: job.jobType,
+        mode: job.mode || normalized.mode,
+        status: job.status || 'queued',
+        priority: normalized.priority,
+        requestedBy: normalized.requestedBy,
+        sourceEntity: normalized.sourceEntity,
+        input: normalized.input,
+        metadata: { ...normalized.metadata, campaignId: campaign?.campaignId || normalized.backendCorrelationId, automationKey: job.automationKey, campaignType: normalized.campaignType, sport: normalized.sport },
+      });
+    }));
+
+    if (eventDoc) {
+      eventDoc.status = jobs.length ? 'submitted' : 'skipped';
+      eventDoc.selectedJobTypes = jobs.map((job) => job.jobType).filter(Boolean);
+      eventDoc.createdJobs = jobs;
+      eventDoc.skippedJobs = Array.isArray(result.skipped) ? result.skipped : [];
+      eventDoc.metadata = { ...(eventDoc.metadata || {}), campaign: result.campaign || null };
+      eventDoc.completedAt = new Date();
+      await eventDoc.save();
+    }
+
+    return {
+      source: 'swarm',
+      campaign: campaign || null,
+      jobs,
+      skipped: Array.isArray(result.skipped) ? result.skipped : [],
+      localEvent: serializeAutomationEvent(eventDoc),
+      swarm: sanitizeSwarmEnvelope(result),
+    };
+  } catch (error) {
+    if (eventDoc) {
+      eventDoc.status = 'failed';
+      eventDoc.errors = [summarizeError(error)];
+      eventDoc.completedAt = new Date();
+      await eventDoc.save();
+    }
+    throw error;
+  }
+}
+
+function normalizeCreateCampaignBody(rawBody, admin, config, crypto) {
+  const raw = isPlainObject(rawBody) ? rawBody : {};
+  const sourceInput = isPlainObject(raw.input) ? raw.input : (isPlainObject(raw.context) ? raw.context : {});
+  const sport = normalizeSport(raw.sport || raw.discipline || sourceInput.sport || sourceInput.discipline || raw.vertical || raw.gameMode);
+  const campaignType = normalizeCampaignType(raw.campaignType || inferCampaignTypeFromBody(raw, sport));
+  const vertical = normalizeVertical(raw.vertical || raw.gameMode || (sport === 'pro_wrestling' ? 'pro_wrestling' : 'combat'));
+  if (!DEFAULT_VERTICALS.has(vertical)) throw httpError(400, 'INVALID_SWARM_VERTICAL', 'Campaign vertical must be combat or pro_wrestling. Use sport=boxing for Boxing.');
+  if (!CAMPAIGN_TYPES.has(campaignType)) throw httpError(400, 'INVALID_CAMPAIGN_TYPE', 'Unsupported swarm campaign type.');
+
+  const pack = LOCAL_CAMPAIGN_PACKS.find((item) => item.campaignType === campaignType) || LOCAL_CAMPAIGN_PACKS[0];
+  const input = {
+    ...sourceInput,
+    sport,
+    discipline: sourceInput.discipline || sport,
+    adminUXIntent: cleanString(raw.adminUXIntent) || cleanString(raw.intent) || buildCampaignIntent(campaignType, sport),
+  };
+  const sourceEntity = normalizeSourceEntity({ ...raw, sourceEntity: raw.sourceEntity, label: raw.label || raw.title }, input, vertical, 'content.article');
+  const title = cleanString(raw.title) || cleanString(input.title) || cleanString(input.matchName) || cleanString(input.eventName) || sourceEntity.label || pack.label;
+  const normalized = {
+    campaignType,
+    title: title.slice(0, 200),
+    vertical,
+    sport,
+    mode: normalizeMode(raw.mode || raw.statusMode || raw.publishMode || config.defaultMode || pack.defaultMode || 'APPROVAL_REQUIRED'),
+    priority: clamp(toInt(raw.priority, 70), 0, 100),
+    requestedBy: raw.requestedBy || adminActor(admin),
+    sourceEntity,
+    input,
+    sections: normalizeCampaignSections(raw.sections) || pack.defaultSections,
+    automationKeys: normalizeStringArray(raw.automationKeys),
+    includeAll: raw.includeAll !== false && (raw.includeAll === true || raw.allAgents === true || raw.runAllAgents === true || raw.allOfTheAbove === true || !Array.isArray(raw.automationKeys)),
+    force: raw.force === true,
+    backendCorrelationId: cleanString(raw.backendCorrelationId) || undefined,
+    idempotencyKey: cleanString(raw.idempotencyKey) || undefined,
+    metadata: {
+      ...(isPlainObject(raw.metadata) ? raw.metadata : {}),
+      submittedFrom: 'fantasymmadness-backend-campaign',
+      submittedAt: new Date().toISOString(),
+      campaignType,
+      sport,
+    },
+  };
+  if (!normalized.idempotencyKey) {
+    normalized.idempotencyKey = createCampaignIdempotencyKey({ crypto, normalized });
+  }
+  return normalized;
+}
+
+function createCampaignIdempotencyKey({ crypto, normalized }) {
+  const hash = crypto.createHash('sha256').update(JSON.stringify({
+    campaignType: normalized.campaignType,
+    title: normalized.title,
+    sourceEntity: normalized.sourceEntity,
+    input: normalized.input,
+    sections: normalized.sections,
+    automationKeys: normalized.automationKeys,
+  })).digest('hex').slice(0, 24);
+  return `backend:campaign:${normalized.campaignType}:${hash}`.slice(0, 200);
+}
+
+function normalizeCampaignType(value) {
+  const normalized = cleanString(value).toLowerCase().replace(/[-\s]+/g, '_');
+  const aliases = {
+    fight: 'fight_full_campaign',
+    fight_full: 'fight_full_campaign',
+    full_fight: 'fight_full_campaign',
+    full_campaign: 'fight_full_campaign',
+    all_agents: 'fight_full_campaign',
+    all_the_above: 'fight_full_campaign',
+    tonight: 'fight_tonight_campaign',
+    tonight_fight: 'fight_tonight_campaign',
+    promote_tonight: 'fight_tonight_campaign',
+    boxing: 'boxing_fight_campaign',
+    boxing_fight: 'boxing_fight_campaign',
+    result: 'fight_result_campaign',
+    fight_result: 'fight_result_campaign',
+    pro_wrestling: 'pro_wrestling_match_campaign',
+    wrestling: 'pro_wrestling_match_campaign',
+    blog: 'blog_promotion_campaign',
+    blog_promotion: 'blog_promotion_campaign',
+    contest: 'contest_promotion_campaign',
+    custom: 'custom_campaign',
+  };
+  return aliases[normalized] || normalized || 'fight_full_campaign';
+}
+
+function inferCampaignTypeFromBody(raw, sport) {
+  if (sport === 'boxing') return 'boxing_fight_campaign';
+  if (sport === 'pro_wrestling' || normalizeVertical(raw.vertical || raw.gameMode) === 'pro_wrestling') return 'pro_wrestling_match_campaign';
+  if (raw.result || raw.resultUpdated) return 'fight_result_campaign';
+  if (raw.tonight || raw.promoteTonight) return 'fight_tonight_campaign';
+  if (raw.blogId || raw.blogTitle) return 'blog_promotion_campaign';
+  if (raw.contestId) return 'contest_promotion_campaign';
+  return 'fight_full_campaign';
+}
+
+function inferCampaignTypeForTrigger(trigger, sport) {
+  if (sport === 'boxing') return 'boxing_fight_campaign';
+  const normalized = normalizeAutomationTrigger(trigger);
+  if (normalized === 'fight_result_updated') return 'fight_result_campaign';
+  if (normalized === 'upcoming_event' || normalized === 'fight_published') return 'fight_full_campaign';
+  if (normalized.includes('wrestling')) return 'pro_wrestling_match_campaign';
+  if (normalized === 'blog_approved') return 'blog_promotion_campaign';
+  if (normalized.includes('contest')) return 'contest_promotion_campaign';
+  return 'custom_campaign';
+}
+
+function buildCampaignIntent(campaignType, sport) {
+  if (campaignType === 'boxing_fight_campaign') return 'Run all Boxing promotion agents for this fight.';
+  if (campaignType === 'fight_tonight_campaign') return 'Promote this fight tonight across content, SEO, social, newsletter, and homepage artifacts.';
+  if (campaignType === 'fight_result_campaign') return 'Create fight result recap and promotional artifacts.';
+  if (campaignType === 'pro_wrestling_match_campaign') return 'Create pro-wrestling match campaign artifacts.';
+  if (campaignType === 'blog_promotion_campaign') return 'Promote this approved blog with SEO and social artifacts.';
+  if (campaignType === 'contest_promotion_campaign') return 'Promote this contest with explainers, reminders, and announcement artifacts.';
+  return `Run the full ${sport || 'fight'} automation campaign.`;
+}
+
+function normalizeCampaignSections(value) {
+  const rawItems = normalizeStringArray(value);
+  if (!rawItems) return undefined;
+  const items = rawItems.map((item) => item.toLowerCase().replace(/[-\s]+/g, '_'));
+  const filtered = items.filter((item) => CAMPAIGN_SECTIONS.has(item));
+  return filtered.length ? [...new Set(filtered)] : undefined;
+}
+
+function normalizeStringArray(value) {
+  let rawItems = [];
+  if (Array.isArray(value)) {
+    rawItems = value;
+  } else if (typeof value === 'string') {
+    try {
+      const parsed = JSON.parse(value);
+      rawItems = Array.isArray(parsed) ? parsed : value.split(',');
+    } catch (error) {
+      rawItems = value.split(',');
+    }
+  }
+  const items = rawItems.map((item) => cleanString(item)).filter(Boolean);
+  return items.length ? [...new Set(items)] : undefined;
+}
+
+async function upsertCampaignFromSwarm(models, swarmCampaign, fallback) {
+  if (!swarmCampaign && !fallback) return null;
+  const campaignId = swarmCampaign?.campaignId || fallback?.campaignId || fallback?.backendCorrelationId;
+  if (!campaignId) return null;
+  const set = {
+    campaignId,
+    campaignType: swarmCampaign?.campaignType || fallback?.campaignType,
+    title: swarmCampaign?.title || fallback?.title,
+    vertical: swarmCampaign?.vertical || fallback?.vertical,
+    sport: swarmCampaign?.sport || fallback?.sport,
+    mode: swarmCampaign?.mode || fallback?.mode,
+    status: swarmCampaign?.status || fallback?.status || 'queued',
+    priority: swarmCampaign?.priority ?? fallback?.priority,
+    requestedBy: swarmCampaign?.requestedBy || fallback?.requestedBy,
+    sourceEntity: swarmCampaign?.sourceEntity || fallback?.sourceEntity,
+    input: swarmCampaign?.input || fallback?.input,
+    sections: swarmCampaign?.sections || fallback?.sections,
+    automationKeys: swarmCampaign?.automationKeys || fallback?.automationKeys,
+    jobIds: swarmCampaign?.jobIds || fallback?.jobIds || [],
+    counts: swarmCampaign?.counts || fallback?.counts,
+    callbackUrl: swarmCampaign?.callbackUrl || fallback?.callbackUrl,
+    backendCorrelationId: swarmCampaign?.backendCorrelationId || fallback?.backendCorrelationId,
+    idempotencyKey: swarmCampaign?.idempotencyKey || fallback?.idempotencyKey,
+    metadata: swarmCampaign?.metadata || fallback?.metadata,
+    swarmCampaign: swarmCampaign || fallback?.swarmCampaign,
+    error: fallback?.error,
+    updatedAt: new Date(),
+  };
+  Object.keys(set).forEach((key) => set[key] === undefined && delete set[key]);
+  await models.SwarmBackendCampaign.updateOne({ campaignId }, { $set: set, $setOnInsert: { createdAt: new Date() } }, { upsert: true });
+  return models.SwarmBackendCampaign.findOne({ campaignId });
+}
+
+async function listLocalCampaigns(models, query) {
+  const page = clamp(toInt(query?.page, 1), 1, 100000);
+  const limit = clamp(toInt(query?.limit, 25), 1, 100);
+  const filter = {};
+  if (query?.status) filter.status = String(query.status);
+  if (query?.campaignType) filter.campaignType = normalizeCampaignType(query.campaignType);
+  if (query?.vertical) filter.vertical = normalizeVertical(query.vertical);
+  if (query?.sport) filter.sport = normalizeSport(query.sport);
+  const [rows, total] = await Promise.all([
+    models.SwarmBackendCampaign.find(filter).sort({ createdAt: -1 }).skip((page - 1) * limit).limit(limit).lean(),
+    models.SwarmBackendCampaign.countDocuments(filter),
+  ]);
+  return { items: rows.map(serializeLocalCampaign), pagination: { page, limit, total, pages: Math.ceil(total / limit) } };
+}
+
+function serializeLocalCampaign(campaign) {
+  if (!campaign) return null;
+  return {
+    id: String(campaign._id),
+    campaignId: campaign.campaignId,
+    campaignType: campaign.campaignType,
+    title: campaign.title,
+    vertical: campaign.vertical,
+    sport: campaign.sport,
+    mode: campaign.mode,
+    status: campaign.status,
+    priority: campaign.priority,
+    requestedBy: campaign.requestedBy,
+    sourceEntity: campaign.sourceEntity,
+    input: campaign.input,
+    sections: campaign.sections || [],
+    automationKeys: campaign.automationKeys || [],
+    jobIds: campaign.jobIds || [],
+    counts: campaign.counts,
+    callbackUrl: campaign.callbackUrl,
+    backendCorrelationId: campaign.backendCorrelationId,
+    idempotencyKey: campaign.idempotencyKey,
+    metadata: campaign.metadata,
+    error: campaign.error,
+    swarmCampaign: campaign.swarmCampaign,
+    createdAt: campaign.createdAt,
+    updatedAt: campaign.updatedAt,
+  };
+}
+
+function isSeoArtifact(artifact) {
+  const type = String(artifact?.artifactType || '');
+  const jobType = String(artifact?.jobType || '');
+  return type.startsWith('seo.') || jobType.startsWith('seo.');
+}
+
+async function applySeoArtifact({ artifact, Blog, admin, options }) {
+  const payload = artifact.payload || {};
+  const targetBlogId = cleanString(options?.targetBlogId || payload.targetBlogId || payload.blogId || artifact.sourceEntity?.id || artifact.swarmArtifact?.sourceEntity?.id);
+  const targetType = String(artifact.sourceEntity?.type || artifact.swarmArtifact?.sourceEntity?.type || payload.targetType || '').toLowerCase();
+  const isBlogTarget = targetType.includes('blog') || Boolean(payload.blogId || payload.targetBlogId);
+  const metaTitle = cleanString(payload.metaTitle || payload.titleTag || payload.openGraph?.title || payload.twitterCard?.title);
+  const metaDescription = cleanString(payload.metaDescription || payload.description || payload.openGraph?.description || payload.twitterCard?.description);
+  const applicationPlan = payload.applicationPlan || {
+    managedBySwarm: true,
+    requiresBackendApply: true,
+    safeToAutoApply: false,
+    backendAction: 'patch_page_seo_fields_after_admin_approval',
+  };
+
+  if (!options?.applyToBlog || !targetBlogId || !isBlogTarget) {
+    return {
+      applied: false,
+      action: 'seo_approved_not_applied',
+      reason: 'SEO artifact was approved and stored, but no blog target was provided. Fight/event schema, sitemap, and internal-link artifacts remain application plans until the frontend/backend target fields exist.',
+      applicationPlan,
+      recommendedFields: { metaTitle, metaDescription },
+    };
+  }
+  if (!Blog) throw httpError(500, 'BLOG_MODEL_UNAVAILABLE', 'Blog model is not available for SEO application.');
+  const blog = await Blog.findById(targetBlogId).catch(() => null);
+  if (!blog) {
+    return { applied: false, action: 'seo_target_not_found', reason: 'Target blog was not found.', targetBlogId, applicationPlan, recommendedFields: { metaTitle, metaDescription } };
+  }
+  const before = { metaTitle: blog.metaTitle, metaDescription: blog.metaDescription };
+  if (metaTitle) blog.metaTitle = metaTitle;
+  if (metaDescription) blog.metaDescription = metaDescription;
+  await blog.save();
+  return {
+    applied: true,
+    action: 'updated_blog_seo',
+    entity: { type: 'Blog', id: String(blog._id), metaTitle: blog.metaTitle, updatedSeo: true },
+    before,
+    after: { metaTitle: blog.metaTitle, metaDescription: blog.metaDescription },
+    reviewedBy: admin,
+    applicationPlan,
+  };
+}
+
+async function triggerAutomationEvent({ config, axios, crypto, mongoose, models, admin, trigger, vertical, sport, mode, sourceEntity, input, metadata, requestedJobTypes, reason }) {
   if (!config.enabled) throw httpError(503, 'SWARM_DISABLED', 'Swarm integration is disabled.');
   const normalizedTrigger = normalizeAutomationTrigger(trigger);
-  const normalizedVertical = normalizeVertical(vertical || inferVerticalForTrigger(normalizedTrigger));
-  if (!DEFAULT_VERTICALS.has(normalizedVertical)) throw httpError(400, 'INVALID_SWARM_VERTICAL', 'Automation event vertical must be combat or pro_wrestling.');
+  const normalizedSport = normalizeSport(sport || input?.sport || input?.discipline || vertical || inferVerticalForTrigger(normalizedTrigger));
+  const normalizedVertical = normalizeVertical(vertical || normalizedSport || inferVerticalForTrigger(normalizedTrigger));
+  if (!DEFAULT_VERTICALS.has(normalizedVertical)) throw httpError(400, 'INVALID_SWARM_VERTICAL', 'Automation event vertical must be combat or pro_wrestling. Use sport=boxing for Boxing.');
 
   if (metadata?.route && config.automationEventHooksEnabled === false) {
     return {
@@ -1425,8 +2105,8 @@ async function triggerAutomationEvent({ config, axios, crypto, mongoose, models,
     status: 'running',
     requestedBy: actor,
     sourceEntity: normalizedSourceEntity,
-    input: input || {},
-    metadata: metadata || {},
+    input: { ...(isPlainObject(input) ? input : {}), sport: normalizedSport, discipline: input?.discipline || normalizedSport },
+    metadata: { ...(isPlainObject(metadata) ? metadata : {}), sport: normalizedSport },
     selectedJobTypes: [],
     createdJobs: [],
     skippedJobs: [],
@@ -1476,13 +2156,14 @@ async function triggerAutomationEvent({ config, axios, crypto, mongoose, models,
       priority: control.priority ?? 50,
       maxAttempts: control.maxAttempts ?? 3,
       sourceEntity: normalizedSourceEntity,
-      input: buildAutomationJobInput({ input, metadata, trigger: normalizedTrigger, eventId, jobType, vertical: normalizedVertical }),
+      input: buildAutomationJobInput({ input: { ...(isPlainObject(input) ? input : {}), sport: normalizedSport, discipline: input?.discipline || normalizedSport }, metadata: { ...(isPlainObject(metadata) ? metadata : {}), sport: normalizedSport }, trigger: normalizedTrigger, eventId, jobType, vertical: normalizedVertical }),
       metadata: {
         ...(metadata || {}),
         automationEventId: eventId,
         automationTrigger: normalizedTrigger,
         automationJobType: jobType,
         submittedFrom: 'fantasymmadness-backend-automation-event',
+        sport: normalizedSport,
       },
     };
 
@@ -1554,6 +2235,7 @@ async function submitNormalizedJobToSwarm({ config, axios, crypto, mongoose, mod
 
 function resolveEventJobTypes({ trigger, settings, requestedJobTypes }) {
   const requested = Array.isArray(requestedJobTypes) ? requestedJobTypes.map((item) => String(item).trim()).filter(Boolean) : [];
+  if (requested.some((item) => ['all', '*', 'all_agents', 'all_the_above'].includes(item.toLowerCase()))) return [...new Set(AUTOMATION_TRIGGER_DEFAULTS[trigger] || [])];
   if (requested.length) return [...new Set(requested)];
   const fromSettings = Object.entries(settings.automations || {})
     .filter(([, control]) => control && control.enabled !== false && Array.isArray(control.triggers) && control.triggers.includes(trigger))
@@ -1642,6 +2324,9 @@ function buildRequestedOutput(jobType) {
   if (jobType.startsWith('seo.')) return 'SEO recommendation artifact with exact fields to review/apply';
   if (jobType.startsWith('social.')) return 'platform-ready social draft; do not publish without backend approval flags';
   if (jobType.startsWith('data.')) return 'data/report artifact with candidates, assumptions, and review notes';
+  if (jobType.startsWith('analytics.')) return 'analytics/dashboard artifact with summary metrics and review notes';
+  if (jobType.startsWith('media.')) return 'media prompt artifact with image-generation instructions for admin review';
+  if (jobType.startsWith('notification.')) return 'admin notification artifact with issue summary and recommended action';
   if (jobType.startsWith('wrestling.')) return 'advisory pro-wrestling analysis artifact; backend remains authoritative';
   return 'automation report artifact';
 }
@@ -1673,6 +2358,9 @@ function buildAutomationDescription(jobType) {
   if (jobType.startsWith('seo.')) return 'Creates SEO recommendations or metadata/schema artifacts.';
   if (jobType.startsWith('social.')) return 'Creates social-media copy; real publishing remains gated by backend settings.';
   if (jobType.startsWith('data.')) return 'Creates data, trend, calendar, or reporting artifacts.';
+  if (jobType.startsWith('analytics.')) return 'Creates analytics, leaderboard, traffic, or dashboard artifacts.';
+  if (jobType.startsWith('media.')) return 'Creates image-prompt and media planning artifacts.';
+  if (jobType.startsWith('notification.')) return 'Creates admin notification artifacts for traffic or automation issues.';
   if (jobType.startsWith('wrestling.')) return 'Creates advisory pro-wrestling analysis artifacts.';
   if (jobType.startsWith('automation.')) return 'Creates automation dashboard/control artifacts.';
   return 'System automation task.';
@@ -1683,6 +2371,9 @@ function inferAdminControls(jobType) {
   if (jobType.startsWith('social.')) controls.push('platforms', 'publishFlag');
   if (jobType.startsWith('seo.')) controls.push('applySeo');
   if (jobType.startsWith('content.')) controls.push('publishBlog');
+  if (jobType.startsWith('media.')) controls.push('imagePrompt');
+  if (jobType.startsWith('analytics.')) controls.push('report');
+  if (jobType.startsWith('notification.')) controls.push('notifyAdmin');
   if (jobType.includes('calendar') || jobType.includes('schedule')) controls.push('schedule');
   if (jobType.startsWith('automation.')) controls.push('dashboard');
   return [...new Set(controls)];
@@ -1796,6 +2487,8 @@ function serializeLocalJob(job) {
     input: job.input,
     artifactId: job.artifactId,
     metadata: job.metadata,
+    campaignId: job.metadata?.campaignId || job.input?.campaignId || job.sourceEntity?.campaignId,
+    sport: job.input?.sport || job.sourceEntity?.sport || job.metadata?.sport,
     error: job.error,
     publishedEntity: job.publishedEntity,
     statusHistory: job.statusHistory,
@@ -1829,6 +2522,8 @@ function serializeLocalArtifact(artifact) {
     publishedEntity: artifact.publishedEntity,
     publishedAt: artifact.publishedAt,
     metadata: artifact.metadata,
+    campaignId: artifact.metadata?.campaignId || artifact.payload?.campaignId,
+    sport: artifact.metadata?.sport || artifact.payload?.sport,
     createdAt: artifact.createdAt,
     updatedAt: artifact.updatedAt,
     swarmArtifact: artifact.swarmArtifact,
@@ -1905,10 +2600,31 @@ function pickQuery(query, keys) {
 }
 
 function normalizeVertical(value) {
-  const normalized = String(value || 'combat').trim().toLowerCase().replace(/-/g, '_');
-  if (['wrestling', 'prowrestling', 'pro_wrestling'].includes(normalized)) return 'pro_wrestling';
-  if (['mma', 'fight', 'fights', 'combat_sports'].includes(normalized)) return 'combat';
+  const normalized = String(value || 'combat').trim().toLowerCase().replace(/[-\s]+/g, '_');
+  if (['wrestling', 'prowrestling', 'pro_wrestling', 'pro_wrestling_match', 'pro_wrestling_event'].includes(normalized)) return 'pro_wrestling';
+  if (['mma', 'boxing', 'kickboxing', 'fight', 'fights', 'combat_sports', 'combat_sport', 'combat'].includes(normalized)) return 'combat';
   return normalized;
+}
+
+function normalizeSport(value) {
+  const normalized = String(value || 'mma').trim().toLowerCase().replace(/[-\s]+/g, '_');
+  const aliases = {
+    mixed_martial_arts: 'mma',
+    ufc: 'mma',
+    mma_fight: 'mma',
+    box: 'boxing',
+    boxing_fight: 'boxing',
+    boxer: 'boxing',
+    kick_boxing: 'kickboxing',
+    kickboxing_fight: 'kickboxing',
+    wrestling: 'pro_wrestling',
+    prowrestling: 'pro_wrestling',
+    pro_wrestling_match: 'pro_wrestling',
+    combat_sports: 'combat',
+    combat_sport: 'combat',
+  };
+  const sport = aliases[normalized] || normalized || 'mma';
+  return DEFAULT_SPORTS.has(sport) ? sport : 'mma';
 }
 
 function stripTrailingSlash(value) {
@@ -1954,11 +2670,15 @@ module.exports = {
   // Exported for lightweight regression tests.
   _private: {
     normalizeVertical,
+    normalizeSport,
     mapArtifactToBlog,
     normalizeCreateJobBody,
     normalizeMode,
     normalizeSourceEntity,
     normalizeAutomationTrigger,
+    normalizeCreateCampaignBody,
+    normalizeCampaignType,
+    shouldRunEventAsCampaign,
     resolveEventJobTypes,
     buildLocalAutomationCatalog,
     buildDefaultAutomationSettings,

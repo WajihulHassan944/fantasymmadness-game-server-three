@@ -51,15 +51,41 @@ assert.strictEqual(_private.normalizeAutomationTrigger('fight-publish'), 'fight_
 assert.strictEqual(_private.normalizeAutomationTrigger('blog published'), 'blog_approved');
 assert.strictEqual(_private.inferVerticalForJobType('content.pro-wrestling-match-preview'), 'pro_wrestling');
 const localCatalog = _private.buildLocalAutomationCatalog();
-assert(localCatalog.jobTypes.includes('social.twitter-post'));
-assert(localCatalog.triggerMap.fight_published.includes('content.match-preview'));
+assert(localCatalog.jobTypes.includes('social.fight-publish-post'));
+assert(localCatalog.triggerMap.fight_published.includes('content.fight-publish-blog-draft'));
 const defaultSettings = _private.buildDefaultAutomationSettings();
 assert.strictEqual(defaultSettings.automations['content.match-preview'].enabled, true);
-assert(_private.resolveEventJobTypes({ trigger: 'fight_published', settings: defaultSettings }).includes('content.match-preview'));
+assert(_private.resolveEventJobTypes({ trigger: 'fight_published', settings: defaultSettings }).includes('content.fight-publish-blog-draft'));
 assert.strictEqual(_private.normalizeMode('draft'), 'DRAFT_ONLY');
 assert.strictEqual(_private.normalizeMode('draft-only'), 'DRAFT_ONLY');
 assert.strictEqual(_private.normalizeMode('approval required'), 'APPROVAL_REQUIRED');
 assert.strictEqual(_private.normalizeMode('auto'), 'AUTOMATED');
+
+const normalizedBoxingJob = _private.normalizeCreateJobBody({
+  vertical: 'boxing',
+  sport: 'boxing',
+  jobType: 'content.fight-publish-blog-draft',
+  mode: 'review',
+  input: { fightId: 'fight-boxing-1', title: 'Boxing Fight Tonight' },
+}, { id: 'admin-boxing' }, { defaultMode: 'DRAFT_ONLY' });
+assert.strictEqual(normalizedBoxingJob.vertical, 'combat');
+assert.strictEqual(normalizedBoxingJob.sport, 'boxing');
+assert.strictEqual(normalizedBoxingJob.input.sport, 'boxing');
+assert.strictEqual(normalizedBoxingJob.sourceEntity.type, 'combat_fight');
+
+const normalizedCampaign = _private.normalizeCreateCampaignBody({
+  campaignType: 'boxing',
+  title: 'Boxing Main Event',
+  sport: 'boxing',
+  includeAll: true,
+  sourceEntity: { type: 'combat_match', id: 'fight-1', label: 'Boxing Main Event' },
+  input: { fightId: 'fight-1', title: 'Boxing Main Event' },
+}, { id: 'admin-campaign' }, { defaultMode: 'DRAFT_ONLY' }, crypto);
+assert.strictEqual(normalizedCampaign.campaignType, 'boxing_fight_campaign');
+assert.strictEqual(normalizedCampaign.vertical, 'combat');
+assert.strictEqual(normalizedCampaign.sport, 'boxing');
+assert.strictEqual(normalizedCampaign.includeAll, true);
+assert(normalizedCampaign.idempotencyKey.startsWith('backend:campaign:boxing_fight_campaign'));
 
 const body = JSON.stringify({ ok: true });
 const signature = _private.signRequest({
@@ -100,6 +126,14 @@ for (const route of [
   '/api/admin/swarm/dashboard',
   '/api/admin/swarm/events/trigger',
   '/api/admin/swarm/automations/:jobType/run',
+  '/api/admin/swarm/artifacts/:artifactId/apply-seo',
+  '/api/admin/swarm/campaigns/boxing',
+  '/api/admin/swarm/campaigns/fight/tonight',
+  '/api/admin/swarm/campaigns/fight/full',
+  '/api/admin/swarm/campaigns/packs',
+  '/api/admin/swarm/campaigns',
+  '/api/admin/swarm/campaigns/:campaignId',
+  '/api/admin/swarm/campaigns/fight',
   '/api/internal/swarm/webhooks/job-completed',
   '/api/internal/swarm/webhooks/job-failed',
 ]) {

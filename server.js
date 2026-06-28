@@ -8557,13 +8557,23 @@ const requireProWrestlingEnabled = (req, res, next) => {
 const verifyAdminToken = (req, res, next) => {
   const authHeader = req.headers.authorization;
   const token = authHeader && authHeader.startsWith('Bearer ') ? authHeader.slice(7) : null;
-  if (!token) return res.status(401).json({ message: 'Admin authentication is required.' });
+  if (!token) {
+    return res.status(401).json({
+      message: 'Admin authentication is required.',
+      code: 'ADMIN_AUTH_REQUIRED',
+      shouldLogin: true,
+    });
+  }
 
   try {
     req.admin = jwt.verify(token, process.env.JWT_SECRET_ADMIN);
     return next();
   } catch (error) {
-    return res.status(403).json({ message: 'Invalid or expired admin token.' });
+    return res.status(401).json({
+      message: 'Invalid or expired admin token.',
+      code: 'ADMIN_TOKEN_INVALID_OR_EXPIRED',
+      shouldLogin: true,
+    });
   }
 };
 
