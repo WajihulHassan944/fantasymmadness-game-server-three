@@ -24,6 +24,7 @@ const axios = require('axios');
 const fetch = require('node-fetch');
 const xml2js = require('xml2js');
 const { registerSwarmPhase2Routes } = require('./swarm-phase2');
+const { registerSeoPerformancePhase2Routes } = require('./seo-performance-phase2');
 
 const ALGORITHM = 'aes-256-cbc'; // AES algorithm
 const ENCRYPTION_KEY = process.env.ENCRYPTION_KEY; // Must be 32 bytes
@@ -10855,6 +10856,27 @@ registerSwarmPhase2Routes({
   Notification,
 });
 
+
+
+// PHASE 2 SEO/PERFORMANCE: Public SEO data, pagination, sitemap/schema helpers,
+// and admin approval endpoints for swarm SEO intelligence. Kept isolated so the
+// existing backend routes and business rules remain unchanged.
+registerSeoPerformancePhase2Routes({
+  app,
+  mongoose,
+  verifyAdminToken,
+  models: {
+    Match,
+    Shadow,
+    Blog,
+    News,
+    YoutubeVideos,
+    Score,
+    User,
+    ProWrestler,
+    ProWrestlingMatch,
+  },
+});
 
 // Start server
 const server = app.listen(PORT, () => {
