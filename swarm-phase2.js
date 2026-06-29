@@ -80,6 +80,12 @@ const DEFAULT_JOB_TYPE_ARRAY = [
   'social.discord-announcement-draft',
   'notification.traffic-issues',
   'notification.failed-automations',
+  'social.instagram-post-draft',
+  'social.facebook-post-draft',
+  'social.multi-platform-daily-posts',
+  'data.fight-calendar-refresh',
+  'content.user-dashboard-opportunities',
+  'analytics.user-growth-1000-plan',
   'seo.competitor-gap-report',
 ];
 
@@ -108,7 +114,7 @@ const LOCAL_CAMPAIGN_PACKS = Object.freeze([
     description: 'Run blog, SEO, social, newsletter, homepage, image, and traffic agents for one fight.',
     defaultVertical: 'combat',
     defaultSport: 'mma',
-    defaultSections: ['content', 'seo', 'social', 'media'],
+    defaultSections: ['content', 'seo', 'social', 'media', 'data'],
   },
   {
     campaignType: 'fight_tonight_campaign',
@@ -116,7 +122,7 @@ const LOCAL_CAMPAIGN_PACKS = Object.freeze([
     description: 'Run same-day fight promotion agents for a fight that needs attention now.',
     defaultVertical: 'combat',
     defaultSport: 'mma',
-    defaultSections: ['content', 'seo', 'social', 'media'],
+    defaultSections: ['content', 'seo', 'social', 'media', 'data'],
   },
   {
     campaignType: 'boxing_fight_campaign',
@@ -124,7 +130,7 @@ const LOCAL_CAMPAIGN_PACKS = Object.freeze([
     description: 'Run the fight campaign pack with Boxing-specific wording, tags, SEO, and social copy.',
     defaultVertical: 'combat',
     defaultSport: 'boxing',
-    defaultSections: ['content', 'seo', 'social', 'media'],
+    defaultSections: ['content', 'seo', 'social', 'media', 'data'],
   },
   {
     campaignType: 'fight_result_campaign',
@@ -247,6 +253,11 @@ const AUTOMATION_TRIGGER_DEFAULTS = Object.freeze({
     'data.trending-wrestling-topics',
     'automation.draft-queue-generation',
     'analytics.agent-performance',
+    'data.fight-calendar-refresh',
+    'content.user-dashboard-opportunities',
+    'social.multi-platform-daily-posts',
+    'social.instagram-post-draft',
+    'social.facebook-post-draft',
   ],
   weekly_schedule: [
     'seo.weekly-traffic-opportunity',
@@ -256,6 +267,21 @@ const AUTOMATION_TRIGGER_DEFAULTS = Object.freeze({
     'seo.competitor-gap-report',
     'analytics.traffic-growth-dashboard',
     'seo.content-freshness-monitor',
+    'analytics.user-growth-1000-plan',
+  ],
+  schedule_daily: [
+    'seo.daily-audit',
+    'data.fight-calendar-refresh',
+    'content.user-dashboard-opportunities',
+    'social.multi-platform-daily-posts',
+    'social.instagram-post-draft',
+    'social.facebook-post-draft',
+  ],
+  schedule_weekly: [
+    'seo.weekly-traffic-opportunity',
+    'analytics.traffic-growth-dashboard',
+    'analytics.user-growth-1000-plan',
+    'seo.competitor-gap-report',
   ],
 });
 
@@ -349,6 +375,10 @@ function registerSwarmPhase2Routes(options) {
       autoPublishEnabled: config.autoPublishEnabled,
       autoImportEnabled: config.autoImportEnabled,
       socialPublishEnabled: config.socialPublishEnabled,
+      socialDefaultPlatforms: config.socialDefaultPlatforms,
+      dailySocialDraftCount: config.dailySocialDraftCount,
+      metaSocialConfigured: config.metaSocialConfigured,
+      twitterConfigured: config.twitterConfigured,
       automationEventHooksEnabled: config.automationEventHooksEnabled,
       defaultMode: config.defaultMode,
       verticals: Array.from(DEFAULT_VERTICALS),
@@ -424,7 +454,7 @@ function registerSwarmPhase2Routes(options) {
     const config = getSwarmConfig();
     if (config.enabled && String(req.query.source || '').toLowerCase() !== 'local') {
       try {
-        const result = await callSwarm(config, axios, crypto, 'GET', '/internal/v1/catalog');
+        const result = await callSwarm(config, axios, crypto, 'GET', '/internal/v1/automations');
         return res.json({ ok: true, source: 'swarm', ...result });
       } catch (error) {
         if (String(req.query.fallbackLocal || 'true').toLowerCase() === 'false') throw error;
@@ -438,8 +468,8 @@ function registerSwarmPhase2Routes(options) {
     const config = getSwarmConfig();
     if (config.enabled && String(req.query.source || '').toLowerCase() !== 'local') {
       try {
-        const result = await callSwarm(config, axios, crypto, 'GET', '/internal/v1/settings');
-        return res.json({ ok: true, source: 'swarm', ...result });
+        const result = await callSwarm(config, axios, crypto, 'GET', '/internal/v1/automations');
+        return res.json({ ok: true, source: 'swarm', settings: buildSettingsFromAutomationItems(result.items || result.automations || []), automations: result.items || result.automations || [], swarm: sanitizeSwarmEnvelope(result) });
       } catch (error) {
         if (String(req.query.fallbackLocal || 'true').toLowerCase() === 'false') throw error;
         return res.status(206).json({ ok: true, source: 'local', warning: 'Swarm unavailable; returned backend settings fallback.', error: summarizeError(error), settings: buildDefaultAutomationSettings() });
@@ -454,7 +484,7 @@ function registerSwarmPhase2Routes(options) {
       return res.status(503).json({ ok: false, code: 'SWARM_DISABLED', message: 'Automation settings live inside the IONOS swarm; configure SWARM_BASE_URL first.' });
     }
     const body = normalizeSettingsUpdateBody(req.body, req.admin);
-    const result = await callSwarm(config, axios, crypto, req.method, '/internal/v1/settings', body);
+    const result = await callSwarm(config, axios, crypto, 'POST', '/internal/v1/automations/settings/bulk', body);
     res.json({ ok: true, source: 'swarm', ...result });
   });
   app.patch('/api/admin/swarm/settings', verifyAdminToken, updateSettingsHandler);
@@ -466,7 +496,7 @@ function registerSwarmPhase2Routes(options) {
     const recentEvents = await listLocalAutomationEvents(models, { limit: 10 });
     if (config.enabled && String(req.query.source || '').toLowerCase() !== 'cache') {
       try {
-        const result = await callSwarm(config, axios, crypto, 'GET', '/internal/v1/dashboard');
+        const result = await callSwarm(config, axios, crypto, 'GET', '/internal/v1/automations/dashboard');
         return res.json({ ok: true, source: 'swarm', backendCache: cache, backendEvents: recentEvents.items, ...result });
       } catch (error) {
         if (String(req.query.fallbackCache || 'true').toLowerCase() === 'false') throw error;
@@ -474,6 +504,104 @@ function registerSwarmPhase2Routes(options) {
       }
     }
     res.json({ ok: true, source: 'cache', backendCache: cache, backendEvents: recentEvents.items });
+  }));
+
+
+  app.get('/api/admin/swarm/automations', verifyAdminToken, asyncHandler(async (req, res) => {
+    const config = getSwarmConfig();
+    if (config.enabled && String(req.query.source || '').toLowerCase() !== 'local') {
+      try {
+        const result = await callSwarm(config, axios, crypto, 'GET', '/internal/v1/automations', undefined, pickQuery(req.query, ['trigger', 'category', 'vertical']));
+        return res.json({ ok: true, source: 'swarm', ...result });
+      } catch (error) {
+        if (String(req.query.fallbackLocal || 'true').toLowerCase() === 'false') throw error;
+        return res.status(206).json({ ok: true, source: 'local', warning: 'Swarm unavailable; returned backend automation fallback.', error: summarizeError(error), ...buildLocalAutomationCatalog() });
+      }
+    }
+    res.json({ ok: true, source: 'local', ...buildLocalAutomationCatalog() });
+  }));
+
+  app.get('/api/admin/swarm/automations/dashboard', verifyAdminToken, asyncHandler(async (req, res) => {
+    const config = getSwarmConfig();
+    const cache = await getCacheStats(models);
+    if (config.enabled && String(req.query.source || '').toLowerCase() !== 'cache') {
+      try {
+        const result = await callSwarm(config, axios, crypto, 'GET', '/internal/v1/automations/dashboard');
+        return res.json({ ok: true, source: 'swarm', backendCache: cache, ...result });
+      } catch (error) {
+        if (String(req.query.fallbackCache || 'true').toLowerCase() === 'false') throw error;
+        return res.status(206).json({ ok: true, source: 'cache', warning: 'Swarm unavailable; returned backend automation dashboard cache.', error: summarizeError(error), backendCache: cache });
+      }
+    }
+    res.json({ ok: true, source: 'cache', backendCache: cache });
+  }));
+
+  app.get('/api/admin/swarm/automations/logs', verifyAdminToken, asyncHandler(async (req, res) => {
+    const config = getSwarmConfig();
+    if (config.enabled && String(req.query.source || '').toLowerCase() !== 'local') {
+      try {
+        const result = await callSwarm(config, axios, crypto, 'GET', '/internal/v1/automations/logs', undefined, pickQuery(req.query, ['key', 'trigger', 'limit']));
+        return res.json({ ok: true, source: 'swarm', ...result });
+      } catch (error) {
+        if (String(req.query.fallbackLocal || 'true').toLowerCase() === 'false') throw error;
+        const events = await listLocalAutomationEvents(models, { limit: req.query.limit || 50, trigger: req.query.trigger });
+        return res.status(206).json({ ok: true, source: 'local', warning: 'Swarm unavailable; returned backend event fallback.', error: summarizeError(error), items: events.items });
+      }
+    }
+    const events = await listLocalAutomationEvents(models, { limit: req.query.limit || 50, trigger: req.query.trigger });
+    res.json({ ok: true, source: 'local', items: events.items });
+  }));
+
+  app.patch('/api/admin/swarm/automations/:key/settings', verifyAdminToken, requireSwarmEnabled, asyncHandler(async (req, res) => {
+    const config = getSwarmConfig();
+    const result = await callSwarm(config, axios, crypto, 'PATCH', `/internal/v1/automations/${encodeURIComponent(req.params.key)}/settings`, {
+      ...(req.body || {}),
+      updatedBy: req.body?.updatedBy || adminActor(req.admin),
+    });
+    res.json({ ok: true, source: 'swarm', ...result });
+  }));
+
+  app.post('/api/admin/swarm/automations/settings/bulk', verifyAdminToken, requireSwarmEnabled, asyncHandler(async (req, res) => {
+    const config = getSwarmConfig();
+    const result = await callSwarm(config, axios, crypto, 'POST', '/internal/v1/automations/settings/bulk', {
+      ...(req.body || {}),
+      items: Array.isArray(req.body?.items) ? req.body.items.map((item) => ({ ...item, updatedBy: item.updatedBy || adminActor(req.admin) })) : [],
+    });
+    res.json({ ok: true, source: 'swarm', ...result });
+  }));
+
+  app.post('/api/admin/swarm/automations/:key/reset', verifyAdminToken, requireSwarmEnabled, asyncHandler(async (req, res) => {
+    const config = getSwarmConfig();
+    const result = await callSwarm(config, axios, crypto, 'POST', `/internal/v1/automations/${encodeURIComponent(req.params.key)}/reset`, {
+      ...(req.body || {}),
+      actor: req.body?.actor || adminActor(req.admin),
+    });
+    res.json({ ok: true, source: 'swarm', ...result });
+  }));
+
+  app.post('/api/admin/swarm/schedules/daily/run', verifyAdminToken, requireSwarmEnabled, asyncHandler(async (req, res) => {
+    const result = await runSchedulePreset({ config: getSwarmConfig(), axios, crypto, mongoose, models, admin: req.admin, body: req.body || {}, preset: 'daily' });
+    res.status(result.createdJobs?.length ? 202 : 200).json({ ok: true, ...result });
+  }));
+
+  app.post('/api/admin/swarm/schedules/weekly/run', verifyAdminToken, requireSwarmEnabled, asyncHandler(async (req, res) => {
+    const result = await runSchedulePreset({ config: getSwarmConfig(), axios, crypto, mongoose, models, admin: req.admin, body: req.body || {}, preset: 'weekly' });
+    res.status(result.createdJobs?.length ? 202 : 200).json({ ok: true, ...result });
+  }));
+
+  app.post('/api/admin/swarm/schedules/daily/seo', verifyAdminToken, requireSwarmEnabled, asyncHandler(async (req, res) => {
+    const result = await runExplicitAutomationJobs({ config: getSwarmConfig(), axios, crypto, mongoose, models, admin: req.admin, body: req.body || {}, trigger: 'daily_schedule', jobTypes: ['seo.daily-audit', 'seo.keyword-opportunity', 'seo.missing-pages-detector', 'seo.low-quality-page-detector', 'seo.broken-link-detector', 'seo.missing-meta-detector'] });
+    res.status(result.createdJobs?.length ? 202 : 200).json({ ok: true, ...result });
+  }));
+
+  app.post('/api/admin/swarm/schedules/daily/social', verifyAdminToken, requireSwarmEnabled, asyncHandler(async (req, res) => {
+    const result = await runExplicitAutomationJobs({ config: getSwarmConfig(), axios, crypto, mongoose, models, admin: req.admin, body: req.body || {}, trigger: 'daily_schedule', jobTypes: ['social.multi-platform-daily-posts', 'social.instagram-post-draft', 'social.facebook-post-draft', 'social.blog-approved-post'] });
+    res.status(result.createdJobs?.length ? 202 : 200).json({ ok: true, ...result });
+  }));
+
+  app.post('/api/admin/swarm/schedules/daily/calendar-refresh', verifyAdminToken, requireSwarmEnabled, asyncHandler(async (req, res) => {
+    const result = await runExplicitAutomationJobs({ config: getSwarmConfig(), axios, crypto, mongoose, models, admin: req.admin, body: req.body || {}, trigger: 'daily_schedule', jobTypes: ['data.fight-calendar-refresh', 'content.user-dashboard-opportunities'] });
+    res.status(result.createdJobs?.length ? 202 : 200).json({ ok: true, ...result });
   }));
 
   app.get('/api/admin/swarm/campaigns/packs', verifyAdminToken, asyncHandler(async (req, res) => {
@@ -706,7 +834,7 @@ function registerSwarmPhase2Routes(options) {
     const useCacheOnly = String(req.query.source || '').toLowerCase() === 'cache' || !config.enabled;
     if (!useCacheOnly) {
       try {
-        const remote = await callSwarm(config, axios, crypto, 'GET', '/internal/v1/jobs', undefined, pickQuery(req.query, ['status', 'vertical', 'jobType', 'page', 'limit']));
+        const remote = await callSwarm(config, axios, crypto, 'GET', '/internal/v1/jobs', undefined, pickQuery(req.query, ['status', 'vertical', 'jobType', 'campaignId', 'sport', 'page', 'limit']));
         const items = Array.isArray(remote.items) ? remote.items : [];
         await Promise.all(items.map((job) => upsertJobFromSwarm(models, job)));
         return res.json({ ok: true, source: 'swarm', ...remote });
@@ -765,7 +893,7 @@ function registerSwarmPhase2Routes(options) {
     const useCacheOnly = String(req.query.source || '').toLowerCase() === 'cache' || !config.enabled;
     if (!useCacheOnly) {
       try {
-        const remote = await callSwarm(config, axios, crypto, 'GET', '/internal/v1/artifacts', undefined, pickQuery(req.query, ['vertical', 'artifactType', 'reviewStatus', 'page', 'limit']));
+        const remote = await callSwarm(config, axios, crypto, 'GET', '/internal/v1/artifacts', undefined, pickQuery(req.query, ['vertical', 'artifactType', 'reviewStatus', 'campaignId', 'sport', 'page', 'limit']));
         const items = Array.isArray(remote.items) ? remote.items : [];
         await Promise.all(items.map((artifact) => upsertArtifactFromSwarm(models, artifact)));
         return res.json({ ok: true, source: 'swarm', ...remote });
@@ -1174,6 +1302,10 @@ function getSwarmConfig() {
     autoPublishEnabled: String(process.env.SWARM_AUTO_PUBLISH_ENABLED || 'false').toLowerCase() === 'true',
     autoImportEnabled: String(process.env.SWARM_AUTO_IMPORT_ENABLED || 'false').toLowerCase() === 'true',
     socialPublishEnabled: String(process.env.SWARM_SOCIAL_PUBLISH_ENABLED || 'false').toLowerCase() === 'true',
+    socialDefaultPlatforms: parseCsv(process.env.SOCIAL_DEFAULT_PLATFORMS || 'x,instagram,facebook'),
+    dailySocialDraftCount: toInt(process.env.SWARM_DAILY_SOCIAL_DRAFT_COUNT || process.env.DAILY_SOCIAL_DRAFT_COUNT, 3),
+    metaSocialConfigured: Boolean(cleanString(process.env.META_APP_ID) || cleanString(process.env.FACEBOOK_PAGE_ID) || cleanString(process.env.INSTAGRAM_BUSINESS_ACCOUNT_ID)),
+    twitterConfigured: Boolean(cleanString(process.env.TWITTER_API_KEY) || cleanString(process.env.X_API_KEY)),
     automationEventHooksEnabled: String(process.env.SWARM_AUTOMATION_EVENT_HOOKS_ENABLED || 'true').toLowerCase() !== 'false',
   };
 }
@@ -1572,6 +1704,8 @@ async function listLocalJobs(models, query) {
   if (query.status) filter.status = query.status;
   if (query.vertical) filter.vertical = normalizeVertical(query.vertical);
   if (query.jobType) filter.jobType = query.jobType;
+  if (query.campaignId) filter['metadata.campaignId'] = String(query.campaignId);
+  if (query.sport) filter['metadata.sport'] = normalizeSport(query.sport);
   const [rows, total] = await Promise.all([
     models.SwarmBackendJob.find(filter).sort({ createdAt: -1 }).skip((page - 1) * limit).limit(limit).lean(),
     models.SwarmBackendJob.countDocuments(filter),
@@ -1586,6 +1720,8 @@ async function listLocalArtifacts(models, query) {
   if (query.vertical) filter.vertical = normalizeVertical(query.vertical);
   if (query.artifactType) filter.artifactType = query.artifactType;
   if (query.reviewStatus) filter.reviewStatus = String(query.reviewStatus).toUpperCase();
+  if (query.campaignId) filter['metadata.campaignId'] = String(query.campaignId);
+  if (query.sport) filter['metadata.sport'] = normalizeSport(query.sport);
   const [rows, total] = await Promise.all([
     models.SwarmBackendArtifact.find(filter).sort({ createdAt: -1 }).skip((page - 1) * limit).limit(limit).lean(),
     models.SwarmBackendArtifact.countDocuments(filter),
@@ -1661,11 +1797,67 @@ function buildDefaultAutomationSettings() {
 
 function normalizeSettingsUpdateBody(body, admin) {
   const raw = isPlainObject(body) ? body : {};
+  if (Array.isArray(raw.items)) {
+    return {
+      items: raw.items.map((item) => ({ ...item, updatedBy: item.updatedBy || adminActor(admin) })),
+    };
+  }
+
+  const items = [];
+  const automations = isPlainObject(raw.automations) ? raw.automations : {};
+  for (const [key, value] of Object.entries(automations)) {
+    if (!isPlainObject(value)) continue;
+    items.push({
+      key,
+      enabled: value.enabled,
+      mode: value.mode || value.defaultMode,
+      approvalRequired: value.approvalRequired ?? value.requiresApproval,
+      autoPublishAllowed: value.autoPublishAllowed ?? value.allowAutoPublish,
+      socialPublishAllowed: value.socialPublishAllowed ?? value.allowSocialPublish,
+      config: value.config,
+      updatedBy: value.updatedBy || adminActor(admin),
+    });
+  }
+
   return {
-    global: isPlainObject(raw.global) ? raw.global : undefined,
-    automations: isPlainObject(raw.automations) ? raw.automations : undefined,
+    items,
     updatedBy: raw.updatedBy || adminActor(admin),
     reason: cleanString(raw.reason) || 'backend-admin-settings-update',
+  };
+}
+
+function buildSettingsFromAutomationItems(items) {
+  const automations = {};
+  for (const item of Array.isArray(items) ? items : []) {
+    const key = cleanString(item?.key || item?.jobType || item?.id);
+    if (!key) continue;
+    automations[key] = {
+      enabled: item?.setting?.enabled ?? item?.enabled ?? item?.enabledByDefault ?? false,
+      defaultMode: item?.setting?.mode || item?.mode || item?.defaultMode || 'DRAFT_ONLY',
+      requiresApproval: item?.setting?.approvalRequired ?? item?.requiresApproval ?? true,
+      allowAutomatedExecution: item?.supportsAutoMode === true,
+      allowAutoPublish: item?.setting?.autoPublishAllowed ?? item?.autoPublishAllowed ?? false,
+      allowSocialPublish: item?.setting?.socialPublishAllowed ?? item?.socialPublishAllowed ?? false,
+      priority: item?.setting?.priority ?? 50,
+      maxAttempts: item?.setting?.maxAttempts ?? 3,
+      triggers: item?.trigger ? [item.trigger] : [],
+      notes: item?.description || item?.label || key,
+    };
+  }
+  return {
+    settingsId: 'swarm-automation-settings',
+    global: {
+      paused: false,
+      approvalRequiredByDefault: true,
+      socialPublishEnabled: false,
+      autoPublishEnabled: false,
+      autoImportEnabled: false,
+      dailySchedulerEnabled: false,
+      weeklySchedulerEnabled: false,
+      maxDailyJobs: 50,
+      defaultMode: 'DRAFT_ONLY',
+    },
+    automations,
   };
 }
 
@@ -2116,7 +2308,7 @@ async function triggerAutomationEvent({ config, axios, crypto, mongoose, models,
 
   let settingsEnvelope;
   try {
-    settingsEnvelope = await callSwarm(config, axios, crypto, 'GET', '/internal/v1/settings');
+    settingsEnvelope = await callSwarm(config, axios, crypto, 'GET', '/internal/v1/automations');
   } catch (error) {
     settingsEnvelope = { ok: false, settings: buildDefaultAutomationSettings(), fallbackReason: summarizeError(error) };
   }
@@ -2260,6 +2452,62 @@ function resolveAutomationMode({ requestedMode, control, config, globalSettings,
   return mode;
 }
 
+
+async function runSchedulePreset({ config, axios, crypto, mongoose, models, admin, body, preset }) {
+  const trigger = preset === 'weekly' ? 'weekly_schedule' : 'daily_schedule';
+  const requestedJobTypes = Array.isArray(body.jobTypes) && body.jobTypes.length ? body.jobTypes : AUTOMATION_TRIGGER_DEFAULTS[trigger];
+  return triggerAutomationEvent({
+    config,
+    axios,
+    crypto,
+    mongoose,
+    models,
+    admin,
+    trigger,
+    vertical: body.vertical || 'combat',
+    sport: body.sport || body.discipline || 'mma',
+    mode: body.mode || 'APPROVAL_REQUIRED',
+    sourceEntity: body.sourceEntity || { type: 'scheduled_automation', label: `${preset} automation run`, origin: 'backend_schedule_preset' },
+    input: {
+      ...(isPlainObject(body.input) ? body.input : {}),
+      schedulePreset: preset,
+      requestedOutput: preset === 'weekly' ? 'weekly traffic, calendar, and growth automation outputs' : 'daily SEO, social, calendar, and dashboard automation outputs',
+      platforms: Array.isArray(body.platforms) ? body.platforms : getSwarmConfig().socialDefaultPlatforms,
+      dailySocialDraftCount: toInt(body.dailySocialDraftCount, getSwarmConfig().dailySocialDraftCount),
+    },
+    metadata: { ...(isPlainObject(body.metadata) ? body.metadata : {}), schedulePreset: preset, submittedFrom: 'backend-schedule-preset' },
+    requestedJobTypes,
+    reason: body.reason || `admin-ran-${preset}-schedule-preset`,
+  });
+}
+
+async function runExplicitAutomationJobs({ config, axios, crypto, mongoose, models, admin, body, trigger, jobTypes }) {
+  return triggerAutomationEvent({
+    config,
+    axios,
+    crypto,
+    mongoose,
+    models,
+    admin,
+    trigger,
+    vertical: body.vertical || 'combat',
+    sport: body.sport || body.discipline || 'mma',
+    mode: body.mode || 'APPROVAL_REQUIRED',
+    sourceEntity: body.sourceEntity || { type: 'manual_schedule_run', label: body.title || trigger, origin: 'backend_explicit_schedule_run' },
+    input: {
+      ...(isPlainObject(body.input) ? body.input : {}),
+      title: body.title,
+      topic: body.topic,
+      platforms: Array.isArray(body.platforms) ? body.platforms : getSwarmConfig().socialDefaultPlatforms,
+      dailySocialDraftCount: toInt(body.dailySocialDraftCount, getSwarmConfig().dailySocialDraftCount),
+    },
+    metadata: { ...(isPlainObject(body.metadata) ? body.metadata : {}), explicitAutomationRun: true, submittedFrom: 'backend-explicit-automation-run' },
+    requestedJobTypes: Array.isArray(body.jobTypes) && body.jobTypes.length ? body.jobTypes : jobTypes,
+    reason: body.reason || `admin-ran-${trigger}-automation-jobs`,
+  });
+}
+
+
 function normalizeAutomationTrigger(value) {
   const normalized = cleanString(value).toLowerCase().replace(/[-\s]+/g, '_');
   if (!normalized) throw httpError(400, 'AUTOMATION_TRIGGER_REQUIRED', 'Automation trigger is required.');
@@ -2275,7 +2523,13 @@ function normalizeAutomationTrigger(value) {
     blog_publish: 'blog_approved',
     blog_published: 'blog_approved',
     daily: 'daily_schedule',
+    schedule_daily: 'daily_schedule',
+    'schedule.daily': 'daily_schedule',
+    daily_schedule: 'daily_schedule',
     weekly: 'weekly_schedule',
+    schedule_weekly: 'weekly_schedule',
+    'schedule.weekly': 'weekly_schedule',
+    weekly_schedule: 'weekly_schedule',
   };
   return aliases[normalized] || normalized;
 }
@@ -2625,6 +2879,14 @@ function normalizeSport(value) {
   };
   const sport = aliases[normalized] || normalized || 'mma';
   return DEFAULT_SPORTS.has(sport) ? sport : 'mma';
+}
+
+
+function parseCsv(value) {
+  return String(value || '')
+    .split(',')
+    .map((item) => item.trim().toLowerCase())
+    .filter(Boolean);
 }
 
 function stripTrailingSlash(value) {
