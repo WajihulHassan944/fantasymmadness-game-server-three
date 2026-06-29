@@ -91,6 +91,160 @@ app.use(bodyParser.urlencoded({ extended: false }));
 app.use(bodyParser.json());
 
 
+
+
+// Client feedback helper utilities for fight freshness, manual scoring, and edit forms.
+function isProvidedValue(value) {
+  return value !== undefined && value !== null && value !== '';
+}
+
+function assignIfProvided(document, field, value) {
+  if (isProvidedValue(value)) {
+    document[field] = value;
+  }
+}
+
+function hasOwnField(source, field) {
+  return source && Object.prototype.hasOwnProperty.call(source, field);
+}
+
+function toNumberIfProvided(value, fallback) {
+  if (!isProvidedValue(value)) return fallback;
+  const numeric = Number(value);
+  return Number.isFinite(numeric) ? numeric : fallback;
+}
+
+function parseMaybeJson(value, fallback = undefined) {
+  if (!isProvidedValue(value)) return fallback;
+  if (typeof value === 'object') return value;
+  try {
+    return JSON.parse(value);
+  } catch (error) {
+    return fallback;
+  }
+}
+
+function normalizeCombatCategory(category) {
+  return String(category || '').trim().toLowerCase();
+}
+
+function pickExplicitNumericField(input, names, fallback) {
+  for (const name of names) {
+    if (hasOwnField(input, name)) {
+      return toNumberIfProvided(input[name], fallback);
+    }
+  }
+  return fallback;
+}
+
+function normalizeRoundStatsForCategory(input = {}, previous = {}, category = 'boxing') {
+  const normalizedCategory = normalizeCombatCategory(category);
+  const output = { ...(previous && typeof previous.toObject === 'function' ? previous.toObject() : previous || {}) };
+
+  output.roundNumber = pickExplicitNumericField(input, ['roundNumber', 'round'], output.roundNumber);
+
+  if (normalizedCategory === 'boxing') {
+    output.HP = pickExplicitNumericField(input, ['HP', 'hp', 'headPunches'], output.HP);
+    output.BP = pickExplicitNumericField(input, ['BP', 'bp', 'bodyPunches'], output.BP);
+    // TP / total punches is intentionally manual only. It is never calculated from HP + BP.
+    output.TP = pickExplicitNumericField(input, ['TP', 'tp', 'totalPunches'], output.TP);
+    output.RW = pickExplicitNumericField(input, ['RW', 'rw', 'roundsWon'], output.RW);
+    output.RL = pickExplicitNumericField(input, ['RL', 'rl', 'roundsLost'], output.RL);
+    output.KO = pickExplicitNumericField(input, ['KO', 'ko', 'knockouts'], output.KO);
+    output.SP = pickExplicitNumericField(input, ['SP', 'sp', 'specialPoints'], output.SP);
+    return output;
+  }
+
+  output.ST = pickExplicitNumericField(input, ['ST', 'st', 'strikes'], output.ST);
+  output.KI = pickExplicitNumericField(input, ['KI', 'ki', 'kicks'], output.KI);
+  output.KN = pickExplicitNumericField(input, ['KN', 'kn', 'knockdowns'], output.KN);
+  output.EL = pickExplicitNumericField(input, ['EL', 'el', 'elbows'], output.EL);
+  output.RW = pickExplicitNumericField(input, ['RW', 'rw', 'roundsWon'], output.RW);
+  output.RL = pickExplicitNumericField(input, ['RL', 'rl', 'roundsLost'], output.RL);
+  output.KO = pickExplicitNumericField(input, ['KO', 'ko', 'knockouts'], output.KO);
+  output.SP = pickExplicitNumericField(input, ['SP', 'sp', 'specialPoints'], output.SP);
+  return output;
+}
+
+function upsertRoundStats(statsArray, incomingStats = {}, category = 'boxing') {
+  if (!incomingStats) return;
+  const rawRound = hasOwnField(incomingStats, 'roundNumber') ? incomingStats.roundNumber : incomingStats.round;
+  if (!isProvidedValue(rawRound)) return;
+  const incomingRound = Number(rawRound);
+  const existingIndex = statsArray.findIndex((stat) => Number(stat.roundNumber) === incomingRound);
+  const previous = existingIndex !== -1 ? statsArray[existingIndex] : {};
+  const normalized = normalizeRoundStatsForCategory(incomingStats, previous, category);
+  if (existingIndex !== -1) {
+    statsArray[existingIndex] = normalized;
+  } else {
+    statsArray.push(normalized);
+  }
+}
+
+function getStatsContainer(match, category) {
+  const normalizedCategory = normalizeCombatCategory(category || match.matchCategory);
+  if (normalizedCategory === 'boxing') {
+    if (!match.BoxingMatch) match.BoxingMatch = {};
+    if (!Array.isArray(match.BoxingMatch.fighterOneStats)) match.BoxingMatch.fighterOneStats = [];
+    if (!Array.isArray(match.BoxingMatch.fighterTwoStats)) match.BoxingMatch.fighterTwoStats = [];
+    return match.BoxingMatch;
+  }
+  if (!match.MMAMatch) match.MMAMatch = {};
+  if (!Array.isArray(match.MMAMatch.fighterOneStats)) match.MMAMatch.fighterOneStats = [];
+  if (!Array.isArray(match.MMAMatch.fighterTwoStats)) match.MMAMatch.fighterTwoStats = [];
+  return match.MMAMatch;
+}
+
+function applyRoundResultsToMatch(match, body = {}) {
+  const category = normalizeCombatCategory(body.matchCategory || match.matchCategory);
+  if (!['boxing', 'mma'].includes(category)) {
+    const error = new Error('Invalid match category');
+    error.statusCode = 400;
+    throw error;
+  }
+  const statsContainer = getStatsContainer(match, category);
+  if (body.fighterOneStats) upsertRoundStats(statsContainer.fighterOneStats, body.fighterOneStats, category);
+  if (body.fighterTwoStats) upsertRoundStats(statsContainer.fighterTwoStats, body.fighterTwoStats, category);
+  return match;
+}
+
+function applyFightFreshSort(query) {
+  return query.sort({ createdAt: -1, updatedAt: -1, matchDate: -1, _id: -1 });
+}
+
+
+async function updateFightVideoFields(Model, id, body = {}) {
+  const update = {};
+  if (isProvidedValue(body.matchVideoUrl)) update.matchVideoUrl = body.matchVideoUrl;
+  if (isProvidedValue(body.videoUrl)) update.matchVideoUrl = body.videoUrl;
+  if (isProvidedValue(body.matchPromotionalVideoUrl)) update.matchPromotionalVideoUrl = body.matchPromotionalVideoUrl;
+  if (isProvidedValue(body.promotionalVideoUrl)) update.matchPromotionalVideoUrl = body.promotionalVideoUrl;
+  if (!Object.keys(update).length) {
+    const error = new Error('At least one video URL is required');
+    error.statusCode = 400;
+    throw error;
+  }
+  const updatedMatch = await Model.findByIdAndUpdate(id, update, { new: true });
+  if (!updatedMatch) {
+    const error = new Error('Fight not found');
+    error.statusCode = 404;
+    throw error;
+  }
+  return updatedMatch;
+}
+
+async function updateFightScoringFields(Model, id, body = {}) {
+  const match = await Model.findById(id);
+  if (!match) {
+    const error = new Error('Fight not found');
+    error.statusCode = 404;
+    throw error;
+  }
+  applyRoundResultsToMatch(match, body);
+  await match.save();
+  return match;
+}
+
 const builder = new xml2js.Builder({
   headless: true,
   rootName: 'createTransactionRequest', // Set the root element name
@@ -236,6 +390,10 @@ app.post(
         fighterAImageUrl,
         fighterBImageUrl,
         promotionBackgroundUrl,
+        matchVideoUrl,
+        matchStatus,
+        BoxingMatch,
+        MMAMatch,
       } = req.body;
 
       let fighterAImage,
@@ -331,9 +489,20 @@ app.post(
       existingMatch.matchName = matchName || existingMatch.matchName;
       existingMatch.matchFighterA = matchFighterA || existingMatch.matchFighterA;
       existingMatch.matchFighterB = matchFighterB || existingMatch.matchFighterB;
-      existingMatch.matchDescription = matchDescription || existingMatch.matchDescription;
-      existingMatch.maxRounds = maxRounds || existingMatch.maxRounds;
-      existingMatch.matchCategoryTwo = matchCategoryTwo || existingMatch.matchCategoryTwo;
+      assignIfProvided(existingMatch, 'matchCategory', matchCategory);
+      assignIfProvided(existingMatch, 'matchName', matchName);
+      assignIfProvided(existingMatch, 'matchFighterA', matchFighterA);
+      assignIfProvided(existingMatch, 'matchFighterB', matchFighterB);
+      assignIfProvided(existingMatch, 'matchDescription', matchDescription);
+      assignIfProvided(existingMatch, 'maxRounds', maxRounds);
+      assignIfProvided(existingMatch, 'matchCategoryTwo', matchCategoryTwo);
+      assignIfProvided(existingMatch, 'matchVideoUrl', matchVideoUrl);
+      assignIfProvided(existingMatch, 'matchStatus', matchStatus);
+
+      const parsedShadowBoxingMatch = parseMaybeJson(BoxingMatch);
+      const parsedShadowMMAMatch = parseMaybeJson(MMAMatch);
+      if (parsedShadowBoxingMatch) existingMatch.BoxingMatch = parsedShadowBoxingMatch;
+      if (parsedShadowMMAMatch) existingMatch.MMAMatch = parsedShadowMMAMatch;
 
       if (fighterAImage) existingMatch.fighterAImage = fighterAImage;
       if (fighterBImage) existingMatch.fighterBImage = fighterBImage;
@@ -417,41 +586,11 @@ app.post('/shadow/addShadowRoundResults/:id', async (req, res) => {
       return res.status(404).json({ message: 'Match not found' });
     }
 
-    // Determine the category of the match
-    if (match.matchCategory === 'boxing') {
-      // Update round results for Fighter One (Boxing)
-      const existingFighterOneRoundIndex = match.BoxingMatch.fighterOneStats.findIndex(stat => stat.roundNumber === fighterOneStats.roundNumber);
-      if (existingFighterOneRoundIndex !== -1) {
-        match.BoxingMatch.fighterOneStats[existingFighterOneRoundIndex] = fighterOneStats;
-      } else {
-        match.BoxingMatch.fighterOneStats.push(fighterOneStats);
-      }
-
-      // Update round results for Fighter Two (Boxing)
-      const existingFighterTwoRoundIndex = match.BoxingMatch.fighterTwoStats.findIndex(stat => stat.roundNumber === fighterTwoStats.roundNumber);
-      if (existingFighterTwoRoundIndex !== -1) {
-        match.BoxingMatch.fighterTwoStats[existingFighterTwoRoundIndex] = fighterTwoStats;
-      } else {
-        match.BoxingMatch.fighterTwoStats.push(fighterTwoStats);
-      }
-    } else if (match.matchCategory === 'mma') {
-      // Update round results for Fighter One (MMA)
-      const existingFighterOneRoundIndex = match.MMAMatch.fighterOneStats.findIndex(stat => stat.roundNumber === fighterOneStats.roundNumber);
-      if (existingFighterOneRoundIndex !== -1) {
-        match.MMAMatch.fighterOneStats[existingFighterOneRoundIndex] = fighterOneStats;
-      } else {
-        match.MMAMatch.fighterOneStats.push(fighterOneStats);
-      }
-
-      // Update round results for Fighter Two (MMA)
-      const existingFighterTwoRoundIndex = match.MMAMatch.fighterTwoStats.findIndex(stat => stat.roundNumber === fighterTwoStats.roundNumber);
-      if (existingFighterTwoRoundIndex !== -1) {
-        match.MMAMatch.fighterTwoStats[existingFighterTwoRoundIndex] = fighterTwoStats;
-      } else {
-        match.MMAMatch.fighterTwoStats.push(fighterTwoStats);
-      }
-    } else {
-      return res.status(400).json({ message: 'Invalid match category' });
+    // Apply round results without deriving TP/total punches from HP/BP.
+    try {
+      applyRoundResultsToMatch(match, { fighterOneStats, fighterTwoStats });
+    } catch (scoringError) {
+      return res.status(scoringError.statusCode || 400).json({ message: scoringError.message });
     }
 
     // Save the updated match document
@@ -1026,6 +1165,92 @@ app.get('/api/matches/:id', async (req, res) => {
     res.status(500).json({ message: 'Server error', error });
   }
 });
+
+
+// Admin-friendly fight edit helpers used by the updated frontend.
+// These endpoints are additive aliases over the existing legacy routes.
+app.get('/api/shadow/:id', async (req, res) => {
+  try {
+    const shadowFight = await Shadow.findById(req.params.id);
+    if (!shadowFight) return res.status(404).json({ message: 'Shadow fight not found' });
+    res.status(200).json(shadowFight);
+  } catch (error) {
+    res.status(500).json({ message: 'Server error', error: error.message });
+  }
+});
+
+app.put('/api/admin/matches/:id/video', async (req, res) => {
+  try {
+    const updatedMatch = await updateFightVideoFields(Match, req.params.id, req.body);
+    res.status(200).json({ message: 'Fight video updated successfully', match: updatedMatch });
+  } catch (error) {
+    res.status(error.statusCode || 500).json({ message: error.message || 'Failed to update fight video' });
+  }
+});
+
+app.post('/api/admin/matches/:id/video', async (req, res) => {
+  try {
+    const updatedMatch = await updateFightVideoFields(Match, req.params.id, req.body);
+    res.status(200).json({ message: 'Fight video updated successfully', match: updatedMatch });
+  } catch (error) {
+    res.status(error.statusCode || 500).json({ message: error.message || 'Failed to update fight video' });
+  }
+});
+
+app.put('/api/admin/shadow/:id/video', async (req, res) => {
+  try {
+    const updatedMatch = await updateFightVideoFields(Shadow, req.params.id, req.body);
+    res.status(200).json({ message: 'Shadow fight video updated successfully', match: updatedMatch });
+  } catch (error) {
+    res.status(error.statusCode || 500).json({ message: error.message || 'Failed to update shadow fight video' });
+  }
+});
+
+app.post('/api/admin/shadow/:id/video', async (req, res) => {
+  try {
+    const updatedMatch = await updateFightVideoFields(Shadow, req.params.id, req.body);
+    res.status(200).json({ message: 'Shadow fight video updated successfully', match: updatedMatch });
+  } catch (error) {
+    res.status(error.statusCode || 500).json({ message: error.message || 'Failed to update shadow fight video' });
+  }
+});
+
+app.put('/api/admin/matches/:id/scoring', async (req, res) => {
+  try {
+    const updatedMatch = await updateFightScoringFields(Match, req.params.id, req.body);
+    res.status(200).json({ message: 'Fight scoring updated successfully', match: updatedMatch, manualTotalPunches: true });
+  } catch (error) {
+    res.status(error.statusCode || 500).json({ message: error.message || 'Failed to update fight scoring' });
+  }
+});
+
+app.post('/api/admin/matches/:id/scoring', async (req, res) => {
+  try {
+    const updatedMatch = await updateFightScoringFields(Match, req.params.id, req.body);
+    res.status(200).json({ message: 'Fight scoring updated successfully', match: updatedMatch, manualTotalPunches: true });
+  } catch (error) {
+    res.status(error.statusCode || 500).json({ message: error.message || 'Failed to update fight scoring' });
+  }
+});
+
+app.put('/api/admin/shadow/:id/scoring', async (req, res) => {
+  try {
+    const updatedMatch = await updateFightScoringFields(Shadow, req.params.id, req.body);
+    res.status(200).json({ message: 'Shadow fight scoring updated successfully', match: updatedMatch, manualTotalPunches: true });
+  } catch (error) {
+    res.status(error.statusCode || 500).json({ message: error.message || 'Failed to update shadow fight scoring' });
+  }
+});
+
+app.post('/api/admin/shadow/:id/scoring', async (req, res) => {
+  try {
+    const updatedMatch = await updateFightScoringFields(Shadow, req.params.id, req.body);
+    res.status(200).json({ message: 'Shadow fight scoring updated successfully', match: updatedMatch, manualTotalPunches: true });
+  } catch (error) {
+    res.status(error.statusCode || 500).json({ message: error.message || 'Failed to update shadow fight scoring' });
+  }
+});
+
 app.delete('/api/matches/:id', async (req, res) => {
   try {
     const { id } = req.params; // matchId
@@ -1453,6 +1678,13 @@ app.post(
       fighterBImageUrl,
       promotionBackgroundUrl,
       addToShadow,
+      matchVideoUrl,
+      matchPromotionalVideoUrl,
+      matchStatus,
+      matchShadowStatus,
+      matchShadowOpenStatus,
+      BoxingMatch,
+      MMAMatch,
     } = req.body;
 
     let fighterAImage,
@@ -1529,25 +1761,31 @@ app.post(
         promotionBackground = promotionBackgroundUrl;
       }
 
-      // Update the match object
-      existingMatch.matchCategory = matchCategory || existingMatch.matchCategory;
-      existingMatch.shadowTemplatesAdditionStatus = addToShadow === 'true' || addToShadow === true ? true : existingMatch.shadowTemplatesAdditionStatus;
-      existingMatch.matchName = matchName || existingMatch.matchName;
-      existingMatch.matchFighterA =
-        matchFighterA || existingMatch.matchFighterA;
-      existingMatch.matchFighterB =
-        matchFighterB || existingMatch.matchFighterB;
-      existingMatch.matchDescription =
-        matchDescription || existingMatch.matchDescription;
-      existingMatch.matchDate = matchDate || existingMatch.matchDate;
-      existingMatch.matchTime = matchTime || existingMatch.matchTime;
-      existingMatch.matchTokens = matchTokens || existingMatch.matchTokens;
-      existingMatch.pot = pot || existingMatch.pot;
-      existingMatch.matchType = matchType || existingMatch.matchType;
-      existingMatch.profit = profit || existingMatch.profit;
-      existingMatch.maxRounds = maxRounds || existingMatch.maxRounds;
-      existingMatch.matchCategoryTwo =
-        matchCategoryTwo || existingMatch.matchCategoryTwo;
+      // Update the match object. Use explicit provided-value checks so 0 remains valid.
+      assignIfProvided(existingMatch, 'matchCategory', matchCategory);
+      if (addToShadow === 'true' || addToShadow === true) existingMatch.shadowTemplatesAdditionStatus = true;
+      assignIfProvided(existingMatch, 'matchName', matchName);
+      assignIfProvided(existingMatch, 'matchFighterA', matchFighterA);
+      assignIfProvided(existingMatch, 'matchFighterB', matchFighterB);
+      assignIfProvided(existingMatch, 'matchDescription', matchDescription);
+      assignIfProvided(existingMatch, 'matchDate', matchDate);
+      assignIfProvided(existingMatch, 'matchTime', matchTime);
+      assignIfProvided(existingMatch, 'matchTokens', matchTokens);
+      assignIfProvided(existingMatch, 'pot', pot);
+      assignIfProvided(existingMatch, 'matchType', matchType);
+      assignIfProvided(existingMatch, 'profit', profit);
+      assignIfProvided(existingMatch, 'maxRounds', maxRounds);
+      assignIfProvided(existingMatch, 'matchCategoryTwo', matchCategoryTwo);
+      assignIfProvided(existingMatch, 'matchVideoUrl', matchVideoUrl);
+      assignIfProvided(existingMatch, 'matchPromotionalVideoUrl', matchPromotionalVideoUrl);
+      assignIfProvided(existingMatch, 'matchStatus', matchStatus);
+      assignIfProvided(existingMatch, 'matchShadowStatus', matchShadowStatus);
+      assignIfProvided(existingMatch, 'matchShadowOpenStatus', matchShadowOpenStatus);
+
+      const parsedBoxingMatch = parseMaybeJson(BoxingMatch);
+      const parsedMMAMatch = parseMaybeJson(MMAMatch);
+      if (parsedBoxingMatch) existingMatch.BoxingMatch = parsedBoxingMatch;
+      if (parsedMMAMatch) existingMatch.MMAMatch = parsedMMAMatch;
 
       if (fighterAImage) existingMatch.fighterAImage = fighterAImage;
       if (fighterBImage) existingMatch.fighterBImage = fighterBImage;
@@ -1589,7 +1827,13 @@ app.post(
 
 // Get Matches API
 app.get('/match', async (req, res) => {
-  const match = await Match.find();
+  const query = {};
+  if (req.query.status) query.matchStatus = req.query.status;
+  if (req.query.category) query.matchCategory = String(req.query.category).toLowerCase();
+  if (req.query.shadowStatus) query.matchShadowStatus = req.query.shadowStatus;
+  if (req.query.openStatus) query.matchShadowOpenStatus = req.query.openStatus;
+
+  const match = await applyFightFreshSort(Match.find(query));
   res.send(match);
 });
 
@@ -1634,41 +1878,11 @@ app.post('/match/addRoundResults/:id', async (req, res) => {
       return res.status(404).json({ message: 'Match not found' });
     }
 
-    // Determine the category of the match
-    if (match.matchCategory === 'boxing') {
-      // Update round results for Fighter One (Boxing)
-      const existingFighterOneRoundIndex = match.BoxingMatch.fighterOneStats.findIndex(stat => stat.roundNumber === fighterOneStats.roundNumber);
-      if (existingFighterOneRoundIndex !== -1) {
-        match.BoxingMatch.fighterOneStats[existingFighterOneRoundIndex] = fighterOneStats;
-      } else {
-        match.BoxingMatch.fighterOneStats.push(fighterOneStats);
-      }
-
-      // Update round results for Fighter Two (Boxing)
-      const existingFighterTwoRoundIndex = match.BoxingMatch.fighterTwoStats.findIndex(stat => stat.roundNumber === fighterTwoStats.roundNumber);
-      if (existingFighterTwoRoundIndex !== -1) {
-        match.BoxingMatch.fighterTwoStats[existingFighterTwoRoundIndex] = fighterTwoStats;
-      } else {
-        match.BoxingMatch.fighterTwoStats.push(fighterTwoStats);
-      }
-    } else if (match.matchCategory === 'mma') {
-      // Update round results for Fighter One (MMA)
-      const existingFighterOneRoundIndex = match.MMAMatch.fighterOneStats.findIndex(stat => stat.roundNumber === fighterOneStats.roundNumber);
-      if (existingFighterOneRoundIndex !== -1) {
-        match.MMAMatch.fighterOneStats[existingFighterOneRoundIndex] = fighterOneStats;
-      } else {
-        match.MMAMatch.fighterOneStats.push(fighterOneStats);
-      }
-
-      // Update round results for Fighter Two (MMA)
-      const existingFighterTwoRoundIndex = match.MMAMatch.fighterTwoStats.findIndex(stat => stat.roundNumber === fighterTwoStats.roundNumber);
-      if (existingFighterTwoRoundIndex !== -1) {
-        match.MMAMatch.fighterTwoStats[existingFighterTwoRoundIndex] = fighterTwoStats;
-      } else {
-        match.MMAMatch.fighterTwoStats.push(fighterTwoStats);
-      }
-    } else {
-      return res.status(400).json({ message: 'Invalid match category' });
+    // Apply round results without deriving TP/total punches from HP/BP.
+    try {
+      applyRoundResultsToMatch(match, { fighterOneStats, fighterTwoStats });
+    } catch (scoringError) {
+      return res.status(scoringError.statusCode || 400).json({ message: scoringError.message });
     }
 
     // Save the updated match document
