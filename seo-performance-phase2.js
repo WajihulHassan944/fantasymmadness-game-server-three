@@ -314,12 +314,6 @@ function isExplicitDraftFight(fight = {}) {
   );
 }
 
-function isDraftFightRecord(fight = {}) {
-  return isExplicitDraftFight(fight)
-    || FIGHT_DRAFT_STATUS_REGEX.test(String(fight.status || ''))
-    || FIGHT_DRAFT_STATUS_REGEX.test(String(fight.matchShadowStatus || ''));
-}
-
 function publicFightVisibilityFilter(query = {}) {
   if (shouldIncludeDraftFights(query)) return null;
 
@@ -356,44 +350,16 @@ function buildFightFilter(query = {}) {
       ];
     }
   }
-
   if (!isAllFilterValue(query.status)) {
-    const status = cleanString(query.status).toLowerCase();
-    const now = new Date();
-    if (['past', 'previous', 'completed', 'complete', 'finished'].includes(status)) {
-      const statusOr = [
-        { matchStatus: { $in: ['Finished', 'Closed', 'finished', 'closed', 'Completed', 'completed'] } },
-        { matchDate: { $lt: now } },
-      ];
-      if (filter.$or) {
-        filter.$and = [{ $or: filter.$or }, { $or: statusOr }];
-        delete filter.$or;
-      } else {
-        filter.$or = statusOr;
-      }
-    } else if (['upcoming', 'future', 'scheduled'].includes(status)) {
-      const statusOr = [
-        { matchStatus: { $in: ['Scheduled', 'Open', 'Live', 'Ongoing', 'scheduled', 'open', 'live', 'ongoing'] } },
-        { matchDate: { $gte: now } },
-      ];
-      if (filter.$or) {
-        filter.$and = [{ $or: filter.$or }, { $or: statusOr }];
-        delete filter.$or;
-      } else {
-        filter.$or = statusOr;
-      }
-    } else {
-      const statusRegex = exactTextRegex(query.status);
-      if (statusRegex) filter.matchStatus = statusRegex;
-    }
+    const statusRegex = exactTextRegex(query.status);
+    if (statusRegex) filter.matchStatus = statusRegex;
   }
-
   if (!isAllFilterValue(query.openStatus)) filter.matchShadowOpenStatus = exactTextRegex(query.openStatus) || query.openStatus;
   if (!isAllFilterValue(query.shadowStatus)) filter.matchShadowStatus = exactTextRegex(query.shadowStatus) || query.shadowStatus;
   const searchFilter = buildSearchFilter(query.search, ['matchName', 'matchFighterA', 'matchFighterB', 'matchDescription']);
   if (searchFilter) {
     if (filter.$or) {
-      filter.$and = [...(filter.$and || []), { $or: filter.$or }, searchFilter];
+      filter.$and = [{ $or: filter.$or }, searchFilter];
       delete filter.$or;
     } else {
       Object.assign(filter, searchFilter);
@@ -415,21 +381,9 @@ async function listFights({ req, Match }) {
   const page = safePage(req.query.page);
   const limit = safeLimit(req.query.limit, 20);
   const filter = buildFightFilter(req.query);
-  let total = await Match.countDocuments(filter);
-  let docs = await Match.find(filter).sort(fightSort(req.query)).skip((page - 1) * limit).limit(limit).lean();
-  let publicDocs = shouldIncludeDraftFights(req.query) ? docs : docs.filter((fight) => !isDraftFightRecord(fight));
-
-  // Legacy safety fallback: if the DB-side filter returns empty because older
-  // records do not have normalized status/visibility fields, load the same query
-  // including drafts and remove only explicit Draft fights in memory.
-  if (!publicDocs.length && !shouldIncludeDraftFights(req.query)) {
-    const fallbackFilter = buildFightFilter({ ...req.query, includeDrafts: 'true' });
-    const fallbackDocs = await Match.find(fallbackFilter).sort(fightSort(req.query)).limit(Math.max(limit * page, limit)).lean();
-    const fallbackPublicDocs = fallbackDocs.filter((fight) => !isDraftFightRecord(fight));
-    total = fallbackPublicDocs.length;
-    publicDocs = fallbackPublicDocs.slice((page - 1) * limit, page * limit);
-  }
-
+  const total = await Match.countDocuments(filter);
+  const docs = await Match.find(filter).sort(fightSort(req.query)).skip((page - 1) * limit).limit(limit).lean();
+  const publicDocs = shouldIncludeDraftFights(req.query) ? docs : docs.filter((fight) => !isExplicitDraftFight(fight));
   return { items: publicDocs.map((fight) => serializeFight(fight, req)), pagination: paginationMeta({ page, limit, total }) };
 }
 
