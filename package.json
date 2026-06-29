@@ -7,10 +7,11 @@
     "node": ">=14.20.1"
   },
   "scripts": {
-    "test": "node pro-wrestling-core.test.js && node pro-wrestling-routes.test.js && node swarm-phase2.test.js",
+    "test": "node pro-wrestling-core.test.js && node pro-wrestling-routes.test.js && node swarm-phase2.test.js && node seo-performance-phase2.test.js",
     "start": "node server.js",
     "test:pro-wrestling": "node pro-wrestling-core.test.js && node pro-wrestling-routes.test.js",
-    "test:swarm-phase2": "node swarm-phase2.test.js"
+    "test:swarm-phase2": "node swarm-phase2.test.js",
+    "test:seo-performance-phase2": "node seo-performance-phase2.test.js"
   },
   "keywords": [],
   "author": "",

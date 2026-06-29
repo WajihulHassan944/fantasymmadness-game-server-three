@@ -24,6 +24,7 @@ const axios = require('axios');
 const fetch = require('node-fetch');
 const xml2js = require('xml2js');
 const { registerSwarmPhase2Routes } = require('./swarm-phase2');
+const { registerSeoPerformancePhase2Routes } = require('./seo-performance-phase2');
 
 const ALGORITHM = 'aes-256-cbc'; // AES algorithm
 const ENCRYPTION_KEY = process.env.ENCRYPTION_KEY; // Must be 32 bytes
@@ -208,8 +209,56 @@ function applyRoundResultsToMatch(match, body = {}) {
   return match;
 }
 
+const FIGHT_DRAFT_STATUSES = ['Draft', 'draft', 'DRAFT'];
+const FIGHT_DRAFT_STATUS_REGEX = /^\s*draft\s*$/i;
+
+function shouldIncludeDraftFights(query = {}) {
+  return ['true', '1', 'yes'].includes(String(query.includeDrafts || query.admin || '').toLowerCase());
+}
+
+function isDraftFightRecord(match = {}) {
+  const normalize = (value) => String(value || '').trim().toLowerCase();
+  return normalize(match.matchStatus) === 'draft'
+    || normalize(match.status) === 'draft'
+    || normalize(match.matchShadowStatus) === 'draft'
+    || match.draft === true
+    || match.isDraft === true;
+}
+
+function isAllFilterValue(value) {
+  return ['', 'all', 'any', 'undefined', 'null'].includes(String(value || '').trim().toLowerCase());
+}
+
+function exactTextRegex(value) {
+  const clean = String(value || '').trim();
+  if (!clean) return null;
+  return new RegExp(`^${clean.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`, 'i');
+}
+
+function appendNoDraftFightFilter(query = {}) {
+  if (shouldIncludeDraftFights(query)) return null;
+
+  // IMPORTANT: hide only fights that are explicitly marked as Draft.
+  // Do not rely on optional visibility flags here because many existing
+  // production fights do not have those fields normalized yet.
+  return {
+    $and: [
+      { $or: [{ matchStatus: { $exists: false } }, { matchStatus: { $not: FIGHT_DRAFT_STATUS_REGEX } }] },
+      { draft: { $ne: true } },
+      { isDraft: { $ne: true } },
+    ],
+  };
+}
+
+function applyFightPublicVisibilityFilter(filter = {}, query = {}) {
+  const draftFilter = appendNoDraftFightFilter(query);
+  if (!draftFilter) return filter;
+  if (filter.$and) return { ...filter, $and: [...filter.$and, ...draftFilter.$and] };
+  return Object.keys(filter).length ? { $and: [filter, ...draftFilter.$and] } : draftFilter;
+}
+
 function applyFightFreshSort(query) {
-  return query.sort({ createdAt: -1, updatedAt: -1, matchDate: -1, _id: -1 });
+  return query.sort({ updatedAt: -1, createdAt: -1, matchDate: -1, _id: -1 });
 }
 
 
@@ -270,7 +319,7 @@ const shadowSchema = new mongoose.Schema({
   fighterAImageDeleteUrl: String, // ImgBB delete URL for Fighter A's image
   fighterBImageDeleteUrl: String, 
   promotionBackgroundDeleteUrl: String, 
-  matchStatus: { type: String, enum: ['Finished', 'Ongoing'], default: 'Ongoing' },
+  matchStatus: { type: String, enum: ['Finished', 'Ongoing', 'Draft', 'Scheduled', 'Live', 'Open', 'Closed'], default: 'Ongoing' },
   
   // Boxing-specific stats
   BoxingMatch: {
@@ -702,8 +751,8 @@ const matchSchema = new mongoose.Schema({
   shadowTemplatesAdditionStatus: { type: Boolean, default: false },
   notificationSent: { type: Boolean, default: false },
   matchBy: { type: String, enum: ['admin', 'affiliate'], default: 'admin' },
-  matchShadowStatus: { type: String, enum: ['active', 'inactive'], default: 'active' },
-  matchStatus: { type: String, enum: ['Finished', 'Ongoing'], default: 'Ongoing' },
+  matchShadowStatus: { type: String, enum: ['active', 'inactive', 'draft'], default: 'active' },
+  matchStatus: { type: String, enum: ['Finished', 'Ongoing', 'Draft', 'Scheduled', 'Live', 'Open', 'Closed'], default: 'Ongoing' },
 matchShadowOpenStatus: { type: String, enum: ['open', 'closed'], default: 'open' },
 matchReward: { type: String, enum: ['Rewarded', 'NotRewarded'], default: 'NotRewarded' },
   matchVideoUrl: String,
@@ -1082,7 +1131,7 @@ app.get('/matchByName', async (req, res) => {
   }
 
   try {
-      const match = await Match.findOne({ matchName });
+      const match = await Match.findOne(applyFightPublicVisibilityFilter({ matchName }, req.query));
 
       if (!match) {
           return res.status(404).json({ message: 'Match not found' });
@@ -1828,12 +1877,50 @@ app.post(
 // Get Matches API
 app.get('/match', async (req, res) => {
   const query = {};
-  if (req.query.status) query.matchStatus = req.query.status;
-  if (req.query.category) query.matchCategory = String(req.query.category).toLowerCase();
-  if (req.query.shadowStatus) query.matchShadowStatus = req.query.shadowStatus;
-  if (req.query.openStatus) query.matchShadowOpenStatus = req.query.openStatus;
 
-  const match = await applyFightFreshSort(Match.find(query));
+  if (!isAllFilterValue(req.query.status)) {
+    const statusValue = String(req.query.status || '').trim().toLowerCase();
+    const now = new Date();
+    if (['past', 'previous', 'completed', 'complete', 'finished'].includes(statusValue)) {
+      query.$or = [
+        ...(query.$or || []),
+        { matchStatus: { $in: ['Finished', 'Closed', 'finished', 'closed', 'Completed', 'completed'] } },
+        { matchDate: { $lt: now } },
+      ];
+    } else if (['upcoming', 'future', 'scheduled'].includes(statusValue)) {
+      query.$or = [
+        ...(query.$or || []),
+        { matchStatus: { $in: ['Scheduled', 'Open', 'Live', 'Ongoing', 'scheduled', 'open', 'live', 'ongoing'] } },
+        { matchDate: { $gte: now } },
+      ];
+    } else {
+      const statusRegex = exactTextRegex(req.query.status);
+      if (statusRegex) query.matchStatus = statusRegex;
+    }
+  }
+
+  if (!isAllFilterValue(req.query.category)) {
+    const categoryRegex = exactTextRegex(req.query.category);
+    if (categoryRegex) {
+      query.$or = [
+        { matchCategory: categoryRegex },
+        { matchCategoryTwo: categoryRegex },
+      ];
+    }
+  }
+
+  if (!isAllFilterValue(req.query.shadowStatus)) query.matchShadowStatus = exactTextRegex(req.query.shadowStatus) || req.query.shadowStatus;
+  if (!isAllFilterValue(req.query.openStatus)) query.matchShadowOpenStatus = exactTextRegex(req.query.openStatus) || req.query.openStatus;
+
+  const visibleQuery = applyFightPublicVisibilityFilter(query, req.query);
+  let match = await applyFightFreshSort(Match.find(visibleQuery));
+  // Safety fallback for legacy records: if the stricter public query produces no
+  // results, keep the same base filters and remove only explicit Draft fights in
+  // memory. This prevents public fight pages from going blank while still hiding drafts.
+  if (!match.length && !shouldIncludeDraftFights(req.query)) {
+    const fallback = await applyFightFreshSort(Match.find(query));
+    match = fallback.filter((item) => !isDraftFightRecord(item));
+  }
   res.send(match);
 });
 
@@ -4042,7 +4129,7 @@ app.get('/api/cron-job', async (req, res) => {
     now.setUTCHours(0, 0, 0, 0); // Normalize 'now' to midnight UTC
 
     // Find all LIVE matches
-    const liveMatches = await Match.find({ matchType: 'LIVE' });
+    const liveMatches = await Match.find(applyFightPublicVisibilityFilter({ matchType: 'LIVE' }, {}));
 
     // Filter matches to only include those with a past date (ignoring time)
     const matchesToConvert = liveMatches.filter((match) => {
@@ -10855,6 +10942,27 @@ registerSwarmPhase2Routes({
   Notification,
 });
 
+
+
+// PHASE 2 SEO/PERFORMANCE: Public SEO data, pagination, sitemap/schema helpers,
+// and admin approval endpoints for swarm SEO intelligence. Kept isolated so the
+// existing backend routes and business rules remain unchanged.
+registerSeoPerformancePhase2Routes({
+  app,
+  mongoose,
+  verifyAdminToken,
+  models: {
+    Match,
+    Shadow,
+    Blog,
+    News,
+    YoutubeVideos,
+    Score,
+    User,
+    ProWrestler,
+    ProWrestlingMatch,
+  },
+});
 
 // Start server
 const server = app.listen(PORT, () => {
