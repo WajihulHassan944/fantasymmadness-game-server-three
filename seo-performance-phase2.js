@@ -104,7 +104,7 @@ function registerSeoPerformancePhase2Routes(options = {}) {
   }));
 
   app.get('/api/public/fights/:id', cachePublicResponse, asyncHandler(async (req, res) => {
-    const fight = await findFightById(models.Match, req.params.id);
+    const fight = await findFightById(models.Match, req.params.id, req.query);
     if (!fight) return res.status(404).json({ ok: false, code: 'FIGHT_NOT_FOUND', message: 'Fight not found.' });
     const related = await buildInternalLinks({ query: { entityType: 'fight', entityId: req.params.id, limit: 8 }, req, models });
     res.json({ ok: true, fight: serializeFight(fight, req), related });
@@ -289,6 +289,33 @@ function buildSearchFilter(search, fields) {
   return { $or: fields.map((field) => ({ [field]: { $regex: term, $options: 'i' } })) };
 }
 
+const FIGHT_DRAFT_STATUSES = ['Draft', 'draft', 'DRAFT'];
+
+function shouldIncludeDraftFights(query = {}) {
+  return ['true', '1', 'yes'].includes(String(query.includeDrafts || query.admin || '').toLowerCase());
+}
+
+function publicFightVisibilityFilter(query = {}) {
+  if (shouldIncludeDraftFights(query)) return null;
+  return {
+    $and: [
+      { matchStatus: { $nin: FIGHT_DRAFT_STATUSES } },
+      { status: { $nin: FIGHT_DRAFT_STATUSES } },
+      { draft: { $ne: true } },
+      { isDraft: { $ne: true } },
+      { publicVisible: { $ne: false } },
+    ],
+  };
+}
+
+function mergeMongoFilters(base = {}, extra = null) {
+  if (!extra) return base;
+  const pieces = [];
+  if (Object.keys(base || {}).length) pieces.push(base);
+  if (Array.isArray(extra.$and)) pieces.push(...extra.$and); else pieces.push(extra);
+  return pieces.length ? { $and: pieces } : {};
+}
+
 function buildFightFilter(query = {}) {
   const filter = {};
   const sport = cleanString(query.sport || query.category || query.matchCategory).toLowerCase();
@@ -298,7 +325,7 @@ function buildFightFilter(query = {}) {
   if (query.shadowStatus) filter.matchShadowStatus = query.shadowStatus;
   const searchFilter = buildSearchFilter(query.search, ['matchName', 'matchFighterA', 'matchFighterB', 'matchDescription']);
   if (searchFilter) Object.assign(filter, searchFilter);
-  return filter;
+  return mergeMongoFilters(filter, publicFightVisibilityFilter(query));
 }
 
 function fightSort(query = {}) {
@@ -319,10 +346,11 @@ async function listFights({ req, Match }) {
   return { items: docs.map((fight) => serializeFight(fight, req)), pagination: paginationMeta({ page, limit, total }) };
 }
 
-async function findFightById(Match, id) {
+async function findFightById(Match, id, query = {}) {
   if (!Match || !cleanString(id)) return null;
   if (!id.match(/^[a-f0-9]{24}$/i)) return null;
-  return Match.findById(id).lean();
+  const filter = mergeMongoFilters({ _id: id }, publicFightVisibilityFilter(query));
+  return Match.findOne(filter).lean();
 }
 
 function serializeFight(fight, req) {
@@ -491,7 +519,7 @@ async function buildSitemapData({ models, seoModels, req, type = 'all' }) {
     sections.static = STATIC_PUBLIC_PAGES.map((page) => ({ ...page, url: `${siteUrl}${page.path}`, lastmod: new Date().toISOString() }));
   }
   if ((normalizedType === 'all' || normalizedType === 'fights') && models.Match) {
-    const fights = await models.Match.find({}).sort({ updatedAt: -1, createdAt: -1 }).limit(1000).lean();
+    const fights = await models.Match.find(mergeMongoFilters({}, publicFightVisibilityFilter({}))).sort({ updatedAt: -1, createdAt: -1 }).limit(1000).lean();
     sections.fights = fights.map((fight) => ({ url: `${siteUrl}/fights/${fight._id}`, lastmod: dateToIso(fight.updatedAt || fight.createdAt || fight.matchDate), priority: 0.85, changefreq: fight.matchStatus === 'Ongoing' ? 'hourly' : 'weekly', title: fight.matchName || `${fight.matchFighterA} vs ${fight.matchFighterB}` }));
   }
   if ((normalizedType === 'all' || normalizedType === 'blogs') && models.Blog) {
@@ -656,7 +684,7 @@ async function buildInternalLinks({ query, req, models }) {
   }
   if (models.Match) {
     const filter = regex ? { $or: [{ matchName: { $regex: regex, $options: 'i' } }, { matchFighterA: { $regex: regex, $options: 'i' } }, { matchFighterB: { $regex: regex, $options: 'i' } }] } : {};
-    const fights = await models.Match.find(filter).sort(fightSort({ sort: 'fresh' })).limit(limit).lean();
+    const fights = await models.Match.find(mergeMongoFilters(filter, publicFightVisibilityFilter({}))).sort(fightSort({ sort: 'fresh' })).limit(limit).lean();
     output.items.push(...fights.map((fight) => ({ type: 'fight', id: String(fight._id), label: fight.matchName || `${fight.matchFighterA} vs ${fight.matchFighterB}`, url: `${siteUrl}/fights/${fight._id}` })));
   }
   return { ...output, items: output.items.slice(0, limit * 2) };

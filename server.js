@@ -209,8 +209,34 @@ function applyRoundResultsToMatch(match, body = {}) {
   return match;
 }
 
+const FIGHT_DRAFT_STATUSES = ['Draft', 'draft', 'DRAFT'];
+
+function shouldIncludeDraftFights(query = {}) {
+  return ['true', '1', 'yes'].includes(String(query.includeDrafts || query.admin || '').toLowerCase());
+}
+
+function appendNoDraftFightFilter(query = {}) {
+  if (shouldIncludeDraftFights(query)) return null;
+  return {
+    $and: [
+      { matchStatus: { $nin: FIGHT_DRAFT_STATUSES } },
+      { status: { $nin: FIGHT_DRAFT_STATUSES } },
+      { draft: { $ne: true } },
+      { isDraft: { $ne: true } },
+      { publicVisible: { $ne: false } },
+    ],
+  };
+}
+
+function applyFightPublicVisibilityFilter(filter = {}, query = {}) {
+  const draftFilter = appendNoDraftFightFilter(query);
+  if (!draftFilter) return filter;
+  if (filter.$and) return { ...filter, $and: [...filter.$and, ...draftFilter.$and] };
+  return Object.keys(filter).length ? { $and: [filter, ...draftFilter.$and] } : draftFilter;
+}
+
 function applyFightFreshSort(query) {
-  return query.sort({ createdAt: -1, updatedAt: -1, matchDate: -1, _id: -1 });
+  return query.sort({ updatedAt: -1, createdAt: -1, matchDate: -1, _id: -1 });
 }
 
 
@@ -271,7 +297,7 @@ const shadowSchema = new mongoose.Schema({
   fighterAImageDeleteUrl: String, // ImgBB delete URL for Fighter A's image
   fighterBImageDeleteUrl: String, 
   promotionBackgroundDeleteUrl: String, 
-  matchStatus: { type: String, enum: ['Finished', 'Ongoing'], default: 'Ongoing' },
+  matchStatus: { type: String, enum: ['Finished', 'Ongoing', 'Draft', 'Scheduled', 'Live', 'Open', 'Closed'], default: 'Ongoing' },
   
   // Boxing-specific stats
   BoxingMatch: {
@@ -703,8 +729,8 @@ const matchSchema = new mongoose.Schema({
   shadowTemplatesAdditionStatus: { type: Boolean, default: false },
   notificationSent: { type: Boolean, default: false },
   matchBy: { type: String, enum: ['admin', 'affiliate'], default: 'admin' },
-  matchShadowStatus: { type: String, enum: ['active', 'inactive'], default: 'active' },
-  matchStatus: { type: String, enum: ['Finished', 'Ongoing'], default: 'Ongoing' },
+  matchShadowStatus: { type: String, enum: ['active', 'inactive', 'draft'], default: 'active' },
+  matchStatus: { type: String, enum: ['Finished', 'Ongoing', 'Draft', 'Scheduled', 'Live', 'Open', 'Closed'], default: 'Ongoing' },
 matchShadowOpenStatus: { type: String, enum: ['open', 'closed'], default: 'open' },
 matchReward: { type: String, enum: ['Rewarded', 'NotRewarded'], default: 'NotRewarded' },
   matchVideoUrl: String,
@@ -1083,7 +1109,7 @@ app.get('/matchByName', async (req, res) => {
   }
 
   try {
-      const match = await Match.findOne({ matchName });
+      const match = await Match.findOne(applyFightPublicVisibilityFilter({ matchName }, req.query));
 
       if (!match) {
           return res.status(404).json({ message: 'Match not found' });
@@ -1834,7 +1860,8 @@ app.get('/match', async (req, res) => {
   if (req.query.shadowStatus) query.matchShadowStatus = req.query.shadowStatus;
   if (req.query.openStatus) query.matchShadowOpenStatus = req.query.openStatus;
 
-  const match = await applyFightFreshSort(Match.find(query));
+  const visibleQuery = applyFightPublicVisibilityFilter(query, req.query);
+  const match = await applyFightFreshSort(Match.find(visibleQuery));
   res.send(match);
 });
 
@@ -4043,7 +4070,7 @@ app.get('/api/cron-job', async (req, res) => {
     now.setUTCHours(0, 0, 0, 0); // Normalize 'now' to midnight UTC
 
     // Find all LIVE matches
-    const liveMatches = await Match.find({ matchType: 'LIVE' });
+    const liveMatches = await Match.find(applyFightPublicVisibilityFilter({ matchType: 'LIVE' }, {}));
 
     // Filter matches to only include those with a past date (ignoring time)
     const matchesToConvert = liveMatches.filter((match) => {
