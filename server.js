@@ -261,6 +261,40 @@ function applyFightFreshSort(query) {
   return query.sort({ updatedAt: -1, createdAt: -1, matchDate: -1, _id: -1 });
 }
 
+function shouldRequestPredictionEligibleFights(query = {}) {
+  const values = [query.playable, query.predictionEligible, query.userPlayable, query.canPredict, query.status, query.intent]
+    .map((value) => String(value || '').trim().toLowerCase());
+  return values.some((value) => ['true', '1', 'yes', 'playable', 'prediction', 'predictions', 'can-predict', 'open-for-predictions', 'active-contests'].includes(value));
+}
+
+const PREDICTION_ELIGIBLE_MATCH_STATUSES = ['Scheduled', 'Open', 'Live', 'Ongoing', 'scheduled', 'open', 'live', 'ongoing', 'Active', 'active'];
+
+function buildPredictionEligibleFightFilter() {
+  return {
+    $or: [
+      { matchShadowOpenStatus: { $in: ['open', 'Open'] } },
+      { matchStatus: { $in: PREDICTION_ELIGIBLE_MATCH_STATUSES } },
+      { status: { $in: PREDICTION_ELIGIBLE_MATCH_STATUSES } },
+    ],
+  };
+}
+
+function isPredictionEligibleFightRecord(match = {}) {
+  if (isDraftFightRecord(match)) return false;
+  const normalize = (value) => String(value || '').trim().toLowerCase();
+  const status = normalize(match.matchStatus || match.status);
+  const openStatus = normalize(match.matchShadowOpenStatus);
+  const shadowStatus = normalize(match.matchShadowStatus);
+  const closedLike = ['finished', 'closed', 'completed', 'complete', 'cancelled', 'canceled'];
+  if (closedLike.includes(status) || closedLike.includes(openStatus)) return false;
+  if (openStatus === 'open') return true;
+  if (['scheduled', 'open', 'live', 'ongoing', 'active'].includes(status)) return true;
+  if (shadowStatus === 'active' && !closedLike.includes(openStatus)) return true;
+  // Legacy fights often miss a normalized status but are still playable if they
+  // are not explicitly closed/draft and have enough card data to submit picks.
+  return Boolean(match.matchFighterA && match.matchFighterB && !status && !openStatus);
+}
+
 
 async function updateFightVideoFields(Model, id, body = {}) {
   const update = {};
@@ -2002,69 +2036,128 @@ app.post(
 
 // Get Matches API
 app.get('/match', async (req, res) => {
-  const query = {};
+  try {
+    const query = {};
 
-  if (!isAllFilterValue(req.query.status)) {
-    const statusValue = String(req.query.status || '').trim().toLowerCase();
-    const now = new Date();
-    if (['past', 'previous', 'completed', 'complete', 'finished'].includes(statusValue)) {
-      query.$or = [
-        ...(query.$or || []),
-        { matchStatus: { $in: ['Finished', 'Closed', 'finished', 'closed', 'Completed', 'completed'] } },
-        { matchShadowOpenStatus: { $in: ['closed', 'Closed'] } },
-        { matchDate: { $lt: now } },
-      ];
-    } else if (['upcoming', 'future', 'scheduled'].includes(statusValue)) {
-      query.$or = [
-        ...(query.$or || []),
-        { matchStatus: { $in: ['Scheduled', 'Open', 'Live', 'Ongoing', 'scheduled', 'open', 'live', 'ongoing'] } },
-        { matchShadowOpenStatus: { $in: ['open', 'Open'] } },
-        { matchDate: { $gte: now } },
-      ];
-    } else {
-      const statusRegex = exactTextRegex(req.query.status);
-      if (statusRegex) query.matchStatus = statusRegex;
+    if (!isAllFilterValue(req.query.status)) {
+      const statusValue = String(req.query.status || '').trim().toLowerCase();
+      const now = new Date();
+      if (['playable', 'prediction', 'predictions', 'can-predict', 'open-for-predictions', 'active-contests'].includes(statusValue)) {
+        query.$or = buildPredictionEligibleFightFilter().$or;
+      } else if (['past', 'previous', 'completed', 'complete', 'finished'].includes(statusValue)) {
+        query.$or = [
+          ...(query.$or || []),
+          { matchStatus: { $in: ['Finished', 'Closed', 'finished', 'closed', 'Completed', 'completed'] } },
+          { matchShadowOpenStatus: { $in: ['closed', 'Closed'] } },
+          { matchDate: { $lt: now } },
+        ];
+      } else if (['upcoming', 'future', 'scheduled'].includes(statusValue)) {
+        query.$or = [
+          ...(query.$or || []),
+          { matchStatus: { $in: ['Scheduled', 'Open', 'Live', 'Ongoing', 'scheduled', 'open', 'live', 'ongoing'] } },
+          { matchShadowOpenStatus: { $in: ['open', 'Open'] } },
+          { matchDate: { $gte: now } },
+        ];
+      } else {
+        const statusRegex = exactTextRegex(req.query.status);
+        if (statusRegex) query.matchStatus = statusRegex;
+      }
     }
-  }
 
-  if (!isAllFilterValue(req.query.category)) {
-    const categoryRegex = exactTextRegex(req.query.category);
-    if (categoryRegex) {
-      query.$or = [
-        { matchCategory: categoryRegex },
-        { matchCategoryTwo: categoryRegex },
-      ];
+    if (!isAllFilterValue(req.query.category)) {
+      const categoryRegex = exactTextRegex(req.query.category);
+      if (categoryRegex) {
+        query.$or = [
+          { matchCategory: categoryRegex },
+          { matchCategoryTwo: categoryRegex },
+        ];
+      }
     }
-  }
 
-  if (!isAllFilterValue(req.query.shadowStatus)) query.matchShadowStatus = exactTextRegex(req.query.shadowStatus) || req.query.shadowStatus;
-  if (!isAllFilterValue(req.query.openStatus)) query.matchShadowOpenStatus = exactTextRegex(req.query.openStatus) || req.query.openStatus;
+    if (!isAllFilterValue(req.query.shadowStatus)) query.matchShadowStatus = exactTextRegex(req.query.shadowStatus) || req.query.shadowStatus;
+    if (!isAllFilterValue(req.query.openStatus)) query.matchShadowOpenStatus = exactTextRegex(req.query.openStatus) || req.query.openStatus;
 
-  const visibleQuery = applyFightPublicVisibilityFilter(query, req.query);
-  let match = await applyFightFreshSort(Match.find(visibleQuery));
-  // Safety fallback for legacy records: if the stricter public query produces no
-  // results, keep the same base filters and remove only explicit Draft fights in
-  // memory. This prevents public fight pages from going blank while still hiding drafts.
-  if (!match.length && !shouldIncludeDraftFights(req.query)) {
-    const fallback = await applyFightFreshSort(Match.find(query));
-    match = fallback.filter((item) => !isDraftFightRecord(item));
-  }
-
-  // Legacy fallback: many admin/public fight cards are stored as Shadow
-  // fights before being promoted. Keep /match backward compatible by falling
-  // back to Shadow records when Match returns empty. Public requests still hide
-  // explicit drafts, while admin/includeDrafts requests can see draft shadows.
-  if (!match.length) {
-    try {
-      const shadowFallback = await applyFightFreshSort(Shadow.find(query));
-      match = shouldIncludeDraftFights(req.query)
-        ? shadowFallback
-        : shadowFallback.filter((item) => !isDraftFightRecord(item));
-    } catch (fallbackError) {
-      console.warn('Legacy /match shadow fallback failed:', fallbackError.message);
+    if (shouldRequestPredictionEligibleFights(req.query) && !query.$or) {
+      query.$or = buildPredictionEligibleFightFilter().$or;
     }
+
+    const visibleQuery = applyFightPublicVisibilityFilter(query, req.query);
+    let match = await applyFightFreshSort(Match.find(visibleQuery));
+
+    // Safety fallback for legacy records: if the stricter public query produces no
+    // results, keep the same base filters and remove only explicit Draft fights in
+    // memory. This prevents public fight pages from going blank while still hiding drafts.
+    if (!match.length && !shouldIncludeDraftFights(req.query)) {
+      const fallback = await applyFightFreshSort(Match.find(query));
+      match = fallback.filter((item) => !isDraftFightRecord(item));
+    }
+
+    // Legacy fallback: many admin/public fight cards are stored as Shadow
+    // fights before being promoted. Keep /match backward compatible by falling
+    // back to Shadow records when Match returns empty. Public requests still hide
+    // explicit drafts, while admin/includeDrafts requests can see draft shadows.
+    if (!match.length) {
+      try {
+        const shadowFallback = await applyFightFreshSort(Shadow.find(query));
+        match = shouldIncludeDraftFights(req.query)
+          ? shadowFallback
+          : shadowFallback.filter((item) => !isDraftFightRecord(item));
+      } catch (fallbackError) {
+        console.warn('Legacy /match shadow fallback failed:', fallbackError.message);
+      }
+    }
+
+    if (shouldRequestPredictionEligibleFights(req.query)) {
+      match = match.filter((item) => isPredictionEligibleFightRecord(item));
+    }
+
+    res.send(match);
+  } catch (error) {
+    console.error('Error fetching matches:', error);
+    res.status(500).json({ message: 'Error fetching matches' });
   }
-  res.send(match);
+});
+
+// Public/user-facing prediction-ready fight feed. This endpoint intentionally
+// reads both regular Match and Shadow fight records because the site supports
+// both paths for fight cards and promotional/affiliate contests. It hides only
+// explicit drafts and closed/completed fights so users always see cards where
+// predictions can be submitted.
+app.get('/api/public/prediction-fights', async (req, res) => {
+  try {
+    const limit = Math.min(Math.max(parseInt(req.query.limit, 10) || 20, 1), 100);
+    const baseQuery = { ...req.query, playable: 'true' };
+    const visibleFilter = applyFightPublicVisibilityFilter(buildPredictionEligibleFightFilter(), baseQuery);
+    const [matches, shadows] = await Promise.all([
+      applyFightFreshSort(Match.find(visibleFilter)).limit(200).lean(),
+      applyFightFreshSort(Shadow.find(visibleFilter)).limit(200).lean().catch(() => []),
+    ]);
+    let items = [
+      ...matches.map((item) => ({ ...item, sourceType: 'match' })),
+      ...shadows.map((item) => ({ ...item, sourceType: 'shadow' })),
+    ].filter((item) => isPredictionEligibleFightRecord(item));
+
+    if (!isAllFilterValue(req.query.category)) {
+      const requested = String(req.query.category || '').trim().toLowerCase();
+      items = items.filter((item) => [item.matchCategory, item.matchCategoryTwo, item.sport, item.gameMode]
+        .map((value) => String(value || '').trim().toLowerCase())
+        .some((value) => value === requested));
+    }
+
+    items = items.sort((a, b) => {
+      const toTime = (value) => {
+        const date = value ? new Date(value) : null;
+        return date && !Number.isNaN(date.getTime()) ? date.getTime() : 0;
+      };
+      return Math.max(toTime(b.updatedAt), toTime(b.createdAt), toTime(b.matchDate), toTime(b._id?.getTimestamp?.()))
+        - Math.max(toTime(a.updatedAt), toTime(a.createdAt), toTime(a.matchDate), toTime(a._id?.getTimestamp?.()));
+    }).slice(0, limit);
+
+    res.json({ ok: true, items, count: items.length });
+  } catch (error) {
+    console.error('Error loading prediction-ready fights:', error);
+    res.status(500).json({ ok: false, message: 'Failed to load prediction-ready fights.' });
+  }
 });
 
 // Update user prediction status

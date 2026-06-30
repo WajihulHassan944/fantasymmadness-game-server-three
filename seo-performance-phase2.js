@@ -52,6 +52,7 @@ function registerSeoPerformancePhase2Routes(options = {}) {
 
   const seoModels = buildSeoModels(mongoose);
   const asyncHandler = (handler) => (req, res, next) => Promise.resolve(handler(req, res, next)).catch(next);
+  const withMergedQuery = (req, extraQuery = {}) => ({ ...req, query: { ...(req.query || {}), ...extraQuery } });
 
   app.locals.seoPerformancePhase2 = {
     buildSitemapData: () => buildSitemapData({ models, seoModels }),
@@ -101,6 +102,11 @@ function registerSeoPerformancePhase2Routes(options = {}) {
   app.get('/api/public/fights', cachePublicResponse, asyncHandler(async (req, res) => {
     const result = await listFights({ req, Match: models.Match, Shadow: models.Shadow });
     res.json({ ok: true, ...result });
+  }));
+
+  app.get('/api/public/prediction-fights', cachePublicResponse, asyncHandler(async (req, res) => {
+    const result = await listFights({ req: withMergedQuery(req, { playable: 'true', intent: 'active-contests' }), Match: models.Match, Shadow: models.Shadow });
+    res.json({ ok: true, ...result, feed: 'prediction-ready' });
   }));
 
   app.get('/api/public/fights/:id', cachePublicResponse, asyncHandler(async (req, res) => {
@@ -320,6 +326,38 @@ function isDraftFightRecord(fight = {}) {
     || FIGHT_DRAFT_STATUS_REGEX.test(String(fight.matchShadowStatus || ''));
 }
 
+function shouldRequestPredictionEligibleFights(query = {}) {
+  const values = [query.playable, query.predictionEligible, query.userPlayable, query.canPredict, query.status, query.intent]
+    .map((value) => String(value || '').trim().toLowerCase());
+  return values.some((value) => ['true', '1', 'yes', 'playable', 'prediction', 'predictions', 'can-predict', 'open-for-predictions', 'active-contests'].includes(value));
+}
+
+const PREDICTION_ELIGIBLE_MATCH_STATUSES = ['Scheduled', 'Open', 'Live', 'Ongoing', 'scheduled', 'open', 'live', 'ongoing', 'Active', 'active'];
+
+function buildPredictionEligibleFightFilter() {
+  return {
+    $or: [
+      { matchShadowOpenStatus: { $in: ['open', 'Open'] } },
+      { matchStatus: { $in: PREDICTION_ELIGIBLE_MATCH_STATUSES } },
+      { status: { $in: PREDICTION_ELIGIBLE_MATCH_STATUSES } },
+    ],
+  };
+}
+
+function isPredictionEligibleFightRecord(fight = {}) {
+  if (isDraftFightRecord(fight)) return false;
+  const normalize = (value) => String(value || '').trim().toLowerCase();
+  const status = normalize(fight.matchStatus || fight.status);
+  const openStatus = normalize(fight.matchShadowOpenStatus);
+  const shadowStatus = normalize(fight.matchShadowStatus);
+  const closedLike = ['finished', 'closed', 'completed', 'complete', 'cancelled', 'canceled'];
+  if (closedLike.includes(status) || closedLike.includes(openStatus)) return false;
+  if (openStatus === 'open') return true;
+  if (['scheduled', 'open', 'live', 'ongoing', 'active'].includes(status)) return true;
+  if (shadowStatus === 'active' && !closedLike.includes(openStatus)) return true;
+  return Boolean(fight.matchFighterA && fight.matchFighterB && !status && !openStatus);
+}
+
 function publicFightVisibilityFilter(query = {}) {
   if (shouldIncludeDraftFights(query)) return null;
 
@@ -360,7 +398,15 @@ function buildFightFilter(query = {}) {
   if (!isAllFilterValue(query.status)) {
     const status = cleanString(query.status).toLowerCase();
     const now = new Date();
-    if (['past', 'previous', 'completed', 'complete', 'finished'].includes(status)) {
+    if (['playable', 'prediction', 'predictions', 'can-predict', 'open-for-predictions', 'active-contests'].includes(status)) {
+      const statusOr = buildPredictionEligibleFightFilter().$or;
+      if (filter.$or) {
+        filter.$and = [{ $or: filter.$or }, { $or: statusOr }];
+        delete filter.$or;
+      } else {
+        filter.$or = statusOr;
+      }
+    } else if (['past', 'previous', 'completed', 'complete', 'finished'].includes(status)) {
       const statusOr = [
         { matchStatus: { $in: ['Finished', 'Closed', 'finished', 'closed', 'Completed', 'completed'] } },
         { matchShadowOpenStatus: { $in: ['closed', 'Closed'] } },
@@ -401,6 +447,16 @@ function buildFightFilter(query = {}) {
       Object.assign(filter, searchFilter);
     }
   }
+  if (shouldRequestPredictionEligibleFights(query) && !cleanString(query.status)) {
+    const playableOr = buildPredictionEligibleFightFilter().$or;
+    if (filter.$or) {
+      filter.$and = [...(filter.$and || []), { $or: filter.$or }, { $or: playableOr }];
+      delete filter.$or;
+    } else {
+      filter.$or = playableOr;
+    }
+  }
+
   return mergeMongoFilters(filter, publicFightVisibilityFilter(query));
 }
 
@@ -476,6 +532,7 @@ async function loadFightDocs(Model, query = {}, source = 'match') {
 function filterPublicFightDocs(docs = [], query = {}) {
   return docs.filter((fight) => {
     if (!shouldIncludeDraftFights(query) && isDraftFightRecord(fight)) return false;
+    if (shouldRequestPredictionEligibleFights(query) && !isPredictionEligibleFightRecord(fight)) return false;
     return fightMatchesRequestedSport(fight, query)
       && fightMatchesRequestedStatus(fight, query)
       && fightMatchesRequestedSearch(fight, query);
