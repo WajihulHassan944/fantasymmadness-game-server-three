@@ -1300,68 +1300,194 @@ app.post('/api/admin/shadow/:id/scoring', async (req, res) => {
   }
 });
 
-app.delete('/api/matches/:id', async (req, res) => {
-  try {
-    const { id } = req.params; // matchId
-    const { affiliateId, updateWallet } = req.query; // Get affiliateId and flag from query parameters
-
-    // Find the match to get image delete URLs
-    const match = await Match.findById(id);
-    if (!match) {
-      return res.status(404).json({ message: 'Match not found' });
+async function safelyDeleteFightImages(fight) {
+  const deleteFromCloudinary = async (publicId) => {
+    if (!publicId) return;
+    try {
+      await cloudinary.uploader.destroy(publicId);
+    } catch (imageError) {
+      console.warn('Fight image delete skipped:', imageError.message);
     }
+  };
 
- const notification = new Notification({
-      title: `Fight Deleted: ${match.matchName}`,
+  await Promise.all([
+    deleteFromCloudinary(fight?.fighterAImageDeleteUrl),
+    deleteFromCloudinary(fight?.fighterBImageDeleteUrl),
+    deleteFromCloudinary(fight?.promotionBackgroundDeleteUrl),
+  ]);
+}
+
+async function refundMatchScoresIfRequested(match, matchId, updateWallet) {
+  if (updateWallet !== 'true') return { refundedUsers: 0 };
+
+  const scores = await Score.find({ matchId });
+  const matchTokens = Number(match?.matchTokens || 0);
+  let refundedUsers = 0;
+
+  await Promise.all(scores.map(async (score) => {
+    const user = await User.findById(score.playerId);
+    if (user) {
+      user.tokens = String((parseInt(user.tokens) || 0) + matchTokens);
+      await user.save();
+      refundedUsers += 1;
+    }
+  }));
+
+  return { refundedUsers };
+}
+
+function isValidMongoObjectId(id) {
+  return Boolean(id && mongoose.Types.ObjectId.isValid(String(id)));
+}
+
+function normalizeFightDeleteItems(payload = {}) {
+  const rawItems = Array.isArray(payload.items) ? payload.items
+    : Array.isArray(payload.ids) ? payload.ids
+      : Array.isArray(payload.fightIds) ? payload.fightIds
+        : Array.isArray(payload.matchIds) ? payload.matchIds
+          : [];
+
+  return rawItems
+    .map((item) => {
+      if (typeof item === 'string') return { id: item };
+      if (!item || typeof item !== 'object') return null;
+      return {
+        id: item.id || item._id || item.matchId || item.fightId,
+        sourceType: item.sourceType || item.source || item.type,
+      };
+    })
+    .filter((item) => item && isValidMongoObjectId(item.id));
+}
+
+async function deleteFightAcrossCollections(id, options = {}) {
+  const { sourceType, affiliateId, updateWallet } = options;
+
+  if (!isValidMongoObjectId(id)) {
+    return { ok: false, id, code: 'INVALID_ID', message: 'Invalid fight id.' };
+  }
+
+  const normalizedSource = String(sourceType || '').trim().toLowerCase();
+  const shouldTryShadowFirst = ['shadow', 'shadowfight', 'template'].includes(normalizedSource);
+  const lookupOrder = shouldTryShadowFirst
+    ? [{ model: Shadow, sourceType: 'shadow' }, { model: Match, sourceType: 'match' }]
+    : [{ model: Match, sourceType: 'match' }, { model: Shadow, sourceType: 'shadow' }];
+
+  let found = null;
+  for (const candidate of lookupOrder) {
+    const fight = await candidate.model.findById(id);
+    if (fight) {
+      found = { ...candidate, fight };
+      break;
+    }
+  }
+
+  if (!found) {
+    return { ok: false, id, code: 'FIGHT_NOT_FOUND', message: 'Fight not found in Match or Shadow collections.' };
+  }
+
+  const { fight, model, sourceType: resolvedSourceType } = found;
+  await safelyDeleteFightImages(fight);
+
+  let refundResult = { refundedUsers: 0 };
+  if (resolvedSourceType === 'match') {
+    refundResult = await refundMatchScoresIfRequested(fight, id, updateWallet);
+  }
+
+  await model.findByIdAndDelete(id);
+  const scoreDeleteResult = await Score.deleteMany({ matchId: id });
+
+  await Shadow.updateMany(
+    { 'AffiliateIds.matchId': id },
+    { $pull: { AffiliateIds: affiliateId
+      ? { AffiliateId: affiliateId, matchId: id }
+      : { matchId: id }
+    } }
+  );
+
+  try {
+    const notification = new Notification({
+      title: `${resolvedSourceType === 'shadow' ? 'Shadow Fight' : 'Fight'} Deleted: ${fight.matchName || 'Untitled Fight'}`,
     });
     await notification.save();
-    // Delete images from Cloudinary
-    const deleteFromCloudinary = async (publicId) => {
-      if (publicId) {
-        await cloudinary.uploader.destroy(publicId);
-      }
-    };
+  } catch (notificationError) {
+    console.warn('Fight delete notification skipped:', notificationError.message);
+  }
 
-    await Promise.all([
-      deleteFromCloudinary(match.fighterAImageDeleteUrl),
-      deleteFromCloudinary(match.fighterBImageDeleteUrl),
-      deleteFromCloudinary(match.promotionBackgroundDeleteUrl),
-    ]);
+  return {
+    ok: true,
+    id,
+    sourceType: resolvedSourceType,
+    title: fight.matchName,
+    deletedScores: scoreDeleteResult?.deletedCount || 0,
+    refundedUsers: refundResult.refundedUsers || 0,
+  };
+}
 
-    // If updateWallet flag is true, update user wallets
-    if (updateWallet === 'true') {
-      const scores = await Score.find({ matchId: id });
-      const matchTokens = match.matchTokens !== null ? match.matchTokens : 0; // Default to 0 if null
+async function handleBulkFightDelete(req, res) {
+  try {
+    const items = normalizeFightDeleteItems(req.body);
 
-      await Promise.all(scores.map(async (score) => {
-        const user = await User.findById(score.playerId);
-        if (user) {
-          user.tokens = ((parseInt(user.tokens) || 0) + matchTokens).toString();
-          await user.save();
-        }
-      }));
+    if (!items.length) {
+      return res.status(400).json({
+        ok: false,
+        message: 'Please provide fight ids in ids, fightIds, matchIds, or items.',
+      });
     }
 
-    // Delete the match by ID
-    const deletedMatch = await Match.findByIdAndDelete(id);
-    if (!deletedMatch) {
-      return res.status(404).json({ message: 'Match not found' });
-    }
- 
-    // Delete the associated predictions
-    await Score.deleteMany({ matchId: id });
-
-    // Remove affiliateId and matchId combination from AffiliateIds
-    if (affiliateId) {
-      await Shadow.updateMany(
-        { 'AffiliateIds.AffiliateId': affiliateId, 'AffiliateIds.matchId': id },
-        { $pull: { AffiliateIds: { AffiliateId: affiliateId, matchId: id } } }
-      );
+    const results = [];
+    for (const item of items) {
+      const result = await deleteFightAcrossCollections(item.id, {
+        sourceType: item.sourceType,
+        affiliateId: req.query.affiliateId || req.body.affiliateId,
+        updateWallet: String(req.query.updateWallet || req.body.updateWallet || 'false'),
+      });
+      results.push(result);
     }
 
-    res.status(200).json({ message: 'Match, associated predictions, and images deleted successfully. Wallets updated if applicable.' });
+    const deletedCount = results.filter((item) => item.ok).length;
+    const failedCount = results.length - deletedCount;
+
+    return res.status(failedCount && !deletedCount ? 404 : 200).json({
+      ok: failedCount === 0,
+      message: `${deletedCount} fight(s) deleted${failedCount ? `, ${failedCount} failed` : ''}.`,
+      deletedCount,
+      failedCount,
+      results,
+    });
   } catch (error) {
-    res.status(500).json({ message: 'Server error', error });
+    console.error('Bulk fight delete failed:', error);
+    return res.status(500).json({ ok: false, message: 'Server error', error: error.message });
+  }
+}
+
+app.post('/api/admin/fights/bulk-delete', handleBulkFightDelete);
+app.delete('/api/admin/fights/bulk-delete', handleBulkFightDelete);
+app.post('/api/matches/bulk-delete', handleBulkFightDelete);
+app.delete('/api/matches/bulk-delete', handleBulkFightDelete);
+
+app.delete('/api/matches/:id', async (req, res) => {
+  try {
+    const result = await deleteFightAcrossCollections(req.params.id, {
+      sourceType: req.query.sourceType || req.query.source,
+      affiliateId: req.query.affiliateId,
+      updateWallet: String(req.query.updateWallet || 'false'),
+    });
+
+    if (!result.ok) {
+      return res.status(result.code === 'INVALID_ID' ? 400 : 404).json({
+        message: result.message,
+        code: result.code,
+        id: result.id,
+      });
+    }
+
+    return res.status(200).json({
+      message: `${result.sourceType === 'shadow' ? 'Shadow fight' : 'Match'} deleted successfully.`,
+      result,
+    });
+  } catch (error) {
+    console.error('Fight delete failed:', error);
+    res.status(500).json({ message: 'Server error', error: error.message });
   }
 });
 
