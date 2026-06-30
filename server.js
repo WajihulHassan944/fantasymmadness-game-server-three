@@ -1885,12 +1885,14 @@ app.get('/match', async (req, res) => {
       query.$or = [
         ...(query.$or || []),
         { matchStatus: { $in: ['Finished', 'Closed', 'finished', 'closed', 'Completed', 'completed'] } },
+        { matchShadowOpenStatus: { $in: ['closed', 'Closed'] } },
         { matchDate: { $lt: now } },
       ];
     } else if (['upcoming', 'future', 'scheduled'].includes(statusValue)) {
       query.$or = [
         ...(query.$or || []),
         { matchStatus: { $in: ['Scheduled', 'Open', 'Live', 'Ongoing', 'scheduled', 'open', 'live', 'ongoing'] } },
+        { matchShadowOpenStatus: { $in: ['open', 'Open'] } },
         { matchDate: { $gte: now } },
       ];
     } else {
@@ -1920,6 +1922,19 @@ app.get('/match', async (req, res) => {
   if (!match.length && !shouldIncludeDraftFights(req.query)) {
     const fallback = await applyFightFreshSort(Match.find(query));
     match = fallback.filter((item) => !isDraftFightRecord(item));
+  }
+
+  // Public legacy fallback: many live/promotional cards are stored as Shadow
+  // fights before being promoted. If the Match collection has nothing for the
+  // public query, return non-draft Shadow fights so the public site, past pages,
+  // user dashboard, and affiliate side do not go blank.
+  if (!match.length && !shouldIncludeDraftFights(req.query)) {
+    try {
+      const shadowFallback = await applyFightFreshSort(Shadow.find(query));
+      match = shadowFallback.filter((item) => !isDraftFightRecord(item));
+    } catch (fallbackError) {
+      console.warn('Legacy /match shadow fallback failed:', fallbackError.message);
+    }
   }
   res.send(match);
 });

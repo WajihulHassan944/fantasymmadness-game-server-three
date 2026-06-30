@@ -99,12 +99,12 @@ function registerSeoPerformancePhase2Routes(options = {}) {
   }));
 
   app.get('/api/public/fights', cachePublicResponse, asyncHandler(async (req, res) => {
-    const result = await listFights({ req, Match: models.Match });
+    const result = await listFights({ req, Match: models.Match, Shadow: models.Shadow });
     res.json({ ok: true, ...result });
   }));
 
   app.get('/api/public/fights/:id', cachePublicResponse, asyncHandler(async (req, res) => {
-    const fight = await findFightById(models.Match, req.params.id, req.query);
+    const fight = await findFightById(models.Match, models.Shadow, req.params.id, req.query);
     if (!fight) return res.status(404).json({ ok: false, code: 'FIGHT_NOT_FOUND', message: 'Fight not found.' });
     const related = await buildInternalLinks({ query: { entityType: 'fight', entityId: req.params.id, limit: 8 }, req, models });
     res.json({ ok: true, fight: serializeFight(fight, req), related });
@@ -314,6 +314,12 @@ function isExplicitDraftFight(fight = {}) {
   );
 }
 
+function isDraftFightRecord(fight = {}) {
+  return isExplicitDraftFight(fight)
+    || FIGHT_DRAFT_STATUS_REGEX.test(String(fight.status || ''))
+    || FIGHT_DRAFT_STATUS_REGEX.test(String(fight.matchShadowStatus || ''));
+}
+
 function publicFightVisibilityFilter(query = {}) {
   if (shouldIncludeDraftFights(query)) return null;
 
@@ -350,16 +356,46 @@ function buildFightFilter(query = {}) {
       ];
     }
   }
+
   if (!isAllFilterValue(query.status)) {
-    const statusRegex = exactTextRegex(query.status);
-    if (statusRegex) filter.matchStatus = statusRegex;
+    const status = cleanString(query.status).toLowerCase();
+    const now = new Date();
+    if (['past', 'previous', 'completed', 'complete', 'finished'].includes(status)) {
+      const statusOr = [
+        { matchStatus: { $in: ['Finished', 'Closed', 'finished', 'closed', 'Completed', 'completed'] } },
+        { matchShadowOpenStatus: { $in: ['closed', 'Closed'] } },
+        { matchDate: { $lt: now } },
+      ];
+      if (filter.$or) {
+        filter.$and = [{ $or: filter.$or }, { $or: statusOr }];
+        delete filter.$or;
+      } else {
+        filter.$or = statusOr;
+      }
+    } else if (['upcoming', 'future', 'scheduled'].includes(status)) {
+      const statusOr = [
+        { matchStatus: { $in: ['Scheduled', 'Open', 'Live', 'Ongoing', 'scheduled', 'open', 'live', 'ongoing'] } },
+        { matchShadowOpenStatus: { $in: ['open', 'Open'] } },
+        { matchDate: { $gte: now } },
+      ];
+      if (filter.$or) {
+        filter.$and = [{ $or: filter.$or }, { $or: statusOr }];
+        delete filter.$or;
+      } else {
+        filter.$or = statusOr;
+      }
+    } else {
+      const statusRegex = exactTextRegex(query.status);
+      if (statusRegex) filter.matchStatus = statusRegex;
+    }
   }
+
   if (!isAllFilterValue(query.openStatus)) filter.matchShadowOpenStatus = exactTextRegex(query.openStatus) || query.openStatus;
   if (!isAllFilterValue(query.shadowStatus)) filter.matchShadowStatus = exactTextRegex(query.shadowStatus) || query.shadowStatus;
   const searchFilter = buildSearchFilter(query.search, ['matchName', 'matchFighterA', 'matchFighterB', 'matchDescription']);
   if (searchFilter) {
     if (filter.$or) {
-      filter.$and = [{ $or: filter.$or }, searchFilter];
+      filter.$and = [...(filter.$and || []), { $or: filter.$or }, searchFilter];
       delete filter.$or;
     } else {
       Object.assign(filter, searchFilter);
@@ -376,25 +412,102 @@ function fightSort(query = {}) {
   return { matchStatus: -1, matchShadowOpenStatus: -1, updatedAt: -1, createdAt: -1, matchDate: -1, _id: -1 };
 }
 
-async function listFights({ req, Match }) {
-  if (!Match) return emptyPaginated(req);
-  const page = safePage(req.query.page);
-  const limit = safeLimit(req.query.limit, 20);
-  const filter = buildFightFilter(req.query);
-  const total = await Match.countDocuments(filter);
-  const docs = await Match.find(filter).sort(fightSort(req.query)).skip((page - 1) * limit).limit(limit).lean();
-  const publicDocs = shouldIncludeDraftFights(req.query) ? docs : docs.filter((fight) => !isExplicitDraftFight(fight));
-  return { items: publicDocs.map((fight) => serializeFight(fight, req)), pagination: paginationMeta({ page, limit, total }) };
+function normalizeFightSportValue(value) {
+  const raw = cleanString(value).toLowerCase();
+  if (!raw) return '';
+  if (['mma', 'mixed martial arts', 'ufc'].includes(raw)) return 'mma';
+  if (['boxing', 'box'].includes(raw)) return 'boxing';
+  if (['kickboxing', 'kick boxing'].includes(raw)) return 'kickboxing';
+  if (['bareknuckle', 'bare knuckle', 'bare-knuckle', 'bkfc'].includes(raw)) return 'bareknuckle';
+  return raw;
 }
 
-async function findFightById(Match, id, query = {}) {
-  if (!Match || !cleanString(id)) return null;
-  if (!id.match(/^[a-f0-9]{24}$/i)) return null;
-  const filter = mergeMongoFilters({ _id: id }, publicFightVisibilityFilter(query));
-  const fight = await Match.findOne(filter).lean();
-  if (fight || shouldIncludeDraftFights(query)) return fight;
-  const fallback = await Match.findById(id).lean();
-  return fallback && !isDraftFightRecord(fallback) ? fallback : null;
+function fightMatchesRequestedSport(fight = {}, query = {}) {
+  const requested = normalizeFightSportValue(query.sport || query.category || query.matchCategory);
+  if (!requested || isAllFilterValue(requested)) return true;
+  const candidates = [fight.matchCategory, fight.matchCategoryTwo, fight.sport, fight.gameMode]
+    .map(normalizeFightSportValue)
+    .filter(Boolean);
+  return candidates.includes(requested);
+}
+
+function fightMatchesRequestedStatus(fight = {}, query = {}) {
+  const requested = cleanString(query.status).toLowerCase();
+  if (!requested || isAllFilterValue(requested)) return true;
+  const now = new Date();
+  const matchDate = fight.matchDate ? new Date(fight.matchDate) : null;
+  const status = cleanString(fight.matchStatus || fight.status || fight.matchShadowOpenStatus).toLowerCase();
+  if (['past', 'previous', 'completed', 'complete', 'finished'].includes(requested)) {
+    return ['finished', 'closed', 'completed', 'complete'].includes(status) || (matchDate && !Number.isNaN(matchDate.getTime()) && matchDate < now);
+  }
+  if (['upcoming', 'future', 'scheduled'].includes(requested)) {
+    return ['scheduled', 'open', 'live', 'ongoing', 'active'].includes(status) || (matchDate && !Number.isNaN(matchDate.getTime()) && matchDate >= now);
+  }
+  return status === requested;
+}
+
+function fightMatchesRequestedSearch(fight = {}, query = {}) {
+  const term = cleanString(query.search).toLowerCase();
+  if (!term) return true;
+  return [fight.matchName, fight.matchFighterA, fight.matchFighterB, fight.matchDescription]
+    .some((value) => cleanString(value).toLowerCase().includes(term));
+}
+
+function compareFightsFresh(a = {}, b = {}) {
+  const toTime = (value) => {
+    const date = value ? new Date(value) : null;
+    return date && !Number.isNaN(date.getTime()) ? date.getTime() : 0;
+  };
+  return Math.max(toTime(b.updatedAt), toTime(b.createdAt), toTime(b.matchDate), toTime(b._id?.getTimestamp?.()))
+    - Math.max(toTime(a.updatedAt), toTime(a.createdAt), toTime(a.matchDate), toTime(a._id?.getTimestamp?.()));
+}
+
+async function loadFightDocs(Model, query = {}, source = 'match') {
+  if (!Model) return [];
+  const filter = buildFightFilter(query);
+  let docs = await Model.find(filter).sort(fightSort(query)).limit(500).lean();
+  if (!docs.length && !shouldIncludeDraftFights(query)) {
+    const fallbackFilter = buildFightFilter({ ...query, includeDrafts: 'true' });
+    docs = await Model.find(fallbackFilter).sort(fightSort(query)).limit(500).lean();
+  }
+  return docs.map((doc) => ({ ...doc, sourceType: source }));
+}
+
+function filterPublicFightDocs(docs = [], query = {}) {
+  return docs.filter((fight) => {
+    if (!shouldIncludeDraftFights(query) && isDraftFightRecord(fight)) return false;
+    return fightMatchesRequestedSport(fight, query)
+      && fightMatchesRequestedStatus(fight, query)
+      && fightMatchesRequestedSearch(fight, query);
+  });
+}
+
+async function listFights({ req, Match, Shadow }) {
+  const page = safePage(req.query.page);
+  const limit = safeLimit(req.query.limit, 20);
+  const source = cleanString(req.query.source || 'all').toLowerCase();
+  const sources = [];
+  if (source === 'all' || source === 'match' || source === 'matches') sources.push(loadFightDocs(Match, req.query, 'match'));
+  if (source === 'all' || source === 'shadow' || source === 'shadows') sources.push(loadFightDocs(Shadow, req.query, 'shadow'));
+  if (!sources.length) sources.push(loadFightDocs(Match, req.query, 'match'));
+
+  const docs = (await Promise.all(sources)).flat();
+  const publicDocs = filterPublicFightDocs(docs, req.query).sort(compareFightsFresh);
+  const start = (page - 1) * limit;
+  const pageDocs = publicDocs.slice(start, start + limit);
+  return { items: pageDocs.map((fight) => serializeFight(fight, req)), pagination: paginationMeta({ page, limit, total: publicDocs.length }) };
+}
+
+async function findFightById(Match, Shadow, id, query = {}) {
+  if (!cleanString(id) || !id.match(/^[a-f0-9]{24}$/i)) return null;
+  const tryFind = async (Model) => {
+    if (!Model) return null;
+    const fight = await Model.findById(id).lean();
+    if (!fight) return null;
+    if (!shouldIncludeDraftFights(query) && isDraftFightRecord(fight)) return null;
+    return fight;
+  };
+  return (await tryFind(Match)) || (await tryFind(Shadow));
 }
 
 function serializeFight(fight, req) {
@@ -562,8 +675,13 @@ async function buildSitemapData({ models, seoModels, req, type = 'all' }) {
   if (normalizedType === 'all' || normalizedType === 'static') {
     sections.static = STATIC_PUBLIC_PAGES.map((page) => ({ ...page, url: `${siteUrl}${page.path}`, lastmod: new Date().toISOString() }));
   }
-  if ((normalizedType === 'all' || normalizedType === 'fights') && models.Match) {
-    const fights = await models.Match.find(mergeMongoFilters({}, publicFightVisibilityFilter({}))).sort({ updatedAt: -1, createdAt: -1 }).limit(1000).lean();
+  if (normalizedType === 'all' || normalizedType === 'fights') {
+    const matchDocs = models.Match ? await models.Match.find(mergeMongoFilters({}, publicFightVisibilityFilter({}))).sort({ updatedAt: -1, createdAt: -1 }).limit(1000).lean() : [];
+    const shadowDocs = models.Shadow ? await models.Shadow.find(mergeMongoFilters({}, publicFightVisibilityFilter({}))).sort({ updatedAt: -1, createdAt: -1 }).limit(1000).lean() : [];
+    const fights = filterPublicFightDocs([
+      ...matchDocs.map((fight) => ({ ...fight, sourceType: 'match' })),
+      ...shadowDocs.map((fight) => ({ ...fight, sourceType: 'shadow' })),
+    ], {}).sort(compareFightsFresh).slice(0, 1000);
     sections.fights = fights.map((fight) => ({ url: `${siteUrl}/fights/${fight._id}`, lastmod: dateToIso(fight.updatedAt || fight.createdAt || fight.matchDate), priority: 0.85, changefreq: fight.matchStatus === 'Ongoing' ? 'hourly' : 'weekly', title: fight.matchName || `${fight.matchFighterA} vs ${fight.matchFighterB}` }));
   }
   if ((normalizedType === 'all' || normalizedType === 'blogs') && models.Blog) {
