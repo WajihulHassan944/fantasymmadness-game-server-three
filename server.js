@@ -2050,14 +2050,16 @@ app.get('/match', async (req, res) => {
     match = fallback.filter((item) => !isDraftFightRecord(item));
   }
 
-  // Public legacy fallback: many live/promotional cards are stored as Shadow
-  // fights before being promoted. If the Match collection has nothing for the
-  // public query, return non-draft Shadow fights so the public site, past pages,
-  // user dashboard, and affiliate side do not go blank.
-  if (!match.length && !shouldIncludeDraftFights(req.query)) {
+  // Legacy fallback: many admin/public fight cards are stored as Shadow
+  // fights before being promoted. Keep /match backward compatible by falling
+  // back to Shadow records when Match returns empty. Public requests still hide
+  // explicit drafts, while admin/includeDrafts requests can see draft shadows.
+  if (!match.length) {
     try {
       const shadowFallback = await applyFightFreshSort(Shadow.find(query));
-      match = shadowFallback.filter((item) => !isDraftFightRecord(item));
+      match = shouldIncludeDraftFights(req.query)
+        ? shadowFallback
+        : shadowFallback.filter((item) => !isDraftFightRecord(item));
     } catch (fallbackError) {
       console.warn('Legacy /match shadow fallback failed:', fallbackError.message);
     }
