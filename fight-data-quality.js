@@ -192,23 +192,34 @@ function registerFightDataQualityRoutes(options) {
     });
   }));
 
-  app.get('/api/combat-fighters', asyncHandler(async (req, res) => {
+  const publicCombatFighterListHandler = asyncHandler(async (req, res) => {
     const filter = buildFighterFilter(req.query, false);
     const page = clamp(toInt(req.query.page, 1), 1, 100000);
     const limit = clamp(toInt(req.query.limit, 50), 1, 100);
+    const sort = buildFighterSort(req.query, false);
     const [items, total] = await Promise.all([
-      CombatFighter.find(filter).sort({ displayName: 1 }).skip((page - 1) * limit).limit(limit).lean(),
+      CombatFighter.find(filter).sort(sort).skip((page - 1) * limit).limit(limit).lean(),
       CombatFighter.countDocuments(filter),
     ]);
-    res.json({ ok: true, items: items.map(serializeCombatFighter), pagination: pagination(page, limit, total) });
-  }));
+    res.json({
+      ok: true,
+      source: 'combat_fighters',
+      items: items.map(serializeCombatFighter),
+      pagination: pagination(page, limit, total),
+      note: 'Public fighter pages should use this fighter-library feed instead of deriving fighters from fight records.',
+    });
+  });
+
+  app.get('/api/combat-fighters', publicCombatFighterListHandler);
+  app.get('/api/public/combat-fighters', publicCombatFighterListHandler);
+  app.get('/api/public/fighters', publicCombatFighterListHandler);
 
   app.get('/api/admin/combat-fighters', verifyAdminToken, asyncHandler(async (req, res) => {
     const filter = buildFighterFilter(req.query, true);
     const page = clamp(toInt(req.query.page, 1), 1, 100000);
     const limit = clamp(toInt(req.query.limit, 50), 1, 100);
     const [items, total] = await Promise.all([
-      CombatFighter.find(filter).sort({ updatedAt: -1, displayName: 1 }).skip((page - 1) * limit).limit(limit).lean(),
+      CombatFighter.find(filter).sort(buildFighterSort(req.query, true)).skip((page - 1) * limit).limit(limit).lean(),
       CombatFighter.countDocuments(filter),
     ]);
     res.json({ ok: true, items: items.map(serializeCombatFighter), pagination: pagination(page, limit, total) });
@@ -336,6 +347,107 @@ function registerFightDataQualityRoutes(options) {
         : 'Combat fighter library import completed for the inspected records. Existing match fields are preserved as fallback; optional fighterAId/fighterBId references were linked when enabled.',
     });
   }));
+
+  const cleanupFightFighterFieldsHandler = asyncHandler(async (req, res) => {
+    const dryRun = parseBool(req.body?.dryRun, true);
+    const includeMatches = parseBool(req.body?.includeMatches, true);
+    const includeShadows = parseBool(req.body?.includeShadows, true);
+    const resolveMissingRefs = parseBool(req.body?.resolveMissingRefs, true);
+    const removeLegacyNames = parseBool(req.body?.removeLegacyNames ?? req.body?.removeNames, true);
+    const removeLegacyImages = parseBool(req.body?.removeLegacyImages ?? req.body?.removeImages, true);
+    const removeLegacyDeleteUrls = parseBool(req.body?.removeLegacyDeleteUrls ?? req.body?.removeDeleteUrls, true);
+    const batchSize = clamp(toInt(req.body?.batchSize, 50), 1, 150);
+    const filter = buildFightFighterCleanupFilter();
+
+    const [matches, shadows, totalMatches, totalShadows] = await Promise.all([
+      includeMatches ? Match.find(filter).select(selectFieldsForFighterImport()).sort({ updatedAt: -1, _id: -1 }).limit(batchSize).lean() : Promise.resolve([]),
+      includeShadows && Shadow ? Shadow.find(filter).select(selectFieldsForFighterImport()).sort({ updatedAt: -1, _id: -1 }).limit(batchSize).lean() : Promise.resolve([]),
+      includeMatches ? Match.countDocuments(filter) : Promise.resolve(0),
+      includeShadows && Shadow ? Shadow.countDocuments(filter) : Promise.resolve(0),
+    ]);
+
+    const records = [...tagRecords(matches, 'match'), ...tagRecords(shadows, 'shadow')];
+    const fighterByKeyMap = resolveMissingRefs
+      ? await buildCombatFighterLookupForCleanup(records, CombatFighter)
+      : new Map();
+
+    const options = {
+      resolveMissingRefs,
+      removeLegacyNames,
+      removeLegacyImages,
+      removeLegacyDeleteUrls,
+    };
+
+    const matchOps = [];
+    const shadowOps = [];
+    const rows = [];
+    let linkedByNameCount = 0;
+    let legacyFieldsUnsetCount = 0;
+    let unresolvedSideCount = 0;
+
+    for (const record of records) {
+      const plan = buildFightFighterCleanupPlan(record, fighterByKeyMap, options);
+      rows.push(summarizeFightFighterCleanupPlan(record, plan));
+      linkedByNameCount += plan.linkedByNameCount;
+      legacyFieldsUnsetCount += plan.legacyFieldsUnsetCount;
+      unresolvedSideCount += plan.unresolvedSides.length;
+
+      if (!plan.hasUpdate) continue;
+      const op = { updateOne: { filter: { _id: record._id }, update: plan.update } };
+      if (record.__collection === 'shadow') shadowOps.push(op);
+      else matchOps.push(op);
+    }
+
+    if (dryRun) {
+      return res.json({
+        ok: true,
+        dryRun: true,
+        inspectedMatches: matches.length,
+        inspectedShadows: shadows.length,
+        totalTargets: totalMatches + totalShadows,
+        eligibleUpdates: rows.filter((row) => row.hasUpdate).length,
+        linkedByNameCount,
+        legacyFieldsUnsetCount,
+        unresolvedSideCount,
+        batch: {
+          batchSize,
+          processedRecords: records.length,
+          hasMore: totalMatches + totalShadows > records.length,
+        },
+        rows: rows.slice(0, 100),
+        note: 'Dry-run only. This checks which fights can be normalized to fighter-library refs and which legacy fighter name/image fields can be safely removed.',
+      });
+    }
+
+    const [matchResult, shadowResult] = await Promise.all([
+      matchOps.length ? Match.bulkWrite(matchOps, { ordered: false }) : Promise.resolve({ modifiedCount: 0 }),
+      Shadow && shadowOps.length ? Shadow.bulkWrite(shadowOps, { ordered: false }) : Promise.resolve({ modifiedCount: 0 }),
+    ]);
+
+    res.json({
+      ok: true,
+      dryRun: false,
+      inspectedMatches: matches.length,
+      inspectedShadows: shadows.length,
+      totalTargets: totalMatches + totalShadows,
+      modifiedMatches: matchResult.modifiedCount || matchResult.nModified || 0,
+      modifiedShadows: shadowResult.modifiedCount || shadowResult.nModified || 0,
+      eligibleUpdates: rows.filter((row) => row.hasUpdate).length,
+      linkedByNameCount,
+      legacyFieldsUnsetCount,
+      unresolvedSideCount,
+      batch: {
+        batchSize,
+        processedRecords: records.length,
+        hasMore: totalMatches + totalShadows > records.length,
+      },
+      rows: rows.slice(0, 100),
+      note: 'Fight records were normalized to fighter-library references. Legacy fighter names/images were removed only for sides that have a valid fighter ref, so public reads must use populated fighter data.',
+    });
+  });
+
+  app.post('/api/admin/combat-fighters/cleanup-fight-fighter-fields', verifyAdminToken, cleanupFightFighterFieldsHandler);
+  app.post('/api/admin/combat-fighters/normalize-fight-links', verifyAdminToken, cleanupFightFighterFieldsHandler);
 
   app.get('/api/admin/combat-fighters/:id', verifyAdminToken, asyncHandler(async (req, res) => {
     if (!mongoose.isValidObjectId(req.params.id)) return res.status(400).json({ ok: false, code: 'INVALID_COMBAT_FIGHTER_ID', message: 'Combat fighter id is invalid.' });
@@ -708,6 +820,140 @@ async function executeCombatFighterImportPlan({ plan, CombatFighter, Match, Shad
   };
 }
 
+function buildFightFighterCleanupFilter() {
+  const valueExists = (field) => ({ [field]: { $exists: true, $nin: [null, '', 'null'] } });
+  const missingRef = (field) => ({ $or: [{ [field]: { $exists: false } }, { [field]: null }, { [field]: '' }] });
+  return {
+    $or: [
+      valueExists('matchFighterA'),
+      valueExists('matchFighterB'),
+      valueExists('fighterAImage'),
+      valueExists('fighterBImage'),
+      valueExists('fighterAImageDeleteUrl'),
+      valueExists('fighterBImageDeleteUrl'),
+      { $and: [missingRef('fighterAId'), valueExists('matchFighterA')] },
+      { $and: [missingRef('fighterBId'), valueExists('matchFighterB')] },
+    ],
+  };
+}
+
+async function buildCombatFighterLookupForCleanup(records, CombatFighter) {
+  const keys = new Map();
+  for (const record of records || []) {
+    for (const side of ['A', 'B']) {
+      if (normalizeExistingObjectId(record[`fighter${side}Id`])) continue;
+      const name = cleanString(side === 'A' ? record.matchFighterA : record.matchFighterB);
+      if (!name) continue;
+      const category = normalizeName(record.matchCategory) || 'combat';
+      const normalizedName = normalizeName(name);
+      if (!normalizedName) continue;
+      keys.set(fighterKey(category, normalizedName), { category, normalizedName });
+    }
+  }
+
+  const clauses = Array.from(keys.values()).map(({ category, normalizedName }) => ({ category, normalizedName }));
+  if (!clauses.length) return new Map();
+
+  const fighters = await CombatFighter.find({
+    status: { $ne: 'inactive' },
+    $or: clauses,
+  }).lean();
+
+  return new Map(fighters.map((fighter) => [fighterKey(fighter.category, fighter.normalizedName), fighter]));
+}
+
+function buildFightFighterCleanupPlan(record, fighterByKeyMap, options = {}) {
+  const update = { $set: {}, $unset: {} };
+  const sides = {};
+  const unresolvedSides = [];
+  let linkedByNameCount = 0;
+  let legacyFieldsUnsetCount = 0;
+
+  for (const side of ['A', 'B']) {
+    const idField = `fighter${side}Id`;
+    const nameField = `matchFighter${side}`;
+    const imageField = `fighter${side}Image`;
+    const deleteUrlField = `fighter${side}ImageDeleteUrl`;
+    const displayName = cleanString(record[nameField]);
+    const category = normalizeName(record.matchCategory) || 'combat';
+    const normalizedName = normalizeName(displayName);
+    let fighterId = normalizeExistingObjectId(record[idField]);
+    let resolvedBy = fighterId ? 'existing_ref' : null;
+
+    if (!fighterId && options.resolveMissingRefs && normalizedName) {
+      const fighter = fighterByKeyMap.get(fighterKey(category, normalizedName));
+      if (fighter?._id) {
+        fighterId = String(fighter._id);
+        update.$set[idField] = fighter._id;
+        linkedByNameCount += 1;
+        resolvedBy = 'name_category_lookup';
+      }
+    }
+
+    const legacyFields = [];
+    if (options.removeLegacyNames !== false && cleanString(record[nameField])) legacyFields.push(nameField);
+    if (options.removeLegacyImages !== false && cleanString(record[imageField])) legacyFields.push(imageField);
+    if (options.removeLegacyDeleteUrls !== false && cleanString(record[deleteUrlField])) legacyFields.push(deleteUrlField);
+
+    if (fighterId) {
+      for (const field of legacyFields) {
+        update.$unset[field] = '';
+        legacyFieldsUnsetCount += 1;
+      }
+    } else if (legacyFields.length) {
+      unresolvedSides.push({ side, displayName, category, reason: 'No active fighter-library record found for this side.' });
+    }
+
+    sides[side] = {
+      fighterId: fighterId || null,
+      displayName,
+      category,
+      normalizedName,
+      resolvedBy,
+      legacyFields,
+      willUnsetLegacyFields: Boolean(fighterId && legacyFields.length),
+    };
+  }
+
+  if (!Object.keys(update.$set).length) delete update.$set;
+  if (!Object.keys(update.$unset).length) delete update.$unset;
+
+  return {
+    update,
+    sides,
+    unresolvedSides,
+    linkedByNameCount,
+    legacyFieldsUnsetCount,
+    hasUpdate: Boolean(update.$set || update.$unset),
+  };
+}
+
+function summarizeFightFighterCleanupPlan(record, plan) {
+  return {
+    id: String(record._id),
+    sourceType: record.__collection || 'match',
+    matchName: record.matchName,
+    matchType: record.matchType,
+    matchStatus: record.matchStatus,
+    hasUpdate: plan.hasUpdate,
+    fighterAId: plan.sides.A?.fighterId || null,
+    fighterBId: plan.sides.B?.fighterId || null,
+    fighterAResolvedBy: plan.sides.A?.resolvedBy || null,
+    fighterBResolvedBy: plan.sides.B?.resolvedBy || null,
+    legacyFieldsToUnset: [
+      ...(plan.sides.A?.willUnsetLegacyFields ? plan.sides.A.legacyFields : []),
+      ...(plan.sides.B?.willUnsetLegacyFields ? plan.sides.B.legacyFields : []),
+    ],
+    unresolvedSides: plan.unresolvedSides,
+  };
+}
+
+function normalizeExistingObjectId(value) {
+  if (!value) return '';
+  if (typeof value === 'object' && value._id) return String(value._id);
+  return cleanString(value);
+}
+
 function collectFighterImportGroups(records) {
   const map = new Map();
   for (const record of records || []) {
@@ -855,6 +1101,14 @@ function buildFighterFilter(query, includeInactive) {
   return filter;
 }
 
+function buildFighterSort(query, adminView = false) {
+  const sortBy = cleanString(query.sortBy || query.sort || 'displayName');
+  const sortOrder = String(query.sortOrder || query.order || 'asc').toLowerCase() === 'desc' ? -1 : 1;
+  const allowed = new Set(['displayName', 'updatedAt', 'createdAt', 'category', 'status']);
+  if (allowed.has(sortBy)) return { [sortBy]: sortOrder, _id: 1 };
+  return adminView ? { updatedAt: -1, displayName: 1, _id: 1 } : { displayName: 1, _id: 1 };
+}
+
 function buildAdminFightFilter(query, options = {}) {
   const filter = {};
   const defaultMatchType = options.defaultMatchType;
@@ -889,8 +1143,14 @@ function serializeAdminFight(item, sourceType) {
     ...item,
     id: String(item._id),
     sourceType,
+    fighterAId: fighterA?.id || normalizeExistingObjectId(item.fighterAId) || null,
+    fighterBId: fighterB?.id || normalizeExistingObjectId(item.fighterBId) || null,
     fighterA,
     fighterB,
+    matchFighterA: fighterA?.displayName || item.matchFighterA || '',
+    matchFighterB: fighterB?.displayName || item.matchFighterB || '',
+    fighterAImage: fighterA?.primaryImage || item.fighterAImage || '',
+    fighterBImage: fighterB?.primaryImage || item.fighterBImage || '',
     fighterAImageResolved: fighterA?.primaryImage || item.fighterAImage || null,
     fighterBImageResolved: fighterB?.primaryImage || item.fighterBImage || null,
   };
@@ -982,7 +1242,7 @@ function serializeCombatFighter(fighter) {
 }
 
 function selectFieldsForFighterImport() {
-  return '_id matchCategory matchCategoryTwo matchFighterA matchFighterB fighterAImage fighterBImage fighterAImageDeleteUrl fighterBImageDeleteUrl updatedAt createdAt matchType matchStatus fighterAId fighterBId';
+  return '_id matchName matchCategory matchCategoryTwo matchFighterA matchFighterB fighterAImage fighterBImage fighterAImageDeleteUrl fighterBImageDeleteUrl updatedAt createdAt matchType matchStatus fighterAId fighterBId';
 }
 
 function tagRecords(records, collection) {
@@ -1028,7 +1288,17 @@ function mergeUniqueStrings(...lists) {
 }
 
 function pagination(page, limit, total) {
-  return { page, limit, total, pages: Math.ceil(total / limit) };
+  const pages = Math.ceil(total / limit);
+  return {
+    page,
+    limit,
+    total,
+    pages,
+    hasNextPage: page < pages,
+    hasPrevPage: page > 1,
+    nextPage: page < pages ? page + 1 : null,
+    prevPage: page > 1 ? page - 1 : null,
+  };
 }
 
 function adminActor(admin) {

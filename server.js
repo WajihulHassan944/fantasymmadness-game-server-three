@@ -207,6 +207,32 @@ function applyCombatFighterSelectionToMatchPayload(matchData, selection = {}, op
   return matchData;
 }
 
+function clearLegacyFighterFieldsForLibraryRefs(record, options = {}) {
+  if (!record || typeof record !== 'object') return record;
+  const removeNames = options.removeNames !== false;
+  const removeImages = options.removeImages !== false;
+  const removeDeleteUrls = options.removeDeleteUrls !== false;
+
+  const clearField = (field) => {
+    if (typeof record.set === 'function') record.set(field, undefined);
+    else delete record[field];
+  };
+
+  if (record.fighterAId) {
+    if (removeNames) clearField('matchFighterA');
+    if (removeImages) clearField('fighterAImage');
+    if (removeDeleteUrls) clearField('fighterAImageDeleteUrl');
+  }
+
+  if (record.fighterBId) {
+    if (removeNames) clearField('matchFighterB');
+    if (removeImages) clearField('fighterBImage');
+    if (removeDeleteUrls) clearField('fighterBImageDeleteUrl');
+  }
+
+  return record;
+}
+
 function pickExplicitNumericField(input, names, fallback) {
   for (const name of names) {
     if (hasOwnField(input, name)) {
@@ -490,8 +516,51 @@ function clearPublicResponseCache() {
   publicResponseCache.clear();
 }
 
-function pickPublicFightFields(fight = {}, sourceType = 'match') {
+function normalizeCombatFighterReadRef(value) {
+  if (!value || typeof value !== 'object' || !value._id) return null;
+  const fighter = toPlainObject(value) || {};
+  return {
+    id: String(fighter._id),
+    _id: fighter._id,
+    displayName: fighter.displayName || '',
+    normalizedName: fighter.normalizedName || '',
+    category: fighter.category || 'combat',
+    aliases: Array.isArray(fighter.aliases) ? fighter.aliases : [],
+    primaryImage: fighter.primaryImage || '',
+    imagePublicId: fighter.imagePublicId || '',
+    imageHealth: fighter.imageHealth || null,
+    status: fighter.status || 'active',
+  };
+}
+
+function normalizeCombatFighterReadId(value) {
+  if (!value) return null;
+  if (typeof value === 'object' && value._id) return String(value._id);
+  return String(value);
+}
+
+function attachCombatFighterReadFallbacks(fight = {}, sourceType = 'match') {
   const item = toPlainObject(fight) || {};
+  const fighterA = normalizeCombatFighterReadRef(item.fighterAId);
+  const fighterB = normalizeCombatFighterReadRef(item.fighterBId);
+  return {
+    ...item,
+    sourceType: item.sourceType || sourceType,
+    fighterAId: normalizeCombatFighterReadId(item.fighterAId),
+    fighterBId: normalizeCombatFighterReadId(item.fighterBId),
+    fighterA,
+    fighterB,
+    // Public/admin cards keep their old field names for compatibility, but the
+    // fighter library is now the source of truth whenever refs are populated.
+    matchFighterA: fighterA?.displayName || item.matchFighterA || '',
+    matchFighterB: fighterB?.displayName || item.matchFighterB || '',
+    fighterAImage: fighterA?.primaryImage || item.fighterAImage || '',
+    fighterBImage: fighterB?.primaryImage || item.fighterBImage || '',
+  };
+}
+
+function pickPublicFightFields(fight = {}, sourceType = 'match') {
+  const item = attachCombatFighterReadFallbacks(fight, sourceType);
   return {
     _id: item._id,
     sourceType,
@@ -500,6 +569,10 @@ function pickPublicFightFields(fight = {}, sourceType = 'match') {
     matchName: item.matchName,
     matchFighterA: item.matchFighterA,
     matchFighterB: item.matchFighterB,
+    fighterAId: item.fighterAId,
+    fighterBId: item.fighterBId,
+    fighterA: item.fighterA,
+    fighterB: item.fighterB,
     fighterAImage: item.fighterAImage,
     fighterBImage: item.fighterBImage,
     promotionBackground: item.promotionBackground,
@@ -1113,8 +1186,8 @@ app.delete('/shadowfighttodelete/:id', async (req, res) => {
 // Get Matches API
 app.get('/shadow', async (req, res) => {
   try {
-    const matches = await Shadow.find().sort({ _id: -1 }).lean(); // Sort by _id in descending order
-    res.send(matches);
+    const matches = await Shadow.find().populate('fighterAId fighterBId').sort({ _id: -1 }).lean(); // Sort by _id in descending order
+    res.send(matches.map((item) => attachCombatFighterReadFallbacks(item, 'shadow')));
   } catch (err) {
     res.status(500).send({ message: 'Error fetching matches' });
   }
@@ -1525,13 +1598,13 @@ app.get('/matchByName', async (req, res) => {
   }
 
   try {
-      const match = await Match.findOne(applyFightPublicVisibilityFilter({ matchName }, req.query));
+      const match = await Match.findOne(applyFightPublicVisibilityFilter({ matchName }, req.query)).populate('fighterAId fighterBId').lean();
 
       if (!match) {
           return res.status(404).json({ message: 'Match not found' });
       }
 
-      res.status(200).json(match);
+      res.status(200).json(attachCombatFighterReadFallbacks(match, 'match'));
   } catch (error) {
       console.error('Error fetching match details:', error);
       res.status(500).json({ message: 'Server error' });
@@ -1597,13 +1670,13 @@ app.get('/api/matches/:id', async (req, res) => {
     const { id } = req.params;
 
     // Find the match by ID
-    const match = await Match.findById(id).lean();
+    const match = await Match.findById(id).populate('fighterAId fighterBId').lean();
 
     if (!match) {
       return res.status(404).json({ message: 'Match not found' });
     }
 
-    res.status(200).json(match);
+    res.status(200).json(attachCombatFighterReadFallbacks(match, 'match'));
   } catch (error) {
     res.status(500).json({ message: 'Server error', error });
   }
@@ -1614,9 +1687,9 @@ app.get('/api/matches/:id', async (req, res) => {
 // These endpoints are additive aliases over the existing legacy routes.
 app.get('/api/shadow/:id', async (req, res) => {
   try {
-    const shadowFight = await Shadow.findById(req.params.id).lean();
+    const shadowFight = await Shadow.findById(req.params.id).populate('fighterAId fighterBId').lean();
     if (!shadowFight) return res.status(404).json({ message: 'Shadow fight not found' });
-    res.status(200).json(shadowFight);
+    res.status(200).json(attachCombatFighterReadFallbacks(shadowFight, 'shadow'));
   } catch (error) {
     res.status(500).json({ message: 'Server error', error: error.message });
   }
@@ -1995,6 +2068,8 @@ app.post(
         promotionBackground,
         promotionBackgroundDeleteUrl
       }, fighterSelection);
+
+      clearLegacyFighterFieldsForLibraryRefs(matchData);
 
       // Conditionally append BoxingMatch and MMAMatch only if they have values
       if (BoxingMatch) {
@@ -2384,6 +2459,8 @@ app.post(
       if (promotionBackgroundDeleteUrl)
         existingMatch.promotionBackgroundDeleteUrl = promotionBackgroundDeleteUrl;
 
+      clearLegacyFighterFieldsForLibraryRefs(existingMatch);
+
       // Save the updated match to the database
       const updatedMatch = await existingMatch.save();
 
@@ -2462,13 +2539,13 @@ app.get('/match', async (req, res) => {
     }
 
     const visibleQuery = applyFightPublicVisibilityFilter(query, req.query);
-    let match = await applyFightFreshSortLean(Match.find(visibleQuery));
+    let match = await applyFightFreshSortLean(Match.find(visibleQuery).populate('fighterAId fighterBId'));
 
     // Safety fallback for legacy records: if the stricter public query produces no
     // results, keep the same base filters and remove only explicit Draft fights in
     // memory. This prevents public fight pages from going blank while still hiding drafts.
     if (!match.length && !shouldIncludeDraftFights(req.query)) {
-      const fallback = await applyFightFreshSortLean(Match.find(query));
+      const fallback = await applyFightFreshSortLean(Match.find(query).populate('fighterAId fighterBId'));
       match = fallback.filter((item) => !isDraftFightRecord(item));
     }
 
@@ -2478,10 +2555,11 @@ app.get('/match', async (req, res) => {
     // explicit drafts, while admin/includeDrafts requests can see draft shadows.
     if (!match.length) {
       try {
-        const shadowFallback = await applyFightFreshSortLean(Shadow.find(query));
-        match = shouldIncludeDraftFights(req.query)
+        const shadowFallback = await applyFightFreshSortLean(Shadow.find(query).populate('fighterAId fighterBId'));
+        const visibleShadowFallback = shouldIncludeDraftFights(req.query)
           ? shadowFallback
           : shadowFallback.filter((item) => !isDraftFightRecord(item));
+        match = visibleShadowFallback.map((item) => ({ ...item, sourceType: 'shadow' }));
       } catch (fallbackError) {
         console.warn('Legacy /match shadow fallback failed:', fallbackError.message);
       }
@@ -2491,7 +2569,7 @@ app.get('/match', async (req, res) => {
       match = match.filter((item) => isPredictionEligibleFightRecord(item));
     }
 
-    res.send(match);
+    res.send(match.map((item) => attachCombatFighterReadFallbacks(item, item.sourceType || 'match')));
   } catch (error) {
     console.error('Error fetching matches:', error);
     res.status(500).json({ message: 'Error fetching matches' });
@@ -2512,8 +2590,8 @@ app.get('/api/public/prediction-fights', async (req, res) => {
         const baseQuery = { ...req.query, playable: 'true' };
         const visibleFilter = applyFightPublicVisibilityFilter(buildPredictionEligibleFightFilter(), baseQuery);
         const [matches, shadows] = await Promise.all([
-          applyFightFreshSortLean(Match.find(visibleFilter)).limit(200),
-          applyFightFreshSortLean(Shadow.find(visibleFilter)).limit(200).catch(() => []),
+          applyFightFreshSortLean(Match.find(visibleFilter).populate('fighterAId fighterBId')).limit(200),
+          applyFightFreshSortLean(Shadow.find(visibleFilter).populate('fighterAId fighterBId')).limit(200).catch(() => []),
         ]);
         let items = [
           ...matches.map((item) => ({ ...item, sourceType: 'match' })),
@@ -2534,7 +2612,8 @@ app.get('/api/public/prediction-fights', async (req, res) => {
           };
           return Math.max(toTime(b.updatedAt), toTime(b.createdAt), toTime(b.matchDate), toTime(b._id?.getTimestamp?.()))
             - Math.max(toTime(a.updatedAt), toTime(a.createdAt), toTime(a.matchDate), toTime(a._id?.getTimestamp?.()));
-        }).slice(0, limit);
+        }).slice(0, limit)
+          .map((item) => attachCombatFighterReadFallbacks(item, item.sourceType || 'match'));
 
         return { ok: true, items, count: items.length, generatedAt: new Date().toISOString() };
       }
@@ -6646,7 +6725,8 @@ async function buildClassicLeaderboard({ limit = 10 } = {}) {
 
   const matchRows = validMatchObjectIds.length
     ? await Match.find({ _id: { $in: validMatchObjectIds } })
-      .select('matchName matchFighterA matchFighterB matchDate matchCategory matchCategoryTwo matchStatus matchShadowStatus matchShadowOpenStatus fighterAImage fighterBImage promotionBackground matchType matchTokens BoxingMatch.fighterOneStats BoxingMatch.fighterTwoStats MMAMatch.fighterOneStats MMAMatch.fighterTwoStats createdAt updatedAt')
+      .select('matchName matchFighterA matchFighterB matchDate matchCategory matchCategoryTwo matchStatus matchShadowStatus matchShadowOpenStatus fighterAImage fighterBImage promotionBackground matchType matchTokens fighterAId fighterBId BoxingMatch.fighterOneStats BoxingMatch.fighterTwoStats MMAMatch.fighterOneStats MMAMatch.fighterTwoStats createdAt updatedAt')
+      .populate('fighterAId fighterBId')
       .lean()
     : [];
 
@@ -6714,8 +6794,8 @@ async function loadPublicFightCards({ limit = 6, category } = {}) {
   const queryLimit = Math.min(Math.max(limit * 3, limit), 100);
 
   const [matches, shadows] = await Promise.all([
-    applyFightFreshSortLean(Match.find(visibleFilter)).limit(queryLimit),
-    applyFightFreshSortLean(Shadow.find(visibleFilter)).limit(queryLimit).catch(() => []),
+    applyFightFreshSortLean(Match.find(visibleFilter).populate('fighterAId fighterBId')).limit(queryLimit),
+    applyFightFreshSortLean(Shadow.find(visibleFilter).populate('fighterAId fighterBId')).limit(queryLimit).catch(() => []),
   ]);
 
   let items = [
