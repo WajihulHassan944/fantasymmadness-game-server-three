@@ -247,26 +247,58 @@ function registerFightDataQualityRoutes(options) {
   }));
 
   app.post('/api/admin/combat-fighters/import-from-fights', verifyAdminToken, asyncHandler(async (req, res) => {
+    const startedAt = Date.now();
     const dryRun = parseBool(req.body?.dryRun, true);
     const limit = clamp(toInt(req.body?.limit, 1500), 1, 5000);
     const includeShadows = parseBool(req.body?.includeShadows, true);
-    const checkImages = parseBool(req.body?.checkImages, true);
+    const checkImages = parseBool(req.body?.checkImages, !dryRun);
     const linkMatches = parseBool(req.body?.linkMatches, !dryRun);
     const overwriteImages = parseBool(req.body?.overwriteImages, false);
     const syncMatchImages = parseBool(req.body?.syncMatchImages, false);
-    const maxCandidateChecksPerFighter = clamp(toInt(req.body?.maxCandidateChecksPerFighter, 8), 1, 20);
+    const offset = clamp(toInt(req.body?.offset ?? req.body?.cursor, 0), 0, 1000000);
+    const defaultBatchSize = dryRun ? 50 : 8;
+    const maxBatchSize = dryRun ? 200 : 25;
+    const batchSize = clamp(toInt(req.body?.batchSize ?? req.body?.fighterBatchSize, defaultBatchSize), 1, maxBatchSize);
+    const maxCandidateChecksPerFighter = clamp(toInt(req.body?.maxCandidateChecksPerFighter, 2), 1, dryRun ? 10 : 4);
+    const imageTimeoutMs = clamp(toInt(req.body?.imageTimeoutMs, 1200), 400, 4000);
+    const remoteConcurrency = clamp(toInt(req.body?.remoteConcurrency, 4), 1, 6);
+    const allowImageGetFallback = parseBool(req.body?.allowImageGetFallback, false);
 
     const [matches, shadows] = await Promise.all([
       Match.find({}).select(selectFieldsForFighterImport()).sort({ updatedAt: -1, _id: -1 }).limit(limit).lean(),
       includeShadows && Shadow ? Shadow.find({}).select(selectFieldsForFighterImport()).sort({ updatedAt: -1, _id: -1 }).limit(limit).lean() : Promise.resolve([]),
     ]);
 
-    const plan = await buildCombatFighterImportPlan({
-      records: [...tagRecords(matches, 'match'), ...tagRecords(shadows, 'shadow')],
+    const records = [...tagRecords(matches, 'match'), ...tagRecords(shadows, 'shadow')];
+    const fighterGroups = sortFighterImportGroups(collectFighterImportGroups(records));
+    const totalFighters = fighterGroups.length;
+    const batchGroups = fighterGroups.slice(offset, offset + batchSize);
+
+    const plan = await buildCombatFighterImportPlanFromGroups({
+      groups: batchGroups,
       axios,
       checkImages,
       maxCandidateChecksPerFighter,
+      imageTimeoutMs,
+      remoteConcurrency,
+      allowGetFallback: allowImageGetFallback,
     });
+
+    const nextOffset = offset + plan.length;
+    const hasMore = nextOffset < totalFighters;
+    const batch = {
+      offset,
+      batchSize,
+      processedFighters: plan.length,
+      totalFighters,
+      nextOffset: hasMore ? nextOffset : null,
+      hasMore,
+      checkImages,
+      imageTimeoutMs,
+      maxCandidateChecksPerFighter,
+      remoteConcurrency,
+      elapsedMs: Date.now() - startedAt,
+    };
 
     if (dryRun) {
       return res.json({
@@ -274,9 +306,10 @@ function registerFightDataQualityRoutes(options) {
         dryRun: true,
         inspectedMatches: matches.length,
         inspectedShadows: shadows.length,
-        fighterCount: plan.length,
+        fighterCount: totalFighters,
+        batch,
         fighters: plan.map(summarizeImportPlanItem),
-        note: 'Dry-run only. Send dryRun=false to create/update combat fighters and optionally link fights.',
+        note: 'Dry-run only. This endpoint is batched to stay under Vercel serverless limits. Send dryRun=false with the same offset/batchSize to create/update this batch, then continue with nextOffset while hasMore=true.',
       });
     }
 
@@ -296,8 +329,11 @@ function registerFightDataQualityRoutes(options) {
       dryRun: false,
       inspectedMatches: matches.length,
       inspectedShadows: shadows.length,
+      batch,
       ...result,
-      note: 'Combat fighter library was imported from unique fight names. Existing match fields are preserved as fallback; optional fighterAId/fighterBId references were linked when enabled.',
+      note: hasMore
+        ? 'Safe batch imported. Continue by calling this endpoint again with dryRun=false and offset=batch.nextOffset until hasMore=false. Existing match fields are preserved as fallback.'
+        : 'Combat fighter library import completed for the inspected records. Existing match fields are preserved as fallback; optional fighterAId/fighterBId references were linked when enabled.',
     });
   }));
 
@@ -494,29 +530,90 @@ function buildFighterSuggestions(matches) {
     .sort((a, b) => b.matchCount - a.matchCount || a.displayName.localeCompare(b.displayName));
 }
 
-async function buildCombatFighterImportPlan({ records, axios, checkImages, maxCandidateChecksPerFighter }) {
-  const groups = collectFighterImportGroups(records);
-  const plan = [];
+async function buildCombatFighterImportPlan({
+  records,
+  axios,
+  checkImages,
+  maxCandidateChecksPerFighter,
+  offset = 0,
+  batchSize = null,
+  imageTimeoutMs = 1200,
+  remoteConcurrency = 4,
+  allowGetFallback = false,
+}) {
+  const groups = sortFighterImportGroups(collectFighterImportGroups(records));
+  const selectedGroups = batchSize ? groups.slice(offset, offset + batchSize) : groups;
+  return buildCombatFighterImportPlanFromGroups({
+    groups: selectedGroups,
+    axios,
+    checkImages,
+    maxCandidateChecksPerFighter,
+    imageTimeoutMs,
+    remoteConcurrency,
+    allowGetFallback,
+  });
+}
 
-  for (const group of groups.values()) {
-    const candidates = sortedImageCandidates(group.candidateImages);
-    const verification = await pickValidImageCandidate(candidates, { axios, checkImages, maxCandidateChecksPerFighter });
-    plan.push({
-      displayName: group.displayName,
-      normalizedName: group.normalizedName,
-      category: group.category,
-      aliases: Array.from(group.aliases),
-      verifiedImage: verification.validCandidate,
-      imageCandidates: candidates.slice(0, 10).map((candidate) => ({ url: candidate.url, count: candidate.count, publicId: candidate.publicId || null })),
-      imageChecks: verification.checked,
-      matchCount: group.matchIds.size,
-      matchIds: Array.from(group.matchIds),
-      links: group.links,
-      status: verification.validCandidate ? 'active' : 'needs_review',
-    });
-  }
+async function buildCombatFighterImportPlanFromGroups({
+  groups,
+  axios,
+  checkImages,
+  maxCandidateChecksPerFighter,
+  imageTimeoutMs = 1200,
+  remoteConcurrency = 4,
+  allowGetFallback = false,
+}) {
+  const plan = await mapWithConcurrency(
+    groups || [],
+    clamp(toInt(remoteConcurrency, 4), 1, 6),
+    async (group) => {
+      const candidates = sortedImageCandidates(group.candidateImages);
+      const verification = await pickValidImageCandidate(candidates, {
+        axios,
+        checkImages,
+        maxCandidateChecksPerFighter,
+        imageTimeoutMs,
+        allowGetFallback,
+      });
+      return {
+        displayName: group.displayName,
+        normalizedName: group.normalizedName,
+        category: group.category,
+        aliases: Array.from(group.aliases),
+        verifiedImage: verification.validCandidate,
+        imageCandidates: candidates.slice(0, 10).map((candidate) => ({ url: candidate.url, count: candidate.count, publicId: candidate.publicId || null })),
+        imageChecks: verification.checked,
+        matchCount: group.matchIds.size,
+        matchIds: Array.from(group.matchIds),
+        links: group.links,
+        status: verification.validCandidate ? 'active' : 'needs_review',
+      };
+    }
+  );
 
   return plan.sort((a, b) => b.matchCount - a.matchCount || a.displayName.localeCompare(b.displayName));
+}
+
+function sortFighterImportGroups(groups) {
+  return Array.from(groups.values()).sort((a, b) => b.matchIds.size - a.matchIds.size || a.displayName.localeCompare(b.displayName));
+}
+
+async function mapWithConcurrency(items, concurrency, mapper) {
+  const list = Array.isArray(items) ? items : [];
+  const safeConcurrency = clamp(toInt(concurrency, 4), 1, Math.max(1, list.length || 1));
+  const results = new Array(list.length);
+  let nextIndex = 0;
+
+  async function worker() {
+    while (nextIndex < list.length) {
+      const currentIndex = nextIndex;
+      nextIndex += 1;
+      results[currentIndex] = await mapper(list[currentIndex], currentIndex);
+    }
+  }
+
+  await Promise.all(Array.from({ length: Math.min(safeConcurrency, list.length || 1) }, worker));
+  return results;
 }
 
 async function executeCombatFighterImportPlan({ plan, CombatFighter, Match, Shadow, admin, linkMatches, overwriteImages, syncMatchImages }) {
@@ -657,13 +754,28 @@ function sortedImageCandidates(candidateMap) {
   });
 }
 
-async function pickValidImageCandidate(candidates, { axios, checkImages, maxCandidateChecksPerFighter }) {
+async function pickValidImageCandidate(candidates, {
+  axios,
+  checkImages,
+  maxCandidateChecksPerFighter,
+  imageTimeoutMs = 1200,
+  allowGetFallback = false,
+}) {
   const checked = [];
   const toCheck = candidates.slice(0, maxCandidateChecksPerFighter);
 
   for (const candidate of toCheck) {
-    const health = checkImages ? await checkImageUrl(candidate.url, axios) : summarizeImageUrl(candidate.url);
-    checked.push({ url: candidate.url, status: health.status, httpStatus: health.httpStatus || null, contentType: health.contentType || null });
+    const health = checkImages
+      ? await checkImageUrl(candidate.url, axios, { timeoutMs: imageTimeoutMs, fallbackGet: allowGetFallback })
+      : summarizeImageUrl(candidate.url);
+    checked.push({
+      url: candidate.url,
+      status: health.status,
+      httpStatus: health.httpStatus || null,
+      contentType: health.contentType || null,
+      timeoutMs: health.timeoutMs || null,
+      error: health.error || null,
+    });
     if (!checkImages || health.status === 'valid') {
       return { validCandidate: { ...candidate, health }, checked };
     }
@@ -794,32 +906,58 @@ function summarizeImageUrl(url) {
   return { status: 'unchecked', url, provider: inferImageProvider(url) };
 }
 
-async function checkImageUrl(url, axios) {
+async function checkImageUrl(url, axios, options = {}) {
   const summary = summarizeImageUrl(url);
   if (summary.status === 'missing') return summary;
   if (!axios || !/^https?:\/\//i.test(url)) return { ...summary, status: 'invalid' };
+
+  const timeoutMs = clamp(toInt(options.timeoutMs, 2500), 400, 7000);
+  const fallbackGet = parseBool(options.fallbackGet, true);
+
   try {
-    const response = await axios.head(url, { timeout: 6000, validateStatus: () => true });
+    const response = await axios.head(url, { timeout: timeoutMs, validateStatus: () => true });
+    const headResult = {
+      ...summary,
+      status: response.status >= 200 && response.status < 400 ? 'valid' : 'broken',
+      httpStatus: response.status,
+      contentType: response.headers?.['content-type'],
+      timeoutMs,
+    };
+
+    if (headResult.status === 'broken' && response.status === 405 && fallbackGet) {
+      return checkImageUrlWithGet(summary, axios, timeoutMs);
+    }
+
+    return headResult;
+  } catch (headError) {
+    if (!fallbackGet) {
+      return {
+        ...summary,
+        status: 'broken',
+        timeoutMs,
+        error: headError.message,
+        fallbackSkipped: true,
+      };
+    }
+
+    return checkImageUrlWithGet(summary, axios, timeoutMs, headError);
+  }
+}
+
+async function checkImageUrlWithGet(summary, axios, timeoutMs, headError) {
+  try {
+    const response = await axios.get(summary.url, { timeout: timeoutMs, responseType: 'stream', validateStatus: () => true });
+    if (response.data && typeof response.data.destroy === 'function') response.data.destroy();
     return {
       ...summary,
       status: response.status >= 200 && response.status < 400 ? 'valid' : 'broken',
       httpStatus: response.status,
       contentType: response.headers?.['content-type'],
+      timeoutMs,
+      fallback: 'GET',
     };
-  } catch (headError) {
-    try {
-      const response = await axios.get(url, { timeout: 7000, responseType: 'stream', validateStatus: () => true });
-      if (response.data && typeof response.data.destroy === 'function') response.data.destroy();
-      return {
-        ...summary,
-        status: response.status >= 200 && response.status < 400 ? 'valid' : 'broken',
-        httpStatus: response.status,
-        contentType: response.headers?.['content-type'],
-        fallback: 'GET',
-      };
-    } catch (getError) {
-      return { ...summary, status: 'broken', error: getError.message || headError.message };
-    }
+  } catch (getError) {
+    return { ...summary, status: 'broken', timeoutMs, error: getError.message || headError?.message };
   }
 }
 
