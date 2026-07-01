@@ -163,6 +163,50 @@ function normalizeCombatCategory(category) {
   return String(category || '').trim().toLowerCase();
 }
 
+async function resolveCombatFighterSelectionForMatchInput({ fighterAId, fighterBId }) {
+  const CombatFighter = mongoose.models.CombatFighter;
+  const result = { fighterA: null, fighterB: null };
+  const ids = [fighterAId, fighterBId].map((value) => String(value || '').trim()).filter(Boolean);
+  const uniqueIds = [...new Set(ids)].filter((id) => mongoose.isValidObjectId(id));
+
+  if (!CombatFighter || uniqueIds.length === 0) return result;
+
+  const fighters = await CombatFighter.find({ _id: { $in: uniqueIds }, status: { $ne: 'inactive' } }).lean();
+  const byId = new Map(fighters.map((fighter) => [String(fighter._id), fighter]));
+  const fighterAKey = String(fighterAId || '').trim();
+  const fighterBKey = String(fighterBId || '').trim();
+
+  result.fighterA = byId.get(fighterAKey) || null;
+  result.fighterB = byId.get(fighterBKey) || null;
+  return result;
+}
+
+function applyCombatFighterSelectionToMatchPayload(matchData, selection = {}, options = {}) {
+  const allowImageFallback = options.allowImageFallback !== false;
+  const fighterA = selection.fighterA;
+  const fighterB = selection.fighterB;
+
+  if (fighterA) {
+    matchData.fighterAId = fighterA._id;
+    if (fighterA.displayName) matchData.matchFighterA = fighterA.displayName;
+    if (allowImageFallback && !matchData.fighterAImage && fighterA.primaryImage) {
+      matchData.fighterAImage = fighterA.primaryImage;
+      // Do not copy fighter image public IDs into fights; deleting a fight must not delete a shared fighter-library asset.
+    }
+  }
+
+  if (fighterB) {
+    matchData.fighterBId = fighterB._id;
+    if (fighterB.displayName) matchData.matchFighterB = fighterB.displayName;
+    if (allowImageFallback && !matchData.fighterBImage && fighterB.primaryImage) {
+      matchData.fighterBImage = fighterB.primaryImage;
+      // Do not copy fighter image public IDs into fights; deleting a fight must not delete a shared fighter-library asset.
+    }
+  }
+
+  return matchData;
+}
+
 function pickExplicitNumericField(input, names, fallback) {
   for (const name of names) {
     if (hasOwnField(input, name)) {
@@ -649,6 +693,9 @@ const shadowSchema = new mongoose.Schema({
   matchName: String,
   matchFighterA: String,
   matchFighterB: String,
+  // Optional normalized fighter references. Existing string/image fields remain fallback.
+  fighterAId: { type: mongoose.Schema.Types.ObjectId, ref: 'CombatFighter' },
+  fighterBId: { type: mongoose.Schema.Types.ObjectId, ref: 'CombatFighter' },
   promotionBackground: String,
   matchDescription: String,
   matchVideoUrl: String,
@@ -727,6 +774,7 @@ const shadowSchema = new mongoose.Schema({
 });
 shadowSchema.index({ matchStatus: 1, matchShadowOpenStatus: 1, updatedAt: -1 });
 shadowSchema.index({ matchDate: -1, updatedAt: -1 });
+shadowSchema.index({ fighterAId: 1, fighterBId: 1 });
 
 
 const Shadow = mongoose.model('Shadow', shadowSchema);
@@ -881,8 +929,8 @@ app.post(
       existingMatch.matchFighterB = matchFighterB || existingMatch.matchFighterB;
       assignIfProvided(existingMatch, 'matchCategory', matchCategory);
       assignIfProvided(existingMatch, 'matchName', matchName);
-      assignIfProvided(existingMatch, 'matchFighterA', matchFighterA);
-      assignIfProvided(existingMatch, 'matchFighterB', matchFighterB);
+      assignIfProvided(existingMatch, 'matchFighterA', selectedFighterPatch.matchFighterA || matchFighterA);
+      assignIfProvided(existingMatch, 'matchFighterB', selectedFighterPatch.matchFighterB || matchFighterB);
       assignIfProvided(existingMatch, 'matchDescription', matchDescription);
       assignIfProvided(existingMatch, 'maxRounds', maxRounds);
       assignIfProvided(existingMatch, 'matchCategoryTwo', matchCategoryTwo);
@@ -1869,6 +1917,8 @@ app.post(
         matchStatus,
         pot,
         matchType,
+        fighterAId,
+        fighterBId,
         fighterAImageUrl,
         fighterAImageDeleteUrlFromReq,
         fighterBImageUrl,
@@ -1915,8 +1965,10 @@ app.post(
         promotionBackgroundDeleteUrl = resultBackground.public_id;
       }
 
+      const fighterSelection = await resolveCombatFighterSelectionForMatchInput({ fighterAId, fighterBId });
+
       // Create match data object
-      const matchData = {
+      const matchData = applyCombatFighterSelectionToMatchPayload({
         matchCategory,
         matchName,
         matchFighterA,
@@ -1942,7 +1994,7 @@ app.post(
         fighterBImageDeleteUrl,
         promotionBackground,
         promotionBackgroundDeleteUrl
-      };
+      }, fighterSelection);
 
       // Conditionally append BoxingMatch and MMAMatch only if they have values
       if (BoxingMatch) {
@@ -2195,6 +2247,8 @@ app.post(
       matchTokens,
       pot,
       matchType,
+      fighterAId,
+      fighterBId,
       fighterAImageUrl,
       fighterBImageUrl,
       promotionBackgroundUrl,
@@ -2282,7 +2336,12 @@ app.post(
         promotionBackground = promotionBackgroundUrl;
       }
 
+      const fighterSelection = await resolveCombatFighterSelectionForMatchInput({ fighterAId, fighterBId });
+      const selectedFighterPatch = applyCombatFighterSelectionToMatchPayload({}, fighterSelection);
+
       // Update the match object. Use explicit provided-value checks so 0 remains valid.
+      assignIfProvided(existingMatch, 'fighterAId', selectedFighterPatch.fighterAId);
+      assignIfProvided(existingMatch, 'fighterBId', selectedFighterPatch.fighterBId);
       assignIfProvided(existingMatch, 'matchCategory', matchCategory);
       if (addToShadow === 'true' || addToShadow === true) existingMatch.shadowTemplatesAdditionStatus = true;
       assignIfProvided(existingMatch, 'matchName', matchName);
@@ -2307,6 +2366,11 @@ app.post(
       const parsedMMAMatch = parseMaybeJson(MMAMatch);
       if (parsedBoxingMatch) existingMatch.BoxingMatch = parsedBoxingMatch;
       if (parsedMMAMatch) existingMatch.MMAMatch = parsedMMAMatch;
+
+      if (!fighterAImage && selectedFighterPatch.fighterAImage) fighterAImage = selectedFighterPatch.fighterAImage;
+      if (!fighterBImage && selectedFighterPatch.fighterBImage) fighterBImage = selectedFighterPatch.fighterBImage;
+      if (!fighterAImageDeleteUrl && selectedFighterPatch.fighterAImageDeleteUrl) fighterAImageDeleteUrl = selectedFighterPatch.fighterAImageDeleteUrl;
+      if (!fighterBImageDeleteUrl && selectedFighterPatch.fighterBImageDeleteUrl) fighterBImageDeleteUrl = selectedFighterPatch.fighterBImageDeleteUrl;
 
       if (fighterAImage) existingMatch.fighterAImage = fighterAImage;
       if (fighterBImage) existingMatch.fighterBImage = fighterBImage;
@@ -2388,6 +2452,10 @@ app.get('/match', async (req, res) => {
 
     if (!isAllFilterValue(req.query.shadowStatus)) query.matchShadowStatus = exactTextRegex(req.query.shadowStatus) || req.query.shadowStatus;
     if (!isAllFilterValue(req.query.openStatus)) query.matchShadowOpenStatus = exactTextRegex(req.query.openStatus) || req.query.openStatus;
+    if (!isAllFilterValue(req.query.matchType || req.query.type)) {
+      const matchTypeRegex = exactTextRegex(req.query.matchType || req.query.type);
+      if (matchTypeRegex) query.matchType = matchTypeRegex;
+    }
 
     if (shouldRequestPredictionEligibleFights(req.query) && !query.$or) {
       query.$or = buildPredictionEligibleFightFilter().$or;
@@ -11765,6 +11833,7 @@ registerFightDataQualityRoutes({
   axios,
   verifyAdminToken,
   Match,
+  Shadow,
 });
 
 // Centralized request/upload error handling. This keeps existing upload routes intact

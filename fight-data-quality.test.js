@@ -54,9 +54,17 @@ assert(gervonta, 'Gervonta suggestion should exist');
 assert.strictEqual(gervonta.matchCount, 2);
 assert.strictEqual(gervonta.primaryImageCandidate, 'https://img/a.jpg');
 
+const importGroups = _private.collectFighterImportGroups([
+  { _id: '1', __collection: 'match', matchCategory: 'boxing', matchFighterA: 'Gervonta Davis', fighterAImage: 'https://img/old-broken.jpg' },
+  { _id: '2', __collection: 'match', matchCategory: 'boxing', matchFighterA: ' GERVONTA DAVIS ', fighterAImage: 'https://img/working.jpg' },
+]);
+assert.strictEqual(importGroups.size, 1);
+assert.strictEqual(importGroups.get('boxing:gervonta davis').links.length, 2);
+
 const serverSource = fs.readFileSync(path.join(__dirname, 'server.js'), 'utf8');
 assert(serverSource.includes("require('./fight-data-quality')"), 'server.js must load fight-data-quality routes.');
 assert(serverSource.includes('fighterAId: { type: mongoose.Schema.Types.ObjectId'), 'Match schema must include fighterAId.');
+assert(serverSource.includes('Shadow,\n});'), 'server.js must pass Shadow model into fight data-quality routes.');
 assert(serverSource.includes('registerFightDataQualityRoutes({'), 'server.js must register fight data-quality routes.');
 
 const routeSource = fs.readFileSync(path.join(__dirname, 'fight-data-quality.js'), 'utf8');
@@ -69,6 +77,11 @@ for (const route of [
   '/api/combat-fighters',
   '/api/admin/combat-fighters',
   '/api/admin/combat-fighters/suggest-from-matches',
+  '/api/admin/fights/live',
+  '/api/admin/shadow-fights/library',
+  '/api/admin/combat-fighters/import-from-fights',
+  '/api/admin/combat-fighters/:id',
+  '/api/admin/combat-fighters/:id/restore',
   '/api/admin/fights/:matchId/link-fighters',
 ]) {
   assert(routeSource.includes(route), `Missing route: ${route}`);
