@@ -39,6 +39,7 @@ const fetch = require('node-fetch');
 const xml2js = require('xml2js');
 const { registerSwarmPhase2Routes } = require('./swarm-phase2');
 const { registerSeoPerformancePhase2Routes } = require('./seo-performance-phase2');
+const { registerFightDataQualityRoutes } = require('./fight-data-quality');
 
 const ALGORITHM = 'aes-256-cbc'; // AES algorithm
 const ENCRYPTION_KEY = process.env.ENCRYPTION_KEY; // Must be 32 bytes
@@ -1087,6 +1088,10 @@ const matchSchema = new mongoose.Schema({
   matchName: String,
   matchFighterA: String,
   matchFighterB: String,
+  // Optional normalized fighter references. Existing string/image fields remain authoritative
+  // until admin links or migrates data safely from the new combat fighter library.
+  fighterAId: { type: mongoose.Schema.Types.ObjectId, ref: 'CombatFighter' },
+  fighterBId: { type: mongoose.Schema.Types.ObjectId, ref: 'CombatFighter' },
   matchDescription: String,
   shadowTemplatesAdditionStatus: { type: Boolean, default: false },
   notificationSent: { type: Boolean, default: false },
@@ -11750,6 +11755,16 @@ registerSeoPerformancePhase2Routes({
     ProWrestler,
     ProWrestlingMatch,
   },
+});
+
+// PHASE: Safe fight data-quality + combat fighter library helpers. Additive only;
+// old match fields/routes stay unchanged and remain the fallback for public pages.
+registerFightDataQualityRoutes({
+  app,
+  mongoose,
+  axios,
+  verifyAdminToken,
+  Match,
 });
 
 // Centralized request/upload error handling. This keeps existing upload routes intact

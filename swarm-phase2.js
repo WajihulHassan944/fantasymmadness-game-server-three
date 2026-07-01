@@ -91,6 +91,61 @@ const DEFAULT_JOB_TYPE_ARRAY = [
 
 const DEFAULT_JOB_TYPES = new Set(DEFAULT_JOB_TYPE_ARRAY);
 
+const JULY_10000_GROWTH_JOB_TYPES = Object.freeze([
+  'analytics.july-10000-signup-growth-plan',
+  'data.event-calendar-daily-update',
+  'content.fight-card-daily-package',
+  'content.blog-seo-daily-articles',
+  'social.instagram-growth-posts',
+  'social.facebook-growth-posts',
+  'social.x-growth-posts',
+  'social.youtube-growth-video-draft',
+  'social.short-form-video-pack',
+  'notification.community-retention-daily',
+  'media.branded-post-image-prompt',
+]);
+
+const JULY_10000_GROWTH_AUTOMATION_KEYS = Object.freeze([
+  'growth.july10000SystemPlan',
+  'event.calendarDailyUpdate',
+  'fightCard.dailyPackage',
+  'blogSeo.dailyArticles',
+  'social.instagramGrowthPosts',
+  'social.facebookGrowthPosts',
+  'social.xGrowthPosts',
+  'social.youtubeGrowthVideoDraft',
+  'social.shortFormVideoPack',
+  'community.retentionDaily',
+  'media.brandedPostImagePrompt',
+]);
+
+const JULY_10000_REQUIRED_YOUTUBE_CTA = 'Make your picks on Fantasy MMadness before the event starts.';
+
+const PHASE1_SEO_FOUNDATION_JOB_TYPES = Object.freeze([
+  'seo.technical-foundation-audit',
+  'seo.sitemap-robots-audit',
+  'seo.pagination-opportunity-report',
+  'seo.image-performance-audit',
+  'seo.core-web-vitals-plan',
+  'seo.landing-page-roadmap',
+  'seo.fight-detail-seo-roadmap',
+  'seo.fighter-profile-seo-roadmap',
+  'seo.blog-architecture-audit',
+  'seo.footer-internal-link-audit',
+  'seo.conversion-cta-audit',
+  'seo.trust-compliance-content-plan',
+  'content.sport-landing-page-brief',
+  'content.fight-detail-page-brief',
+  'content.fighter-profile-page-brief',
+  'media.blog-featured-image-prompt',
+]);
+
+for (const jobType of [...PHASE1_SEO_FOUNDATION_JOB_TYPES, ...JULY_10000_GROWTH_JOB_TYPES]) {
+  if (!DEFAULT_JOB_TYPES.has(jobType)) {
+    DEFAULT_JOB_TYPE_ARRAY.push(jobType);
+    DEFAULT_JOB_TYPES.add(jobType);
+  }
+}
 
 const DEFAULT_SPORTS = new Set(['mma', 'boxing', 'kickboxing', 'combat', 'pro_wrestling']);
 
@@ -102,6 +157,7 @@ const CAMPAIGN_TYPES = new Set([
   'pro_wrestling_match_campaign',
   'blog_promotion_campaign',
   'contest_promotion_campaign',
+  'july_10000_signup_growth_system',
   'custom_campaign',
 ]);
 
@@ -163,6 +219,16 @@ const LOCAL_CAMPAIGN_PACKS = Object.freeze([
     defaultVertical: 'combat',
     defaultSport: 'mma',
     defaultSections: ['content', 'social', 'notification'],
+  },
+  {
+    campaignType: 'july_10000_signup_growth_system',
+    label: 'July 10,000 signup growth system',
+    description: 'Run the safe daily growth pack: event calendar, fight card, Instagram, Facebook, X, YouTube, Shorts, blog/SEO, media, and retention draft agents.',
+    defaultVertical: 'combat',
+    defaultSport: 'combat',
+    defaultSections: ['content', 'seo', 'social', 'media', 'analytics', 'notification', 'data'],
+    automationKeys: JULY_10000_GROWTH_AUTOMATION_KEYS,
+    dailyOutputTargets: buildJulyGrowthOutputTargets(),
   },
   {
     campaignType: 'custom_campaign',
@@ -259,6 +325,7 @@ const AUTOMATION_TRIGGER_DEFAULTS = Object.freeze({
     'social.instagram-post-draft',
     'social.facebook-post-draft',
   ],
+  july_growth_daily: JULY_10000_GROWTH_JOB_TYPES,
   weekly_schedule: [
     'seo.weekly-traffic-opportunity',
     'seo.duplicate-content-detector',
@@ -388,8 +455,13 @@ function registerSwarmPhase2Routes(options) {
       automationGroups: AUTOMATION_GROUPS,
       campaignTypes: Array.from(CAMPAIGN_TYPES),
       campaignPacks: LOCAL_CAMPAIGN_PACKS,
+      julyGrowth: buildJulyGrowthConfig(),
       reviewStatuses: Array.from(REVIEW_STATUSES),
     });
+  }));
+
+  app.get('/api/admin/swarm/growth/july-10000/config', verifyAdminToken, asyncHandler(async (req, res) => {
+    res.json({ ok: true, source: 'backend', config: buildJulyGrowthConfig() });
   }));
 
   app.get('/api/admin/swarm/health', verifyAdminToken, asyncHandler(async (req, res) => {
@@ -604,6 +676,51 @@ function registerSwarmPhase2Routes(options) {
     res.status(result.createdJobs?.length ? 202 : 200).json({ ok: true, ...result });
   }));
 
+  const runJulyGrowthDailyHandler = asyncHandler(async (req, res) => {
+    const body = mergeJulyGrowthBody(req.body || {});
+    const result = await runExplicitAutomationJobs({
+      config: getSwarmConfig(),
+      axios,
+      crypto,
+      mongoose,
+      models,
+      admin: req.admin,
+      body,
+      trigger: 'july_growth_daily',
+      jobTypes: JULY_10000_GROWTH_JOB_TYPES,
+    });
+    res.status(result.createdJobs?.length ? 202 : 200).json({ ok: true, growthConfig: buildJulyGrowthConfig(), ...result });
+  });
+
+  app.post('/api/admin/swarm/schedules/daily/july-growth', verifyAdminToken, requireSwarmEnabled, runJulyGrowthDailyHandler);
+  app.post('/api/admin/swarm/growth/july-10000/run', verifyAdminToken, requireSwarmEnabled, runJulyGrowthDailyHandler);
+
+  app.get('/api/admin/swarm/growth/july-10000/dashboard', verifyAdminToken, asyncHandler(async (req, res) => {
+    const growthFilter = {
+      $or: [
+        { 'metadata.growthSystem': 'july-10000-signups' },
+        { jobType: { $in: JULY_10000_GROWTH_JOB_TYPES } },
+      ],
+    };
+    const [jobs, artifacts, campaigns, awaitingReview, latestJobs, latestArtifacts] = await Promise.all([
+      models.SwarmBackendJob.countDocuments(growthFilter),
+      models.SwarmBackendArtifact.countDocuments(growthFilter),
+      models.SwarmBackendCampaign.countDocuments({ campaignType: 'july_10000_signup_growth_system' }),
+      models.SwarmBackendArtifact.countDocuments({ ...growthFilter, reviewStatus: { $in: ['DRAFT', 'AWAITING_REVIEW'] } }),
+      models.SwarmBackendJob.find(growthFilter).sort({ createdAt: -1 }).limit(10).lean(),
+      models.SwarmBackendArtifact.find(growthFilter).sort({ createdAt: -1 }).limit(10).lean(),
+    ]);
+
+    res.json({
+      ok: true,
+      source: 'backend-cache',
+      config: buildJulyGrowthConfig(),
+      counts: { jobs, artifacts, campaigns, awaitingReview },
+      latestJobs: latestJobs.map(serializeLocalJob),
+      latestArtifacts: latestArtifacts.map(serializeLocalArtifact),
+    });
+  }));
+
   app.get('/api/admin/swarm/campaigns/packs', verifyAdminToken, asyncHandler(async (req, res) => {
     const config = getSwarmConfig();
     if (config.enabled && String(req.query.source || '').toLowerCase() !== 'local') {
@@ -702,6 +819,21 @@ function registerSwarmPhase2Routes(options) {
   app.post('/api/admin/swarm/campaigns/boxing', verifyAdminToken, requireSwarmEnabled, asyncHandler(async (req, res) => {
     const result = await createSwarmCampaign({ config: getSwarmConfig(), axios, crypto, mongoose, models, body: { ...(req.body || {}), campaignType: 'boxing_fight_campaign', sport: 'boxing', vertical: 'combat', includeAll: req.body?.includeAll !== false }, admin: req.admin, reason: 'admin-created-boxing-campaign' });
     res.status(202).json({ ok: true, ...result });
+  }));
+
+  app.post('/api/admin/swarm/campaigns/july-growth', verifyAdminToken, requireSwarmEnabled, asyncHandler(async (req, res) => {
+    const body = mergeJulyGrowthCampaignBody(req.body || {});
+    const result = await createSwarmCampaign({
+      config: getSwarmConfig(),
+      axios,
+      crypto,
+      mongoose,
+      models,
+      body,
+      admin: req.admin,
+      reason: body.reason || 'admin-created-july-10000-growth-campaign',
+    });
+    res.status(202).json({ ok: true, growthConfig: buildJulyGrowthConfig(), ...result });
   }));
 
   app.get('/api/admin/swarm/events', verifyAdminToken, asyncHandler(async (req, res) => {
@@ -1310,6 +1442,112 @@ function getSwarmConfig() {
   };
 }
 
+function buildJulyGrowthOutputTargets() {
+  return {
+    instagramPosts: toInt(process.env.GROWTH_DAILY_INSTAGRAM_POSTS, 6),
+    facebookPosts: toInt(process.env.GROWTH_DAILY_FACEBOOK_POSTS, 5),
+    xPosts: toInt(process.env.GROWTH_DAILY_X_POSTS, 15),
+    youtubeVideos: toInt(process.env.GROWTH_DAILY_YOUTUBE_VIDEOS, 2),
+    shorts: toInt(process.env.GROWTH_DAILY_SHORTS, 8),
+    blogs: toInt(process.env.GROWTH_DAILY_BLOGS, 4),
+    stories: toInt(process.env.GROWTH_DAILY_STORIES, 10),
+    notifications: toInt(process.env.GROWTH_DAILY_NOTIFICATIONS, 3),
+    dailyAssetCap: toInt(process.env.SWARM_DAILY_CONTENT_ASSET_CAP, 60),
+  };
+}
+
+function buildJulyGrowthConfig() {
+  const outputTargets = buildJulyGrowthOutputTargets();
+  return {
+    enabled: String(process.env.JULY_GROWTH_SYSTEM_ENABLED || 'true').toLowerCase() !== 'false',
+    campaignType: 'july_10000_signup_growth_system',
+    growthSystem: 'july-10000-signups',
+    julySignupGoal: toInt(process.env.JULY_SIGNUP_GOAL, 10000),
+    timezone: cleanString(process.env.GROWTH_TIMEZONE) || 'America/New_York',
+    outputTargets,
+    jobTypes: JULY_10000_GROWTH_JOB_TYPES,
+    automationKeys: JULY_10000_GROWTH_AUTOMATION_KEYS,
+    requiredYouTubeEndingLine: JULY_10000_REQUIRED_YOUTUBE_CTA,
+    brandLogo: {
+      url: cleanString(process.env.BRAND_LOGO_URL),
+      corner: cleanString(process.env.BRAND_LOGO_CORNER) || 'bottom-right',
+      opacity: Number(process.env.BRAND_LOGO_OPACITY || 0.86),
+    },
+    schedule: {
+      calendarUpdate: '8 AM',
+      youtubeVideo: '10 AM',
+      facebookPost: '12 PM',
+      blogAndXThread: '2 PM',
+      shortVideos: '5 PM',
+      liveContent: '7 PM',
+      resultsAndYoutubeRecap: '10 PM',
+    },
+    safety: {
+      autoPublishEnabled: String(process.env.SWARM_AUTO_PUBLISH_ENABLED || 'false').toLowerCase() === 'true',
+      socialPublishEnabled: String(process.env.SWARM_SOCIAL_PUBLISH_ENABLED || 'false').toLowerCase() === 'true',
+      youtubeUploadEnabled: String(process.env.YOUTUBE_UPLOAD_ENABLED || 'false').toLowerCase() === 'true',
+      approvalRequiredByDefault: true,
+      backendDoesNotChangeWalletsOrPredictions: true,
+    },
+  };
+}
+
+function buildJulyGrowthInput(rawBody) {
+  const raw = isPlainObject(rawBody) ? rawBody : {};
+  const input = isPlainObject(raw.input) ? raw.input : {};
+  const config = buildJulyGrowthConfig();
+  const topic = cleanString(raw.topic || input.topic || raw.title || input.title) || 'Fantasy MMadness July 10,000 signup growth system';
+  return {
+    ...input,
+    topic,
+    title: cleanString(raw.title || input.title) || topic,
+    sport: normalizeSport(raw.sport || input.sport || raw.discipline || input.discipline || 'combat'),
+    discipline: normalizeSport(raw.discipline || input.discipline || raw.sport || input.sport || 'combat'),
+    signupGoal: toInt(raw.signupGoal || input.signupGoal, config.julySignupGoal),
+    growthSystem: config.growthSystem,
+    timezone: cleanString(raw.timezone || input.timezone) || config.timezone,
+    dailyOutputTargets: { ...config.outputTargets, ...(isPlainObject(raw.dailyOutputTargets) ? raw.dailyOutputTargets : {}), ...(isPlainObject(input.dailyOutputTargets) ? input.dailyOutputTargets : {}) },
+    requiredYouTubeEndingLine: cleanString(raw.requiredYouTubeEndingLine || input.requiredYouTubeEndingLine) || config.requiredYouTubeEndingLine,
+    brandLogo: { ...config.brandLogo, ...(isPlainObject(raw.brandLogo) ? raw.brandLogo : {}), ...(isPlainObject(input.brandLogo) ? input.brandLogo : {}) },
+    publishingSchedule: config.schedule,
+    approvalMode: 'approval-first',
+  };
+}
+
+function mergeJulyGrowthBody(rawBody) {
+  const raw = isPlainObject(rawBody) ? rawBody : {};
+  const growthInput = buildJulyGrowthInput(raw);
+  return {
+    ...raw,
+    title: raw.title || growthInput.title,
+    topic: raw.topic || growthInput.topic,
+    vertical: 'combat',
+    sport: growthInput.sport || 'combat',
+    mode: normalizeMode(raw.mode || 'APPROVAL_REQUIRED'),
+    sourceEntity: raw.sourceEntity || { type: 'growth_campaign', id: 'july-10000-signups', label: growthInput.title, origin: 'backend_july_growth_system' },
+    input: growthInput,
+    metadata: {
+      ...(isPlainObject(raw.metadata) ? raw.metadata : {}),
+      growthSystem: 'july-10000-signups',
+      julySignupGoal: growthInput.signupGoal,
+      requiredYouTubeEndingLine: growthInput.requiredYouTubeEndingLine,
+      submittedFrom: 'backend-july-growth-system',
+    },
+  };
+}
+
+function mergeJulyGrowthCampaignBody(rawBody) {
+  const raw = mergeJulyGrowthBody(rawBody);
+  return {
+    ...raw,
+    campaignType: 'july_10000_signup_growth_system',
+    title: raw.title || 'Fantasy MMadness July 10,000 signup growth system',
+    includeAll: raw.includeAll !== false,
+    sections: normalizeCampaignSections(raw.sections) || ['content', 'seo', 'social', 'media', 'analytics', 'notification', 'data'],
+    automationKeys: normalizeStringArray(raw.automationKeys) || JULY_10000_GROWTH_AUTOMATION_KEYS,
+  };
+}
+
 async function callSwarm(config, axios, crypto, method, path, body, query) {
   if (!config.enabled) {
     const error = new Error('Swarm is not configured.');
@@ -1471,6 +1709,7 @@ function normalizeSourceEntity(raw, input, vertical, jobType) {
 }
 
 function inferSourceEntityType(input, vertical, jobType) {
+  if (cleanString(input.growthSystem) || String(jobType || '').includes('growth') || String(jobType || '').includes('july-10000')) return 'growth_campaign';
   if (cleanString(input.matchId)) return vertical === 'pro_wrestling' ? 'pro_wrestling_match' : 'combat_match';
   if (cleanString(input.fightId)) return 'combat_fight';
   if (cleanString(input.eventId)) return vertical === 'pro_wrestling' ? 'pro_wrestling_event' : 'combat_event';
@@ -1897,7 +2136,7 @@ function buildCampaignBodyFromEvent({ trigger, body, admin }) {
       campaignRequestedFrom: 'backend-event-trigger',
     },
     sections: normalizeCampaignSections(raw.sections),
-    automationKeys: normalizeStringArray(raw.automationKeys),
+    automationKeys: normalizeStringArray(raw.automationKeys) || pack.automationKeys,
     includeAll: raw.includeAll !== false && (raw.includeAll === true || raw.allAgents === true || raw.runAllAgents === true || raw.allOfTheAbove === true || !Array.isArray(raw.automationKeys)),
     force: raw.force === true,
     backendCorrelationId: cleanString(raw.backendCorrelationId) || undefined,
@@ -2010,12 +2249,14 @@ function normalizeCreateCampaignBody(rawBody, admin, config, crypto) {
   if (!CAMPAIGN_TYPES.has(campaignType)) throw httpError(400, 'INVALID_CAMPAIGN_TYPE', 'Unsupported swarm campaign type.');
 
   const pack = LOCAL_CAMPAIGN_PACKS.find((item) => item.campaignType === campaignType) || LOCAL_CAMPAIGN_PACKS[0];
-  const input = {
-    ...sourceInput,
-    sport,
-    discipline: sourceInput.discipline || sport,
-    adminUXIntent: cleanString(raw.adminUXIntent) || cleanString(raw.intent) || buildCampaignIntent(campaignType, sport),
-  };
+  const input = campaignType === 'july_10000_signup_growth_system'
+    ? buildJulyGrowthInput({ ...raw, input: sourceInput })
+    : {
+      ...sourceInput,
+      sport,
+      discipline: sourceInput.discipline || sport,
+      adminUXIntent: cleanString(raw.adminUXIntent) || cleanString(raw.intent) || buildCampaignIntent(campaignType, sport),
+    };
   const sourceEntity = normalizeSourceEntity({ ...raw, sourceEntity: raw.sourceEntity, label: raw.label || raw.title }, input, vertical, 'content.article');
   const title = cleanString(raw.title) || cleanString(input.title) || cleanString(input.matchName) || cleanString(input.eventName) || sourceEntity.label || pack.label;
   const normalized = {
@@ -2029,7 +2270,7 @@ function normalizeCreateCampaignBody(rawBody, admin, config, crypto) {
     sourceEntity,
     input,
     sections: normalizeCampaignSections(raw.sections) || pack.defaultSections,
-    automationKeys: normalizeStringArray(raw.automationKeys),
+    automationKeys: normalizeStringArray(raw.automationKeys) || pack.automationKeys,
     includeAll: raw.includeAll !== false && (raw.includeAll === true || raw.allAgents === true || raw.runAllAgents === true || raw.allOfTheAbove === true || !Array.isArray(raw.automationKeys)),
     force: raw.force === true,
     backendCorrelationId: cleanString(raw.backendCorrelationId) || undefined,
@@ -2081,6 +2322,14 @@ function normalizeCampaignType(value) {
     blog: 'blog_promotion_campaign',
     blog_promotion: 'blog_promotion_campaign',
     contest: 'contest_promotion_campaign',
+    july: 'july_10000_signup_growth_system',
+    july_growth: 'july_10000_signup_growth_system',
+    july_10000: 'july_10000_signup_growth_system',
+    growth: 'july_10000_signup_growth_system',
+    growth_system: 'july_10000_signup_growth_system',
+    signup_growth: 'july_10000_signup_growth_system',
+    ten_thousand_signups: 'july_10000_signup_growth_system',
+    '10000_signups': 'july_10000_signup_growth_system',
     custom: 'custom_campaign',
   };
   return aliases[normalized] || normalized || 'fight_full_campaign';
@@ -2089,6 +2338,7 @@ function normalizeCampaignType(value) {
 function inferCampaignTypeFromBody(raw, sport) {
   if (sport === 'boxing') return 'boxing_fight_campaign';
   if (sport === 'pro_wrestling' || normalizeVertical(raw.vertical || raw.gameMode) === 'pro_wrestling') return 'pro_wrestling_match_campaign';
+  if (raw.growthSystem || raw.julyGrowth || raw.july10000 || raw.signupGoal || raw.targetSignups) return 'july_10000_signup_growth_system';
   if (raw.result || raw.resultUpdated) return 'fight_result_campaign';
   if (raw.tonight || raw.promoteTonight) return 'fight_tonight_campaign';
   if (raw.blogId || raw.blogTitle) return 'blog_promotion_campaign';
@@ -2114,6 +2364,7 @@ function buildCampaignIntent(campaignType, sport) {
   if (campaignType === 'pro_wrestling_match_campaign') return 'Create pro-wrestling match campaign artifacts.';
   if (campaignType === 'blog_promotion_campaign') return 'Promote this approved blog with SEO and social artifacts.';
   if (campaignType === 'contest_promotion_campaign') return 'Promote this contest with explainers, reminders, and announcement artifacts.';
+  if (campaignType === 'july_10000_signup_growth_system') return 'Run the safe July 10,000-signup growth system as draft/approval artifacts across content, social, YouTube, media, calendar, and retention.';
   return `Run the full ${sport || 'fight'} automation campaign.`;
 }
 
@@ -2526,6 +2777,12 @@ function normalizeAutomationTrigger(value) {
     schedule_daily: 'daily_schedule',
     'schedule.daily': 'daily_schedule',
     daily_schedule: 'daily_schedule',
+    july: 'july_growth_daily',
+    july_growth: 'july_growth_daily',
+    july_10000: 'july_growth_daily',
+    growth_daily: 'july_growth_daily',
+    july_growth_daily: 'july_growth_daily',
+    'schedule.july_growth': 'july_growth_daily',
     weekly: 'weekly_schedule',
     schedule_weekly: 'weekly_schedule',
     'schedule.weekly': 'weekly_schedule',
@@ -2944,6 +3201,9 @@ module.exports = {
     resolveEventJobTypes,
     buildLocalAutomationCatalog,
     buildDefaultAutomationSettings,
+    buildJulyGrowthConfig,
+    DEFAULT_JOB_TYPE_ARRAY,
+    JULY_10000_GROWTH_JOB_TYPES,
     inferVerticalForJobType,
     signRequest,
     sha256Hex,

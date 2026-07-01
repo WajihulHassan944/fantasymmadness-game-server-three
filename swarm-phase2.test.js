@@ -87,6 +87,20 @@ assert.strictEqual(normalizedCampaign.sport, 'boxing');
 assert.strictEqual(normalizedCampaign.includeAll, true);
 assert(normalizedCampaign.idempotencyKey.startsWith('backend:campaign:boxing_fight_campaign'));
 
+const normalizedJulyGrowthCampaign = _private.normalizeCreateCampaignBody({
+  campaignType: 'july_growth',
+  title: 'July Growth System',
+  growthSystem: 'july-10000-signups',
+  input: { topic: 'Combat sports daily growth system' },
+}, { id: 'admin-growth' }, { defaultMode: 'DRAFT_ONLY' }, crypto);
+assert.strictEqual(normalizedJulyGrowthCampaign.campaignType, 'july_10000_signup_growth_system');
+assert.strictEqual(normalizedJulyGrowthCampaign.mode, 'DRAFT_ONLY');
+assert.strictEqual(normalizedJulyGrowthCampaign.sourceEntity.type, 'growth_campaign');
+assert.strictEqual(normalizedJulyGrowthCampaign.input.requiredYouTubeEndingLine, 'Make your picks on Fantasy MMadness before the event starts.');
+assert(normalizedJulyGrowthCampaign.automationKeys.includes('social.youtubeGrowthVideoDraft'));
+assert(_private.buildJulyGrowthConfig().jobTypes.includes('social.youtube-growth-video-draft'));
+assert(_private.DEFAULT_JOB_TYPE_ARRAY.includes('analytics.july-10000-signup-growth-plan'));
+
 const body = JSON.stringify({ ok: true });
 const signature = _private.signRequest({
   crypto,
@@ -128,6 +142,11 @@ for (const route of [
   '/api/admin/swarm/automations/:jobType/run',
   '/api/admin/swarm/artifacts/:artifactId/apply-seo',
   '/api/admin/swarm/campaigns/boxing',
+  '/api/admin/swarm/campaigns/july-growth',
+  '/api/admin/swarm/growth/july-10000/config',
+  '/api/admin/swarm/growth/july-10000/dashboard',
+  '/api/admin/swarm/growth/july-10000/run',
+  '/api/admin/swarm/schedules/daily/july-growth',
   '/api/admin/swarm/campaigns/fight/tonight',
   '/api/admin/swarm/campaigns/fight/full',
   '/api/admin/swarm/campaigns/packs',
