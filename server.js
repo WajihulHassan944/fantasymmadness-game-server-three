@@ -5,6 +5,20 @@ const moment = require('moment');
 const Parser = require('rss-parser');
 const parser = new Parser();
 const app = express();
+
+// Production-safe defaults. These are intentionally conservative and configurable
+// so existing routes keep their contracts while oversized requests fail fast.
+app.disable('x-powered-by');
+app.set('trust proxy', 1);
+const JSON_BODY_LIMIT = process.env.JSON_BODY_LIMIT || process.env.REQUEST_BODY_LIMIT || '10mb';
+const URLENCODED_BODY_LIMIT = process.env.URLENCODED_BODY_LIMIT || JSON_BODY_LIMIT;
+const SECURITY_HEADERS = Object.freeze({
+  'X-Content-Type-Options': 'nosniff',
+  'X-Frame-Options': 'SAMEORIGIN',
+  'Referrer-Policy': 'strict-origin-when-cross-origin',
+  'Permissions-Policy': 'camera=(), microphone=(), geolocation=()',
+});
+
 const { ObjectId } = require('mongodb');
 const Pusher = require('pusher');
 const cors = require("cors");
@@ -41,14 +55,23 @@ cloudinary.config({
 // Example of generating a random IV for encryption
 const iv = crypto.randomBytes(IV_LENGTH);
 
+app.use((req, res, next) => {
+  Object.entries(SECURITY_HEADERS).forEach(([name, value]) => res.setHeader(name, value));
+  if (process.env.NODE_ENV === 'production') {
+    res.setHeader('Strict-Transport-Security', 'max-age=31536000; includeSubDomains; preload');
+  }
+  next();
+});
+
 app.use(express.json({
+  limit: JSON_BODY_LIMIT,
   verify: (req, res, buf) => {
     req.rawBody = buf ? buf.toString('utf8') : '';
   },
 }));
 
 // CORS configuration
-const allowedOrigins = [
+const defaultAllowedOrigins = [
   'https://fantasymmadness-version2.vercel.app', // Production
   'http://localhost:3000',
   'https://www.fantasymmadness.com',
@@ -65,6 +88,16 @@ const allowedOrigins = [
    'https://www.z7neckbrace.online',
    'https://suckapunch.online',
    'https://www.suckapunch.online'
+];
+
+const allowedOrigins = [
+  ...new Set([
+    ...defaultAllowedOrigins,
+    ...String(process.env.CORS_ORIGINS || '')
+      .split(',')
+      .map((origin) => origin.trim())
+      .filter(Boolean),
+  ]),
 ];
 
 app.use(cors({
@@ -88,8 +121,8 @@ mongoose.connect(MONGODB_URI, {
 });
 
 // Middleware
-app.use(bodyParser.urlencoded({ extended: false }));
-app.use(bodyParser.json());
+app.use(bodyParser.urlencoded({ extended: false, limit: URLENCODED_BODY_LIMIT }));
+app.use(bodyParser.json({ limit: JSON_BODY_LIMIT }));
 
 
 
@@ -250,6 +283,246 @@ function appendNoDraftFightFilter(query = {}) {
   };
 }
 
+const SENSITIVE_ACCOUNT_FIELDS = [
+  'password',
+  'verificationToken',
+  'resetPasswordToken',
+  'resetPasswordExpires',
+  'preferredPaymentMethodValue',
+  'profileDeleteUrl',
+];
+
+const SENSITIVE_BILLING_FIELDS = [
+  'cardNumber',
+  'cardCode',
+  'expirationDate',
+  'paymentProfileId',
+  'customerProfileId',
+  'transactionId',
+];
+
+const USER_SAFE_SELECT = [
+  '_id',
+  'firstName',
+  'lastName',
+  'playerName',
+  'zipCode',
+  'tokens',
+  'email',
+  'phone',
+  'shortBio',
+  'isNotificationsEnabled',
+  'isSubscribed',
+  'isUSCitizen',
+  'isAgreed',
+  'verified',
+  'profileUrl',
+  'currentPlan',
+  'freePlanExpiryDate',
+  'hasAvailedFreePlan',
+  'preferredPaymentMethod',
+  'hasSubmittedTestimonial',
+  'billing.address',
+  'billing.city',
+  'billing.state',
+  'billing.zip',
+  'billing.country',
+  'createdAt',
+  'updatedAt',
+].join(' ');
+
+const AFFILIATE_SAFE_SELECT = [
+  '_id',
+  'firstName',
+  'lastName',
+  'playerName',
+  'zipCode',
+  'email',
+  'phone',
+  'hearing',
+  'isNotificationsEnabled',
+  'isSubscribed',
+  'isUSCitizen',
+  'isAgreed',
+  'totalViews',
+  'verified',
+  'profileUrl',
+  'tokens',
+  'preferredPaymentMethod',
+  'rewardTitle',
+  'rewardImageUrl',
+  'usersJoined',
+  'payouts',
+  'createdAt',
+  'updatedAt',
+].join(' ');
+
+function toPlainObject(value) {
+  if (!value) return value;
+  if (typeof value.toObject === 'function') {
+    return value.toObject({ depopulate: false, versionKey: false, transform: false });
+  }
+  if (typeof value === 'object') {
+    return Array.isArray(value) ? value.map((item) => toPlainObject(item)) : { ...value };
+  }
+  return value;
+}
+
+function sanitizeAccountObject(value) {
+  const account = toPlainObject(value);
+  if (!account || typeof account !== 'object' || Array.isArray(account)) return account;
+
+  SENSITIVE_ACCOUNT_FIELDS.forEach((field) => {
+    delete account[field];
+  });
+
+  if (account.billing && typeof account.billing === 'object') {
+    SENSITIVE_BILLING_FIELDS.forEach((field) => {
+      delete account.billing[field];
+    });
+  }
+
+  return account;
+}
+
+function sanitizeAccountList(values) {
+  return Array.isArray(values) ? values.map((value) => sanitizeAccountObject(value)) : [];
+}
+
+function attachSafeAccountJsonTransform(schema) {
+  schema.set('toJSON', {
+    virtuals: true,
+    transform: (_doc, ret) => sanitizeAccountObject(ret),
+  });
+}
+
+function parsePositiveInteger(value, fallback, max = 100) {
+  const parsed = Number.parseInt(value, 10);
+  if (!Number.isFinite(parsed) || parsed <= 0) return fallback;
+  return Math.min(parsed, max);
+}
+
+const PUBLIC_CACHE_TTL_SECONDS = parsePositiveInteger(process.env.PUBLIC_CACHE_TTL_SECONDS, 15, 300);
+const publicResponseCache = new Map();
+
+function getPublicCacheKey(req, namespace = 'public') {
+  return `${namespace}:${req.originalUrl || req.url || ''}`;
+}
+
+function setPublicCacheHeaders(res, ttlSeconds = PUBLIC_CACHE_TTL_SECONDS, cacheState = 'MISS') {
+  const ttl = parsePositiveInteger(ttlSeconds, PUBLIC_CACHE_TTL_SECONDS, 300);
+  res.setHeader('Cache-Control', `public, max-age=${ttl}, s-maxage=${ttl}, stale-while-revalidate=${ttl * 4}`);
+  res.setHeader('X-Backend-Cache', cacheState);
+}
+
+async function readThroughPublicCache(cacheKey, producer, ttlSeconds = PUBLIC_CACHE_TTL_SECONDS) {
+  const ttl = parsePositiveInteger(ttlSeconds, PUBLIC_CACHE_TTL_SECONDS, 300);
+  const now = Date.now();
+  const cached = publicResponseCache.get(cacheKey);
+
+  if (cached && cached.expiresAt > now) {
+    return { payload: cached.payload, cacheState: 'HIT' };
+  }
+
+  const payload = await producer();
+  publicResponseCache.set(cacheKey, {
+    payload,
+    expiresAt: now + ttl * 1000,
+  });
+
+  if (publicResponseCache.size > 250) {
+    const expiredKeys = [];
+    publicResponseCache.forEach((entry, key) => {
+      if (!entry || entry.expiresAt <= now) expiredKeys.push(key);
+    });
+    expiredKeys.forEach((key) => publicResponseCache.delete(key));
+  }
+
+  return { payload, cacheState: 'MISS' };
+}
+
+function clearPublicResponseCache() {
+  publicResponseCache.clear();
+}
+
+function pickPublicFightFields(fight = {}, sourceType = 'match') {
+  const item = toPlainObject(fight) || {};
+  return {
+    _id: item._id,
+    sourceType,
+    matchCategory: item.matchCategory,
+    matchCategoryTwo: item.matchCategoryTwo,
+    matchName: item.matchName,
+    matchFighterA: item.matchFighterA,
+    matchFighterB: item.matchFighterB,
+    fighterAImage: item.fighterAImage,
+    fighterBImage: item.fighterBImage,
+    promotionBackground: item.promotionBackground,
+    matchDescription: item.matchDescription,
+    matchType: item.matchType,
+    matchTokens: item.matchTokens,
+    matchDate: item.matchDate,
+    matchStatus: item.matchStatus,
+    matchShadowStatus: item.matchShadowStatus,
+    matchShadowOpenStatus: item.matchShadowOpenStatus,
+    affiliateId: item.affiliateId,
+    AffiliateIds: item.AffiliateIds,
+    createdAt: item.createdAt,
+    updatedAt: item.updatedAt,
+  };
+}
+
+function calculateClassicPredictionPoints(userPrediction = [], fighterOneStats = [], fighterTwoStats = [], matchCategory = '') {
+  if (!Array.isArray(userPrediction) || !Array.isArray(fighterOneStats) || !Array.isArray(fighterTwoStats)) return 0;
+
+  return userPrediction.reduce((totalScore, roundPrediction, index) => {
+    const fighterOneRound = fighterOneStats[index];
+    const fighterTwoRound = fighterTwoStats[index];
+    if (!fighterOneRound || !fighterTwoRound || !roundPrediction) return totalScore;
+
+    let roundScore = 0;
+    const addIfUnderOrEqual = (predictionValue, actualValue) => {
+      const prediction = Number(predictionValue);
+      const actual = Number(actualValue);
+      if (Number.isFinite(prediction) && Number.isFinite(actual) && prediction <= actual) roundScore += prediction;
+    };
+    const addIfEqualPrediction = (predictionValue, actualValue, scoreValue = predictionValue) => {
+      const prediction = Number(predictionValue);
+      const actual = Number(actualValue);
+      const score = Number(scoreValue);
+      if (Number.isFinite(prediction) && Number.isFinite(actual) && prediction === actual && Number.isFinite(score)) roundScore += score;
+    };
+
+    if (String(matchCategory).toLowerCase() === 'boxing') {
+      addIfUnderOrEqual(roundPrediction.hpPrediction1, fighterOneRound.HP);
+      addIfUnderOrEqual(roundPrediction.bpPrediction1, fighterOneRound.BP);
+      addIfUnderOrEqual(roundPrediction.tpPrediction1, fighterOneRound.TP);
+      addIfEqualPrediction(roundPrediction.rwPrediction1, fighterOneRound.RW);
+      addIfEqualPrediction(roundPrediction.koPrediction1, fighterOneRound.KO, fighterOneRound.KO);
+      addIfUnderOrEqual(roundPrediction.hpPrediction2, fighterTwoRound.HP);
+      addIfUnderOrEqual(roundPrediction.bpPrediction2, fighterTwoRound.BP);
+      addIfUnderOrEqual(roundPrediction.tpPrediction2, fighterTwoRound.TP);
+      addIfEqualPrediction(roundPrediction.rwPrediction2, fighterTwoRound.RW);
+      addIfEqualPrediction(roundPrediction.koPrediction2, fighterTwoRound.KO, fighterTwoRound.KO);
+    } else if (String(matchCategory).toLowerCase() === 'mma') {
+      addIfUnderOrEqual(roundPrediction.hpPrediction1, fighterOneRound.ST);
+      addIfUnderOrEqual(roundPrediction.bpPrediction1, fighterOneRound.KI);
+      addIfUnderOrEqual(roundPrediction.tpPrediction1, fighterOneRound.KN);
+      addIfUnderOrEqual(roundPrediction.elPrediction1, fighterOneRound.EL);
+      addIfEqualPrediction(roundPrediction.rwPrediction1, fighterOneRound.RW);
+      addIfEqualPrediction(roundPrediction.koPrediction1, fighterOneRound.KO, fighterOneRound.KO);
+      addIfUnderOrEqual(roundPrediction.hpPrediction2, fighterTwoRound.ST);
+      addIfUnderOrEqual(roundPrediction.bpPrediction2, fighterTwoRound.KI);
+      addIfUnderOrEqual(roundPrediction.tpPrediction2, fighterTwoRound.KN);
+      addIfUnderOrEqual(roundPrediction.elPrediction2, fighterTwoRound.EL);
+      addIfEqualPrediction(roundPrediction.rwPrediction2, fighterTwoRound.RW);
+      addIfEqualPrediction(roundPrediction.koPrediction2, fighterTwoRound.KO, fighterTwoRound.KO);
+    }
+
+    return totalScore + roundScore;
+  }, 0);
+}
+
 function applyFightPublicVisibilityFilter(filter = {}, query = {}) {
   const draftFilter = appendNoDraftFightFilter(query);
   if (!draftFilter) return filter;
@@ -259,6 +532,14 @@ function applyFightPublicVisibilityFilter(filter = {}, query = {}) {
 
 function applyFightFreshSort(query) {
   return query.sort({ updatedAt: -1, createdAt: -1, matchDate: -1, _id: -1 });
+}
+
+function applyLeanRead(query) {
+  return typeof query.lean === 'function' ? query.lean() : query;
+}
+
+function applyFightFreshSortLean(query) {
+  return applyLeanRead(applyFightFreshSort(query));
 }
 
 function shouldRequestPredictionEligibleFights(query = {}) {
@@ -335,8 +616,32 @@ const builder = new xml2js.Builder({
   xmldec: { version: '1.0', encoding: 'UTF-8' }
 });
 // File upload configuration
+// Keep memory storage because existing Cloudinary upload streams depend on buffers,
+// but add conservative limits so a single oversized request cannot exhaust memory.
+const MAX_UPLOAD_FILE_SIZE_BYTES = Number(process.env.MAX_UPLOAD_FILE_SIZE_BYTES || 15 * 1024 * 1024);
+const MAX_UPLOAD_FILES_PER_REQUEST = Number(process.env.MAX_UPLOAD_FILES_PER_REQUEST || 10);
 const storage = multer.memoryStorage();
-const upload = multer({ storage: storage });
+const upload = multer({
+  storage,
+  limits: {
+    fileSize: MAX_UPLOAD_FILE_SIZE_BYTES,
+    files: MAX_UPLOAD_FILES_PER_REQUEST,
+  },
+  fileFilter: (req, file, callback) => {
+    const mimeType = String(file.mimetype || '').toLowerCase();
+
+    // Existing uploads are image-focused. Keep application/octet-stream as a
+    // compatibility escape hatch for browsers/devices that omit a precise type.
+    if (!mimeType || mimeType.startsWith('image/') || mimeType === 'application/octet-stream') {
+      return callback(null, true);
+    }
+
+    const error = new Error(`Unsupported upload type: ${mimeType}`);
+    error.statusCode = 415;
+    error.code = 'UNSUPPORTED_UPLOAD_TYPE';
+    return callback(error);
+  },
+});
 const shadowSchema = new mongoose.Schema({
   matchCategory: String, // 'boxing' or 'mma'
   matchCategoryTwo: String,
@@ -419,7 +724,8 @@ const shadowSchema = new mongoose.Schema({
     }
   ]
 });
-
+shadowSchema.index({ matchStatus: 1, matchShadowOpenStatus: 1, updatedAt: -1 });
+shadowSchema.index({ matchDate: -1, updatedAt: -1 });
 
 
 const Shadow = mongoose.model('Shadow', shadowSchema);
@@ -758,7 +1064,7 @@ app.delete('/shadowfighttodelete/:id', async (req, res) => {
 // Get Matches API
 app.get('/shadow', async (req, res) => {
   try {
-    const matches = await Shadow.find().sort({ _id: -1 }); // Sort by _id in descending order
+    const matches = await Shadow.find().sort({ _id: -1 }).lean(); // Sort by _id in descending order
     res.send(matches);
   } catch (err) {
     res.status(500).send({ message: 'Error fetching matches' });
@@ -864,8 +1170,9 @@ matchReward: { type: String, enum: ['Rewarded', 'NotRewarded'], default: 'NotRew
   
   __v: Number
 } , { timestamps: true });
-
-
+matchSchema.index({ matchStatus: 1, matchShadowOpenStatus: 1, updatedAt: -1 });
+matchSchema.index({ matchDate: -1, updatedAt: -1 });
+matchSchema.index({ affiliateId: 1, updatedAt: -1 });
 
 
 const Match = mongoose.model('Match', matchSchema);
@@ -1237,7 +1544,7 @@ app.get('/api/matches/:id', async (req, res) => {
     const { id } = req.params;
 
     // Find the match by ID
-    const match = await Match.findById(id);
+    const match = await Match.findById(id).lean();
 
     if (!match) {
       return res.status(404).json({ message: 'Match not found' });
@@ -1254,7 +1561,7 @@ app.get('/api/matches/:id', async (req, res) => {
 // These endpoints are additive aliases over the existing legacy routes.
 app.get('/api/shadow/:id', async (req, res) => {
   try {
-    const shadowFight = await Shadow.findById(req.params.id);
+    const shadowFight = await Shadow.findById(req.params.id).lean();
     if (!shadowFight) return res.status(404).json({ message: 'Shadow fight not found' });
     res.status(200).json(shadowFight);
   } catch (error) {
@@ -2082,13 +2389,13 @@ app.get('/match', async (req, res) => {
     }
 
     const visibleQuery = applyFightPublicVisibilityFilter(query, req.query);
-    let match = await applyFightFreshSort(Match.find(visibleQuery));
+    let match = await applyFightFreshSortLean(Match.find(visibleQuery));
 
     // Safety fallback for legacy records: if the stricter public query produces no
     // results, keep the same base filters and remove only explicit Draft fights in
     // memory. This prevents public fight pages from going blank while still hiding drafts.
     if (!match.length && !shouldIncludeDraftFights(req.query)) {
-      const fallback = await applyFightFreshSort(Match.find(query));
+      const fallback = await applyFightFreshSortLean(Match.find(query));
       match = fallback.filter((item) => !isDraftFightRecord(item));
     }
 
@@ -2098,7 +2405,7 @@ app.get('/match', async (req, res) => {
     // explicit drafts, while admin/includeDrafts requests can see draft shadows.
     if (!match.length) {
       try {
-        const shadowFallback = await applyFightFreshSort(Shadow.find(query));
+        const shadowFallback = await applyFightFreshSortLean(Shadow.find(query));
         match = shouldIncludeDraftFights(req.query)
           ? shadowFallback
           : shadowFallback.filter((item) => !isDraftFightRecord(item));
@@ -2125,35 +2432,43 @@ app.get('/match', async (req, res) => {
 // predictions can be submitted.
 app.get('/api/public/prediction-fights', async (req, res) => {
   try {
-    const limit = Math.min(Math.max(parseInt(req.query.limit, 10) || 20, 1), 100);
-    const baseQuery = { ...req.query, playable: 'true' };
-    const visibleFilter = applyFightPublicVisibilityFilter(buildPredictionEligibleFightFilter(), baseQuery);
-    const [matches, shadows] = await Promise.all([
-      applyFightFreshSort(Match.find(visibleFilter)).limit(200).lean(),
-      applyFightFreshSort(Shadow.find(visibleFilter)).limit(200).lean().catch(() => []),
-    ]);
-    let items = [
-      ...matches.map((item) => ({ ...item, sourceType: 'match' })),
-      ...shadows.map((item) => ({ ...item, sourceType: 'shadow' })),
-    ].filter((item) => isPredictionEligibleFightRecord(item));
+    const { payload, cacheState } = await readThroughPublicCache(
+      getPublicCacheKey(req, 'public-prediction-fights'),
+      async () => {
+        const limit = Math.min(Math.max(parseInt(req.query.limit, 10) || 20, 1), 100);
+        const baseQuery = { ...req.query, playable: 'true' };
+        const visibleFilter = applyFightPublicVisibilityFilter(buildPredictionEligibleFightFilter(), baseQuery);
+        const [matches, shadows] = await Promise.all([
+          applyFightFreshSortLean(Match.find(visibleFilter)).limit(200),
+          applyFightFreshSortLean(Shadow.find(visibleFilter)).limit(200).catch(() => []),
+        ]);
+        let items = [
+          ...matches.map((item) => ({ ...item, sourceType: 'match' })),
+          ...shadows.map((item) => ({ ...item, sourceType: 'shadow' })),
+        ].filter((item) => isPredictionEligibleFightRecord(item));
 
-    if (!isAllFilterValue(req.query.category)) {
-      const requested = String(req.query.category || '').trim().toLowerCase();
-      items = items.filter((item) => [item.matchCategory, item.matchCategoryTwo, item.sport, item.gameMode]
-        .map((value) => String(value || '').trim().toLowerCase())
-        .some((value) => value === requested));
-    }
+        if (!isAllFilterValue(req.query.category)) {
+          const requested = String(req.query.category || '').trim().toLowerCase();
+          items = items.filter((item) => [item.matchCategory, item.matchCategoryTwo, item.sport, item.gameMode]
+            .map((value) => String(value || '').trim().toLowerCase())
+            .some((value) => value === requested));
+        }
 
-    items = items.sort((a, b) => {
-      const toTime = (value) => {
-        const date = value ? new Date(value) : null;
-        return date && !Number.isNaN(date.getTime()) ? date.getTime() : 0;
-      };
-      return Math.max(toTime(b.updatedAt), toTime(b.createdAt), toTime(b.matchDate), toTime(b._id?.getTimestamp?.()))
-        - Math.max(toTime(a.updatedAt), toTime(a.createdAt), toTime(a.matchDate), toTime(a._id?.getTimestamp?.()));
-    }).slice(0, limit);
+        items = items.sort((a, b) => {
+          const toTime = (value) => {
+            const date = value ? new Date(value) : null;
+            return date && !Number.isNaN(date.getTime()) ? date.getTime() : 0;
+          };
+          return Math.max(toTime(b.updatedAt), toTime(b.createdAt), toTime(b.matchDate), toTime(b._id?.getTimestamp?.()))
+            - Math.max(toTime(a.updatedAt), toTime(a.createdAt), toTime(a.matchDate), toTime(a._id?.getTimestamp?.()));
+        }).slice(0, limit);
 
-    res.json({ ok: true, items, count: items.length });
+        return { ok: true, items, count: items.length, generatedAt: new Date().toISOString() };
+      }
+    );
+
+    setPublicCacheHeaders(res, PUBLIC_CACHE_TTL_SECONDS, cacheState);
+    res.json(payload);
   } catch (error) {
     console.error('Error loading prediction-ready fights:', error);
     res.status(500).json({ ok: false, message: 'Failed to load prediction-ready fights.' });
@@ -2296,6 +2611,8 @@ const DeviceInfoSchema = new mongoose.Schema({
   email: { type: String, required: false },
   deviceId: { type: String, required: true },
 }, { timestamps: true });
+DeviceInfoSchema.index({ deviceId: 1 });
+DeviceInfoSchema.index({ email: 1, createdAt: -1 });
 
 const DeviceInfo = mongoose.model('DeviceInfo', DeviceInfoSchema);
 app.post('/admin/add-device', async (req, res) => {
@@ -2322,7 +2639,7 @@ app.post('/admin/add-device', async (req, res) => {
 });
 app.get('/admin/device-info', async (req, res) => {
   try {
-    const devices = await DeviceInfo.find();
+    const devices = await DeviceInfo.find().lean();
     res.status(200).json(devices);
   } catch (error) {
     console.error(error);
@@ -2375,6 +2692,8 @@ const DeviceInfoSchemaForSpinWheel = new mongoose.Schema({
   email: { type: String, required: false },
   deviceId: { type: String, required: true },
 }, { timestamps: true });
+DeviceInfoSchemaForSpinWheel.index({ deviceId: 1 });
+DeviceInfoSchemaForSpinWheel.index({ email: 1, createdAt: -1 });
 
 const DeviceInfoSpinWheel = mongoose.model('DeviceInfoSpinWheel', DeviceInfoSchemaForSpinWheel);
 app.post('/admin/add-device-spin-wheel', async (req, res) => {
@@ -2400,7 +2719,7 @@ app.post('/admin/add-device-spin-wheel', async (req, res) => {
 });
 app.get('/admin/device-info-spin-wheel', async (req, res) => {
   try {
-    const devices = await DeviceInfoSpinWheel.find();
+    const devices = await DeviceInfoSpinWheel.find().lean();
     res.status(200).json(devices);
   } catch (error) {
     console.error(error);
@@ -2464,27 +2783,27 @@ const userSchema = new mongoose.Schema({
   email: { type: String, required: true, unique: true },
   phone: String,
   shortBio: String,
-  password: String,
+  password: { type: String, select: false },
   isNotificationsEnabled: Boolean,
   isSubscribed: Boolean,
   isUSCitizen: Boolean,
   isAgreed: Boolean,
-  verificationToken: String,
+  verificationToken: { type: String, select: false },
   verified: { type: Boolean, default: false },
   profileUrl: String,
-  profileDeleteUrl: String,
+  profileDeleteUrl: { type: String, select: false },
   currentPlan: { type: String, default: 'None' }, // Current subscription plan
   freePlanExpiryDate: Date, // Date when the free plan expires
   hasAvailedFreePlan: { type: Boolean, default: false }, // Indicates if the user has availed the free plan
   preferredPaymentMethod: String,
-  preferredPaymentMethodValue: String,
-  resetPasswordToken: String,
-  resetPasswordExpires: Date,
+  preferredPaymentMethodValue: { type: String, select: false },
+  resetPasswordToken: { type: String, select: false },
+  resetPasswordExpires: { type: Date, select: false },
   hasSubmittedTestimonial: { type: Boolean, default: false },
   billing: {
-    cardNumber: { type: String },  // Encrypted
-    expirationDate: { type: String },  // Encrypted
-    cardCode: { type: String },  // Encrypted
+    cardNumber: { type: String, select: false },  // Encrypted
+    expirationDate: { type: String, select: false },  // Encrypted
+    cardCode: { type: String, select: false },  // Encrypted
     address: String,
     city: String,
     state: String,
@@ -2492,6 +2811,9 @@ const userSchema = new mongoose.Schema({
     country: String
   },
 }, { timestamps: true });
+userSchema.index({ playerName: 1 });
+userSchema.index({ createdAt: -1 });
+attachSafeAccountJsonTransform(userSchema);
 
 const User = mongoose.model('User', userSchema);
 app.put('/update-profile-url', async (req, res) => {
@@ -3244,7 +3566,7 @@ app.post('/api/authorize-net/transaction', async (req, res) => {
   const { email, amount } = req.body;
 
   try {
-    const user = await User.findOne({ email });
+    const user = await User.findOne({ email }).select('+billing.cardNumber +billing.expirationDate +billing.cardCode');
     if (!user) return res.status(404).json({ message: 'User not found' });
 
     // Decrypt card details
@@ -3585,7 +3907,7 @@ app.put('/update-profile/:userId', upload.single('image'), async (req, res) => {
     // Check if a new image is provided
     if (req.file) {
       // Find the user to retrieve the previous profile details
-      const user = await User.findById(userId);
+      const user = await User.findById(userId).select('+profileDeleteUrl');
       if (!user) {
         return res.status(404).json({ message: 'User not found' });
       }
@@ -3718,19 +4040,27 @@ app.post('/api/deduct-tokens', async (req, res) => {
 });
 
 
-// Get Matches API
+// Get registered users. Kept at the legacy /users path for compatibility,
+// but response payloads are sanitized so credentials, reset tokens, and card data
+// cannot be exposed to public clients.
 app.get('/users', async (req, res) => {
-  const match = await User.find();
-  res.send(match);
+  try {
+    const users = await User.find().select(USER_SAFE_SELECT).lean();
+    res.send(sanitizeAccountList(users));
+  } catch (error) {
+    console.error('Error fetching users:', error);
+    res.status(500).json({ message: 'Error fetching users' });
+  }
 });
 
 
-// Create reusable transporter object using the default SMTP transport
+// Create reusable transporter object using the default SMTP transport.
+// Credentials must come from environment variables; do not commit mailbox app passwords.
 const transporter = nodemailer.createTransport({
-  service: 'Gmail',
+  service: process.env.SMTP_SERVICE || 'Gmail',
   auth: {
-    user: 'Fantasymmadness2@gmail.com',
-    pass: 'nxoozxaywvjzivsh',
+    user: process.env.SMTP_USER || 'Fantasymmadness2@gmail.com',
+    pass: process.env.SMTP_PASS || process.env.GMAIL_APP_PASSWORD,
   },
 });
 
@@ -4188,7 +4518,7 @@ app.delete('/usertodelete/:id', async (req, res) => {
 
   try {
     // Find the user by ID
-    const user = await User.findById(id);
+    const user = await User.findById(id).select('+profileDeleteUrl firstName email');
     if (!user) {
       return res.status(404).json({ message: 'User not found' });
     }
@@ -4261,7 +4591,7 @@ app.post('/upload-avatar', upload.single('image'), async (req, res) => {
     }
 
     // Find the user to retrieve the previous avatar details
-    const user = await User.findOne({ email });
+    const user = await User.findOne({ email }).select('+profileDeleteUrl profileUrl email');
     if (!user) {
       return res.status(404).json({ message: 'User not found' });
     }
@@ -4490,14 +4820,14 @@ app.post('/login', async (req, res) => {
   const { email, password } = req.body;
 
   try {
-    const user = await User.findOne({ email });
+    const user = await User.findOne({ email }).select('_id +password verified').lean();
 
     if (!user) {
       return res.status(400).json({ message: 'Invalid email or password' });
     }
 
     if (!user.verified) {
-      return res.status(403451).json({ message: 'Please verify your email before logging in' });
+      return res.status(403).json({ message: 'Please verify your email before logging in' });
     }
 
     const isPasswordValid = await bcrypt.compare(password, user.password);
@@ -4543,7 +4873,7 @@ const verifyToken = (req, res, next) => {
 // Profile API
 app.get('/profile', verifyToken, async (req, res) => {
   try {
-    const user = await User.findById(req.user.id);
+    const user = await User.findById(req.user.id).select(USER_SAFE_SELECT);
 
     if (!user) {
       return res.status(404).json({ message: 'User not found' });
@@ -4559,7 +4889,7 @@ app.get('/profile', verifyToken, async (req, res) => {
 // Profile API
 app.get('/profileAffiliate', verifyToken, async (req, res) => {
   try {
-    const user = await Affiliate.findById(req.user.id);
+    const user = await Affiliate.findById(req.user.id).select(AFFILIATE_SAFE_SELECT);
 
     if (!user) {
       return res.status(404).json({ message: 'User not found' });
@@ -4623,7 +4953,7 @@ app.post('/api/reward-tokens-to-admin', async (req, res) => {
 app.get('/api/admin-tokens', async (req, res) => {
   try {
     // Fetch all admin tokens from the database
-    const adminTokens = await Admintokens.find();
+    const adminTokens = await Admintokens.find().lean();
 
     if (adminTokens.length === 0) {
       return res.status(404).json({ success: false, message: 'No admin tokens found' });
@@ -4667,7 +4997,7 @@ const affiliateSchema = new mongoose.Schema({
   email: String,
   phone: String,
   hearing: String,
-  password: String,
+  password: { type: String, select: false },
   isNotificationsEnabled: Boolean,
   isSubscribed: Boolean,
   isUSCitizen: Boolean,
@@ -4675,15 +5005,15 @@ const affiliateSchema = new mongoose.Schema({
   totalViews: { type: Number, default: 0 },
 verified: { type: Boolean, default: false },
   profileUrl: String,
-  profileDeleteUrl: String,
+  profileDeleteUrl: { type: String, select: false },
   tokens: { type: String, default: '0' },
   preferredPaymentMethod: String, 
-  preferredPaymentMethodValue: String, 
-  resetPasswordToken: String,
-  resetPasswordExpires: Date,
+  preferredPaymentMethodValue: { type: String, select: false }, 
+  resetPasswordToken: { type: String, select: false },
+  resetPasswordExpires: { type: Date, select: false },
   rewardTitle: String,
 rewardImageUrl: String,
-rewardImageDeleteUrl: String,
+rewardImageDeleteUrl: { type: String, select: false },
 
   usersJoined: [{
     userId: { type: mongoose.Schema.Types.ObjectId, ref: 'User' }, // User who joined
@@ -4696,6 +5026,10 @@ rewardImageDeleteUrl: String,
     status: { type: String, default: 'pending' } // Status of the payout, default is 'pending'
   }]
 }, { timestamps: true });
+affiliateSchema.index({ email: 1 });
+affiliateSchema.index({ createdAt: -1 });
+affiliateSchema.index({ totalViews: -1, createdAt: -1 });
+attachSafeAccountJsonTransform(affiliateSchema);
 
 const Affiliate = mongoose.model('Affiliate', affiliateSchema);
 
@@ -4712,7 +5046,7 @@ app.post('/upload-affiliate-reward', upload.single('image'), async (req, res) =>
       return res.status(400).json({ message: 'No image file provided' });
     }
 
-    const affiliate = await Affiliate.findById(affiliateId);
+    const affiliate = await Affiliate.findById(affiliateId).select('+rewardImageDeleteUrl rewardTitle rewardImageUrl');
     if (!affiliate) {
       return res.status(404).json({ message: 'Affiliate not found' });
     }
@@ -5687,7 +6021,7 @@ app.put('/update-profile-affiliate/:userId', upload.single('image'), async (req,
     // Check if a new image is provided
     if (req.file) {
       // Find the affiliate to retrieve the previous delete URL
-      const affiliate = await Affiliate.findById(userId);
+      const affiliate = await Affiliate.findById(userId).select('+profileDeleteUrl');
       if (!affiliate) {
         return res.status(404).send('Affiliate not found');
       }
@@ -5736,7 +6070,7 @@ app.delete('/affiliatetodelete/:id', async (req, res) => {
 
   try {
     // Find the affiliate by ID
-    const affiliate = await Affiliate.findById(id);
+    const affiliate = await Affiliate.findById(id).select('+profileDeleteUrl firstName');
     if (!affiliate) {
       return res.status(404).json({ message: 'Affiliate not found' });
     }
@@ -5765,10 +6099,16 @@ const notification = new Notification({
 
 
 
-// Get Matches API
+// Get affiliates. Kept at the legacy /affiliates path for compatibility,
+// with sensitive credential/reset/payment values removed from each payload.
 app.get('/affiliates', async (req, res) => {
-  const match = await Affiliate.find();
-  res.send(match);
+  try {
+    const affiliates = await Affiliate.find().select(AFFILIATE_SAFE_SELECT).lean();
+    res.send(sanitizeAccountList(affiliates));
+  } catch (error) {
+    console.error('Error fetching affiliates:', error);
+    res.status(500).json({ message: 'Error fetching affiliates' });
+  }
 });
 
 app.post('/send-email-affiliate', async (req, res) => {
@@ -6099,7 +6439,7 @@ app.post('/loginAffiliate', async (req, res) => {
   const { email, password } = req.body;
 
   try {
-    const user = await Affiliate.findOne({ email });
+    const user = await Affiliate.findOne({ email }).select('_id +password verified').lean();
 
     if (!user) {
       return res.status(400).json({ message: 'Invalid email or password' });
@@ -6168,11 +6508,20 @@ const scoreSchema = new mongoose.Schema({
     elPrediction2: Number   // For MMA only (EL)
   }],
 });
+scoreSchema.index({ matchId: 1, playerId: 1 });
+scoreSchema.index({ playerId: 1 });
+scoreSchema.index({ matchId: 1 });
 
 const Score = mongoose.model('Score', scoreSchema);
 app.post('/api/scores', async (req, res) => {
   try {
     const { playerId, matchId, predictions } = req.body;
+
+    if (!playerId || !matchId || !Array.isArray(predictions)) {
+      return res.status(400).json({
+        message: 'playerId, matchId, and predictions array are required.',
+      });
+    }
 
     // Check if there's an existing record with the same playerId and matchId
     let existingScore = await Score.findOne({ playerId, matchId });
@@ -6181,11 +6530,13 @@ app.post('/api/scores', async (req, res) => {
       // If a record exists, update its values
       existingScore.predictions = predictions;
       await existingScore.save();
+      clearPublicResponseCache();
       res.status(200).send(existingScore);
     } else {
       // If no record exists, create a new one
       const score = new Score({ playerId, matchId, predictions });
       await score.save();
+      clearPublicResponseCache();
       res.status(201).send(score);
     }
   } catch (error) {
@@ -6196,16 +6547,195 @@ app.post('/api/scores', async (req, res) => {
 // API endpoint to retrieve scores
 app.get('/api/scores', async (req, res) => {
   try {
-    const scores = await Score.find();
+    const query = {};
+    if (req.query.matchId) query.matchId = String(req.query.matchId);
+    if (req.query.playerId) query.playerId = String(req.query.playerId);
+
+    const scoreQuery = Score.find(query).lean();
+    if (req.query.limit) scoreQuery.limit(parsePositiveInteger(req.query.limit, 100, 1000));
+
+    const scores = await scoreQuery;
     res.send(scores);
   } catch (error) {
     res.status(500).send(error);
   }
 });
 
+
+async function buildClassicLeaderboard({ limit = 10 } = {}) {
+  const scoreRows = await Score.find().select('playerId matchId predictions').lean();
+  if (!scoreRows.length) return { leaderboard: [], playerCount: 0 };
+
+  const validMatchObjectIds = [...new Set(scoreRows
+    .map((score) => String(score.matchId || '').trim())
+    .filter((matchId) => mongoose.isValidObjectId(matchId)))]
+    .map((matchId) => new mongoose.Types.ObjectId(matchId));
+
+  const matchRows = validMatchObjectIds.length
+    ? await Match.find({ _id: { $in: validMatchObjectIds } })
+      .select('matchName matchFighterA matchFighterB matchDate matchCategory matchCategoryTwo matchStatus matchShadowStatus matchShadowOpenStatus fighterAImage fighterBImage promotionBackground matchType matchTokens BoxingMatch.fighterOneStats BoxingMatch.fighterTwoStats MMAMatch.fighterOneStats MMAMatch.fighterTwoStats createdAt updatedAt')
+      .lean()
+    : [];
+
+  const matchById = new Map(matchRows
+    .filter((match) => !isDraftFightRecord(match))
+    .map((match) => [String(match._id), match]));
+
+  const playerIds = [...new Set(scoreRows.map((score) => String(score.playerId || '').trim()).filter(Boolean))];
+  const validPlayerObjectIds = playerIds
+    .filter((playerId) => mongoose.isValidObjectId(playerId))
+    .map((playerId) => new mongoose.Types.ObjectId(playerId));
+
+  const userRows = validPlayerObjectIds.length
+    ? await User.find({ _id: { $in: validPlayerObjectIds } }).select(USER_SAFE_SELECT).lean()
+    : [];
+  const userById = new Map(sanitizeAccountList(userRows).map((user) => [String(user._id), user]));
+
+  const pointsByPlayer = new Map();
+  const playerMatchId = new Map();
+
+  scoreRows.forEach((score) => {
+    const match = matchById.get(String(score.matchId));
+    if (!match) return;
+
+    const fighterOneStats = String(match.matchCategory || '').toLowerCase() === 'boxing'
+      ? match.BoxingMatch?.fighterOneStats
+      : match.MMAMatch?.fighterOneStats;
+    const fighterTwoStats = String(match.matchCategory || '').toLowerCase() === 'boxing'
+      ? match.BoxingMatch?.fighterTwoStats
+      : match.MMAMatch?.fighterTwoStats;
+
+    const pointsEarned = calculateClassicPredictionPoints(
+      score.predictions,
+      fighterOneStats,
+      fighterTwoStats,
+      match.matchCategory
+    );
+
+    if (pointsEarned <= 0) return;
+
+    const playerId = String(score.playerId);
+    pointsByPlayer.set(playerId, (pointsByPlayer.get(playerId) || 0) + pointsEarned);
+    playerMatchId.set(playerId, String(match._id));
+  });
+
+  const leaderboard = [...pointsByPlayer.entries()]
+    .map(([playerId, totalPoints]) => {
+      const user = userById.get(playerId) || { _id: playerId };
+      const match = matchById.get(playerMatchId.get(playerId));
+      return {
+        ...user,
+        totalPoints,
+        matchId: match ? String(match._id) : playerMatchId.get(playerId),
+        match: match ? pickPublicFightFields(match, 'match') : null,
+      };
+    })
+    .sort((a, b) => b.totalPoints - a.totalPoints)
+    .slice(0, limit);
+
+  return { leaderboard, playerCount: pointsByPlayer.size };
+}
+
+async function loadPublicFightCards({ limit = 6, category } = {}) {
+  const visibleFilter = applyFightPublicVisibilityFilter(buildPredictionEligibleFightFilter(), { playable: 'true' });
+  const queryLimit = Math.min(Math.max(limit * 3, limit), 100);
+
+  const [matches, shadows] = await Promise.all([
+    applyFightFreshSortLean(Match.find(visibleFilter)).limit(queryLimit),
+    applyFightFreshSortLean(Shadow.find(visibleFilter)).limit(queryLimit).catch(() => []),
+  ]);
+
+  let items = [
+    ...matches.map((item) => ({ ...pickPublicFightFields(item, 'match'), __raw: item })),
+    ...shadows.map((item) => ({ ...pickPublicFightFields(item, 'shadow'), __raw: item })),
+  ].filter((item) => isPredictionEligibleFightRecord(item.__raw || item));
+
+  if (!isAllFilterValue(category)) {
+    const requested = String(category || '').trim().toLowerCase();
+    items = items.filter((item) => [item.matchCategory, item.matchCategoryTwo]
+      .map((value) => String(value || '').trim().toLowerCase())
+      .some((value) => value === requested));
+  }
+
+  return items
+    .sort((a, b) => {
+      const toTime = (value) => {
+        const date = value ? new Date(value) : null;
+        return date && !Number.isNaN(date.getTime()) ? date.getTime() : 0;
+      };
+      return Math.max(toTime(b.updatedAt), toTime(b.createdAt), toTime(b.matchDate))
+        - Math.max(toTime(a.updatedAt), toTime(a.createdAt), toTime(a.matchDate));
+    })
+    .slice(0, limit)
+    .map(({ __raw, ...item }) => item);
+}
+
+app.get('/api/public/leaderboard', async (req, res) => {
+  try {
+    const { payload, cacheState } = await readThroughPublicCache(
+      getPublicCacheKey(req, 'public-leaderboard'),
+      async () => {
+        const limit = parsePositiveInteger(req.query.limit, 10, 100);
+        const result = await buildClassicLeaderboard({ limit });
+
+        return {
+          ok: true,
+          leaderboard: result.leaderboard,
+          playerCount: result.playerCount,
+          generatedAt: new Date().toISOString(),
+        };
+      }
+    );
+
+    setPublicCacheHeaders(res, PUBLIC_CACHE_TTL_SECONDS, cacheState);
+    res.json(payload);
+  } catch (error) {
+    console.error('Error building public leaderboard:', error);
+    res.status(500).json({ ok: false, message: 'Failed to build public leaderboard.' });
+  }
+});
+
+app.get('/api/public/home-summary', async (req, res) => {
+  try {
+    const { payload, cacheState } = await readThroughPublicCache(
+      getPublicCacheKey(req, 'public-home-summary'),
+      async () => {
+        const fightLimit = parsePositiveInteger(req.query.fightLimit || req.query.limit, 6, 24);
+        const leaderboardLimit = parsePositiveInteger(req.query.leaderboardLimit, 5, 25);
+
+        const [featuredFights, leaderboardResult, totalPlayers, activeClassicFights] = await Promise.all([
+          loadPublicFightCards({ limit: fightLimit, category: req.query.category }),
+          buildClassicLeaderboard({ limit: leaderboardLimit }),
+          User.countDocuments(),
+          Match.countDocuments(applyFightPublicVisibilityFilter(buildPredictionEligibleFightFilter(), { playable: 'true' })),
+        ]);
+
+        return {
+          ok: true,
+          featuredFights,
+          leaderboard: leaderboardResult.leaderboard,
+          stats: {
+            players: totalPlayers,
+            activeFights: activeClassicFights,
+            leaderboardPlayers: leaderboardResult.playerCount,
+          },
+          generatedAt: new Date().toISOString(),
+        };
+      }
+    );
+
+    setPublicCacheHeaders(res, PUBLIC_CACHE_TTL_SECONDS, cacheState);
+    res.json(payload);
+  } catch (error) {
+    console.error('Error building public home summary:', error);
+    res.status(500).json({ ok: false, message: 'Failed to build public home summary.' });
+  }
+});
+
 app.delete('/api/scores', async (req, res) => {
   try {
     await Score.deleteMany({}); // This will delete all records in the Score collection
+    clearPublicResponseCache();
     res.status(200).send({ message: 'All records deleted successfully' });
   } catch (error) {
     res.status(500).send({ error: 'Failed to delete records' });
@@ -6232,8 +6762,15 @@ const adminSchema = new mongoose.Schema({
   firstName: String,
   lastName: String,
   email: String,
-  password: String,
+  password: { type: String, select: false },
   profileUrl: String, // Add profileUrl field
+});
+adminSchema.index({ email: 1 });
+adminSchema.set('toJSON', {
+  transform: (_doc, ret) => {
+    delete ret.password;
+    return ret;
+  },
 });
 
 const Admin = mongoose.model('Admin', adminSchema);
@@ -6274,7 +6811,7 @@ app.post('/admin/login', async (req, res) => {
     const { email, password } = req.body;
 
     // Find the admin by email
-    const admin = await Admin.findOne({ email });
+    const admin = await Admin.findOne({ email }).select('_id email +password').lean();
     if (!admin) {
       return res.status(400).json({ message: 'Invalid email or password.' });
     }
@@ -6320,6 +6857,7 @@ app.post('/admin/login', async (req, res) => {
 const youtubeVideosSchema = new mongoose.Schema({
   videoUrl: String, 
 });
+youtubeVideosSchema.index({ videoUrl: 1 });
 
 
 
@@ -6367,7 +6905,7 @@ app.post('/youtubeVideos', async (req, res) => {
 
 // Get Matches API
 app.get('/youtubeVideos', async (req, res) => {
-  const match = await YoutubeVideos.find();
+  const match = await YoutubeVideos.find().lean();
   res.send(match);
 });
 
@@ -6554,7 +7092,7 @@ app.get('/dashboard-counts', async (req, res) => {
     const shadowTemplatesCount = await Shadow.countDocuments({});
 
     // Fetch total clicks from SiteStats
-    const stats = await SiteStats.findOne({});
+    const stats = await SiteStats.findOne({}).lean();
     const totalClicks = stats ? stats.totalClicks : 0;
 
     // Count unread notifications
@@ -6584,6 +7122,7 @@ const userRemovedMatchesSchema = new mongoose.Schema({
       default: [] 
   },
 }, { timestamps: true });
+userRemovedMatchesSchema.index({ userId: 1 });
 
 
 const UserRemovedMatches = mongoose.model('UserRemovedMatches', userRemovedMatchesSchema);
@@ -6691,7 +7230,7 @@ app.get('/user/:userId/removed-matches', async (req, res) => {
 app.get('/users/removed-matches', async (req, res) => {
   try {
       // Find all documents in the UserRemovedMatches collection
-      const allUserMatches = await UserRemovedMatches.find();
+      const allUserMatches = await UserRemovedMatches.find().lean();
 
       if (!allUserMatches || allUserMatches.length === 0) {
           return res.status(404).json({ message: 'No removed matches found for any user' });
@@ -6725,6 +7264,7 @@ const customUserSchema = new mongoose.Schema({
   
 }, { timestamps: true });
 
+customUserSchema.index({ createdAt: -1 });
 const Usernonregistered = mongoose.model('Usernonregistered', customUserSchema);
 
 // POST API to create a new non-registered user
@@ -6754,7 +7294,7 @@ app.post('/api/users/nonregistered', async (req, res) => {
 // GET API to fetch all non-registered users
 app.get('/api/users/nonregistered', async (req, res) => {
   try {
-      const users = await Usernonregistered.find();
+      const users = await Usernonregistered.find().lean();
       res.status(200).json(users);
   } catch (error) {
       res.status(500).json({ message: 'Error fetching users', error });
@@ -7281,7 +7821,7 @@ app.post('/redusers', async (req, res) => {
 // GET API - Get all users from the red list
 app.get('/redusers', async (req, res) => {
   try {
-    const redUsers = await Redusers.find();
+    const redUsers = await Redusers.find().lean();
     res.status(200).json({ message: 'Red list users retrieved', data: redUsers });
   } catch (error) {
     res.status(500).json({ message: 'Error retrieving red list users', error: error.message });
@@ -7322,6 +7862,7 @@ const siteStatsSchema = new mongoose.Schema({
   },
 });
 
+siteStatsSchema.index({ domain: 1 });
 const SiteStats = mongoose.model('SiteStats', siteStatsSchema);
 
 app.post('/track-click', async (req, res) => {
@@ -7396,7 +7937,7 @@ app.get('/get-total-clicks', async (req, res) => {
 app.get('/get-all-time-clicks', async (req, res) => {
   
   try {
-    const stats = await SiteStats.find({ });
+    const stats = await SiteStats.find({ }).lean();
 
     if (!stats) {
       return res.status(404).send({ message: `No stats found.` });
@@ -7493,6 +8034,7 @@ const faqSchema = new mongoose.Schema({
   description:String,
 });
 
+faqSchema.index({ title: 1 });
 const Faqs = mongoose.model('Faqs', faqSchema);
 
 
@@ -7528,7 +8070,7 @@ app.post('/faqs', async (req, res) => {
 
 app.get('/faqs', async (req, res) => {
   try {
-    const faqs = await Faqs.find();
+    const faqs = await Faqs.find().lean();
     res.status(200).json({ success: true, data: faqs });
   } catch (error) {
     res.status(500).json({ success: false, message: error.message });
@@ -7613,6 +8155,7 @@ const testimonialSchema = new mongoose.Schema({
   author: String,
   description:String,
 });
+testimonialSchema.index({ author: 1 });
 
 const Testimonials = mongoose.model('Testimonials', testimonialSchema);
 
@@ -7665,7 +8208,7 @@ app.post('/testimonials', async (req, res) => {
 
 app.get('/testimonials', async (req, res) => {
   try {
-    const testimonials = await Testimonials.find();
+    const testimonials = await Testimonials.find().lean();
     res.status(200).json({ success: true, data: testimonials });
   } catch (error) {
     res.status(500).json({ success: false, message: error.message });
@@ -7719,6 +8262,8 @@ const newsSchema = new mongoose.Schema({
   dateCreated: { type: Date, default: Date.now }, // Automatically set the creation date
 });
 
+newsSchema.index({ dateCreated: -1 });
+newsSchema.index({ title: 1 });
 const News = mongoose.model('News', newsSchema);
 
 
@@ -7861,7 +8406,7 @@ app.get('/unsubscribe-user/:userId', async (req, res) => {
 app.get('/news', async (req, res) => {
   try {
     // Fetch from database
-    const dbArticles = await News.find().sort({ createdAt: -1 });
+    const dbArticles = await News.find().sort({ createdAt: -1 }).lean();
 
     // Fetch from RSS feed
     const feed = await parser.parseURL('https://rss.app/feeds/_6ePdUiq5QyfSygcS.xml');
@@ -7965,6 +8510,8 @@ const sponsorSchema = new mongoose.Schema({
   dateCreated: { type: Date, default: Date.now }, // Automatically set the creation date
 });
 
+sponsorSchema.index({ email: 1 });
+sponsorSchema.index({ dateCreated: -1 });
 const Sponsors = mongoose.model('Sponsors', sponsorSchema);
 
 // Get all sponsors by email
@@ -7973,7 +8520,7 @@ app.get('/sponsors/email/:email', async (req, res) => {
     const { email } = req.params; // Extract email from the request parameters
 
     // Find all sponsors with the given email
-    const sponsors = await Sponsors.find({ email });
+    const sponsors = await Sponsors.find({ email }).lean();
 
     if (sponsors.length === 0) {
       return res.status(404).json({ success: false, message: 'No sponsors found for the given email' });
@@ -8117,7 +8664,7 @@ app.post('/upload-sponsor', upload.single('image'), async (req, res) => {
 // Get all News articles
 app.get('/sponsors', async (req, res) => {
   try {
-    const sponsorArticles = await Sponsors.find();
+    const sponsorArticles = await Sponsors.find().lean();
     res.status(200).json({ success: true, data: sponsorArticles });
   } catch (error) {
     res.status(500).json({ success: false, message: error.message });
@@ -8246,6 +8793,8 @@ const blogSchema = new mongoose.Schema({
     }
   ]
 }, { timestamps: true });
+blogSchema.index({ createdAt: -1 });
+blogSchema.index({ metaTitle: 1 });
 
 
 const Blog = mongoose.model('Blog', blogSchema);
@@ -8357,7 +8906,7 @@ if (req.files['blogHeaderImage']) {
 
 app.get('/api/blogs', async (req, res) => {
   try {
-    const blogs = await Blog.find().sort({ createdAt: -1 });
+    const blogs = await Blog.find().sort({ createdAt: -1 }).lean();
     res.status(200).json(blogs);
   } catch (err) {
     console.error('Error fetching blogs:', err);
@@ -8368,7 +8917,7 @@ app.get('/api/blogs', async (req, res) => {
 app.get('/api/blogs/:id', async (req, res) => {
   try {
     const blogId = req.params.id;
-    const blog = await Blog.findById(blogId);
+    const blog = await Blog.findById(blogId).lean();
 
     if (!blog) {
       return res.status(404).json({ error: 'Blog not found.' });
@@ -8469,6 +9018,8 @@ const referralSchema = new mongoose.Schema({
   rewarded: { type: Boolean, default: false },
   createdAt: { type: Date, default: Date.now }
 });
+referralSchema.index({ referrer: 1, createdAt: -1 });
+referralSchema.index({ referredUser: 1 });
 
 const Referral = mongoose.model('Referral', referralSchema);
 
@@ -8564,12 +9115,13 @@ const notificationSchema = new mongoose.Schema({
   read: { type: Boolean, default: false },
 }, { timestamps: true });
 
+notificationSchema.index({ read: 1, createdAt: -1 });
 const Notification = mongoose.model('Notification', notificationSchema);
 
 // GET all notifications
 app.get('/api/notifications', async (req, res) => {
   try {
-    const notifications = await Notification.find().sort({ createdAt: -1 });
+    const notifications = await Notification.find().sort({ createdAt: -1 }).lean();
     res.status(200).json(notifications);
   } catch (error) {
     res.status(500).json({ message: 'Error fetching notifications' });
@@ -8674,7 +9226,7 @@ app.post('/api/messages/send', async (req, res) => {
 
 app.get('/api/messages/get', async (req, res) => {
   try {
-    const messages = await Message.find({}).sort({ createdAt: 1 });
+    const messages = await Message.find({}).sort({ createdAt: 1 }).lean();
 
     // Group messages by 'date'
     const messagesByDate = messages.reduce((acc, msg) => {
@@ -11198,6 +11750,42 @@ registerSeoPerformancePhase2Routes({
     ProWrestler,
     ProWrestlingMatch,
   },
+});
+
+// Centralized request/upload error handling. This keeps existing upload routes intact
+// while returning deterministic 4xx responses for malformed or oversized requests.
+app.use((error, req, res, next) => {
+  if (error instanceof multer.MulterError) {
+    const isFileTooLarge = error.code === 'LIMIT_FILE_SIZE';
+    return res.status(isFileTooLarge ? 413 : 400).json({
+      message: isFileTooLarge
+        ? `Uploaded file is too large. Maximum allowed size is ${MAX_UPLOAD_FILE_SIZE_BYTES} bytes.`
+        : error.message,
+      code: error.code,
+    });
+  }
+
+  if (req.fileValidationError) {
+    return res.status(400).json({ message: req.fileValidationError });
+  }
+
+  if (error?.statusCode) {
+    return res.status(error.statusCode).json({ message: error.message, code: error.code });
+  }
+
+  if (error?.message === 'Not allowed by CORS') {
+    return res.status(403).json({ message: 'Origin is not allowed by CORS.' });
+  }
+
+  if (error?.type === 'entity.too.large') {
+    return res.status(413).json({ message: `Request body is too large. Maximum JSON body size is ${JSON_BODY_LIMIT}.` });
+  }
+
+  if (error instanceof SyntaxError && error.status === 400 && 'body' in error) {
+    return res.status(400).json({ message: 'Malformed JSON request body.' });
+  }
+
+  return next(error);
 });
 
 // Start server
