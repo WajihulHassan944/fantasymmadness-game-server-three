@@ -12097,6 +12097,8 @@ registerFightDataQualityRoutes({
   app,
   mongoose,
   axios,
+  upload,
+  cloudinary,
   verifyAdminToken,
   Match,
   Shadow,

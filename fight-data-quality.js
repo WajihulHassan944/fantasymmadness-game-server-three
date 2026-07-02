@@ -31,13 +31,14 @@ const DEFAULT_SCORING_CONFIG = Object.freeze({
 });
 
 function registerFightDataQualityRoutes(options) {
-  const { app, mongoose, verifyAdminToken, Match, Shadow, axios } = options || {};
+  const { app, mongoose, verifyAdminToken, Match, Shadow, axios, upload, cloudinary } = options || {};
   if (!app || !mongoose || !verifyAdminToken || !Match) {
     throw new Error('registerFightDataQualityRoutes requires app, mongoose, verifyAdminToken, and Match.');
   }
 
   const CombatFighter = buildCombatFighterModel(mongoose);
   const asyncHandler = (handler) => (req, res, next) => Promise.resolve(handler(req, res, next)).catch(next);
+  const fighterImageUpload = buildFighterImageUploadMiddleware(upload);
 
   app.get('/api/scoring-config', asyncHandler(async (req, res) => {
     res.json({ ok: true, source: 'backend-default', config: DEFAULT_SCORING_CONFIG });
@@ -225,8 +226,9 @@ function registerFightDataQualityRoutes(options) {
     res.json({ ok: true, items: items.map(serializeCombatFighter), pagination: pagination(page, limit, total) });
   }));
 
-  app.post('/api/admin/combat-fighters', verifyAdminToken, asyncHandler(async (req, res) => {
+  app.post('/api/admin/combat-fighters', verifyAdminToken, fighterImageUpload, asyncHandler(async (req, res) => {
     const payload = normalizeCombatFighterPayload(req.body || {}, req.admin);
+    await applyUploadedCombatFighterImage(payload, req, cloudinary);
     const existing = await CombatFighter.findOne({ normalizedName: payload.normalizedName, category: payload.category });
     if (existing) {
       Object.assign(existing, payload, { deletedAt: undefined, deletedBy: undefined, updatedBy: adminActor(req.admin) });
@@ -456,10 +458,11 @@ function registerFightDataQualityRoutes(options) {
     res.json({ ok: true, fighter: serializeCombatFighter(fighter) });
   }));
 
-  app.patch('/api/admin/combat-fighters/:id', verifyAdminToken, asyncHandler(async (req, res) => {
+  app.patch('/api/admin/combat-fighters/:id', verifyAdminToken, fighterImageUpload, asyncHandler(async (req, res) => {
     const fighter = await CombatFighter.findById(req.params.id);
     if (!fighter) return res.status(404).json({ ok: false, code: 'COMBAT_FIGHTER_NOT_FOUND', message: 'Combat fighter not found.' });
     const patch = normalizeCombatFighterPatch(req.body || {}, req.admin);
+    await applyUploadedCombatFighterImage(patch, req, cloudinary, fighter);
     Object.assign(fighter, patch);
     await fighter.save();
     res.json({ ok: true, fighter: serializeCombatFighter(fighter) });
@@ -535,6 +538,98 @@ function registerFightDataQualityRoutes(options) {
   });
 
   return { CombatFighter, scoringConfig: DEFAULT_SCORING_CONFIG };
+}
+
+
+function buildFighterImageUploadMiddleware(upload) {
+  if (!upload || typeof upload.fields !== 'function') {
+    return (req, res, next) => next();
+  }
+  return upload.fields([
+    { name: 'image', maxCount: 1 },
+    { name: 'fighterImage', maxCount: 1 },
+    { name: 'primaryImage', maxCount: 1 },
+    { name: 'primaryImageFile', maxCount: 1 },
+  ]);
+}
+
+function getUploadedCombatFighterImage(req) {
+  if (!req) return null;
+  if (req.file && req.file.buffer) return req.file;
+  const files = req.files || {};
+  const fields = ['image', 'fighterImage', 'primaryImage', 'primaryImageFile'];
+  for (const field of fields) {
+    const list = Array.isArray(files[field]) ? files[field] : [];
+    const file = list.find((item) => item && item.buffer);
+    if (file) return file;
+  }
+  return null;
+}
+
+async function applyUploadedCombatFighterImage(target, req, cloudinary, existingFighter = null) {
+  const file = getUploadedCombatFighterImage(req);
+  if (!file) return target;
+  if (!cloudinary || !cloudinary.uploader || typeof cloudinary.uploader.upload_stream !== 'function') {
+    const error = new Error('Cloudinary uploader is not configured for fighter image uploads.');
+    error.status = 500;
+    error.code = 'FIGHTER_IMAGE_UPLOAD_NOT_CONFIGURED';
+    throw error;
+  }
+
+  const result = await uploadBufferToCloudinary(file.buffer, {
+    cloudinary,
+    folder: 'combat_fighters',
+    resourceType: 'image',
+  });
+
+  const previousPublicId = cleanString(existingFighter?.imagePublicId);
+  if (previousPublicId && previousPublicId !== result.public_id && typeof cloudinary.uploader.destroy === 'function') {
+    try {
+      await cloudinary.uploader.destroy(previousPublicId);
+    } catch (destroyError) {
+      // Do not fail the admin update if an old Cloudinary asset cannot be removed.
+    }
+  }
+
+  target.primaryImage = result.secure_url || result.url;
+  target.imagePublicId = result.public_id;
+  target.imageHealth = {
+    status: 'valid',
+    provider: 'cloudinary',
+    source: 'admin_upload',
+    url: target.primaryImage,
+    publicId: result.public_id,
+    checkedAt: new Date(),
+    bytes: result.bytes || null,
+    width: result.width || null,
+    height: result.height || null,
+    format: result.format || null,
+  };
+
+  if (!req.body || req.body.status === undefined || String(req.body.status) === 'needs_review') {
+    target.status = 'active';
+  }
+
+  return target;
+}
+
+function uploadBufferToCloudinary(buffer, { cloudinary, folder, resourceType = 'image' }) {
+  return new Promise((resolve, reject) => {
+    const stream = cloudinary.uploader.upload_stream(
+      {
+        folder,
+        resource_type: resourceType,
+        transformation: [
+          { quality: 'auto', fetch_format: 'auto' },
+        ],
+      },
+      (error, result) => {
+        if (error) return reject(error);
+        return resolve(result || {});
+      }
+    );
+    stream.end(buffer);
+  });
 }
 
 function buildCombatFighterModel(mongoose) {
