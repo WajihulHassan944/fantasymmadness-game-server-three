@@ -339,6 +339,157 @@ function exactTextRegex(value) {
   return new RegExp(`^${clean.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`, 'i');
 }
 
+function escapeRegexText(value) {
+  return String(value || '').trim().replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+function cleanFightCategoryValue(value) {
+  const clean = String(value || '').trim();
+  if (!clean || ['undefined', 'null', 'all', 'any'].includes(clean.toLowerCase())) return '';
+  return clean;
+}
+
+function normalizeFightCategorySlug(value) {
+  const clean = cleanFightCategoryValue(value).toLowerCase();
+  if (!clean) return '';
+  const compact = clean.replace(/[^a-z0-9]+/g, '');
+  if (['bareknuckle', 'bareknuckleboxing', 'bareknucklefighting'].includes(compact)) return 'bare-knuckle';
+  if (['kickboxing', 'k1', 'kone'].includes(compact)) return 'kickboxing';
+  if (['mixedmartialarts', 'mma'].includes(compact)) return 'mma';
+  if (['boxing', 'box'].includes(compact)) return 'boxing';
+  return clean.replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '');
+}
+
+function getFightCategoryAliases(value) {
+  const clean = cleanFightCategoryValue(value);
+  const slug = normalizeFightCategorySlug(clean);
+  const aliasesBySlug = {
+    'bare-knuckle': ['Bare-knuckle', 'Bare Knuckle', 'Bareknuckle', 'bare-knuckle', 'bare knuckle', 'bareknuckle'],
+    kickboxing: ['kickboxing', 'Kickboxing', 'kick-boxing', 'Kick-boxing', 'kick boxing', 'Kick Boxing', 'K-1', 'K1'],
+    boxing: ['boxing', 'Boxing'],
+    mma: ['mma', 'MMA', 'mixed martial arts', 'Mixed Martial Arts'],
+  };
+  const aliases = aliasesBySlug[slug] || [clean];
+  return [...new Set(aliases.filter(Boolean))];
+}
+
+function categoryTextRegex(value) {
+  const aliases = getFightCategoryAliases(value);
+  if (!aliases.length) return null;
+  return new RegExp(`^(?:${aliases.map(escapeRegexText).join('|')})$`, 'i');
+}
+
+const FIGHT_CATEGORY_TWO_BLANK_REGEX = /^\s*$/i;
+
+function hasSecondaryFightCategory(match = {}) {
+  return Boolean(cleanFightCategoryValue(match.matchCategoryTwo));
+}
+
+function getEffectiveFightCategory(match = {}) {
+  return cleanFightCategoryValue(match.matchCategoryTwo) || cleanFightCategoryValue(match.matchCategory) || 'combat';
+}
+
+function getEffectiveFightCategorySlug(match = {}) {
+  return normalizeFightCategorySlug(getEffectiveFightCategory(match));
+}
+
+function isFightRecordInEffectiveCategory(match = {}, category) {
+  if (isAllFilterValue(category)) return true;
+  const requestedSlug = normalizeFightCategorySlug(category);
+  if (!requestedSlug) return true;
+  return getEffectiveFightCategorySlug(match) === requestedSlug;
+}
+
+function appendAndFilter(query = {}, condition = null) {
+  if (!condition || !Object.keys(condition).length) return query;
+  const base = { ...(query || {}) };
+  const andParts = Array.isArray(base.$and) ? [...base.$and] : [];
+  delete base.$and;
+  if (Object.keys(base).length) andParts.unshift(base);
+  andParts.push(condition);
+  return andParts.length === 1 ? andParts[0] : { $and: andParts };
+}
+
+function buildEffectiveFightCategoryFilter(category) {
+  if (isAllFilterValue(category)) return null;
+  const categoryRegex = categoryTextRegex(category);
+  if (!categoryRegex) return null;
+  const emptySecondaryFilter = {
+    $or: [
+      { matchCategoryTwo: { $exists: false } },
+      { matchCategoryTwo: null },
+      { matchCategoryTwo: '' },
+      { matchCategoryTwo: FIGHT_CATEGORY_TWO_BLANK_REGEX },
+    ],
+  };
+  return {
+    $or: [
+      { matchCategoryTwo: categoryRegex },
+      { $and: [{ matchCategory: categoryRegex }, emptySecondaryFilter] },
+    ],
+  };
+}
+
+function shouldUseStrictPlayableFightFilter(query = {}) {
+  return ['true', '1', 'yes'].includes(String(query.strictPlayable || query.openOnly || query.onlyOpen || '').toLowerCase());
+}
+
+function getRequestedClassicPlayerId(query = {}) {
+  return String(query.playerId || query.userId || query.accountId || query.viewerId || '').trim();
+}
+
+function getFightStatusBucket(match = {}) {
+  const normalize = (value) => String(value || '').trim().toLowerCase();
+  const status = normalize(match.matchStatus || match.status);
+  const openStatus = normalize(match.matchShadowOpenStatus);
+  if (['finished', 'closed', 'completed', 'complete', 'cancelled', 'canceled'].includes(status) || openStatus === 'closed') return 'completed';
+  if (['scheduled', 'open', 'live', 'ongoing', 'active'].includes(status) || openStatus === 'open') return 'playable';
+  return 'playable';
+}
+
+async function attachPlayerPredictionStateToFightItems(items = [], query = {}) {
+  const playerId = getRequestedClassicPlayerId(query);
+  const baseItems = Array.isArray(items) ? items : [];
+  if (!baseItems.length) return [];
+
+  let submittedMatchIds = new Set();
+  if (playerId) {
+    const matchIds = [...new Set(baseItems.map((item) => String(item && item._id || '').trim()).filter(Boolean))];
+    if (matchIds.length) {
+      const scores = await Score.find({ playerId, matchId: { $in: matchIds } }).select('matchId').lean();
+      submittedMatchIds = new Set(scores.map((score) => String(score.matchId)));
+    }
+  }
+
+  return baseItems.map((item) => {
+    const plain = toPlainObject(item) || {};
+    const predictionSubmitted = submittedMatchIds.has(String(plain._id));
+    return {
+      ...plain,
+      predictionSubmitted,
+      userPredictionSubmitted: predictionSubmitted,
+      userPredictionStatus: predictionSubmitted ? 'submitted' : 'not_submitted',
+      userFightBucket: predictionSubmitted ? 'completed' : 'playable',
+      fightStatusBucket: getFightStatusBucket(plain),
+      canSubmitPrediction: !predictionSubmitted && !isDraftFightRecord(plain),
+    };
+  });
+}
+
+function applyPublicFightStatusIntent(items = [], query = {}) {
+  const statusValue = String(query.status || query.bucket || query.view || '').trim().toLowerCase();
+  if (!statusValue || ['all', 'any'].includes(statusValue)) return items;
+  if (['completed', 'complete', 'submitted', 'my-predictions', 'predicted'].includes(statusValue)) {
+    return items.filter((item) => item.predictionSubmitted || item.userFightBucket === 'completed');
+  }
+  if (['playable', 'prediction', 'predictions', 'can-predict', 'open-for-predictions', 'active-contests', 'unsubmitted'].includes(statusValue)) {
+    return shouldUseStrictPlayableFightFilter(query)
+      ? items.filter((item) => isPredictionEligibleFightRecord(item) && !item.predictionSubmitted)
+      : items.filter((item) => !item.predictionSubmitted);
+  }
+  return items;
+}
+
 function appendNoDraftFightFilter(query = {}) {
   if (shouldIncludeDraftFights(query)) return null;
 
@@ -543,6 +694,8 @@ function attachCombatFighterReadFallbacks(fight = {}, sourceType = 'match') {
   const item = toPlainObject(fight) || {};
   const fighterA = normalizeCombatFighterReadRef(item.fighterAId);
   const fighterB = normalizeCombatFighterReadRef(item.fighterBId);
+  const effectiveCategory = getEffectiveFightCategory(item);
+  const effectiveCategorySlug = getEffectiveFightCategorySlug(item);
   return {
     ...item,
     sourceType: item.sourceType || sourceType,
@@ -550,6 +703,14 @@ function attachCombatFighterReadFallbacks(fight = {}, sourceType = 'match') {
     fighterBId: normalizeCombatFighterReadId(item.fighterBId),
     fighterA,
     fighterB,
+    // Keep matchCategory as the scoring/rules category. Use effectiveCategory for
+    // UI/category tabs: matchCategoryTwo wins, otherwise matchCategory is used.
+    effectiveCategory,
+    effectiveCategorySlug,
+    displayCategory: effectiveCategory,
+    categoryLabel: effectiveCategory,
+    categorySlug: effectiveCategorySlug,
+    hasSecondaryCategory: hasSecondaryFightCategory(item),
     // Public/admin cards keep their old field names for compatibility, but the
     // fighter library is now the source of truth whenever refs are populated.
     matchFighterA: fighterA?.displayName || item.matchFighterA || '',
@@ -566,6 +727,12 @@ function pickPublicFightFields(fight = {}, sourceType = 'match') {
     sourceType,
     matchCategory: item.matchCategory,
     matchCategoryTwo: item.matchCategoryTwo,
+    effectiveCategory: item.effectiveCategory,
+    effectiveCategorySlug: item.effectiveCategorySlug,
+    displayCategory: item.displayCategory,
+    categoryLabel: item.categoryLabel,
+    categorySlug: item.categorySlug,
+    hasSecondaryCategory: item.hasSecondaryCategory,
     matchName: item.matchName,
     matchFighterA: item.matchFighterA,
     matchFighterB: item.matchFighterB,
@@ -2490,13 +2657,17 @@ app.post(
 // Get Matches API
 app.get('/match', async (req, res) => {
   try {
-    const query = {};
+    let query = {};
 
     if (!isAllFilterValue(req.query.status)) {
       const statusValue = String(req.query.status || '').trim().toLowerCase();
       const now = new Date();
       if (['playable', 'prediction', 'predictions', 'can-predict', 'open-for-predictions', 'active-contests'].includes(statusValue)) {
-        query.$or = buildPredictionEligibleFightFilter().$or;
+        // By default, keep all non-draft fights visible to users. If the frontend
+        // explicitly asks for strict/open-only fights, apply the old open-status filter.
+        if (shouldUseStrictPlayableFightFilter(req.query)) {
+          query = appendAndFilter(query, buildPredictionEligibleFightFilter());
+        }
       } else if (['past', 'previous', 'completed', 'complete', 'finished'].includes(statusValue)) {
         query.$or = [
           ...(query.$or || []),
@@ -2518,13 +2689,7 @@ app.get('/match', async (req, res) => {
     }
 
     if (!isAllFilterValue(req.query.category)) {
-      const categoryRegex = exactTextRegex(req.query.category);
-      if (categoryRegex) {
-        query.$or = [
-          { matchCategory: categoryRegex },
-          { matchCategoryTwo: categoryRegex },
-        ];
-      }
+      query = appendAndFilter(query, buildEffectiveFightCategoryFilter(req.query.category));
     }
 
     if (!isAllFilterValue(req.query.shadowStatus)) query.matchShadowStatus = exactTextRegex(req.query.shadowStatus) || req.query.shadowStatus;
@@ -2534,8 +2699,8 @@ app.get('/match', async (req, res) => {
       if (matchTypeRegex) query.matchType = matchTypeRegex;
     }
 
-    if (shouldRequestPredictionEligibleFights(req.query) && !query.$or) {
-      query.$or = buildPredictionEligibleFightFilter().$or;
+    if (shouldUseStrictPlayableFightFilter(req.query) && shouldRequestPredictionEligibleFights(req.query)) {
+      query = appendAndFilter(query, buildPredictionEligibleFightFilter());
     }
 
     const visibleQuery = applyFightPublicVisibilityFilter(query, req.query);
@@ -2565,44 +2730,58 @@ app.get('/match', async (req, res) => {
       }
     }
 
-    if (shouldRequestPredictionEligibleFights(req.query)) {
+    if (shouldUseStrictPlayableFightFilter(req.query) && shouldRequestPredictionEligibleFights(req.query)) {
       match = match.filter((item) => isPredictionEligibleFightRecord(item));
     }
 
-    res.send(match.map((item) => attachCombatFighterReadFallbacks(item, item.sourceType || 'match')));
+    if (!isAllFilterValue(req.query.category)) {
+      match = match.filter((item) => isFightRecordInEffectiveCategory(item, req.query.category));
+    }
+
+    let responseItems = match.map((item) => attachCombatFighterReadFallbacks(item, item.sourceType || 'match'));
+    responseItems = await attachPlayerPredictionStateToFightItems(responseItems, req.query);
+    responseItems = applyPublicFightStatusIntent(responseItems, req.query);
+
+    res.send(responseItems);
   } catch (error) {
     console.error('Error fetching matches:', error);
     res.status(500).json({ message: 'Error fetching matches' });
   }
 });
 
-// Public/user-facing prediction-ready fight feed. This endpoint intentionally
-// reads both regular Match and Shadow fight records because the site supports
-// both paths for fight cards and promotional/affiliate contests. It hides only
-// explicit drafts and closed/completed fights so users always see cards where
-// predictions can be submitted.
+// Public/user-facing fight feed. It intentionally reads both regular Match and
+// Shadow fight records because the site supports both paths for fight cards and
+// promotional/affiliate contests. Only explicit Draft records are hidden by
+// default. If a player/user id is passed, records already predicted by that user
+// are marked for completed cards; the rest stay playable.
 app.get('/api/public/prediction-fights', async (req, res) => {
   try {
     const { payload, cacheState } = await readThroughPublicCache(
       getPublicCacheKey(req, 'public-prediction-fights'),
       async () => {
         const limit = Math.min(Math.max(parseInt(req.query.limit, 10) || 20, 1), 100);
-        const baseQuery = { ...req.query, playable: 'true' };
-        const visibleFilter = applyFightPublicVisibilityFilter(buildPredictionEligibleFightFilter(), baseQuery);
+        const queryLimit = Math.min(Math.max(limit * 6, 200), 500);
+        let baseFilter = {};
+        baseFilter = appendAndFilter(baseFilter, buildEffectiveFightCategoryFilter(req.query.category));
+        if (shouldUseStrictPlayableFightFilter(req.query)) {
+          baseFilter = appendAndFilter(baseFilter, buildPredictionEligibleFightFilter());
+        }
+        const visibleFilter = applyFightPublicVisibilityFilter(baseFilter, req.query);
         const [matches, shadows] = await Promise.all([
-          applyFightFreshSortLean(Match.find(visibleFilter).populate('fighterAId fighterBId')).limit(200),
-          applyFightFreshSortLean(Shadow.find(visibleFilter).populate('fighterAId fighterBId')).limit(200).catch(() => []),
+          applyFightFreshSortLean(Match.find(visibleFilter).populate('fighterAId fighterBId')).limit(queryLimit),
+          applyFightFreshSortLean(Shadow.find(visibleFilter).populate('fighterAId fighterBId')).limit(queryLimit).catch(() => []),
         ]);
         let items = [
           ...matches.map((item) => ({ ...item, sourceType: 'match' })),
           ...shadows.map((item) => ({ ...item, sourceType: 'shadow' })),
-        ].filter((item) => isPredictionEligibleFightRecord(item));
+        ].filter((item) => !isDraftFightRecord(item));
+
+        if (shouldUseStrictPlayableFightFilter(req.query)) {
+          items = items.filter((item) => isPredictionEligibleFightRecord(item));
+        }
 
         if (!isAllFilterValue(req.query.category)) {
-          const requested = String(req.query.category || '').trim().toLowerCase();
-          items = items.filter((item) => [item.matchCategory, item.matchCategoryTwo, item.sport, item.gameMode]
-            .map((value) => String(value || '').trim().toLowerCase())
-            .some((value) => value === requested));
+          items = items.filter((item) => isFightRecordInEffectiveCategory(item, req.query.category));
         }
 
         items = items.sort((a, b) => {
@@ -2612,10 +2791,18 @@ app.get('/api/public/prediction-fights', async (req, res) => {
           };
           return Math.max(toTime(b.updatedAt), toTime(b.createdAt), toTime(b.matchDate), toTime(b._id?.getTimestamp?.()))
             - Math.max(toTime(a.updatedAt), toTime(a.createdAt), toTime(a.matchDate), toTime(a._id?.getTimestamp?.()));
-        }).slice(0, limit)
-          .map((item) => attachCombatFighterReadFallbacks(item, item.sourceType || 'match'));
+        }).map((item) => attachCombatFighterReadFallbacks(item, item.sourceType || 'match'));
 
-        return { ok: true, items, count: items.length, generatedAt: new Date().toISOString() };
+        items = await attachPlayerPredictionStateToFightItems(items, req.query);
+        items = applyPublicFightStatusIntent(items, req.query).slice(0, limit);
+
+        return {
+          ok: true,
+          items,
+          count: items.length,
+          categoryMode: 'matchCategoryTwo-preferred',
+          generatedAt: new Date().toISOString(),
+        };
       }
     );
 
@@ -6790,8 +6977,10 @@ async function buildClassicLeaderboard({ limit = 10 } = {}) {
 }
 
 async function loadPublicFightCards({ limit = 6, category } = {}) {
-  const visibleFilter = applyFightPublicVisibilityFilter(buildPredictionEligibleFightFilter(), { playable: 'true' });
-  const queryLimit = Math.min(Math.max(limit * 3, limit), 100);
+  let baseFilter = {};
+  baseFilter = appendAndFilter(baseFilter, buildEffectiveFightCategoryFilter(category));
+  const visibleFilter = applyFightPublicVisibilityFilter(baseFilter, { playable: 'true' });
+  const queryLimit = Math.min(Math.max(limit * 6, limit), 500);
 
   const [matches, shadows] = await Promise.all([
     applyFightFreshSortLean(Match.find(visibleFilter).populate('fighterAId fighterBId')).limit(queryLimit),
@@ -6801,13 +6990,10 @@ async function loadPublicFightCards({ limit = 6, category } = {}) {
   let items = [
     ...matches.map((item) => ({ ...pickPublicFightFields(item, 'match'), __raw: item })),
     ...shadows.map((item) => ({ ...pickPublicFightFields(item, 'shadow'), __raw: item })),
-  ].filter((item) => isPredictionEligibleFightRecord(item.__raw || item));
+  ].filter((item) => !isDraftFightRecord(item.__raw || item));
 
   if (!isAllFilterValue(category)) {
-    const requested = String(category || '').trim().toLowerCase();
-    items = items.filter((item) => [item.matchCategory, item.matchCategoryTwo]
-      .map((value) => String(value || '').trim().toLowerCase())
-      .some((value) => value === requested));
+    items = items.filter((item) => isFightRecordInEffectiveCategory(item.__raw || item, category));
   }
 
   return items
@@ -6860,7 +7046,7 @@ app.get('/api/public/home-summary', async (req, res) => {
           loadPublicFightCards({ limit: fightLimit, category: req.query.category }),
           buildClassicLeaderboard({ limit: leaderboardLimit }),
           User.countDocuments(),
-          Match.countDocuments(applyFightPublicVisibilityFilter(buildPredictionEligibleFightFilter(), { playable: 'true' })),
+          Match.countDocuments(applyFightPublicVisibilityFilter({}, { playable: 'true' })),
         ]);
 
         return {
