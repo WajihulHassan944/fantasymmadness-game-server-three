@@ -747,6 +747,22 @@ function pickPublicFightFields(fight = {}, sourceType = 'match') {
     matchType: item.matchType,
     matchTokens: item.matchTokens,
     matchDate: item.matchDate,
+    matchTime: item.matchTime,
+    venue: item.venue,
+    homepagePromoted: Boolean(item.homepagePromoted),
+    homepagePromotionRank: Number(item.homepagePromotionRank || 0),
+    homepagePromotion: {
+      isPromoted: Boolean(item.homepagePromoted),
+      rank: Number(item.homepagePromotionRank || 0),
+      title: item.homepagePromotionTitle || '',
+      subtitle: item.homepagePromotionSubtitle || '',
+      ctaLabel: item.homepagePromotionCtaLabel || '',
+      startsAt: item.homepagePromotionStartsAt || null,
+      endsAt: item.homepagePromotionEndsAt || null,
+      calendarSource: item.homepagePromotionCalendarSource || '',
+      externalSourceUrl: item.homepagePromotionExternalSourceUrl || '',
+      updatedAt: item.homepagePromotionUpdatedAt || null,
+    },
     matchStatus: item.matchStatus,
     matchShadowStatus: item.matchShadowStatus,
     matchShadowOpenStatus: item.matchShadowOpenStatus,
@@ -939,6 +955,20 @@ const shadowSchema = new mongoose.Schema({
   promotionBackground: String,
   matchDescription: String,
   matchVideoUrl: String,
+  matchDate: Date,
+  matchTime: String,
+  venue: String,
+  homepagePromoted: { type: Boolean, default: false, index: true },
+  homepagePromotionRank: { type: Number, default: 0 },
+  homepagePromotionTitle: String,
+  homepagePromotionSubtitle: String,
+  homepagePromotionCtaLabel: String,
+  homepagePromotionStartsAt: Date,
+  homepagePromotionEndsAt: Date,
+  homepagePromotionCalendarSource: String,
+  homepagePromotionExternalSourceUrl: String,
+  homepagePromotionUpdatedAt: Date,
+  homepagePromotionUpdatedBy: String,
   fighterAImage: String,  // URL of Fighter A's image
   fighterBImage: String,  // URL of Fighter B's image
   matchType: String,      // LIVE or SHADOW
@@ -1014,6 +1044,7 @@ const shadowSchema = new mongoose.Schema({
 });
 shadowSchema.index({ matchStatus: 1, matchShadowOpenStatus: 1, updatedAt: -1 });
 shadowSchema.index({ matchDate: -1, updatedAt: -1 });
+shadowSchema.index({ homepagePromoted: 1, homepagePromotionRank: -1, matchDate: 1, updatedAt: -1 });
 shadowSchema.index({ fighterAId: 1, fighterBId: 1 });
 
 
@@ -1392,6 +1423,18 @@ matchReward: { type: String, enum: ['Rewarded', 'NotRewarded'], default: 'NotRew
   matchPromotionalVideoUrl: String,
   matchDate: Date,
   matchTime: String,  // Store the match time as a string in 'HH:MM' format
+  venue: String,
+  homepagePromoted: { type: Boolean, default: false, index: true },
+  homepagePromotionRank: { type: Number, default: 0 },
+  homepagePromotionTitle: String,
+  homepagePromotionSubtitle: String,
+  homepagePromotionCtaLabel: String,
+  homepagePromotionStartsAt: Date,
+  homepagePromotionEndsAt: Date,
+  homepagePromotionCalendarSource: String,
+  homepagePromotionExternalSourceUrl: String,
+  homepagePromotionUpdatedAt: Date,
+  homepagePromotionUpdatedBy: String,
   matchTokens: Number,
   pot: Number,
   profit: Number,
@@ -1465,6 +1508,7 @@ matchReward: { type: String, enum: ['Rewarded', 'NotRewarded'], default: 'NotRew
 } , { timestamps: true });
 matchSchema.index({ matchStatus: 1, matchShadowOpenStatus: 1, updatedAt: -1 });
 matchSchema.index({ matchDate: -1, updatedAt: -1 });
+matchSchema.index({ homepagePromoted: 1, homepagePromotionRank: -1, matchDate: 1, updatedAt: -1 });
 matchSchema.index({ affiliateId: 1, updatedAt: -1 });
 
 
@@ -12053,6 +12097,201 @@ app.get('/api/wrestling/cron/process', requireProWrestlingEnabled, verifyWrestli
     res.json({ processedAt: now, locked, cancelled, startingSoonNotifications });
   } catch (error) {
     handleWrestlingError(res, error);
+  }
+});
+
+
+function parseHomepagePromotionBoolean(value, fallback = true) {
+  if (value === undefined || value === null || value === '') return fallback;
+  if (typeof value === 'boolean') return value;
+  const normalized = String(value).trim().toLowerCase();
+  if (['true', '1', 'yes', 'on', 'promote', 'promoted'].includes(normalized)) return true;
+  if (['false', '0', 'no', 'off', 'unpromote', 'remove'].includes(normalized)) return false;
+  return fallback;
+}
+
+function parseOptionalPromotionDate(value) {
+  if (!value) return undefined;
+  const date = new Date(value);
+  return Number.isNaN(date.getTime()) ? undefined : date;
+}
+
+function isHomepagePromotionVisible(fight = {}, now = new Date()) {
+  if (!fight || !fight.homepagePromoted || isDraftFightRecord(fight)) return false;
+  const startsAt = fight.homepagePromotionStartsAt ? new Date(fight.homepagePromotionStartsAt) : null;
+  const endsAt = fight.homepagePromotionEndsAt ? new Date(fight.homepagePromotionEndsAt) : null;
+  if (startsAt && !Number.isNaN(startsAt.getTime()) && startsAt.getTime() > now.getTime()) return false;
+  if (endsAt && !Number.isNaN(endsAt.getTime()) && endsAt.getTime() < now.getTime()) return false;
+  return true;
+}
+
+function compareHomepagePromotedFights(a = {}, b = {}) {
+  const rankDiff = Number(b.homepagePromotionRank || 0) - Number(a.homepagePromotionRank || 0);
+  if (rankDiff) return rankDiff;
+  const toTime = (value) => {
+    const date = value ? new Date(value) : null;
+    return date && !Number.isNaN(date.getTime()) ? date.getTime() : 0;
+  };
+  const aMatch = toTime(a.matchDate);
+  const bMatch = toTime(b.matchDate);
+  if (aMatch && bMatch && aMatch !== bMatch) return aMatch - bMatch;
+  return Math.max(toTime(b.homepagePromotionUpdatedAt), toTime(b.updatedAt), toTime(b.createdAt))
+    - Math.max(toTime(a.homepagePromotionUpdatedAt), toTime(a.updatedAt), toTime(a.createdAt));
+}
+
+async function resolveFightDocumentForAdminPromotion(id, requestedSourceType = '') {
+  if (!mongoose.Types.ObjectId.isValid(id)) return null;
+  const source = String(requestedSourceType || '').toLowerCase();
+  if (source === 'shadow') {
+    const shadow = await Shadow.findById(id).populate('fighterAId fighterBId');
+    return shadow ? { model: Shadow, doc: shadow, sourceType: 'shadow' } : null;
+  }
+  if (source === 'match' || source === 'live') {
+    const match = await Match.findById(id).populate('fighterAId fighterBId');
+    return match ? { model: Match, doc: match, sourceType: 'match' } : null;
+  }
+  const match = await Match.findById(id).populate('fighterAId fighterBId');
+  if (match) return { model: Match, doc: match, sourceType: 'match' };
+  const shadow = await Shadow.findById(id).populate('fighterAId fighterBId');
+  if (shadow) return { model: Shadow, doc: shadow, sourceType: 'shadow' };
+  return null;
+}
+
+function getHomepagePromotionUpdate(req) {
+  const promoted = parseHomepagePromotionBoolean(
+    req.body?.homepagePromoted ?? req.body?.promoted ?? req.body?.isPromoted,
+    true,
+  );
+  const now = new Date();
+  const update = {
+    homepagePromoted: promoted,
+    homepagePromotionUpdatedAt: now,
+    homepagePromotionUpdatedBy: req.admin?.id || req.admin?._id || req.admin?.email || 'admin',
+  };
+  if (req.body?.rank !== undefined || req.body?.homepagePromotionRank !== undefined) {
+    update.homepagePromotionRank = Number(req.body?.homepagePromotionRank ?? req.body?.rank) || 0;
+  }
+  if (req.body?.title !== undefined || req.body?.homepagePromotionTitle !== undefined) update.homepagePromotionTitle = String(req.body?.homepagePromotionTitle ?? req.body?.title ?? '').trim();
+  if (req.body?.subtitle !== undefined || req.body?.homepagePromotionSubtitle !== undefined) update.homepagePromotionSubtitle = String(req.body?.homepagePromotionSubtitle ?? req.body?.subtitle ?? '').trim();
+  if (req.body?.ctaLabel !== undefined || req.body?.homepagePromotionCtaLabel !== undefined) update.homepagePromotionCtaLabel = String(req.body?.homepagePromotionCtaLabel ?? req.body?.ctaLabel ?? '').trim();
+  if (req.body?.calendarSource !== undefined || req.body?.homepagePromotionCalendarSource !== undefined) update.homepagePromotionCalendarSource = String(req.body?.homepagePromotionCalendarSource ?? req.body?.calendarSource ?? '').trim();
+  if (req.body?.externalSourceUrl !== undefined || req.body?.homepagePromotionExternalSourceUrl !== undefined) update.homepagePromotionExternalSourceUrl = String(req.body?.homepagePromotionExternalSourceUrl ?? req.body?.externalSourceUrl ?? '').trim();
+  const startsAt = parseOptionalPromotionDate(req.body?.startsAt ?? req.body?.homepagePromotionStartsAt);
+  const endsAt = parseOptionalPromotionDate(req.body?.endsAt ?? req.body?.homepagePromotionEndsAt);
+  if (startsAt !== undefined) update.homepagePromotionStartsAt = startsAt;
+  if (endsAt !== undefined) update.homepagePromotionEndsAt = endsAt;
+  return update;
+}
+
+app.patch('/api/admin/fights/:id/homepage-promotion', verifyAdminToken, async (req, res) => {
+  try {
+    const resolved = await resolveFightDocumentForAdminPromotion(req.params.id, req.body?.sourceType || req.query.sourceType);
+    if (!resolved) return res.status(404).json({ ok: false, message: 'Fight not found.' });
+    const update = getHomepagePromotionUpdate(req);
+    Object.assign(resolved.doc, update);
+    await resolved.doc.save();
+    clearPublicResponseCache();
+    res.json({
+      ok: true,
+      sourceType: resolved.sourceType,
+      fight: pickPublicFightFields(resolved.doc, resolved.sourceType),
+      message: update.homepagePromoted ? 'Fight promoted on homepage banner.' : 'Fight removed from homepage banner.',
+    });
+  } catch (error) {
+    console.error('Error updating homepage promotion:', error);
+    res.status(500).json({ ok: false, message: 'Failed to update homepage promotion.' });
+  }
+});
+
+app.post('/api/admin/fights/:id/homepage-promotion', verifyAdminToken, async (req, res) => {
+  try {
+    const resolved = await resolveFightDocumentForAdminPromotion(req.params.id, req.body?.sourceType || req.query.sourceType);
+    if (!resolved) return res.status(404).json({ ok: false, message: 'Fight not found.' });
+    const update = getHomepagePromotionUpdate({ body: { ...(req.body || {}), homepagePromoted: req.body?.homepagePromoted ?? req.body?.promoted ?? true }, admin: req.admin });
+    Object.assign(resolved.doc, update);
+    await resolved.doc.save();
+    clearPublicResponseCache();
+    res.status(201).json({
+      ok: true,
+      sourceType: resolved.sourceType,
+      fight: pickPublicFightFields(resolved.doc, resolved.sourceType),
+      message: 'Fight promoted on homepage banner.',
+    });
+  } catch (error) {
+    console.error('Error creating homepage promotion:', error);
+    res.status(500).json({ ok: false, message: 'Failed to create homepage promotion.' });
+  }
+});
+
+app.get('/api/public/homepage/promoted-fights', async (req, res) => {
+  try {
+    const { payload, cacheState } = await readThroughPublicCache(
+      getPublicCacheKey(req, 'public-homepage-promoted-fights'),
+      async () => {
+        const limit = parsePositiveInteger(req.query.limit, 8, 24);
+        const now = new Date();
+        const visiblePromotedFilter = applyFightPublicVisibilityFilter({ homepagePromoted: true }, { playable: 'true' });
+        const queryLimit = Math.min(Math.max(limit * 4, limit), 120);
+        const [matches, shadows] = await Promise.all([
+          applyFightFreshSortLean(Match.find(visiblePromotedFilter).populate('fighterAId fighterBId')).limit(queryLimit),
+          applyFightFreshSortLean(Shadow.find(visiblePromotedFilter).populate('fighterAId fighterBId')).limit(queryLimit).catch(() => []),
+        ]);
+        const items = [
+          ...matches.map((fight) => pickPublicFightFields(fight, 'match')),
+          ...shadows.map((fight) => pickPublicFightFields(fight, 'shadow')),
+        ]
+          .filter((fight) => isHomepagePromotionVisible(fight, now))
+          .sort(compareHomepagePromotedFights)
+          .slice(0, limit);
+        return { ok: true, items, count: items.length, generatedAt: now.toISOString() };
+      }
+    );
+    setPublicCacheHeaders(res, PUBLIC_CACHE_TTL_SECONDS, cacheState);
+    res.json(payload);
+  } catch (error) {
+    console.error('Error loading promoted homepage fights:', error);
+    res.status(500).json({ ok: false, message: 'Failed to load promoted homepage fights.' });
+  }
+});
+
+app.get('/api/affiliate/:affiliateId/promoted-fights', async (req, res) => {
+  try {
+    const affiliateId = String(req.params.affiliateId || '').trim();
+    if (!affiliateId) return res.status(400).json({ ok: false, message: 'Affiliate id is required.' });
+    const includeClosed = ['true', '1', 'yes'].includes(String(req.query.includeClosed || '').toLowerCase());
+    const directMatches = await Match.find({ affiliateId }).populate('fighterAId fighterBId').sort({ updatedAt: -1, createdAt: -1 }).limit(120).lean();
+    const shadowFilter = mongoose.Types.ObjectId.isValid(affiliateId)
+      ? { 'AffiliateIds.AffiliateId': new mongoose.Types.ObjectId(affiliateId) }
+      : { 'AffiliateIds.AffiliateId': affiliateId };
+    const shadows = await Shadow.find(shadowFilter).populate('fighterAId fighterBId').sort({ updatedAt: -1, createdAt: -1 }).limit(120).lean().catch(() => []);
+    const linkedMatchIds = [...new Set(shadows.flatMap((shadow) => (Array.isArray(shadow.AffiliateIds) ? shadow.AffiliateIds : [])
+      .filter((item) => String(item?.AffiliateId || '') === affiliateId || String(item?.AffiliateId?._id || '') === affiliateId)
+      .map((item) => String(item?.matchId || item?.matchId?._id || ''))
+      .filter((id) => mongoose.Types.ObjectId.isValid(id))))];
+    const linkedMatches = linkedMatchIds.length
+      ? await Match.find({ _id: { $in: linkedMatchIds } }).populate('fighterAId fighterBId').sort({ updatedAt: -1, createdAt: -1 }).lean()
+      : [];
+
+    const byId = new Map();
+    [...directMatches, ...linkedMatches].forEach((match) => {
+      if (!match || isDraftFightRecord(match)) return;
+      if (!includeClosed) {
+        const closed = String(match.matchShadowOpenStatus || '').toLowerCase() === 'closed' || String(match.matchStatus || '').toLowerCase() === 'finished';
+        if (closed) return;
+      }
+      byId.set(String(match._id), pickPublicFightFields(match, 'match'));
+    });
+
+    res.json({
+      ok: true,
+      affiliateId,
+      items: Array.from(byId.values()).sort(compareHomepagePromotedFights),
+      shadowTemplates: shadows.map((shadow) => pickPublicFightFields(shadow, 'shadow')),
+      generatedAt: new Date().toISOString(),
+    });
+  } catch (error) {
+    console.error('Error loading affiliate promoted fights:', error);
+    res.status(500).json({ ok: false, message: 'Failed to load affiliate promoted fights.' });
   }
 });
 

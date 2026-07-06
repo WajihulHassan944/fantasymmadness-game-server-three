@@ -1002,6 +1002,61 @@ function registerSwarmPhase2Routes(options) {
     res.json({ ok: true, job: serializeLocalJob(local), remoteError });
   }));
 
+  app.get('/api/admin/swarm/jobs/:jobId/summary', verifyAdminToken, asyncHandler(async (req, res) => {
+    const config = getSwarmConfig();
+    const jobId = String(req.params.jobId || '').trim();
+    let remoteError = null;
+
+    if (config.enabled && String(req.query.source || '').toLowerCase() !== 'cache') {
+      try {
+        const remote = await callSwarm(config, axios, crypto, 'GET', `/internal/v1/jobs/${encodeURIComponent(jobId)}`);
+        const swarmJob = remote.job || remote.data?.job || remote;
+        await upsertJobFromSwarm(models, swarmJob);
+      } catch (error) {
+        remoteError = summarizeError(error);
+      }
+    }
+
+    const local = await models.SwarmBackendJob.findOne({
+      $or: [{ jobId }, { backendCorrelationId: jobId }, { artifactId: jobId }],
+    }).lean();
+
+    if (!local && remoteError) {
+      return res.status(502).json({ ok: false, code: 'SWARM_JOB_SUMMARY_LOOKUP_FAILED', error: remoteError });
+    }
+    if (!local) return res.status(404).json({ ok: false, code: 'SWARM_JOB_NOT_FOUND', message: 'Job not found.' });
+
+    const serializedJob = serializeLocalJob(local);
+    const campaignId = cleanString(req.query.campaignId || serializedJob.campaignId || local.metadata?.campaignId || local.input?.campaignId || local.sourceEntity?.campaignId);
+    const artifactOr = [
+      { jobId: local.jobId },
+      { jobId },
+      { 'metadata.jobId': local.jobId },
+      { 'metadata.backendCorrelationId': local.backendCorrelationId },
+    ];
+    if (local.artifactId) artifactOr.push({ artifactId: local.artifactId });
+    if (campaignId) artifactOr.push({ 'metadata.campaignId': campaignId });
+
+    const [artifacts, campaign, relatedJobs] = await Promise.all([
+      models.SwarmBackendArtifact.find({ $or: artifactOr.filter(Boolean) }).sort({ updatedAt: -1, createdAt: -1 }).limit(40).lean(),
+      campaignId ? models.SwarmBackendCampaign.findOne({ campaignId }).lean() : null,
+      campaignId ? models.SwarmBackendJob.find({ 'metadata.campaignId': campaignId }).sort({ createdAt: -1 }).limit(30).lean() : [],
+    ]);
+
+    res.json({
+      ok: true,
+      source: remoteError ? 'cache' : 'swarm-cache',
+      job: serializedJob,
+      artifacts: artifacts.map(serializeLocalArtifact),
+      campaign: serializeLocalCampaign(campaign),
+      relatedJobs: relatedJobs.map(serializeLocalJob),
+      outputReady: artifacts.length > 0 || Boolean(local.artifactId),
+      outputLink: local.artifactId ? `/administration/swarm/jobs/${encodeURIComponent(local.jobId)}#artifact-${encodeURIComponent(local.artifactId)}` : null,
+      remoteError,
+      generatedAt: new Date().toISOString(),
+    });
+  }));
+
   app.post('/api/admin/swarm/jobs/:jobId/cancel', verifyAdminToken, requireSwarmEnabled, asyncHandler(async (req, res) => {
     const config = getSwarmConfig();
     const payload = { reason: String(req.body?.reason || 'admin-cancel-requested') };
@@ -1416,6 +1471,17 @@ function buildSwarmModels(mongoose) {
   };
 }
 
+function parseExternalFightSources() {
+  const urls = parseCsv(process.env.EXTERNAL_FIGHT_SOURCE_URLS || process.env.SWARM_EXTERNAL_FIGHT_SOURCE_URLS || '');
+  const names = parseCsv(process.env.EXTERNAL_FIGHT_SOURCE_NAMES || process.env.SWARM_EXTERNAL_FIGHT_SOURCE_NAMES || '');
+  return urls.map((url, index) => ({
+    name: names[index] || `External fight source ${index + 1}`,
+    url,
+    refreshCadence: 'daily',
+    sourceType: 'client_provided_external_fight_link',
+  })).filter((source) => source.url);
+}
+
 function getSwarmConfig() {
   const baseUrl = stripTrailingSlash(process.env.SWARM_BASE_URL || process.env.IONOS_SWARM_URL || '');
   const enabledFromEnv = String(process.env.SWARM_ENABLED || (baseUrl ? 'true' : 'false')).toLowerCase() !== 'false';
@@ -1435,6 +1501,7 @@ function getSwarmConfig() {
     autoImportEnabled: String(process.env.SWARM_AUTO_IMPORT_ENABLED || 'false').toLowerCase() === 'true',
     socialPublishEnabled: String(process.env.SWARM_SOCIAL_PUBLISH_ENABLED || 'false').toLowerCase() === 'true',
     socialDefaultPlatforms: parseCsv(process.env.SOCIAL_DEFAULT_PLATFORMS || 'x,instagram,facebook'),
+    externalFightSources: parseExternalFightSources(),
     dailySocialDraftCount: toInt(process.env.SWARM_DAILY_SOCIAL_DRAFT_COUNT || process.env.DAILY_SOCIAL_DRAFT_COUNT, 3),
     metaSocialConfigured: Boolean(cleanString(process.env.META_APP_ID) || cleanString(process.env.FACEBOOK_PAGE_ID) || cleanString(process.env.INSTAGRAM_BUSINESS_ACCOUNT_ID)),
     twitterConfigured: Boolean(cleanString(process.env.TWITTER_API_KEY) || cleanString(process.env.X_API_KEY)),
@@ -2725,6 +2792,8 @@ async function runSchedulePreset({ config, axios, crypto, mongoose, models, admi
       requestedOutput: preset === 'weekly' ? 'weekly traffic, calendar, and growth automation outputs' : 'daily SEO, social, calendar, and dashboard automation outputs',
       platforms: Array.isArray(body.platforms) ? body.platforms : getSwarmConfig().socialDefaultPlatforms,
       dailySocialDraftCount: toInt(body.dailySocialDraftCount, getSwarmConfig().dailySocialDraftCount),
+      externalSources: Array.isArray(body.externalSources) ? body.externalSources : getSwarmConfig().externalFightSources,
+      sourceMode: Array.isArray(body.externalSources) || getSwarmConfig().externalFightSources.length ? 'backend_plus_external_feeds' : 'backend_only',
     },
     metadata: { ...(isPlainObject(body.metadata) ? body.metadata : {}), schedulePreset: preset, submittedFrom: 'backend-schedule-preset' },
     requestedJobTypes,
@@ -2751,6 +2820,8 @@ async function runExplicitAutomationJobs({ config, axios, crypto, mongoose, mode
       topic: body.topic,
       platforms: Array.isArray(body.platforms) ? body.platforms : getSwarmConfig().socialDefaultPlatforms,
       dailySocialDraftCount: toInt(body.dailySocialDraftCount, getSwarmConfig().dailySocialDraftCount),
+      externalSources: Array.isArray(body.externalSources) ? body.externalSources : getSwarmConfig().externalFightSources,
+      sourceMode: Array.isArray(body.externalSources) || getSwarmConfig().externalFightSources.length ? 'backend_plus_external_feeds' : 'backend_only',
     },
     metadata: { ...(isPlainObject(body.metadata) ? body.metadata : {}), explicitAutomationRun: true, submittedFrom: 'backend-explicit-automation-run' },
     requestedJobTypes: Array.isArray(body.jobTypes) && body.jobTypes.length ? body.jobTypes : jobTypes,
