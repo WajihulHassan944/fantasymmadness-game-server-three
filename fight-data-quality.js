@@ -50,7 +50,41 @@ function registerFightDataQualityRoutes(options) {
 
   app.get('/api/admin/fights', verifyAdminToken, asyncHandler(async (req, res) => {
     const page = clamp(toInt(req.query.page, 1), 1, 100000);
-    const limit = clamp(toInt(req.query.limit, 50), 1, 200);
+    const limit = clamp(toInt(req.query.limit, 50), 1, 500);
+    const requestedSource = cleanString(req.query.source || req.query.registrySource || '').toLowerCase();
+    const includeShadow = parseBool(req.query.includeShadow ?? req.query.withShadow, false)
+      || ['all', 'combined', 'registry', 'match_and_shadow', 'both'].includes(requestedSource);
+
+    if (includeShadow) {
+      const filter = buildAdminFightFilter(req.query, { defaultMatchType: null });
+      const ShadowModel = Shadow;
+      const queryLimit = Math.min(Math.max(limit, 1), 500);
+      const [matches, shadows, matchTotal, shadowTotal] = await Promise.all([
+        Match.find(filter).populate('fighterAId fighterBId').sort({ updatedAt: -1, _id: -1 }).limit(queryLimit).lean(),
+        ShadowModel ? ShadowModel.find(filter).populate('fighterAId fighterBId').sort({ updatedAt: -1, _id: -1 }).limit(queryLimit).lean() : Promise.resolve([]),
+        Match.countDocuments(filter),
+        ShadowModel ? ShadowModel.countDocuments(filter) : Promise.resolve(0),
+      ]);
+
+      const serialized = [
+        ...matches.map((item) => serializeAdminFight(item, 'match')),
+        ...shadows.map((item) => serializeAdminFight(item, 'shadow')),
+      ].sort(compareAdminFightRecords);
+      const offset = (page - 1) * limit;
+      const pageItems = serialized.slice(offset, offset + limit);
+
+      return res.json({
+        ok: true,
+        source: 'combined',
+        includeShadow: true,
+        defaultMatchType: 'all',
+        items: pageItems,
+        counts: { match: matchTotal, shadow: shadowTotal, total: matchTotal + shadowTotal },
+        pagination: pagination(page, limit, matchTotal + shadowTotal),
+        note: 'Combined admin registry response includes Match and Shadow records so /administration/fights can show the full fight library with LIVE/SHADOW filters.',
+      });
+    }
+
     const filter = buildAdminFightFilter(req.query, { defaultMatchType: 'LIVE' });
     const [items, total] = await Promise.all([
       Match.find(filter)
@@ -67,7 +101,7 @@ function registerFightDataQualityRoutes(options) {
       defaultMatchType: 'LIVE',
       items: items.map((item) => serializeAdminFight(item, 'match')),
       pagination: pagination(page, limit, total),
-      note: 'This admin endpoint defaults to LIVE fights from the Match collection so /administration/fights does not show Shadow library records.',
+      note: 'This admin endpoint defaults to LIVE fights from the Match collection. Pass source=all or includeShadow=true for the combined registry.',
     });
   }));
 
@@ -1204,6 +1238,20 @@ function buildFighterSort(query, adminView = false) {
   return adminView ? { updatedAt: -1, displayName: 1, _id: 1 } : { displayName: 1, _id: 1 };
 }
 
+
+function compareAdminFightRecords(a = {}, b = {}) {
+  const toTime = (value) => {
+    const date = value ? new Date(value) : null;
+    return date && !Number.isNaN(date.getTime()) ? date.getTime() : 0;
+  };
+  const aType = String(a.matchType || '').toUpperCase() === 'LIVE' ? 1 : 0;
+  const bType = String(b.matchType || '').toUpperCase() === 'LIVE' ? 1 : 0;
+  if (aType !== bType) return bType - aType;
+  const aTime = Math.max(toTime(a.updatedAt), toTime(a.createdAt), toTime(a.matchDate), toTime(a._id?.getTimestamp?.()));
+  const bTime = Math.max(toTime(b.updatedAt), toTime(b.createdAt), toTime(b.matchDate), toTime(b._id?.getTimestamp?.()));
+  return bTime - aTime;
+}
+
 function buildAdminFightFilter(query, options = {}) {
   const filter = {};
   const defaultMatchType = options.defaultMatchType;
@@ -1214,20 +1262,25 @@ function buildAdminFightFilter(query, options = {}) {
   }
 
   if (!isAllFilterValue(query.status)) filter.matchStatus = exactTextRegex(query.status) || query.status;
+  const andFilters = [];
   if (!isAllFilterValue(query.category)) {
     const categoryRegex = exactTextRegex(query.category);
-    filter.$or = [{ matchCategory: categoryRegex }, { matchCategoryTwo: categoryRegex }];
+    andFilters.push({ $or: [{ matchCategory: categoryRegex }, { matchCategoryTwo: categoryRegex }] });
   }
   if (query.search) {
-    const searchRegex = new RegExp(escapeRegExp(String(query.search).trim()), 'i');
+    const searchText = String(query.search).trim();
+    const searchRegex = new RegExp(escapeRegExp(searchText), 'i');
     const searchOr = [
       { matchName: searchRegex },
       { matchFighterA: searchRegex },
       { matchFighterB: searchRegex },
       { matchDescription: searchRegex },
     ];
-    filter.$or = filter.$or ? [...filter.$or, ...searchOr] : searchOr;
+    if (mongooseLikeObjectId(searchText)) searchOr.push({ _id: searchText });
+    andFilters.push({ $or: searchOr });
   }
+  if (andFilters.length === 1) Object.assign(filter, andFilters[0]);
+  if (andFilters.length > 1) filter.$and = andFilters;
   return filter;
 }
 
@@ -1249,6 +1302,11 @@ function serializeAdminFight(item, sourceType) {
     fighterAImageResolved: fighterA?.primaryImage || item.fighterAImage || null,
     fighterBImageResolved: fighterB?.primaryImage || item.fighterBImage || null,
   };
+}
+
+
+function mongooseLikeObjectId(value) {
+  return /^[a-fA-F0-9]{24}$/.test(String(value || '').trim());
 }
 
 function normalizePopulatedFighter(value) {

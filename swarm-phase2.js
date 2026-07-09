@@ -738,7 +738,15 @@ function registerSwarmPhase2Routes(options) {
   app.get('/api/admin/swarm/campaigns', verifyAdminToken, asyncHandler(async (req, res) => {
     const config = getSwarmConfig();
     const useCacheOnly = String(req.query.source || '').toLowerCase() === 'cache' || !config.enabled;
-    if (!useCacheOnly) {
+    const needsLocalSearch = Boolean(
+      cleanString(req.query.search)
+      || cleanString(req.query.fightId)
+      || cleanString(req.query.matchId)
+      || cleanString(req.query.entityId)
+      || cleanString(req.query.sourceEntityId)
+      || cleanString(req.query.campaignId)
+    );
+    if (!useCacheOnly && !needsLocalSearch) {
       try {
         const result = await callSwarm(config, axios, crypto, 'GET', '/internal/v1/campaigns', undefined, pickQuery(req.query, ['status', 'campaignType', 'vertical', 'sport', 'page', 'limit']));
         const items = Array.isArray(result.items) ? result.items : [];
@@ -750,8 +758,19 @@ function registerSwarmPhase2Routes(options) {
         return res.status(206).json({ ok: true, source: 'cache', warning: 'Swarm unavailable; returned backend campaign cache.', error: summarizeError(error), ...cache });
       }
     }
+
+    if (!useCacheOnly && needsLocalSearch) {
+      try {
+        const result = await callSwarm(config, axios, crypto, 'GET', '/internal/v1/campaigns', undefined, pickQuery(req.query, ['status', 'campaignType', 'vertical', 'sport', 'page', 'limit']));
+        const items = Array.isArray(result.items) ? result.items : [];
+        await Promise.all(items.map((campaign) => upsertCampaignFromSwarm(models, campaign)));
+      } catch (error) {
+        if (String(req.query.fallbackCache || 'true').toLowerCase() === 'false') throw error;
+      }
+    }
+
     const cache = await listLocalCampaigns(models, req.query);
-    res.json({ ok: true, source: 'cache', ...cache });
+    res.json({ ok: true, source: needsLocalSearch ? 'cache-search' : 'cache', ...cache });
   }));
 
   app.get('/api/admin/swarm/campaigns/:campaignId', verifyAdminToken, asyncHandler(async (req, res) => {
@@ -964,7 +983,15 @@ function registerSwarmPhase2Routes(options) {
   app.get('/api/admin/swarm/jobs', verifyAdminToken, asyncHandler(async (req, res) => {
     const config = getSwarmConfig();
     const useCacheOnly = String(req.query.source || '').toLowerCase() === 'cache' || !config.enabled;
-    if (!useCacheOnly) {
+    const needsLocalSearch = Boolean(
+      cleanString(req.query.search)
+      || cleanString(req.query.fightId)
+      || cleanString(req.query.matchId)
+      || cleanString(req.query.entityId)
+      || cleanString(req.query.sourceEntityId)
+      || cleanString(req.query.campaignId)
+    );
+    if (!useCacheOnly && !needsLocalSearch) {
       try {
         const remote = await callSwarm(config, axios, crypto, 'GET', '/internal/v1/jobs', undefined, pickQuery(req.query, ['status', 'vertical', 'jobType', 'campaignId', 'sport', 'page', 'limit']));
         const items = Array.isArray(remote.items) ? remote.items : [];
@@ -977,8 +1004,18 @@ function registerSwarmPhase2Routes(options) {
       }
     }
 
+    if (!useCacheOnly && needsLocalSearch) {
+      try {
+        const remote = await callSwarm(config, axios, crypto, 'GET', '/internal/v1/jobs', undefined, pickQuery(req.query, ['status', 'vertical', 'jobType', 'campaignId', 'sport', 'page', 'limit']));
+        const items = Array.isArray(remote.items) ? remote.items : [];
+        await Promise.all(items.map((job) => upsertJobFromSwarm(models, job)));
+      } catch (error) {
+        if (String(req.query.fallbackCache || 'true').toLowerCase() === 'false') throw error;
+      }
+    }
+
     const cache = await listLocalJobs(models, req.query);
-    res.json({ ok: true, source: 'cache', ...cache });
+    res.json({ ok: true, source: needsLocalSearch ? 'cache-search' : 'cache', ...cache });
   }));
 
   app.get('/api/admin/swarm/jobs/:jobId', verifyAdminToken, asyncHandler(async (req, res) => {
@@ -1028,6 +1065,7 @@ function registerSwarmPhase2Routes(options) {
 
     const serializedJob = serializeLocalJob(local);
     const campaignId = cleanString(req.query.campaignId || serializedJob.campaignId || local.metadata?.campaignId || local.input?.campaignId || local.sourceEntity?.campaignId);
+    const fightId = cleanString(req.query.fightId || req.query.matchId || serializedJob.fightId || serializedJob.matchId || local.metadata?.fightId || local.metadata?.matchId || local.input?.fightId || local.input?.matchId || local.sourceEntity?.fightId || local.sourceEntity?.matchId || local.sourceEntity?.id);
     const artifactOr = [
       { jobId: local.jobId },
       { jobId },
@@ -1036,11 +1074,32 @@ function registerSwarmPhase2Routes(options) {
     ];
     if (local.artifactId) artifactOr.push({ artifactId: local.artifactId });
     if (campaignId) artifactOr.push({ 'metadata.campaignId': campaignId });
+    if (fightId) {
+      artifactOr.push({ 'metadata.fightId': fightId });
+      artifactOr.push({ 'metadata.matchId': fightId });
+      artifactOr.push({ 'payload.fightId': fightId });
+      artifactOr.push({ 'payload.matchId': fightId });
+    }
 
+    if (local.artifactId && config.enabled && String(req.query.source || '').toLowerCase() !== 'cache') {
+      try {
+        const remoteArtifact = await callSwarm(config, axios, crypto, 'GET', `/internal/v1/artifacts/${encodeURIComponent(local.artifactId)}`);
+        const swarmArtifact = remoteArtifact.artifact || remoteArtifact.data?.artifact || remoteArtifact;
+        if (swarmArtifact?.artifactId) await upsertArtifactFromSwarm(models, swarmArtifact);
+      } catch (artifactError) {
+        // Keep the job summary usable even when the artifact is not ready or the swarm lookup fails.
+      }
+    }
+
+    const relatedJobsFilter = campaignId
+      ? buildCampaignScopeFilter(campaignId)
+      : fightId
+        ? buildFightScopeFilter(fightId)
+        : null;
     const [artifacts, campaign, relatedJobs] = await Promise.all([
       models.SwarmBackendArtifact.find({ $or: artifactOr.filter(Boolean) }).sort({ updatedAt: -1, createdAt: -1 }).limit(40).lean(),
       campaignId ? models.SwarmBackendCampaign.findOne({ campaignId }).lean() : null,
-      campaignId ? models.SwarmBackendJob.find({ 'metadata.campaignId': campaignId }).sort({ createdAt: -1 }).limit(30).lean() : [],
+      relatedJobsFilter ? models.SwarmBackendJob.find(relatedJobsFilter).sort({ createdAt: -1 }).limit(30).lean() : [],
     ]);
 
     res.json({
@@ -1049,6 +1108,8 @@ function registerSwarmPhase2Routes(options) {
       job: serializedJob,
       artifacts: artifacts.map(serializeLocalArtifact),
       campaign: serializeLocalCampaign(campaign),
+      fightId: fightId || undefined,
+      campaignId: campaignId || undefined,
       relatedJobs: relatedJobs.map(serializeLocalJob),
       outputReady: artifacts.length > 0 || Boolean(local.artifactId),
       outputLink: local.artifactId ? `/administration/swarm/jobs/${encodeURIComponent(local.jobId)}#artifact-${encodeURIComponent(local.artifactId)}` : null,
@@ -1077,10 +1138,37 @@ function registerSwarmPhase2Routes(options) {
 
   app.get('/api/admin/swarm/artifacts', verifyAdminToken, asyncHandler(async (req, res) => {
     const config = getSwarmConfig();
+    const requestedArtifactId = cleanString(req.query.artifactId || req.query.id);
     const useCacheOnly = String(req.query.source || '').toLowerCase() === 'cache' || !config.enabled;
-    if (!useCacheOnly) {
+
+    if (requestedArtifactId) {
+      let remoteError = null;
+      if (!useCacheOnly) {
+        try {
+          const remote = await callSwarm(config, axios, crypto, 'GET', `/internal/v1/artifacts/${encodeURIComponent(requestedArtifactId)}`);
+          const swarmArtifact = remote.artifact || remote.data?.artifact || remote;
+          if (swarmArtifact?.artifactId) await upsertArtifactFromSwarm(models, swarmArtifact);
+        } catch (error) {
+          remoteError = summarizeError(error);
+          if (String(req.query.fallbackCache || 'true').toLowerCase() === 'false') throw error;
+        }
+      }
+      const local = await models.SwarmBackendArtifact.findOne({ artifactId: requestedArtifactId }).lean();
+      if (!local && remoteError) return res.status(206).json({ ok: true, source: 'cache', warning: 'Swarm unavailable; returned backend cache.', error: remoteError, items: [], pagination: { page: 1, limit: 1, total: 0, pages: 0 } });
+      return res.json({ ok: true, source: remoteError ? 'cache' : 'swarm-cache', items: local ? [serializeLocalArtifact(local)] : [], pagination: { page: 1, limit: 1, total: local ? 1 : 0, pages: local ? 1 : 0 }, remoteError });
+    }
+
+    const needsLocalSearch = Boolean(
+      cleanString(req.query.search)
+      || cleanString(req.query.fightId)
+      || cleanString(req.query.matchId)
+      || cleanString(req.query.entityId)
+      || cleanString(req.query.sourceEntityId)
+      || cleanString(req.query.campaignId)
+    );
+    if (!useCacheOnly && !needsLocalSearch) {
       try {
-        const remote = await callSwarm(config, axios, crypto, 'GET', '/internal/v1/artifacts', undefined, pickQuery(req.query, ['vertical', 'artifactType', 'reviewStatus', 'campaignId', 'sport', 'page', 'limit']));
+        const remote = await callSwarm(config, axios, crypto, 'GET', '/internal/v1/artifacts', undefined, pickQuery(req.query, ['vertical', 'artifactType', 'reviewStatus', 'campaignId', 'sport', 'jobId', 'page', 'limit']));
         const items = Array.isArray(remote.items) ? remote.items : [];
         await Promise.all(items.map((artifact) => upsertArtifactFromSwarm(models, artifact)));
         return res.json({ ok: true, source: 'swarm', ...remote });
@@ -1091,8 +1179,18 @@ function registerSwarmPhase2Routes(options) {
       }
     }
 
+    if (!useCacheOnly && needsLocalSearch) {
+      try {
+        const remote = await callSwarm(config, axios, crypto, 'GET', '/internal/v1/artifacts', undefined, pickQuery(req.query, ['vertical', 'artifactType', 'reviewStatus', 'campaignId', 'sport', 'jobId', 'page', 'limit']));
+        const items = Array.isArray(remote.items) ? remote.items : [];
+        await Promise.all(items.map((artifact) => upsertArtifactFromSwarm(models, artifact)));
+      } catch (error) {
+        if (String(req.query.fallbackCache || 'true').toLowerCase() === 'false') throw error;
+      }
+    }
+
     const cache = await listLocalArtifacts(models, req.query);
-    res.json({ ok: true, source: 'cache', ...cache });
+    res.json({ ok: true, source: needsLocalSearch ? 'cache-search' : 'cache', ...cache });
   }));
 
   app.get('/api/admin/swarm/artifacts/:artifactId', verifyAdminToken, asyncHandler(async (req, res) => {
@@ -1693,7 +1791,17 @@ function normalizeCreateJobBody(body, admin, config) {
   const input = normalizeInput(raw);
   input.sport = normalizeSport(input.sport || input.discipline || sport || vertical);
   input.discipline = input.discipline || input.sport;
-  const sourceEntity = normalizeSourceEntity(raw, input, vertical, jobType);
+  const scopeFightId = cleanString(input.fightId || input.matchId || raw.fightId || raw.matchId || raw.sourceEntity?.id || raw.sourceEntity?.fightId || raw.sourceEntity?.matchId);
+  if (scopeFightId) {
+    input.fightId = input.fightId || scopeFightId;
+    input.matchId = input.matchId || scopeFightId;
+  }
+  const sourceEntity = { ...normalizeSourceEntity(raw, input, vertical, jobType) };
+  if (scopeFightId) {
+    sourceEntity.id = sourceEntity.id || scopeFightId;
+    sourceEntity.fightId = sourceEntity.fightId || scopeFightId;
+    sourceEntity.matchId = sourceEntity.matchId || scopeFightId;
+  }
 
   return {
     vertical,
@@ -1714,6 +1822,7 @@ function normalizeCreateJobBody(body, admin, config) {
     maxAttempts: raw.maxAttempts,
     metadata: {
       ...(isPlainObject(raw.metadata) ? raw.metadata : {}),
+      ...(scopeFightId ? { fightId: scopeFightId, matchId: scopeFightId, sourceEntityId: scopeFightId } : {}),
       sport: input.sport,
       submittedFrom: 'fantasymmadness-backend',
       submittedAt: new Date().toISOString(),
@@ -2003,36 +2112,214 @@ function normalizeBlogSections(sections) {
     .filter((section) => section.title || section.content);
 }
 
+function getScopedFightId(query = {}) {
+  return cleanString(query.fightId || query.matchId || query.entityId || query.sourceEntityId || query.sourceId);
+}
+
+function buildFightScopeFilter(scopeId) {
+  if (!scopeId) return null;
+  return { $or: [
+    { 'input.fightId': scopeId },
+    { 'input.matchId': scopeId },
+    { 'input.id': scopeId },
+    { 'input._id': scopeId },
+    { 'metadata.fightId': scopeId },
+    { 'metadata.matchId': scopeId },
+    { 'metadata.sourceEntityId': scopeId },
+    { 'metadata.sourceFightId': scopeId },
+    { 'sourceEntity.id': scopeId },
+    { 'sourceEntity.fightId': scopeId },
+    { 'sourceEntity.matchId': scopeId },
+    { 'swarmJob.input.fightId': scopeId },
+    { 'swarmJob.input.matchId': scopeId },
+    { 'swarmJob.metadata.fightId': scopeId },
+    { 'swarmJob.metadata.matchId': scopeId },
+    { 'swarmJob.sourceEntity.id': scopeId },
+    { 'swarmJob.sourceEntity.fightId': scopeId },
+    { 'swarmJob.sourceEntity.matchId': scopeId },
+  ] };
+}
+
+function buildCampaignScopeFilter(campaignId) {
+  if (!campaignId) return null;
+  return { $or: [
+    { 'metadata.campaignId': campaignId },
+    { 'input.campaignId': campaignId },
+    { 'sourceEntity.campaignId': campaignId },
+    { 'swarmJob.campaignId': campaignId },
+    { 'swarmJob.metadata.campaignId': campaignId },
+    { backendCorrelationId: campaignId },
+  ] };
+}
+
+function buildArtifactFightScopeFilter(scopeId, relatedJobIds = [], relatedArtifactIds = []) {
+  if (!scopeId) return null;
+  const or = [
+    { 'metadata.fightId': scopeId },
+    { 'metadata.matchId': scopeId },
+    { 'metadata.sourceEntityId': scopeId },
+    { 'payload.fightId': scopeId },
+    { 'payload.matchId': scopeId },
+    { 'payload.id': scopeId },
+    { 'provenance.fightId': scopeId },
+    { 'provenance.matchId': scopeId },
+    { 'swarmArtifact.metadata.fightId': scopeId },
+    { 'swarmArtifact.metadata.matchId': scopeId },
+    { 'swarmArtifact.payload.fightId': scopeId },
+    { 'swarmArtifact.payload.matchId': scopeId },
+  ];
+  if (relatedJobIds.length) or.push({ jobId: { $in: relatedJobIds } });
+  if (relatedArtifactIds.length) or.push({ artifactId: { $in: relatedArtifactIds } });
+  return { $or: or };
+}
+
 async function listLocalJobs(models, query) {
   const page = clamp(toInt(query.page, 1), 1, 100000);
   const limit = clamp(toInt(query.limit, 25), 1, 100);
   const filter = {};
+  const andFilters = [];
   if (query.status) filter.status = query.status;
   if (query.vertical) filter.vertical = normalizeVertical(query.vertical);
   if (query.jobType) filter.jobType = query.jobType;
-  if (query.campaignId) filter['metadata.campaignId'] = String(query.campaignId);
+  const campaignScope = buildCampaignScopeFilter(cleanString(query.campaignId));
+  if (campaignScope) andFilters.push(campaignScope);
+  const fightScope = buildFightScopeFilter(getScopedFightId(query));
+  if (fightScope) andFilters.push(fightScope);
   if (query.sport) filter['metadata.sport'] = normalizeSport(query.sport);
+  if (query.search) {
+    const search = String(query.search).trim();
+    const searchRegex = new RegExp(escapeRegExp(search), 'i');
+    andFilters.push({ $or: [
+      { jobId: searchRegex },
+      { backendCorrelationId: searchRegex },
+      { artifactId: searchRegex },
+      { jobType: searchRegex },
+      { status: searchRegex },
+      { 'metadata.campaignId': searchRegex },
+      { 'metadata.fightId': searchRegex },
+      { 'metadata.matchId': searchRegex },
+      { 'input.title': searchRegex },
+      { 'input.topic': searchRegex },
+      { 'input.fightId': searchRegex },
+      { 'input.matchId': searchRegex },
+      { 'sourceEntity.id': searchRegex },
+      { 'sourceEntity.label': searchRegex },
+    ] });
+  }
+  if (andFilters.length) filter.$and = andFilters;
   const [rows, total] = await Promise.all([
     models.SwarmBackendJob.find(filter).sort({ createdAt: -1 }).skip((page - 1) * limit).limit(limit).lean(),
     models.SwarmBackendJob.countDocuments(filter),
   ]);
-  return { items: rows.map(serializeLocalJob), pagination: { page, limit, total, pages: Math.ceil(total / limit) } };
+  return { items: rows.map(serializeLocalJob), pagination: { page, limit, total, pages: Math.ceil(total / limit) }, scope: { fightId: getScopedFightId(query) || undefined, campaignId: cleanString(query.campaignId) || undefined } };
 }
 
 async function listLocalArtifacts(models, query) {
   const page = clamp(toInt(query.page, 1), 1, 100000);
   const limit = clamp(toInt(query.limit, 25), 1, 100);
   const filter = {};
+  const andFilters = [];
   if (query.vertical) filter.vertical = normalizeVertical(query.vertical);
   if (query.artifactType) filter.artifactType = query.artifactType;
   if (query.reviewStatus) filter.reviewStatus = String(query.reviewStatus).toUpperCase();
-  if (query.campaignId) filter['metadata.campaignId'] = String(query.campaignId);
+  const campaignId = cleanString(query.campaignId);
+  if (campaignId) andFilters.push({ $or: [
+    { 'metadata.campaignId': campaignId },
+    { 'payload.campaignId': campaignId },
+    { 'swarmArtifact.metadata.campaignId': campaignId },
+    { 'swarmArtifact.payload.campaignId': campaignId },
+  ] });
   if (query.sport) filter['metadata.sport'] = normalizeSport(query.sport);
+  if (query.artifactId) andFilters.push({ artifactId: String(query.artifactId) });
+  if (query.jobId) andFilters.push({ jobId: String(query.jobId) });
+
+  const scopeId = getScopedFightId(query);
+  if (scopeId) {
+    const scopedJobs = await models.SwarmBackendJob.find(buildFightScopeFilter(scopeId)).select('jobId artifactId').limit(1000).lean();
+    const relatedJobIds = scopedJobs.map((job) => job.jobId).filter(Boolean);
+    const relatedArtifactIds = scopedJobs.map((job) => job.artifactId).filter(Boolean);
+    const fightScope = buildArtifactFightScopeFilter(scopeId, relatedJobIds, relatedArtifactIds);
+    if (fightScope) andFilters.push(fightScope);
+  }
+
+  if (query.search) {
+    const search = String(query.search).trim();
+    const searchRegex = new RegExp(escapeRegExp(search), 'i');
+    andFilters.push({ $or: [
+      { artifactId: searchRegex },
+      { jobId: searchRegex },
+      { jobType: searchRegex },
+      { artifactType: searchRegex },
+      { title: searchRegex },
+      { summary: searchRegex },
+      { reviewStatus: searchRegex },
+      { 'metadata.campaignId': searchRegex },
+      { 'metadata.fightId': searchRegex },
+      { 'metadata.matchId': searchRegex },
+      { 'payload.title': searchRegex },
+      { 'payload.metaTitle': searchRegex },
+      { 'payload.headline': searchRegex },
+      { 'payload.fightId': searchRegex },
+      { 'payload.matchId': searchRegex },
+    ] });
+  }
+  if (andFilters.length) filter.$and = andFilters;
   const [rows, total] = await Promise.all([
     models.SwarmBackendArtifact.find(filter).sort({ createdAt: -1 }).skip((page - 1) * limit).limit(limit).lean(),
     models.SwarmBackendArtifact.countDocuments(filter),
   ]);
-  return { items: rows.map(serializeLocalArtifact), pagination: { page, limit, total, pages: Math.ceil(total / limit) } };
+  return { items: rows.map(serializeLocalArtifact), pagination: { page, limit, total, pages: Math.ceil(total / limit) }, scope: { fightId: scopeId || undefined, campaignId: campaignId || undefined } };
+}
+
+async function listLocalCampaigns(models, query) {
+  const page = clamp(toInt(query?.page, 1), 1, 100000);
+  const limit = clamp(toInt(query?.limit, 25), 1, 100);
+  const filter = {};
+  const andFilters = [];
+  if (query?.status) filter.status = String(query.status);
+  if (query?.campaignType) filter.campaignType = normalizeCampaignType(query.campaignType);
+  if (query?.vertical) filter.vertical = normalizeVertical(query.vertical);
+  if (query?.sport) filter.sport = normalizeSport(query.sport);
+  const campaignId = cleanString(query?.campaignId);
+  if (campaignId) andFilters.push({ $or: [{ campaignId }, { backendCorrelationId: campaignId }, { 'metadata.campaignId': campaignId }] });
+  const scopeId = getScopedFightId(query || {});
+  if (scopeId) andFilters.push({ $or: [
+    { 'input.fightId': scopeId },
+    { 'input.matchId': scopeId },
+    { 'metadata.fightId': scopeId },
+    { 'metadata.matchId': scopeId },
+    { 'metadata.sourceEntityId': scopeId },
+    { 'sourceEntity.id': scopeId },
+    { 'sourceEntity.fightId': scopeId },
+    { 'sourceEntity.matchId': scopeId },
+    { 'swarmCampaign.input.fightId': scopeId },
+    { 'swarmCampaign.input.matchId': scopeId },
+  ] });
+  if (query?.search) {
+    const search = String(query.search).trim();
+    const searchRegex = new RegExp(escapeRegExp(search), 'i');
+    andFilters.push({ $or: [
+      { campaignId: searchRegex },
+      { campaignType: searchRegex },
+      { title: searchRegex },
+      { sport: searchRegex },
+      { status: searchRegex },
+      { 'input.title': searchRegex },
+      { 'input.topic': searchRegex },
+      { 'input.fightId': searchRegex },
+      { 'input.matchId': searchRegex },
+      { 'metadata.fightId': searchRegex },
+      { 'metadata.matchId': searchRegex },
+      { 'sourceEntity.id': searchRegex },
+      { 'sourceEntity.label': searchRegex },
+    ] });
+  }
+  if (andFilters.length) filter.$and = andFilters;
+  const [rows, total] = await Promise.all([
+    models.SwarmBackendCampaign.find(filter).sort({ createdAt: -1 }).skip((page - 1) * limit).limit(limit).lean(),
+    models.SwarmBackendCampaign.countDocuments(filter),
+  ]);
+  return { items: rows.map(serializeLocalCampaign), pagination: { page, limit, total, pages: Math.ceil(total / limit) }, scope: { fightId: scopeId || undefined, campaignId: campaignId || undefined } };
 }
 
 async function getCacheStats(models) {
@@ -2324,7 +2611,17 @@ function normalizeCreateCampaignBody(rawBody, admin, config, crypto) {
       discipline: sourceInput.discipline || sport,
       adminUXIntent: cleanString(raw.adminUXIntent) || cleanString(raw.intent) || buildCampaignIntent(campaignType, sport),
     };
-  const sourceEntity = normalizeSourceEntity({ ...raw, sourceEntity: raw.sourceEntity, label: raw.label || raw.title }, input, vertical, 'content.article');
+  const scopeFightId = cleanString(sourceInput.fightId || sourceInput.matchId || raw.fightId || raw.matchId || raw.sourceEntity?.id || raw.sourceEntity?.fightId || raw.sourceEntity?.matchId);
+  if (scopeFightId) {
+    input.fightId = input.fightId || scopeFightId;
+    input.matchId = input.matchId || scopeFightId;
+  }
+  const sourceEntity = { ...normalizeSourceEntity({ ...raw, sourceEntity: raw.sourceEntity, label: raw.label || raw.title }, input, vertical, 'content.article') };
+  if (scopeFightId) {
+    sourceEntity.id = sourceEntity.id || scopeFightId;
+    sourceEntity.fightId = sourceEntity.fightId || scopeFightId;
+    sourceEntity.matchId = sourceEntity.matchId || scopeFightId;
+  }
   const title = cleanString(raw.title) || cleanString(input.title) || cleanString(input.matchName) || cleanString(input.eventName) || sourceEntity.label || pack.label;
   const normalized = {
     campaignType,
@@ -2344,6 +2641,7 @@ function normalizeCreateCampaignBody(rawBody, admin, config, crypto) {
     idempotencyKey: cleanString(raw.idempotencyKey) || undefined,
     metadata: {
       ...(isPlainObject(raw.metadata) ? raw.metadata : {}),
+      ...(scopeFightId ? { fightId: scopeFightId, matchId: scopeFightId, sourceEntityId: scopeFightId } : {}),
       submittedFrom: 'fantasymmadness-backend-campaign',
       submittedAt: new Date().toISOString(),
       campaignType,
@@ -2492,21 +2790,6 @@ async function upsertCampaignFromSwarm(models, swarmCampaign, fallback) {
   return models.SwarmBackendCampaign.findOne({ campaignId });
 }
 
-async function listLocalCampaigns(models, query) {
-  const page = clamp(toInt(query?.page, 1), 1, 100000);
-  const limit = clamp(toInt(query?.limit, 25), 1, 100);
-  const filter = {};
-  if (query?.status) filter.status = String(query.status);
-  if (query?.campaignType) filter.campaignType = normalizeCampaignType(query.campaignType);
-  if (query?.vertical) filter.vertical = normalizeVertical(query.vertical);
-  if (query?.sport) filter.sport = normalizeSport(query.sport);
-  const [rows, total] = await Promise.all([
-    models.SwarmBackendCampaign.find(filter).sort({ createdAt: -1 }).skip((page - 1) * limit).limit(limit).lean(),
-    models.SwarmBackendCampaign.countDocuments(filter),
-  ]);
-  return { items: rows.map(serializeLocalCampaign), pagination: { page, limit, total, pages: Math.ceil(total / limit) } };
-}
-
 function serializeLocalCampaign(campaign) {
   if (!campaign) return null;
   return {
@@ -2530,6 +2813,8 @@ function serializeLocalCampaign(campaign) {
     backendCorrelationId: campaign.backendCorrelationId,
     idempotencyKey: campaign.idempotencyKey,
     metadata: campaign.metadata,
+    fightId: campaign.metadata?.fightId || campaign.input?.fightId || campaign.sourceEntity?.fightId || campaign.sourceEntity?.id,
+    matchId: campaign.metadata?.matchId || campaign.input?.matchId || campaign.sourceEntity?.matchId || campaign.sourceEntity?.id,
     error: campaign.error,
     swarmCampaign: campaign.swarmCampaign,
     createdAt: campaign.createdAt,
@@ -3070,6 +3355,8 @@ function serializeLocalJob(job) {
     artifactId: job.artifactId,
     metadata: job.metadata,
     campaignId: job.metadata?.campaignId || job.input?.campaignId || job.sourceEntity?.campaignId,
+    fightId: job.metadata?.fightId || job.input?.fightId || job.sourceEntity?.fightId || job.sourceEntity?.id,
+    matchId: job.metadata?.matchId || job.input?.matchId || job.sourceEntity?.matchId || job.sourceEntity?.id,
     sport: job.input?.sport || job.sourceEntity?.sport || job.metadata?.sport,
     error: job.error,
     publishedEntity: job.publishedEntity,
@@ -3105,6 +3392,8 @@ function serializeLocalArtifact(artifact) {
     publishedAt: artifact.publishedAt,
     metadata: artifact.metadata,
     campaignId: artifact.metadata?.campaignId || artifact.payload?.campaignId,
+    fightId: artifact.metadata?.fightId || artifact.payload?.fightId || artifact.provenance?.fightId,
+    matchId: artifact.metadata?.matchId || artifact.payload?.matchId || artifact.provenance?.matchId,
     sport: artifact.metadata?.sport || artifact.payload?.sport,
     createdAt: artifact.createdAt,
     updatedAt: artifact.updatedAt,
