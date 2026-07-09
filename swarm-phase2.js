@@ -379,6 +379,8 @@ function registerSwarmPhase2Routes(options) {
     verifyAdminToken,
     Blog,
     Notification,
+    upload,
+    cloudinary,
   } = options || {};
 
   if (!app || !mongoose || !axios || !crypto || !verifyAdminToken) {
@@ -417,6 +419,8 @@ function registerSwarmPhase2Routes(options) {
       reason: campaign?.reason || 'backend-hook-triggered-campaign',
     }),
   };
+
+  const artifactUpload = upload?.fields ? upload.fields([{ name: 'blogHeaderImage', maxCount: 1 }]) : (req, res, next) => next();
 
   const requireSwarmEnabled = (req, res, next) => {
     const config = getSwarmConfig();
@@ -1214,6 +1218,90 @@ function registerSwarmPhase2Routes(options) {
     res.json({ ok: true, artifact: serializeLocalArtifact(local), remoteError });
   }));
 
+
+  app.patch('/api/admin/swarm/artifacts/:artifactId', verifyAdminToken, artifactUpload, asyncHandler(async (req, res) => {
+    const config = getSwarmConfig();
+    const artifact = await loadArtifactForReview({ config, axios, crypto, models, artifactId: req.params.artifactId });
+    const admin = adminActor(req.admin);
+    const patch = await buildArtifactEditPatch({ req, artifact, admin, cloudinary, mongoose, Blog });
+
+    artifact.title = patch.title || artifact.title;
+    artifact.summary = patch.summary || artifact.summary;
+    artifact.payload = patch.payload || artifact.payload || {};
+    artifact.metadata = patch.metadata || artifact.metadata || {};
+    artifact.reviewedBy = patch.reviewedBy || artifact.reviewedBy;
+    artifact.reviewedAt = patch.reviewedAt || artifact.reviewedAt;
+    artifact.reviewReason = patch.reviewReason || artifact.reviewReason;
+
+    if (patch.reviewStatus) artifact.reviewStatus = patch.reviewStatus;
+    await artifact.save();
+
+    let remoteUpdate = null;
+    if (config.enabled) {
+      try {
+        remoteUpdate = await updateRemoteArtifact({
+          config,
+          axios,
+          crypto,
+          artifactId: artifact.artifactId,
+          patch: {
+            title: artifact.title,
+            summary: artifact.summary,
+            payload: artifact.payload,
+            metadata: artifact.metadata,
+            reviewStatus: artifact.reviewStatus,
+          },
+        });
+        const remoteArtifact = remoteUpdate.artifact || remoteUpdate.data?.artifact;
+        if (remoteArtifact?.artifactId) await upsertArtifactFromSwarm(models, remoteArtifact);
+      } catch (error) {
+        remoteUpdate = { ok: false, warning: 'Artifact was updated in backend cache but remote swarm patch failed.', error: summarizeError(error) };
+      }
+    }
+
+    const publishedBlog = await updatePublishedBlogFromArtifact({ artifact, Blog });
+    await models.SwarmBackendJob.updateOne(
+      { jobId: artifact.jobId },
+      { $set: { artifactId: artifact.artifactId, updatedAt: new Date() }, $push: { statusHistory: { status: 'artifact_edited', at: new Date(), reason: 'artifact-edited-from-admin' } } },
+    ).catch(() => null);
+
+    res.json({ ok: true, artifact: serializeLocalArtifact(artifact), publishedBlog, remoteUpdate: sanitizeSwarmEnvelope(remoteUpdate) });
+  }));
+
+  app.post('/api/admin/swarm/artifacts/:artifactId/generate-blog-banner', verifyAdminToken, asyncHandler(async (req, res) => {
+    const config = getSwarmConfig();
+    const artifact = await loadArtifactForReview({ config, axios, crypto, models, artifactId: req.params.artifactId });
+    const bannerPatch = await buildGeneratedBlogBannerPatch({ artifact, mongoose, admin: req.admin, reason: req.body?.reason || 'admin-generated-blog-banner' });
+
+    artifact.payload = bannerPatch.payload;
+    artifact.summary = bannerPatch.summary || artifact.summary;
+    artifact.metadata = bannerPatch.metadata;
+    artifact.reviewedBy = adminActor(req.admin);
+    artifact.reviewedAt = new Date();
+    artifact.reviewReason = bannerPatch.reviewReason;
+    await artifact.save();
+
+    let remoteUpdate = null;
+    if (config.enabled) {
+      try {
+        remoteUpdate = await updateRemoteArtifact({
+          config,
+          axios,
+          crypto,
+          artifactId: artifact.artifactId,
+          patch: { payload: artifact.payload, summary: artifact.summary, metadata: artifact.metadata },
+        });
+        const remoteArtifact = remoteUpdate.artifact || remoteUpdate.data?.artifact;
+        if (remoteArtifact?.artifactId) await upsertArtifactFromSwarm(models, remoteArtifact);
+      } catch (error) {
+        remoteUpdate = { ok: false, warning: 'Generated banner was stored in backend cache but remote swarm patch failed.', error: summarizeError(error) };
+      }
+    }
+
+    const publishedBlog = await updatePublishedBlogFromArtifact({ artifact, Blog });
+    res.json({ ok: true, artifact: serializeLocalArtifact(artifact), publishedBlog, remoteUpdate: sanitizeSwarmEnvelope(remoteUpdate) });
+  }));
+
   app.post('/api/admin/swarm/artifacts/:artifactId/approve', verifyAdminToken, asyncHandler(async (req, res) => {
     const config = getSwarmConfig();
     const artifact = await loadArtifactForReview({ config, axios, crypto, models, artifactId: req.params.artifactId });
@@ -1246,6 +1334,7 @@ function registerSwarmPhase2Routes(options) {
         { $set: { status: seoApplication.applied ? 'published' : 'approved', artifactId: latest.artifactId, publishedEntity: seoApplication.entity, updatedAt: new Date() }, $push: { statusHistory: { status: seoApplication.applied ? 'published' : 'approved', at: new Date(), reason: seoApplication.applied ? 'seo-artifact-approved-and-applied' : 'seo-artifact-approved-for-review' } } },
       );
     } else if (publish && isBlogArtifact(latest)) {
+      await ensureArtifactBlogBanner({ artifact: latest, mongoose, admin: req.admin });
       published = await publishBlogArtifact({ artifact: latest, Blog, Notification, admin, mongoose, publishOptions: { updateExisting: req.body?.updateExisting === true } });
       latest.reviewStatus = 'PUBLISHED';
       latest.publishedEntity = published.entity;
@@ -2026,6 +2115,256 @@ function isBlogArtifact(artifact) {
   return jobType.startsWith('content.') && !jobType.includes('image-prompt');
 }
 
+
+async function updateRemoteArtifact({ config, axios, crypto, artifactId, patch }) {
+  return callSwarm(config, axios, crypto, 'PATCH', `/internal/v1/artifacts/${encodeURIComponent(artifactId)}`, patch || {});
+}
+
+function parseJsonField(value, fallback) {
+  if (value === undefined || value === null || value === '') return fallback;
+  if (typeof value === 'object') return value;
+  try { return JSON.parse(String(value)); } catch (_error) { return fallback; }
+}
+
+function isTruthyFormValue(value) {
+  return ['true', '1', 'yes', 'y', 'on'].includes(String(value || '').trim().toLowerCase());
+}
+
+async function uploadSwarmArtifactImage({ file, cloudinary, folder = 'swarm/blog-banners' }) {
+  if (!file?.buffer || !cloudinary?.uploader?.upload_stream) return null;
+  return new Promise((resolve, reject) => {
+    cloudinary.uploader.upload_stream({ folder }, (error, result) => {
+      if (error) return reject(error);
+      return resolve({ url: result.secure_url, publicId: result.public_id });
+    }).end(file.buffer);
+  });
+}
+
+async function buildArtifactEditPatch({ req, artifact, admin, cloudinary, mongoose, Blog }) {
+  const body = req.body || {};
+  const existingPayload = artifact.payload || {};
+  const nextPayload = { ...existingPayload };
+  const title = cleanString(body.title) || cleanString(body.header) || cleanString(body.metaTitle) || artifact.title;
+  const summary = cleanString(body.summary) || cleanString(body.metaDescription) || artifact.summary;
+
+  if (body.metaTitle !== undefined) nextPayload.metaTitle = cleanString(body.metaTitle);
+  if (body.metaDescription !== undefined) nextPayload.metaDescription = cleanString(body.metaDescription);
+  if (body.header !== undefined) nextPayload.header = cleanString(body.header);
+  if (body.blogHeaderImageUrl !== undefined) nextPayload.blogHeaderImage = cleanString(body.blogHeaderImageUrl);
+  if (body.blogHeaderImageAlt !== undefined) nextPayload.blogHeaderImageAlt = cleanString(body.blogHeaderImageAlt);
+  if (body.blogImagePrompt !== undefined) nextPayload.blogImagePrompt = cleanString(body.blogImagePrompt);
+  if (body.tags !== undefined) nextPayload.tags = parseJsonField(body.tags, normalizeStringArray(body.tags) || nextPayload.tags || []);
+
+  const parsedSections = parseJsonField(body.sections, undefined);
+  if (Array.isArray(parsedSections)) nextPayload.sections = normalizeBlogSections(parsedSections);
+
+  const headerImageFile = req.files?.blogHeaderImage?.[0];
+  const uploadedHeader = await uploadSwarmArtifactImage({ file: headerImageFile, cloudinary });
+  if (uploadedHeader?.url) {
+    nextPayload.blogHeaderImage = uploadedHeader.url;
+    nextPayload.blogHeaderImagePublicId = uploadedHeader.publicId;
+    nextPayload.blogImage = {
+      ...(isPlainObject(nextPayload.blogImage) ? nextPayload.blogImage : {}),
+      url: uploadedHeader.url,
+      publicId: uploadedHeader.publicId,
+      source: 'admin_upload',
+      updatedAt: new Date().toISOString(),
+    };
+  }
+
+  if (isTruthyFormValue(body.generateBanner)) {
+    const generated = await buildGeneratedBlogBannerPayload({ artifact: { ...artifact.toObject?.() || artifact, payload: nextPayload }, mongoose });
+    Object.assign(nextPayload, generated.payload);
+  }
+
+  const nextMetadata = {
+    ...(artifact.metadata || {}),
+    lastEditedAt: new Date().toISOString(),
+    lastEditedBy: admin,
+    editableFromAdmin: true,
+  };
+
+  const resetReview = isTruthyFormValue(body.resetReview);
+  return {
+    title,
+    summary,
+    payload: nextPayload,
+    metadata: nextMetadata,
+    reviewStatus: resetReview ? 'AWAITING_REVIEW' : undefined,
+    reviewedBy: admin,
+    reviewedAt: new Date(),
+    reviewReason: cleanString(body.reason) || 'artifact-edited-from-admin',
+  };
+}
+
+async function ensureArtifactBlogBanner({ artifact, mongoose, admin }) {
+  if (!artifact || !isBlogArtifact(artifact)) return artifact;
+  const payload = artifact.payload || {};
+  if (cleanString(payload.blogHeaderImage) || cleanString(payload.blogImage?.url)) return artifact;
+  const patch = await buildGeneratedBlogBannerPatch({ artifact, mongoose, admin, reason: 'auto-generated-banner-before-blog-publish' });
+  artifact.payload = patch.payload;
+  artifact.metadata = patch.metadata;
+  artifact.summary = patch.summary || artifact.summary;
+  return artifact;
+}
+
+async function buildGeneratedBlogBannerPatch({ artifact, mongoose, admin, reason }) {
+  const generated = await buildGeneratedBlogBannerPayload({ artifact, mongoose });
+  return {
+    payload: generated.payload,
+    metadata: {
+      ...(artifact.metadata || {}),
+      blogBannerGeneratedAt: new Date().toISOString(),
+      blogBannerGeneratedBy: adminActor(admin),
+      blogBannerGenerationMode: generated.mode,
+      editableFromAdmin: true,
+    },
+    summary: artifact.summary || generated.payload.metaDescription || generated.payload.header || artifact.title,
+    reviewReason: reason || 'blog-banner-generated',
+  };
+}
+
+async function buildGeneratedBlogBannerPayload({ artifact, mongoose }) {
+  const payload = { ...(artifact.payload || {}) };
+  const fight = await loadFightContextForArtifact({ artifact, mongoose });
+  const title = cleanString(payload.header || payload.metaTitle || artifact.title || fight?.title || 'Fantasy MMADNESS Fight Card');
+  const fighterAName = cleanString(fight?.fighterAName || payload.fighterAName || payload.fighterA || payload.matchFighterA || 'Fighter A');
+  const fighterBName = cleanString(fight?.fighterBName || payload.fighterBName || payload.fighterB || payload.matchFighterB || 'Fighter B');
+  const fighterAImage = cleanString(fight?.fighterAImage || payload.fighterAImage || payload.fighterAImageUrl || payload.sourceImages?.[0]);
+  const fighterBImage = cleanString(fight?.fighterBImage || payload.fighterBImage || payload.fighterBImageUrl || payload.sourceImages?.[1]);
+  const category = cleanString(fight?.category || payload.sport || payload.discipline || artifact.vertical || 'combat');
+  const bannerPrompt = buildBlogBannerPrompt({ title, fighterAName, fighterBName, category, fighterAImage, fighterBImage });
+  const bannerDataUri = buildSvgFightBannerDataUri({ title, fighterAName, fighterBName, category, fighterAImage, fighterBImage });
+  payload.blogHeaderImage = payload.blogHeaderImage || bannerDataUri;
+  payload.blogHeaderImageAlt = payload.blogHeaderImageAlt || `${fighterAName} vs ${fighterBName} Fantasy MMADNESS fight-card banner`;
+  payload.blogImagePrompt = payload.blogImagePrompt || bannerPrompt;
+  payload.blogImage = {
+    ...(isPlainObject(payload.blogImage) ? payload.blogImage : {}),
+    url: payload.blogHeaderImage,
+    alt: payload.blogHeaderImageAlt,
+    prompt: bannerPrompt,
+    source: 'backend_generated_svg_from_fighter_images',
+    sourceImageUrls: [fighterAImage, fighterBImage].filter(Boolean),
+    bannerText: `${fighterAName} vs ${fighterBName}`,
+    category,
+    generatedAt: new Date().toISOString(),
+  };
+  payload.fighterAName = payload.fighterAName || fighterAName;
+  payload.fighterBName = payload.fighterBName || fighterBName;
+  if (fighterAImage) payload.fighterAImage = payload.fighterAImage || fighterAImage;
+  if (fighterBImage) payload.fighterBImage = payload.fighterBImage || fighterBImage;
+  return { payload, mode: 'svg_fighter_banner' };
+}
+
+async function loadFightContextForArtifact({ artifact, mongoose }) {
+  const payload = artifact.payload || {};
+  const metadata = artifact.metadata || {};
+  let job = null;
+  try {
+    const JobModel = mongoose.models.SwarmBackendJob;
+    if (JobModel && artifact.jobId) job = await JobModel.findOne({ jobId: artifact.jobId }).lean();
+  } catch (_error) {}
+  const source = job?.sourceEntity || {};
+  const input = job?.input || {};
+  const rawId = cleanString(metadata.fightId || metadata.matchId || payload.fightId || payload.matchId || input.fightId || input.matchId || source.fightId || source.matchId || source.id);
+  const fallback = {
+    title: cleanString(payload.matchTitle || payload.eventName || payload.header || artifact.title),
+    fighterAName: cleanString(payload.fighterAName || payload.matchFighterA || input.fighterAName || input.matchFighterA),
+    fighterBName: cleanString(payload.fighterBName || payload.matchFighterB || input.fighterBName || input.matchFighterB),
+    fighterAImage: cleanString(payload.fighterAImage || input.fighterAImage || payload.sourceImages?.[0]),
+    fighterBImage: cleanString(payload.fighterBImage || input.fighterBImage || payload.sourceImages?.[1]),
+    category: cleanString(payload.sport || input.sport || metadata.sport),
+  };
+  if (!rawId || !mongoose.isValidObjectId(rawId)) return fallback;
+
+  const Match = mongoose.models.Match;
+  const Shadow = mongoose.models.Shadow;
+  const ProWrestlingMatch = mongoose.models.ProWrestlingMatch;
+  let fight = null;
+  try {
+    if (Match) fight = await Match.findById(rawId).populate('fighterAId fighterBId').lean();
+    if (!fight && Shadow) fight = await Shadow.findById(rawId).populate('fighterAId fighterBId').lean();
+    if (!fight && ProWrestlingMatch) fight = await ProWrestlingMatch.findById(rawId).lean();
+  } catch (_error) {}
+  if (!fight) return fallback;
+
+  const fighterARef = isPlainObject(fight.fighterAId) ? fight.fighterAId : null;
+  const fighterBRef = isPlainObject(fight.fighterBId) ? fight.fighterBId : null;
+  return {
+    title: cleanString(fight.matchName || fight.eventName || fight.title || fallback.title),
+    fighterAName: cleanString(fighterARef?.displayName || fight.matchFighterA || fight.fighterAName || fallback.fighterAName),
+    fighterBName: cleanString(fighterBRef?.displayName || fight.matchFighterB || fight.fighterBName || fallback.fighterBName),
+    fighterAImage: cleanString(fighterARef?.primaryImage || fight.fighterAImage || fallback.fighterAImage),
+    fighterBImage: cleanString(fighterBRef?.primaryImage || fight.fighterBImage || fallback.fighterBImage),
+    category: cleanString(fight.matchCategoryTwo || fight.matchCategory || fight.sport || fallback.category),
+  };
+}
+
+function buildBlogBannerPrompt({ title, fighterAName, fighterBName, category, fighterAImage, fighterBImage }) {
+  return [
+    `Create a premium Fantasy MMADNESS blog banner for ${title}.`,
+    `Main matchup: ${fighterAName} vs ${fighterBName}.`,
+    `Discipline: ${category}.`,
+    'Use a dark arena background, red/blue fight lighting, cinematic contrast, strong sports-poster composition, and space for the blog headline.',
+    fighterAImage ? `Use Fighter A reference image URL as the primary left-side source: ${fighterAImage}` : '',
+    fighterBImage ? `Use Fighter B reference image URL as the primary right-side source: ${fighterBImage}` : '',
+    'Do not change the fight rules, names, result, odds, wallet values, or scoring claims. Keep the visual promotional only.',
+  ].filter(Boolean).join(' ');
+}
+
+function xmlEscape(value) {
+  return String(value || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+}
+
+function safeSvgImageUrl(value) {
+  const url = cleanString(value);
+  if (!/^https?:\/\//i.test(url)) return '';
+  return url.replace(/"/g, '%22');
+}
+
+function buildSvgFightBannerDataUri({ title, fighterAName, fighterBName, category, fighterAImage, fighterBImage }) {
+  const aImg = safeSvgImageUrl(fighterAImage);
+  const bImg = safeSvgImageUrl(fighterBImage);
+  const headline = `${fighterAName} vs ${fighterBName}`;
+  const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="1600" height="900" viewBox="0 0 1600 900">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#02060d"/><stop offset="0.48" stop-color="#07101d"/><stop offset="1" stop-color="#25040a"/></linearGradient>
+    <radialGradient id="red" cx="76%" cy="24%" r="64%"><stop offset="0" stop-color="#df111b" stop-opacity="0.62"/><stop offset="1" stop-color="#df111b" stop-opacity="0"/></radialGradient>
+    <radialGradient id="blue" cx="22%" cy="28%" r="58%"><stop offset="0" stop-color="#1d9bf0" stop-opacity="0.55"/><stop offset="1" stop-color="#1d9bf0" stop-opacity="0"/></radialGradient>
+    <filter id="shadow"><feDropShadow dx="0" dy="18" stdDeviation="20" flood-color="#000" flood-opacity="0.65"/></filter>
+  </defs>
+  <rect width="1600" height="900" fill="url(#bg)"/>
+  <rect width="1600" height="900" fill="url(#blue)"/>
+  <rect width="1600" height="900" fill="url(#red)"/>
+  <g opacity="0.22" stroke="#fff" stroke-width="1">${Array.from({ length: 18 }).map((_, i) => `<path d="M${i * 95} 0V900"/>`).join('')}${Array.from({ length: 10 }).map((_, i) => `<path d="M0 ${i * 95}H1600"/>`).join('')}</g>
+  ${aImg ? `<image href="${aImg}" x="70" y="120" width="560" height="660" preserveAspectRatio="xMidYMid slice" opacity="0.92" filter="url(#shadow)"/>` : ''}
+  ${bImg ? `<image href="${bImg}" x="970" y="120" width="560" height="660" preserveAspectRatio="xMidYMid slice" opacity="0.92" filter="url(#shadow)"/>` : ''}
+  <rect x="0" y="0" width="1600" height="900" fill="rgba(0,0,0,0.18)"/>
+  <circle cx="800" cy="444" r="86" fill="#e50914" stroke="#fff" stroke-opacity="0.18" stroke-width="3"/>
+  <text x="800" y="462" text-anchor="middle" font-family="Impact, Arial Black, sans-serif" font-size="54" fill="#fff">VS</text>
+  <text x="800" y="90" text-anchor="middle" font-family="Arial, sans-serif" font-size="28" fill="#f51b2b" letter-spacing="8">FANTASY MMADNESS</text>
+  <text x="800" y="735" text-anchor="middle" font-family="Impact, Arial Black, sans-serif" font-size="78" fill="#ffffff">${xmlEscape(headline).slice(0, 80)}</text>
+  <text x="800" y="798" text-anchor="middle" font-family="Arial, sans-serif" font-size="28" fill="#b8c0cc" letter-spacing="4">${xmlEscape(category).toUpperCase()} • FIGHT CARD ARTICLE</text>
+  <text x="800" y="848" text-anchor="middle" font-family="Arial, sans-serif" font-size="25" fill="#f51b2b">${xmlEscape(title).slice(0, 110)}</text>
+</svg>`;
+  return `data:image/svg+xml;charset=UTF-8,${encodeURIComponent(svg)}`;
+}
+
+async function updatePublishedBlogFromArtifact({ artifact, Blog }) {
+  if (!Blog || !artifact?.publishedEntity?.id) return null;
+  const blog = await Blog.findById(artifact.publishedEntity.id).catch(() => null);
+  if (!blog) return null;
+  const blogData = mapArtifactToBlog(artifact.payload || {}, artifact);
+  if (blogData.metaTitle) blog.metaTitle = blogData.metaTitle;
+  if (blogData.metaDescription) blog.metaDescription = blogData.metaDescription;
+  if (blogData.header) blog.header = blogData.header;
+  if (blogData.blogHeaderImage) blog.blogHeaderImage = blogData.blogHeaderImage;
+  if (blogData.blogHeaderImagePublicId) blog.blogHeaderImagePublicId = blogData.blogHeaderImagePublicId;
+  if (Array.isArray(blogData.sections) && blogData.sections.length) blog.sections = blogData.sections;
+  await blog.save();
+  return { id: String(blog._id), metaTitle: blog.metaTitle, updated: true };
+}
+
 async function publishBlogArtifact({ artifact, Blog, Notification, admin, publishOptions }) {
   if (!Blog) throw httpError(500, 'BLOG_MODEL_UNAVAILABLE', 'Blog model is not available for publishing.');
   if (artifact.publishedEntity?.id) {
@@ -2085,8 +2424,8 @@ function mapArtifactToBlog(payload, artifact) {
     metaTitle: cleanString(payload.metaTitle) || cleanString(payload.seoTitle) || cleanString(payload.title) || cleanString(artifact.title),
     metaDescription: cleanString(payload.metaDescription) || cleanString(payload.description) || cleanString(artifact.summary) || '',
     header: cleanString(payload.header) || cleanString(payload.title) || cleanString(artifact.title),
-    blogHeaderImage: cleanString(payload.blogHeaderImage) || cleanString(payload.image) || '',
-    blogHeaderImagePublicId: cleanString(payload.blogHeaderImagePublicId) || '',
+    blogHeaderImage: cleanString(payload.blogHeaderImage) || cleanString(payload.blogImage?.url) || cleanString(payload.generatedImageUrl) || cleanString(payload.image) || '',
+    blogHeaderImagePublicId: cleanString(payload.blogHeaderImagePublicId) || cleanString(payload.blogImage?.publicId) || '',
     sections: normalizeBlogSections(sections),
   };
 }

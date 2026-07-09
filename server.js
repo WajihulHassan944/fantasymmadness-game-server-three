@@ -12306,6 +12306,8 @@ registerSwarmPhase2Routes({
   verifyAdminToken,
   Blog,
   Notification,
+  upload,
+  cloudinary,
 });
 
 
