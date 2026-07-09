@@ -2234,8 +2234,17 @@ async function buildGeneratedBlogBannerPayload({ artifact, mongoose }) {
   const fighterBImage = cleanString(fight?.fighterBImage || payload.fighterBImage || payload.fighterBImageUrl || payload.sourceImages?.[1]);
   const category = cleanString(fight?.category || payload.sport || payload.discipline || artifact.vertical || 'combat');
   const bannerPrompt = buildBlogBannerPrompt({ title, fighterAName, fighterBName, category, fighterAImage, fighterBImage });
-  const bannerDataUri = buildSvgFightBannerDataUri({ title, fighterAName, fighterBName, category, fighterAImage, fighterBImage });
-  payload.blogHeaderImage = payload.blogHeaderImage || bannerDataUri;
+  const embeddedFighterAImage = await resolveBannerImageDataUri(fighterAImage);
+  const embeddedFighterBImage = await resolveBannerImageDataUri(fighterBImage);
+  const bannerDataUri = buildSvgFightBannerDataUri({
+    title,
+    fighterAName,
+    fighterBName,
+    category,
+    fighterAImage: embeddedFighterAImage,
+    fighterBImage: embeddedFighterBImage,
+  });
+  payload.blogHeaderImage = bannerDataUri;
   payload.blogHeaderImageAlt = payload.blogHeaderImageAlt || `${fighterAName} vs ${fighterBName} Fantasy MMADNESS fight-card banner`;
   payload.blogImagePrompt = payload.blogImagePrompt || bannerPrompt;
   payload.blogImage = {
@@ -2243,7 +2252,7 @@ async function buildGeneratedBlogBannerPayload({ artifact, mongoose }) {
     url: payload.blogHeaderImage,
     alt: payload.blogHeaderImageAlt,
     prompt: bannerPrompt,
-    source: 'backend_generated_svg_from_fighter_images',
+    source: embeddedFighterAImage || embeddedFighterBImage ? 'backend_generated_svg_with_embedded_fighter_images' : 'backend_generated_svg_fallback',
     sourceImageUrls: [fighterAImage, fighterBImage].filter(Boolean),
     bannerText: `${fighterAName} vs ${fighterBName}`,
     category,
@@ -2253,7 +2262,7 @@ async function buildGeneratedBlogBannerPayload({ artifact, mongoose }) {
   payload.fighterBName = payload.fighterBName || fighterBName;
   if (fighterAImage) payload.fighterAImage = payload.fighterAImage || fighterAImage;
   if (fighterBImage) payload.fighterBImage = payload.fighterBImage || fighterBImage;
-  return { payload, mode: 'svg_fighter_banner' };
+  return { payload, mode: embeddedFighterAImage || embeddedFighterBImage ? 'svg_embedded_fighter_banner' : 'svg_fallback_banner' };
 }
 
 async function loadFightContextForArtifact({ artifact, mongoose }) {
@@ -2312,13 +2321,41 @@ function buildBlogBannerPrompt({ title, fighterAName, fighterBName, category, fi
   ].filter(Boolean).join(' ');
 }
 
+
+async function resolveBannerImageDataUri(sourceUrl) {
+  const url = cleanString(sourceUrl);
+  if (!url) return '';
+  if (/^data:image\//i.test(url)) return url;
+  if (typeof fetch !== 'function') return '';
+  try {
+    const controller = typeof AbortController !== 'undefined' ? new AbortController() : null;
+    const timer = controller ? setTimeout(() => controller.abort(), 12000) : null;
+    const response = await fetch(url, {
+      method: 'GET',
+      signal: controller?.signal,
+      headers: { 'User-Agent': 'Fantasy-MMADNESS-Blog-Banner/1.0', Accept: 'image/*,*/*;q=0.8' },
+    });
+    if (timer) clearTimeout(timer);
+    if (!response.ok) return '';
+    const contentType = cleanString(response.headers.get('content-type')) || 'image/jpeg';
+    if (!/^image\//i.test(contentType)) return '';
+    const arrayBuffer = await response.arrayBuffer();
+    if (!arrayBuffer || !arrayBuffer.byteLength) return '';
+    const base64 = Buffer.from(arrayBuffer).toString('base64');
+    return `data:${contentType};base64,${base64}`;
+  } catch (_error) {
+    return '';
+  }
+}
+
 function xmlEscape(value) {
   return String(value || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
 }
 
 function safeSvgImageUrl(value) {
   const url = cleanString(value);
-  if (!/^https?:\/\//i.test(url)) return '';
+  if (!url) return '';
+  if (!/^https?:\/\//i.test(url) && !/^data:image\//i.test(url)) return '';
   return url.replace(/"/g, '%22');
 }
 
