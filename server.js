@@ -2281,6 +2281,11 @@ app.post(
       }, fighterSelection);
 
       clearLegacyFighterFieldsForLibraryRefs(matchData);
+      Object.assign(matchData, buildAutoHomepagePromotionFields({
+        body: req.body,
+        admin: req.admin,
+        actor: matchBy || affiliateId || 'addMatch',
+      }));
 
       // Conditionally append BoxingMatch and MMAMatch only if they have values
       if (BoxingMatch) {
@@ -2296,6 +2301,7 @@ app.post(
       // Save the match details to the database
       const newMatch = new Match(matchData);
       const savedMatch = await newMatch.save();
+      clearPublicResponseCache();
 
   const notification = new Notification({
       title: `New Fight Added: ${savedMatch.matchName}`,
@@ -7372,9 +7378,15 @@ app.post('/addShadow', upload.fields([
       promotionBackgroundDeleteUrl,
       matchType,
       maxRounds,
+      ...buildAutoHomepagePromotionFields({
+        body: req.body,
+        admin: req.admin,
+        actor: 'addShadow',
+      }),
     });
 
     await newMatch.save();
+    clearPublicResponseCache();
 
  const notification = new Notification({
       title: `Shadow Fight Added: ${newMatch.matchName}`,
@@ -12114,6 +12126,31 @@ function parseOptionalPromotionDate(value) {
   if (!value) return undefined;
   const date = new Date(value);
   return Number.isNaN(date.getTime()) ? undefined : date;
+}
+
+function buildAutoHomepagePromotionFields({ body = {}, admin = null, actor = '' } = {}) {
+  const now = new Date();
+  const update = {
+    homepagePromoted: true,
+    homepagePromotionRank: Number(body.homepagePromotionRank ?? body.rank ?? 0) || 0,
+    homepagePromotionUpdatedAt: now,
+    homepagePromotionUpdatedBy: admin?.id || admin?._id || admin?.email || actor || body.matchBy || body.createdBy || 'admin-create',
+  };
+  const title = body.homepagePromotionTitle ?? body.promotionTitle ?? body.title;
+  const subtitle = body.homepagePromotionSubtitle ?? body.promotionSubtitle ?? body.subtitle;
+  const ctaLabel = body.homepagePromotionCtaLabel ?? body.ctaLabel;
+  const calendarSource = body.homepagePromotionCalendarSource ?? body.calendarSource;
+  const externalSourceUrl = body.homepagePromotionExternalSourceUrl ?? body.externalSourceUrl;
+  if (title !== undefined) update.homepagePromotionTitle = String(title || '').trim();
+  if (subtitle !== undefined) update.homepagePromotionSubtitle = String(subtitle || '').trim();
+  if (ctaLabel !== undefined) update.homepagePromotionCtaLabel = String(ctaLabel || '').trim();
+  if (calendarSource !== undefined) update.homepagePromotionCalendarSource = String(calendarSource || '').trim();
+  if (externalSourceUrl !== undefined) update.homepagePromotionExternalSourceUrl = String(externalSourceUrl || '').trim();
+  const startsAt = parseOptionalPromotionDate(body.homepagePromotionStartsAt ?? body.startsAt);
+  const endsAt = parseOptionalPromotionDate(body.homepagePromotionEndsAt ?? body.endsAt);
+  if (startsAt !== undefined) update.homepagePromotionStartsAt = startsAt;
+  if (endsAt !== undefined) update.homepagePromotionEndsAt = endsAt;
+  return update;
 }
 
 function isHomepagePromotionVisible(fight = {}, now = new Date()) {
