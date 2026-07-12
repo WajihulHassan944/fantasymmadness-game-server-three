@@ -438,12 +438,51 @@ function getRequestedClassicPlayerId(query = {}) {
   return String(query.playerId || query.userId || query.accountId || query.viewerId || '').trim();
 }
 
+function parseFightDateTime(match = {}) {
+  const rawDate = match.matchDate || match.date || match.fightDate || match.scheduledAt || match.homepagePromotionStartsAt;
+  if (!rawDate) return null;
+  const date = new Date(rawDate);
+  if (Number.isNaN(date.getTime())) return null;
+  const timeText = String(match.matchTime || match.time || match.fightTime || '').trim();
+  const timeMatch = timeText.match(/^(\d{1,2}):(\d{2})/);
+  if (timeMatch) {
+    const hours = Number(timeMatch[1]);
+    const minutes = Number(timeMatch[2]);
+    if (Number.isFinite(hours) && Number.isFinite(minutes)) date.setHours(hours, minutes, 0, 0);
+  }
+  return date;
+}
+
+function isShadowFightRecord(match = {}) {
+  const source = String(match.sourceType || match.collection || '').trim().toLowerCase();
+  const type = String(match.matchType || match.type || '').trim().toLowerCase();
+  return source === 'shadow' || type === 'shadow';
+}
+
+function isLiveFightRecord(match = {}) {
+  const type = String(match.matchType || match.type || '').trim().toLowerCase();
+  return type === 'live' && !isShadowFightRecord({ ...match, sourceType: match.sourceType || '' });
+}
+
+function hasFutureFightDate(match = {}, now = new Date()) {
+  const fightDate = parseFightDateTime(match);
+  return Boolean(fightDate && fightDate.getTime() >= now.getTime());
+}
+
+function getFightTimelineBucket(match = {}, now = new Date()) {
+  if (isDraftFightRecord(match)) return 'draft';
+  if (isShadowFightRecord(match)) return hasFutureFightDate(match, now) ? 'upcoming' : 'past';
+  if (isLiveFightRecord(match)) return 'upcoming';
+  const status = String(match.matchStatus || match.status || '').trim().toLowerCase();
+  const openStatus = String(match.matchShadowOpenStatus || '').trim().toLowerCase();
+  if (['finished', 'closed', 'completed', 'complete', 'cancelled', 'canceled'].includes(status) || openStatus === 'closed') return 'past';
+  return hasFutureFightDate(match, now) ? 'upcoming' : 'upcoming';
+}
+
 function getFightStatusBucket(match = {}) {
-  const normalize = (value) => String(value || '').trim().toLowerCase();
-  const status = normalize(match.matchStatus || match.status);
-  const openStatus = normalize(match.matchShadowOpenStatus);
-  if (['finished', 'closed', 'completed', 'complete', 'cancelled', 'canceled'].includes(status) || openStatus === 'closed') return 'completed';
-  if (['scheduled', 'open', 'live', 'ongoing', 'active'].includes(status) || openStatus === 'open') return 'playable';
+  const timeline = getFightTimelineBucket(match);
+  if (timeline === 'past') return 'completed';
+  if (timeline === 'draft') return 'draft';
   return 'playable';
 }
 
@@ -479,6 +518,12 @@ async function attachPlayerPredictionStateToFightItems(items = [], query = {}) {
 function applyPublicFightStatusIntent(items = [], query = {}) {
   const statusValue = String(query.status || query.bucket || query.view || '').trim().toLowerCase();
   if (!statusValue || ['all', 'any'].includes(statusValue)) return items;
+  if (['upcoming', 'future', 'scheduled'].includes(statusValue)) {
+    return items.filter((item) => getFightTimelineBucket(item) === 'upcoming');
+  }
+  if (['past', 'previous', 'history', 'shadow-history'].includes(statusValue)) {
+    return items.filter((item) => getFightTimelineBucket(item) === 'past');
+  }
   if (['completed', 'complete', 'submitted', 'my-predictions', 'predicted'].includes(statusValue)) {
     return items.filter((item) => item.predictionSubmitted || item.userFightBucket === 'completed');
   }
@@ -768,6 +813,8 @@ function pickPublicFightFields(fight = {}, sourceType = 'match') {
     matchShadowOpenStatus: item.matchShadowOpenStatus,
     affiliateId: item.affiliateId,
     AffiliateIds: item.AffiliateIds,
+    timelineBucket: getFightTimelineBucket(item),
+    publicTimelineBucket: getFightTimelineBucket(item),
     createdAt: item.createdAt,
     updatedAt: item.updatedAt,
   };
@@ -958,6 +1005,10 @@ const shadowSchema = new mongoose.Schema({
   matchDate: Date,
   matchTime: String,
   venue: String,
+  sourceMatchId: { type: mongoose.Schema.Types.ObjectId, ref: 'Match', index: true },
+  convertedFromLiveAt: Date,
+  affiliatePromotionDate: Date,
+  affiliatePromotionTime: String,
   homepagePromoted: { type: Boolean, default: false, index: true },
   homepagePromotionRank: { type: Number, default: 0 },
   homepagePromotionTitle: String,
@@ -1100,6 +1151,9 @@ app.post(
         fighterBImageUrl,
         promotionBackgroundUrl,
         matchVideoUrl,
+        matchDate,
+        matchTime,
+        venue,
         matchStatus,
         BoxingMatch,
         MMAMatch,
@@ -1206,6 +1260,9 @@ app.post(
       assignIfProvided(existingMatch, 'maxRounds', maxRounds);
       assignIfProvided(existingMatch, 'matchCategoryTwo', matchCategoryTwo);
       assignIfProvided(existingMatch, 'matchVideoUrl', matchVideoUrl);
+      assignIfProvided(existingMatch, 'matchDate', matchDate);
+      assignIfProvided(existingMatch, 'matchTime', matchTime);
+      assignIfProvided(existingMatch, 'venue', venue);
       assignIfProvided(existingMatch, 'matchStatus', matchStatus);
 
       const parsedShadowBoxingMatch = parseMaybeJson(BoxingMatch);
@@ -1404,6 +1461,8 @@ const matchSchema = new mongoose.Schema({
   matchCategoryTwo: String,
   affiliateId: String,
   shadowFightId: String,
+  sourceShadowId: { type: mongoose.Schema.Types.ObjectId, ref: 'Shadow' },
+  promotedShadowFightId: { type: mongoose.Schema.Types.ObjectId, ref: 'Shadow' },
   matchName: String,
   matchFighterA: String,
   matchFighterB: String,
@@ -2250,6 +2309,13 @@ app.post(
       }
 
       const fighterSelection = await resolveCombatFighterSelectionForMatchInput({ fighterAId, fighterBId });
+      const requestedMatchDate = matchDate || req.body?.fightDate || req.body?.scheduledDate;
+      const requestedMatchTime = matchTime || req.body?.fightTime || req.body?.scheduledTime;
+
+      // Admin-created/affiliate-promoted public fight cards are LIVE by design.
+      // Historical/template records live in Shadow and are created by the rollover job.
+      const normalizedLiveMatchType = 'LIVE';
+      const normalizedLiveStatus = matchStatus || 'Ongoing';
 
       // Create match data object
       const matchData = applyCombatFighterSelectionToMatchPayload({
@@ -2259,12 +2325,12 @@ app.post(
         matchFighterB,
         matchDescription,
         matchVideoUrl,
-        matchDate,
-        matchTime,
+        matchDate: requestedMatchDate,
+        matchTime: requestedMatchTime,
         matchTokens,
-        matchStatus,
+        matchStatus: normalizedLiveStatus,
         pot,
-        matchType,
+        matchType: normalizedLiveMatchType,
         affiliateId,
         matchBy,
         profit,
@@ -2280,6 +2346,10 @@ app.post(
         promotionBackgroundDeleteUrl
       }, fighterSelection);
 
+      if (mongoose.Types.ObjectId.isValid(String(shadowFightId || ''))) {
+        matchData.sourceShadowId = shadowFightId;
+        matchData.promotedShadowFightId = shadowFightId;
+      }
       clearLegacyFighterFieldsForLibraryRefs(matchData);
       Object.assign(matchData, buildAutoHomepagePromotionFields({
         body: req.body,
@@ -2754,31 +2824,33 @@ app.get('/match', async (req, res) => {
     }
 
     const visibleQuery = applyFightPublicVisibilityFilter(query, req.query);
-    let match = await applyFightFreshSortLean(Match.find(visibleQuery).populate('fighterAId fighterBId'));
+    let matchRows = await applyFightFreshSortLean(Match.find(visibleQuery).populate('fighterAId fighterBId'));
+    let shadowRows = [];
 
     // Safety fallback for legacy records: if the stricter public query produces no
     // results, keep the same base filters and remove only explicit Draft fights in
     // memory. This prevents public fight pages from going blank while still hiding drafts.
-    if (!match.length && !shouldIncludeDraftFights(req.query)) {
+    if (!matchRows.length && !shouldIncludeDraftFights(req.query)) {
       const fallback = await applyFightFreshSortLean(Match.find(query).populate('fighterAId fighterBId'));
-      match = fallback.filter((item) => !isDraftFightRecord(item));
+      matchRows = fallback.filter((item) => !isDraftFightRecord(item));
     }
 
-    // Legacy fallback: many admin/public fight cards are stored as Shadow
-    // fights before being promoted. Keep /match backward compatible by falling
-    // back to Shadow records when Match returns empty. Public requests still hide
-    // explicit drafts, while admin/includeDrafts requests can see draft shadows.
-    if (!match.length) {
-      try {
-        const shadowFallback = await applyFightFreshSortLean(Shadow.find(query).populate('fighterAId fighterBId'));
-        const visibleShadowFallback = shouldIncludeDraftFights(req.query)
-          ? shadowFallback
-          : shadowFallback.filter((item) => !isDraftFightRecord(item));
-        match = visibleShadowFallback.map((item) => ({ ...item, sourceType: 'shadow' }));
-      } catch (fallbackError) {
-        console.warn('Legacy /match shadow fallback failed:', fallbackError.message);
-      }
+    // Always include Shadow rows in the legacy match feed. Previously Shadow rows
+    // were only used when Match returned empty, which made calendars/affiliate
+    // dashboards miss most template fights once any live match existed.
+    try {
+      const rawShadowRows = await applyFightFreshSortLean(Shadow.find(visibleQuery).populate('fighterAId fighterBId'));
+      shadowRows = shouldIncludeDraftFights(req.query)
+        ? rawShadowRows
+        : rawShadowRows.filter((item) => !isDraftFightRecord(item));
+    } catch (fallbackError) {
+      console.warn('Legacy /match shadow merge failed:', fallbackError.message);
     }
+
+    let match = [
+      ...matchRows.map((item) => ({ ...item, sourceType: 'match' })),
+      ...shadowRows.map((item) => ({ ...item, sourceType: 'shadow' })),
+    ];
 
     if (shouldUseStrictPlayableFightFilter(req.query) && shouldRequestPredictionEligibleFights(req.query)) {
       match = match.filter((item) => isPredictionEligibleFightRecord(item));
@@ -5076,129 +5148,83 @@ cron.schedule('0 0 * * *', async () => { // Runs daily at midnight
 
 
 // Cron Job Route
-app.get('/api/cron-job', async (req, res) => {
-  console.log('Cron job started.');
+function buildShadowTemplatePayloadFromLiveMatch(match = {}) {
+  return {
+    sourceMatchId: match._id,
+    convertedFromLiveAt: new Date(),
+    matchCategory: match.matchCategory,
+    matchCategoryTwo: match.matchCategoryTwo,
+    matchName: match.matchName,
+    matchFighterA: match.matchFighterA,
+    matchFighterB: match.matchFighterB,
+    fighterAId: match.fighterAId,
+    fighterBId: match.fighterBId,
+    promotionBackground: match.promotionBackground,
+    matchDescription: match.matchDescription,
+    matchVideoUrl: match.matchVideoUrl,
+    matchDate: match.matchDate,
+    matchTime: match.matchTime,
+    venue: match.venue,
+    fighterAImage: match.fighterAImage,
+    fighterBImage: match.fighterBImage,
+    matchType: 'SHADOW',
+    maxRounds: match.maxRounds,
+    fighterAImageDeleteUrl: match.fighterAImageDeleteUrl,
+    fighterBImageDeleteUrl: match.fighterBImageDeleteUrl,
+    promotionBackgroundDeleteUrl: match.promotionBackgroundDeleteUrl,
+    matchStatus: match.matchStatus === 'Draft' ? 'Draft' : 'Ongoing',
+    matchShadowStatus: 'active',
+    matchShadowOpenStatus: 'open',
+    BoxingMatch: match.BoxingMatch,
+    MMAMatch: match.MMAMatch,
+    homepagePromoted: false,
+    homepagePromotionRank: 0,
+  };
+}
 
-  try {
-    const now = new Date();
-    now.setUTCHours(0, 0, 0, 0); // Normalize 'now' to midnight UTC
+async function convertPastLiveFightsToShadowTemplates({ notifyAffiliates = false } = {}) {
+  const now = new Date();
+  const liveMatches = await Match.find(applyFightPublicVisibilityFilter({ matchType: 'LIVE' }, { includeDrafts: 'false' }));
+  const matchesToConvert = liveMatches.filter((match) => {
+    const fightDate = parseFightDateTime(match);
+    return Boolean(fightDate && fightDate.getTime() < now.getTime());
+  });
 
-    // Find all LIVE matches
-    const liveMatches = await Match.find(applyFightPublicVisibilityFilter({ matchType: 'LIVE' }, {}));
+  const converted = [];
+  const skipped = [];
 
-    // Filter matches to only include those with a past date (ignoring time)
-    const matchesToConvert = liveMatches.filter((match) => {
-      const matchDate = new Date(match.matchDate);
-      matchDate.setUTCHours(0, 0, 0, 0); // Normalize match date to midnight UTC
-      return matchDate < now; // Match date is in the past
-    });
-
-    if (matchesToConvert.length === 0) {
-      console.log('No matches to convert to shadow.');
-      return res.status(200).json({ message: 'No matches to convert to shadow.' });
-    }
-
-    for (const match of matchesToConvert) {
-      // Create and save shadow match
-      const shadowMatch = new Shadow({
-        matchCategory: match.matchCategory,
-        matchCategoryTwo: match.matchCategoryTwo,
-        matchName: match.matchName,
-        matchFighterA: match.matchFighterA,
-        matchFighterB: match.matchFighterB,
-        promotionBackground: match.promotionBackground,
-        matchDescription: match.matchDescription,
-        fighterAImage: match.fighterAImage,
-        fighterBImage: match.fighterBImage,
-        matchType: 'SHADOW',
-        maxRounds: match.maxRounds,
-        fighterAImageDeleteUrl: match.fighterAImageDeleteUrl,
-        fighterBImageDeleteUrl: match.fighterBImageDeleteUrl,
-        promotionBackgroundDeleteUrl: match.promotionBackgroundDeleteUrl,
-      });
-
+  for (const match of matchesToConvert) {
+    let shadowMatch = await Shadow.findOne({ sourceMatchId: match._id });
+    if (!shadowMatch) {
+      shadowMatch = new Shadow(buildShadowTemplatePayloadFromLiveMatch(match));
       await shadowMatch.save();
-
-
-      // Optionally, update the original match to reflect the conversion
-      match.matchType = 'SHADOW';
-      await match.save();
-
-      console.log(`Converted match ${match._id} to shadow.`);
-      const users = await Affiliate.find();
-      const mailPromises = users.map((user) => {
-        const mailOptions = {
-          from: 'Fantasymmadness2@gmail.com',
-          to: user.email,
-          subject: 'Fantasy MMAdness - New Fight Announcement',
-          html: `
-            <table width="100%" cellpadding="0" cellspacing="0" border="0" style="width:100%; max-width:600px; margin:auto;">
-              <!-- Logo Section -->
-              <tr>
-                <td align="center" style="padding: 15px 0;">
-                  <img src="https://res.cloudinary.com/daflot6fo/image/upload/v1736068036/bywcrrcqmcyczdyhjmdv.png" alt="Fantasy mmadness Logo" style="width:100px;" />
-                  <h2 style="margin: 0; color: #191164; font-family: 'New York', Charter, Georgia, serif;">Fantasy mmadness</h2>
-                </td>
-              </tr>
-              
-              <!-- Greeting Section -->
-              <tr>
-                <td style="padding: 10px 0;">
-                  <p style="font-size: 16px; font-family: Arial, sans-serif; color: #333;">Dear ${user.firstName} ${user.lastName},</p>
-                  <p style="font-size: 16px; font-family: Arial, sans-serif; color: #333;">We're thrilled to announce that a new Shadow Fight has been added to your dashboard, ready for promotion.</p>
-                  <p style="font-size: 16px; font-family: Arial, sans-serif; color: #333;"><strong>Fight Name:</strong> ${match.matchName}</p>
-                </td>
-              </tr>
-              
-              <!-- Affiliate Call-to-Action Section -->
-              <tr>
-                <td align="center" style="padding: 20px; background-color:#f8f8f8;">
-                  <h2 style="color: #191164; font-family: 'Impact', fantasy, sans-serif;">Take the Lead!</h2>
-                  <p style="font-size: 17px; font-family: 'Comic Sans MS', fantasy, sans-serif; color: #555;">
-                    The new Shadow Fight is now available for promotion. Share the excitement with your audience, build anticipation, and engage them in this thrilling event. 
-                  </p>
-                  <p style="font-size: 17px; font-family: 'Comic Sans MS', fantasy, sans-serif; color: #555;">
-                    Boost your league’s activity by encouraging fans to participate, and don’t miss the opportunity to expand your reach and earn rewards.
-                  </p>
-                </td>
-              </tr>
-    
-              <!-- Match Details Section -->
-              <tr>
-                <td style="padding: 10px;">
-                  <p style="font-size: 16px; font-family: Arial, sans-serif; color: #333;"><strong>Max Rounds:</strong> ${match.maxRounds}</p>
-                  <p style="font-size: 16px; font-family: Arial, sans-serif; color: #333;"><strong>Match Type:</strong> SHADOW</p>
-                  <p style="font-size: 16px; font-family: Arial, sans-serif; color: #333;">
-                    Now is the time to activate your followers and get them involved. Start promoting the fight today, and keep the excitement growing in your community!
-                  </p>
-                </td>
-              </tr>
-    
-              <!-- Footer Section -->
-              <tr>
-                <td align="center" style="padding: 15px 0;">
-                  <img src="https://res.cloudinary.com/daflot6fo/image/upload/v1736068036/bywcrrcqmcyczdyhjmdv.png" alt="Fantasy mmadness Logo" style="width:70px;" />
-                  <p><a href="https://fantasymmadness.com" style="font-family: Arial, sans-serif; color: #191164; text-decoration: none;">https://fantasymmadness.com</a></p>
-                </td>
-              </tr>
-            </table>
-          `,
-        };
-        return transporter.sendMail(mailOptions);
-      });
-
-      try {
-        await Promise.all(mailPromises);
-        console.log(`Emails sent successfully for match ${match._id}`);
-      } catch (error) {
-        console.error(`Error sending emails for match ${match._id}:`, error);
-      }
+      converted.push({ sourceMatchId: String(match._id), shadowId: String(shadowMatch._id), matchName: match.matchName });
+    } else {
+      skipped.push({ sourceMatchId: String(match._id), shadowId: String(shadowMatch._id), reason: 'shadow-template-already-exists' });
     }
 
-    res.status(200).json({ message: 'Cron job completed successfully.' });
+    match.matchType = 'SHADOW';
+    match.matchStatus = match.matchStatus === 'Draft' ? 'Draft' : 'Finished';
+    match.matchShadowOpenStatus = 'closed';
+    match.shadowTemplatesAdditionStatus = true;
+    match.homepagePromoted = false;
+    match.homepagePromotionUpdatedAt = new Date();
+    match.homepagePromotionUpdatedBy = 'live-to-shadow-rollover';
+    await match.save();
+  }
+
+  if (converted.length || skipped.length) clearPublicResponseCache();
+  return { processedAt: now.toISOString(), converted, skipped, checked: liveMatches.length };
+}
+
+app.get('/api/cron-job', async (req, res) => {
+  try {
+    const notifyAffiliates = ['true', '1', 'yes'].includes(String(req.query.notifyAffiliates || '').toLowerCase());
+    const result = await convertPastLiveFightsToShadowTemplates({ notifyAffiliates });
+    res.status(200).json({ ok: true, message: 'Live fight rollover completed.', ...result });
   } catch (error) {
     console.error('Error in cron job:', error);
-    res.status(500).json({ error: 'Cron job failed.' });
+    res.status(500).json({ ok: false, error: 'Cron job failed.', details: error.message });
   }
 });
 
@@ -7314,6 +7340,9 @@ app.post('/addShadow', upload.fields([
       matchFighterB,
       matchDescription,
       matchVideoUrl,
+      matchDate,
+      matchTime,
+      venue,
       matchType,
       fighterAImageUrl,
       fighterAImageDeleteUrlFromReq,
@@ -7370,19 +7399,20 @@ app.post('/addShadow', upload.fields([
       matchFighterB,
       matchDescription,
       matchVideoUrl,
+      matchDate,
+      matchTime,
+      venue,
       fighterAImage,
       fighterBImage,
       fighterAImageDeleteUrl,
       fighterBImageDeleteUrl,
       promotionBackground,
       promotionBackgroundDeleteUrl,
-      matchType,
+      matchType: 'SHADOW',
       maxRounds,
-      ...buildAutoHomepagePromotionFields({
-        body: req.body,
-        admin: req.admin,
-        actor: 'addShadow',
-      }),
+      ...(parseHomepagePromotionBoolean(req.body?.homepagePromoted ?? req.body?.promoted, false)
+        ? buildAutoHomepagePromotionFields({ body: req.body, admin: req.admin, actor: 'addShadow' })
+        : {}),
     });
 
     await newMatch.save();
@@ -12260,6 +12290,45 @@ app.post('/api/admin/fights/:id/homepage-promotion', verifyAdminToken, async (re
   }
 });
 
+app.get('/api/public/fight-calendar', async (req, res) => {
+  try {
+    const limit = parsePositiveInteger(req.query.limit, 500, 1000);
+    let baseFilter = {};
+    if (!isAllFilterValue(req.query.category)) baseFilter = appendAndFilter(baseFilter, buildEffectiveFightCategoryFilter(req.query.category));
+    const visibleFilter = applyFightPublicVisibilityFilter(baseFilter, req.query);
+    const [matches, shadows] = await Promise.all([
+      Match.find(visibleFilter).populate('fighterAId fighterBId').sort({ matchDate: 1, updatedAt: -1 }).limit(limit).lean(),
+      Shadow.find(visibleFilter).populate('fighterAId fighterBId').sort({ matchDate: 1, updatedAt: -1 }).limit(limit).lean().catch(() => []),
+    ]);
+    let items = [
+      ...matches.map((fight) => pickPublicFightFields(fight, 'match')),
+      ...shadows.map((fight) => pickPublicFightFields(fight, 'shadow')),
+    ].filter((fight) => !isDraftFightRecord(fight) && parseFightDateTime(fight));
+    items = applyPublicFightStatusIntent(items, req.query);
+    const groupedByDate = items.reduce((acc, fight) => {
+      const date = parseFightDateTime(fight);
+      if (!date) return acc;
+      const key = date.toISOString().slice(0, 10);
+      if (!acc[key]) acc[key] = [];
+      acc[key].push({
+        id: String(fight._id || fight.id),
+        sourceType: fight.sourceType,
+        title: fight.matchName || `${fight.matchFighterA || 'Fighter A'} vs ${fight.matchFighterB || 'Fighter B'}`,
+        fighterA: fight.matchFighterA,
+        fighterB: fight.matchFighterB,
+        category: fight.displayCategory || fight.matchCategoryTwo || fight.matchCategory,
+        matchTime: fight.matchTime,
+        timelineBucket: fight.timelineBucket || getFightTimelineBucket(fight),
+      });
+      return acc;
+    }, {});
+    res.json({ ok: true, items, groupedByDate, dates: Object.keys(groupedByDate).sort(), count: items.length, generatedAt: new Date().toISOString() });
+  } catch (error) {
+    console.error('Error loading fight calendar:', error);
+    res.status(500).json({ ok: false, message: 'Failed to load fight calendar.' });
+  }
+});
+
 app.get('/api/public/homepage/promoted-fights', async (req, res) => {
   try {
     const { payload, cacheState } = await readThroughPublicCache(
@@ -12295,35 +12364,67 @@ app.get('/api/affiliate/:affiliateId/promoted-fights', async (req, res) => {
   try {
     const affiliateId = String(req.params.affiliateId || '').trim();
     if (!affiliateId) return res.status(400).json({ ok: false, message: 'Affiliate id is required.' });
-    const includeClosed = ['true', '1', 'yes'].includes(String(req.query.includeClosed || '').toLowerCase());
-    const directMatches = await Match.find({ affiliateId }).populate('fighterAId fighterBId').sort({ updatedAt: -1, createdAt: -1 }).limit(120).lean();
-    const shadowFilter = mongoose.Types.ObjectId.isValid(affiliateId)
-      ? { 'AffiliateIds.AffiliateId': new mongoose.Types.ObjectId(affiliateId) }
+
+    const activeOnly = ['true', '1', 'yes'].includes(String(req.query.activeOnly || req.query.openOnly || '').toLowerCase());
+    const affiliateObjectId = mongoose.Types.ObjectId.isValid(affiliateId) ? new mongoose.Types.ObjectId(affiliateId) : null;
+    const shadowFilter = affiliateObjectId
+      ? { 'AffiliateIds.AffiliateId': affiliateObjectId }
       : { 'AffiliateIds.AffiliateId': affiliateId };
-    const shadows = await Shadow.find(shadowFilter).populate('fighterAId fighterBId').sort({ updatedAt: -1, createdAt: -1 }).limit(120).lean().catch(() => []);
-    const linkedMatchIds = [...new Set(shadows.flatMap((shadow) => (Array.isArray(shadow.AffiliateIds) ? shadow.AffiliateIds : [])
+
+    const [directMatches, promotedShadowTemplates, allShadowTemplates] = await Promise.all([
+      Match.find({ $or: [{ affiliateId }, { sourceShadowId: { $exists: true }, affiliateId }] }).populate('fighterAId fighterBId').sort({ updatedAt: -1, createdAt: -1 }).limit(300).lean(),
+      Shadow.find(shadowFilter).populate('fighterAId fighterBId').sort({ updatedAt: -1, createdAt: -1 }).limit(300).lean().catch(() => []),
+      Shadow.find(applyFightPublicVisibilityFilter({}, { includeDrafts: req.query.includeDrafts })).populate('fighterAId fighterBId').sort({ updatedAt: -1, createdAt: -1 }).limit(500).lean().catch(() => []),
+    ]);
+
+    const linkedMatchIds = [...new Set(promotedShadowTemplates.flatMap((shadow) => (Array.isArray(shadow.AffiliateIds) ? shadow.AffiliateIds : [])
       .filter((item) => String(item?.AffiliateId || '') === affiliateId || String(item?.AffiliateId?._id || '') === affiliateId)
       .map((item) => String(item?.matchId || item?.matchId?._id || ''))
       .filter((id) => mongoose.Types.ObjectId.isValid(id))))];
+
     const linkedMatches = linkedMatchIds.length
       ? await Match.find({ _id: { $in: linkedMatchIds } }).populate('fighterAId fighterBId').sort({ updatedAt: -1, createdAt: -1 }).lean()
       : [];
 
-    const byId = new Map();
-    [...directMatches, ...linkedMatches].forEach((match) => {
-      if (!match || isDraftFightRecord(match)) return;
-      if (!includeClosed) {
-        const closed = String(match.matchShadowOpenStatus || '').toLowerCase() === 'closed' || String(match.matchStatus || '').toLowerCase() === 'finished';
-        if (closed) return;
-      }
-      byId.set(String(match._id), pickPublicFightFields(match, 'match'));
-    });
+    const byKey = new Map();
+    const addItem = (fight, sourceType, extra = {}) => {
+      if (!fight || isDraftFightRecord(fight)) return;
+      if (activeOnly && getFightTimelineBucket({ ...fight, sourceType }) === 'past') return;
+      const key = `${sourceType}:${String(fight._id)}`;
+      byKey.set(key, {
+        ...pickPublicFightFields(fight, sourceType),
+        affiliatePromotion: {
+          isPromoted: true,
+          affiliateId,
+          sourceType,
+          ...extra,
+        },
+      });
+    };
+
+    directMatches.forEach((match) => addItem(match, 'match', { mode: 'affiliate-created-match' }));
+    linkedMatches.forEach((match) => addItem(match, 'match', { mode: 'linked-shadow-match' }));
+    promotedShadowTemplates.forEach((shadow) => addItem(shadow, 'shadow', { mode: 'promoted-shadow-template' }));
+
+    const promotedShadowIds = new Set(promotedShadowTemplates.map((shadow) => String(shadow._id)));
+    const availableShadowTemplates = allShadowTemplates
+      .filter((shadow) => !isDraftFightRecord(shadow))
+      .map((shadow) => ({
+        ...pickPublicFightFields(shadow, 'shadow'),
+        affiliatePromotion: {
+          isPromoted: promotedShadowIds.has(String(shadow._id)),
+          affiliateId,
+          sourceType: 'shadow',
+        },
+      }));
 
     res.json({
       ok: true,
       affiliateId,
-      items: Array.from(byId.values()).sort(compareHomepagePromotedFights),
-      shadowTemplates: shadows.map((shadow) => pickPublicFightFields(shadow, 'shadow')),
+      items: Array.from(byKey.values()).sort(compareHomepagePromotedFights),
+      promotedShadowTemplates: promotedShadowTemplates.map((shadow) => pickPublicFightFields(shadow, 'shadow')),
+      availableShadowTemplates,
+      shadowTemplates: availableShadowTemplates,
       generatedAt: new Date().toISOString(),
     });
   } catch (error) {
@@ -12331,6 +12432,32 @@ app.get('/api/affiliate/:affiliateId/promoted-fights', async (req, res) => {
     res.status(500).json({ ok: false, message: 'Failed to load affiliate promoted fights.' });
   }
 });
+
+app.get('/api/affiliate/:affiliateId/shadow-fights', async (req, res) => {
+  try {
+    const affiliateId = String(req.params.affiliateId || '').trim();
+    const promoted = await Shadow.find({
+      ...(mongoose.Types.ObjectId.isValid(affiliateId)
+        ? { 'AffiliateIds.AffiliateId': new mongoose.Types.ObjectId(affiliateId) }
+        : { 'AffiliateIds.AffiliateId': affiliateId }),
+    }).select('_id').lean().catch(() => []);
+    const promotedIds = new Set(promoted.map((item) => String(item._id)));
+    const shadows = await Shadow.find(applyFightPublicVisibilityFilter({}, req.query)).populate('fighterAId fighterBId').sort({ updatedAt: -1, createdAt: -1 }).limit(500).lean();
+    res.json({
+      ok: true,
+      affiliateId,
+      items: shadows.filter((shadow) => !isDraftFightRecord(shadow)).map((shadow) => ({
+        ...pickPublicFightFields(shadow, 'shadow'),
+        affiliatePromotion: { isPromoted: promotedIds.has(String(shadow._id)), affiliateId, sourceType: 'shadow' },
+      })),
+      generatedAt: new Date().toISOString(),
+    });
+  } catch (error) {
+    console.error('Error loading affiliate shadow fights:', error);
+    res.status(500).json({ ok: false, message: 'Failed to load affiliate shadow fights.' });
+  }
+});
+
 
 
 // PHASE 2: Centralized IONOS swarm gateway routes. Kept isolated in swarm-phase2.js

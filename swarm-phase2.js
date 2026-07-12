@@ -1422,14 +1422,46 @@ function registerSwarmPhase2Routes(options) {
     const linkedJob = await models.SwarmBackendJob.findOne({ jobId: artifact.jobId }).lean();
     if (!linkedJob) return res.status(404).json({ ok: false, code: 'SOURCE_JOB_NOT_FOUND', message: 'Source job was not found in backend cache.' });
 
+    const fightContext = await loadFightContextForArtifact({ artifact, mongoose });
+    const existingInput = linkedJob.input || {};
+    const existingMetadata = linkedJob.metadata || {};
+    const scopedFightId = cleanString(existingMetadata.fightId || existingMetadata.matchId || existingInput.fightId || existingInput.matchId || linkedJob.sourceEntity?.fightId || linkedJob.sourceEntity?.matchId || linkedJob.sourceEntity?.id || artifact.metadata?.fightId || artifact.payload?.fightId || artifact.payload?.matchId);
+    const hydratedInput = {
+      ...existingInput,
+      ...(scopedFightId ? { fightId: scopedFightId, matchId: scopedFightId } : {}),
+      eventName: existingInput.eventName || fightContext?.title,
+      matchTitle: existingInput.matchTitle || fightContext?.title,
+      topic: existingInput.topic || fightContext?.title,
+      fighterAName: existingInput.fighterAName || fightContext?.fighterAName,
+      fighterBName: existingInput.fighterBName || fightContext?.fighterBName,
+      matchFighterA: existingInput.matchFighterA || fightContext?.fighterAName,
+      matchFighterB: existingInput.matchFighterB || fightContext?.fighterBName,
+      fighterAImage: existingInput.fighterAImage || fightContext?.fighterAImage,
+      fighterBImage: existingInput.fighterBImage || fightContext?.fighterBImage,
+      sport: existingInput.sport || fightContext?.category,
+      discipline: existingInput.discipline || fightContext?.category,
+      regenerateFromArtifactId: artifact.artifactId,
+      regenerateReason: req.body?.reason || 'admin-regenerate-with-fight-context',
+    };
+
     req.body = {
       vertical: linkedJob.vertical,
       jobType: linkedJob.jobType,
       mode: linkedJob.mode || 'DRAFT_ONLY',
       priority: linkedJob.priority || 50,
-      sourceEntity: linkedJob.sourceEntity,
-      input: { ...(linkedJob.input || {}), regenerateFromArtifactId: artifact.artifactId, regenerateReason: req.body?.reason || 'admin-regenerate' },
-      metadata: { ...(linkedJob.metadata || {}), regeneratedFromJobId: linkedJob.jobId, regeneratedFromArtifactId: artifact.artifactId },
+      sourceEntity: {
+        ...(linkedJob.sourceEntity || {}),
+        ...(scopedFightId ? { id: linkedJob.sourceEntity?.id || scopedFightId, fightId: linkedJob.sourceEntity?.fightId || scopedFightId, matchId: linkedJob.sourceEntity?.matchId || scopedFightId } : {}),
+        label: linkedJob.sourceEntity?.label || fightContext?.title || linkedJob.sourceEntity?.id || 'Fight content regeneration',
+      },
+      input: hydratedInput,
+      metadata: {
+        ...existingMetadata,
+        ...(scopedFightId ? { fightId: scopedFightId, matchId: scopedFightId, sourceEntityId: scopedFightId } : {}),
+        regeneratedFromJobId: linkedJob.jobId,
+        regeneratedFromArtifactId: artifact.artifactId,
+        regenerateHydratedFightContext: true,
+      },
     };
 
     const config = getSwarmConfig();

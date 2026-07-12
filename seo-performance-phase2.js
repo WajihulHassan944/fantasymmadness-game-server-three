@@ -398,32 +398,12 @@ function buildFightFilter(query = {}) {
   if (!isAllFilterValue(query.status)) {
     const status = cleanString(query.status).toLowerCase();
     const now = new Date();
-    if (['playable', 'prediction', 'predictions', 'can-predict', 'open-for-predictions', 'active-contests'].includes(status)) {
+    if (['past', 'previous', 'history', 'shadow-history', 'upcoming', 'future', 'scheduled'].includes(status)) {
+      // Timeline status is source-aware: LIVE fights are upcoming; SHADOW fights
+      // are past unless they have an affiliate/promotional future date. Apply it
+      // after loading both collections so Shadow records without dates are not dropped.
+    } else if (['playable', 'prediction', 'predictions', 'can-predict', 'open-for-predictions', 'active-contests'].includes(status)) {
       const statusOr = buildPredictionEligibleFightFilter().$or;
-      if (filter.$or) {
-        filter.$and = [{ $or: filter.$or }, { $or: statusOr }];
-        delete filter.$or;
-      } else {
-        filter.$or = statusOr;
-      }
-    } else if (['past', 'previous', 'completed', 'complete', 'finished'].includes(status)) {
-      const statusOr = [
-        { matchStatus: { $in: ['Finished', 'Closed', 'finished', 'closed', 'Completed', 'completed'] } },
-        { matchShadowOpenStatus: { $in: ['closed', 'Closed'] } },
-        { matchDate: { $lt: now } },
-      ];
-      if (filter.$or) {
-        filter.$and = [{ $or: filter.$or }, { $or: statusOr }];
-        delete filter.$or;
-      } else {
-        filter.$or = statusOr;
-      }
-    } else if (['upcoming', 'future', 'scheduled'].includes(status)) {
-      const statusOr = [
-        { matchStatus: { $in: ['Scheduled', 'Open', 'Live', 'Ongoing', 'scheduled', 'open', 'live', 'ongoing'] } },
-        { matchShadowOpenStatus: { $in: ['open', 'Open'] } },
-        { matchDate: { $gte: now } },
-      ];
       if (filter.$or) {
         filter.$and = [{ $or: filter.$or }, { $or: statusOr }];
         delete filter.$or;
@@ -487,18 +467,42 @@ function fightMatchesRequestedSport(fight = {}, query = {}) {
   return candidates.includes(requested);
 }
 
+function parseFightDateTime(fight = {}) {
+  const rawDate = fight.matchDate || fight.date || fight.scheduledAt || fight.homepagePromotionStartsAt;
+  if (!rawDate) return null;
+  const date = new Date(rawDate);
+  if (Number.isNaN(date.getTime())) return null;
+  const timeText = cleanString(fight.matchTime || fight.time);
+  const timeMatch = timeText.match(/^(\d{1,2}):(\d{2})/);
+  if (timeMatch) date.setHours(Number(timeMatch[1]), Number(timeMatch[2]), 0, 0);
+  return date;
+}
+
+function isShadowFightRecord(fight = {}) {
+  const source = cleanString(fight.sourceType || fight.collection).toLowerCase();
+  const type = cleanString(fight.matchType || fight.type).toLowerCase();
+  return source === 'shadow' || type === 'shadow';
+}
+
+function getFightTimelineBucket(fight = {}, now = new Date()) {
+  if (isDraftFightRecord(fight)) return 'draft';
+  const fightDate = parseFightDateTime(fight);
+  const hasFutureDate = Boolean(fightDate && fightDate.getTime() >= now.getTime());
+  const type = cleanString(fight.matchType || fight.type).toLowerCase();
+  if (isShadowFightRecord(fight)) return hasFutureDate ? 'upcoming' : 'past';
+  if (type === 'live') return 'upcoming';
+  const status = cleanString(fight.matchStatus || fight.status || fight.matchShadowOpenStatus).toLowerCase();
+  if (['finished', 'closed', 'completed', 'complete', 'cancelled', 'canceled'].includes(status)) return 'past';
+  return 'upcoming';
+}
+
 function fightMatchesRequestedStatus(fight = {}, query = {}) {
   const requested = cleanString(query.status).toLowerCase();
   if (!requested || isAllFilterValue(requested)) return true;
-  const now = new Date();
-  const matchDate = fight.matchDate ? new Date(fight.matchDate) : null;
+  if (['past', 'previous', 'history', 'shadow-history'].includes(requested)) return getFightTimelineBucket(fight) === 'past';
+  if (['upcoming', 'future', 'scheduled'].includes(requested)) return getFightTimelineBucket(fight) === 'upcoming';
+  if (['completed', 'complete', 'finished'].includes(requested)) return getFightTimelineBucket(fight) === 'past';
   const status = cleanString(fight.matchStatus || fight.status || fight.matchShadowOpenStatus).toLowerCase();
-  if (['past', 'previous', 'completed', 'complete', 'finished'].includes(requested)) {
-    return ['finished', 'closed', 'completed', 'complete'].includes(status) || (matchDate && !Number.isNaN(matchDate.getTime()) && matchDate < now);
-  }
-  if (['upcoming', 'future', 'scheduled'].includes(requested)) {
-    return ['scheduled', 'open', 'live', 'ongoing', 'active'].includes(status) || (matchDate && !Number.isNaN(matchDate.getTime()) && matchDate >= now);
-  }
   return status === requested;
 }
 
@@ -521,10 +525,10 @@ function compareFightsFresh(a = {}, b = {}) {
 async function loadFightDocs(Model, query = {}, source = 'match') {
   if (!Model) return [];
   const filter = buildFightFilter(query);
-  let docs = await Model.find(filter).sort(fightSort(query)).limit(500).lean();
+  let docs = await Model.find(filter).populate('fighterAId fighterBId').sort(fightSort(query)).limit(500).lean();
   if (!docs.length && !shouldIncludeDraftFights(query)) {
     const fallbackFilter = buildFightFilter({ ...query, includeDrafts: 'true' });
-    docs = await Model.find(fallbackFilter).sort(fightSort(query)).limit(500).lean();
+    docs = await Model.find(fallbackFilter).populate('fighterAId fighterBId').sort(fightSort(query)).limit(500).lean();
   }
   return docs.map((doc) => ({ ...doc, sourceType: source }));
 }
@@ -569,23 +573,53 @@ async function findFightById(Match, Shadow, id, query = {}) {
 
 function serializeFight(fight, req) {
   const id = String(fight?._id || '');
-  const title = cleanString(fight?.matchName) || `${cleanString(fight?.matchFighterA)} vs ${cleanString(fight?.matchFighterB)}`.trim();
+  const fighterARef = fight?.fighterAId && typeof fight.fighterAId === 'object' ? fight.fighterAId : null;
+  const fighterBRef = fight?.fighterBId && typeof fight.fighterBId === 'object' ? fight.fighterBId : null;
+  const fighterAName = cleanString(fighterARef?.displayName || fight?.matchFighterA || 'Fighter A');
+  const fighterBName = cleanString(fighterBRef?.displayName || fight?.matchFighterB || 'Fighter B');
+  const fighterAImage = cleanString(fighterARef?.primaryImage || fight?.fighterAImage || '');
+  const fighterBImage = cleanString(fighterBRef?.primaryImage || fight?.fighterBImage || '');
+  const effectiveCategory = cleanString(fight?.matchCategoryTwo || fight?.matchCategory || 'combat');
+  const title = cleanString(fight?.matchName) || `${fighterAName} vs ${fighterBName}`.trim();
   return {
+    _id: fight?._id,
     id,
+    sourceType: fight?.sourceType,
     title,
+    matchName: fight?.matchName,
+    matchFighterA: fighterAName,
+    matchFighterB: fighterBName,
+    fighterAImage,
+    fighterBImage,
+    promotionBackground: fight?.promotionBackground,
+    matchDescription: fight?.matchDescription,
+    matchCategory: fight?.matchCategory,
+    matchCategoryTwo: fight?.matchCategoryTwo,
+    effectiveCategory,
+    displayCategory: effectiveCategory,
+    categoryLabel: effectiveCategory,
+    categorySlug: slugify(effectiveCategory),
+    matchType: fight?.matchType,
+    matchDate: fight?.matchDate,
+    matchTime: fight?.matchTime,
+    venue: fight?.venue,
     slug: `${slugify(title)}-${id.slice(-6)}`,
-    sport: cleanString(fight?.matchCategory || fight?.matchCategoryTwo || 'combat').toLowerCase(),
+    sport: effectiveCategory.toLowerCase(),
     status: fight?.matchStatus,
+    matchStatus: fight?.matchStatus,
     openStatus: fight?.matchShadowOpenStatus,
+    matchShadowOpenStatus: fight?.matchShadowOpenStatus,
     shadowStatus: fight?.matchShadowStatus,
-    fighterA: { name: fight?.matchFighterA, image: fight?.fighterAImage },
-    fighterB: { name: fight?.matchFighterB, image: fight?.fighterBImage },
+    matchShadowStatus: fight?.matchShadowStatus,
+    timelineBucket: getFightTimelineBucket(fight),
+    fighterA: { name: fighterAName, image: fighterAImage, primaryImage: fighterAImage },
+    fighterB: { name: fighterBName, image: fighterBImage, primaryImage: fighterBImage },
     description: fight?.matchDescription,
     date: fight?.matchDate,
     time: fight?.matchTime,
     videoUrl: fight?.matchVideoUrl,
     promotionalVideoUrl: fight?.matchPromotionalVideoUrl,
-    image: fight?.promotionBackground || fight?.fighterAImage || fight?.fighterBImage,
+    image: fight?.promotionBackground || fighterAImage || fighterBImage,
     updatedAt: fight?.updatedAt,
     createdAt: fight?.createdAt,
     seoUrl: `${getSiteUrl(req)}/fights/${id}`,
