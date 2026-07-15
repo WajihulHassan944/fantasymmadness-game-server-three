@@ -40,6 +40,7 @@ const xml2js = require('xml2js');
 const { registerSwarmPhase2Routes } = require('./swarm-phase2');
 const { registerSeoPerformancePhase2Routes } = require('./seo-performance-phase2');
 const { registerFightDataQualityRoutes } = require('./fight-data-quality');
+const { registerUfcEventDiscovery, GOOGLE_NEWS_UFC_RSS_FEED_URL, _private: ufcEventDiscoveryPrivate } = require('./ufc-event-discovery');
 
 const ALGORITHM = 'aes-256-cbc'; // AES algorithm
 const ENCRYPTION_KEY = process.env.ENCRYPTION_KEY; // Must be 32 bytes
@@ -1483,6 +1484,21 @@ matchReward: { type: String, enum: ['Rewarded', 'NotRewarded'], default: 'NotRew
   matchDate: Date,
   matchTime: String,  // Store the match time as a string in 'HH:MM' format
   venue: String,
+  // Auto-discovered UFC/upcoming-event metadata. These fields are additive and
+  // keep manually created fight records backward-compatible while allowing
+  // Google News/official UFC enrichment to dedupe and update calendar entries.
+  autoDiscovered: { type: Boolean, default: false, index: true },
+  autoDiscoveryProvider: String,
+  autoDiscoveryKey: String,
+  autoDiscoveryConfidence: Number,
+  autoDiscoverySource: String,
+  autoDiscoverySourceUrl: String,
+  autoDiscoveryPayload: mongoose.Schema.Types.Mixed,
+  autoDiscoveryLastSeenAt: Date,
+  ufcEventNumber: Number,
+  ufcEventType: String,
+  officialEventUrl: String,
+  eventCity: String,
   homepagePromoted: { type: Boolean, default: false, index: true },
   homepagePromotionRank: { type: Number, default: 0 },
   homepagePromotionTitle: String,
@@ -1569,9 +1585,77 @@ matchSchema.index({ matchStatus: 1, matchShadowOpenStatus: 1, updatedAt: -1 });
 matchSchema.index({ matchDate: -1, updatedAt: -1 });
 matchSchema.index({ homepagePromoted: 1, homepagePromotionRank: -1, matchDate: 1, updatedAt: -1 });
 matchSchema.index({ affiliateId: 1, updatedAt: -1 });
+matchSchema.index({ autoDiscoveryKey: 1 }, { sparse: true });
+matchSchema.index({ ufcEventNumber: 1 }, { sparse: true });
+matchSchema.index({ autoDiscovered: 1, matchDate: 1 });
 
 
 const Match = mongoose.model('Match', matchSchema);
+
+function buildUpcomingEventAutomationPayload(match, context = {}) {
+  const item = toPlainObject(match) || {};
+  const contextInput = context.input && typeof context.input === 'object' ? context.input : {};
+  const contextMetadata = context.metadata && typeof context.metadata === 'object' ? context.metadata : {};
+  const title = item.matchName || `${item.matchFighterA || ''} vs ${item.matchFighterB || ''}`.trim() || contextInput.eventName || contextInput.title;
+  return {
+    trigger: context.trigger || 'upcoming_event',
+    vertical: 'combat',
+    sport: context.sport || item.matchCategoryTwo || item.matchCategory || contextInput.sport || 'mma',
+    sourceEntity: {
+      type: 'combat_match',
+      id: String(item._id || item.id || contextInput.matchId || ''),
+      label: title,
+    },
+    input: {
+      matchId: String(item._id || item.id || contextInput.matchId || ''),
+      matchName: item.matchName,
+      title,
+      eventName: contextInput.eventName || item.matchName,
+      eventNumber: contextInput.eventNumber || item.ufcEventNumber,
+      eventType: contextInput.eventType || item.ufcEventType,
+      fighterA: item.matchFighterA,
+      fighterB: item.matchFighterB,
+      fighters: [item.matchFighterA, item.matchFighterB].filter(Boolean),
+      matchDate: item.matchDate,
+      matchTime: item.matchTime,
+      matchType: item.matchType,
+      maxRounds: item.maxRounds,
+      description: item.matchDescription,
+      venue: contextInput.venue || item.venue,
+      city: contextInput.city || item.eventCity,
+      articleSource: contextInput.articleSource || item.autoDiscoverySource,
+      articleUrl: contextInput.articleUrl || item.autoDiscoverySourceUrl,
+      officialEventUrl: contextInput.officialEventUrl || item.officialEventUrl,
+      discoveryConfidence: contextInput.discoveryConfidence || item.autoDiscoveryConfidence,
+      discoveryProvider: contextInput.discoveryProvider || item.autoDiscoveryProvider,
+      ...contextInput,
+    },
+    metadata: {
+      route: context.route || 'backend-upcoming-event-hook',
+      action: context.action || 'upcoming-event-created',
+      matchId: String(item._id || item.id || contextInput.matchId || ''),
+      eventNumber: item.ufcEventNumber,
+      discoveryProvider: item.autoDiscoveryProvider,
+      discoveryKey: item.autoDiscoveryKey,
+      source: context.source || 'fantasymmadness-backend',
+      ...contextMetadata,
+    },
+    reason: context.reason || 'upcoming-event-created-in-backend',
+  };
+}
+
+async function triggerUpcomingEventAutomationForMatch(match, context = {}) {
+  if (!match || !app.locals.swarmPhase2?.triggerAutomationEvent) return null;
+  try {
+    return await app.locals.swarmPhase2.triggerAutomationEvent(buildUpcomingEventAutomationPayload(match, context));
+  } catch (error) {
+    return {
+      ok: false,
+      warning: context.warning || 'Fight was saved but upcoming-event automation failed.',
+      error: error.message,
+    };
+  }
+}
 
 app.get('/api/update-shadow-open-status', async (req, res) => {
   console.log('Cron job to update matchShadowOpenStatus started.');
@@ -2554,29 +2638,12 @@ const nonRegisteredUserMailPromises = nonRegisteredUsers.map(user => {
     console.log('Notification skipped because notify is set to false');
   }
 
-  const swarmAutomation = await app.locals.swarmPhase2?.triggerAutomationEvent?.({
-    trigger: 'upcoming_event',
-    vertical: 'combat',
-    sourceEntity: {
-      type: 'combat_match',
-      id: String(savedMatch._id),
-      label: savedMatch.matchName || `${savedMatch.matchFighterA || ''} vs ${savedMatch.matchFighterB || ''}`.trim(),
-    },
-    input: {
-      matchId: String(savedMatch._id),
-      matchName: savedMatch.matchName,
-      title: savedMatch.matchName,
-      fighterA: savedMatch.matchFighterA,
-      fighterB: savedMatch.matchFighterB,
-      matchDate: savedMatch.matchDate,
-      matchTime: savedMatch.matchTime,
-      matchType: savedMatch.matchType,
-      maxRounds: savedMatch.maxRounds,
-      description: savedMatch.matchDescription,
-    },
-    metadata: { route: '/addMatch', action: 'legacy-upcoming-event-created' },
+  const swarmAutomation = await triggerUpcomingEventAutomationForMatch(savedMatch, {
+    route: '/addMatch',
+    action: 'legacy-upcoming-event-created',
     reason: 'combat-match-added-in-backend',
-  }).catch((error) => ({ ok: false, warning: 'Fight was added but upcoming-event automation failed.', error: error.message }));
+    warning: 'Fight was added but upcoming-event automation failed.',
+  });
 
   // Respond with success and the saved match ID
   res.status(200).json({ message: 'Match Added Successfully and Notifications Sent', matchId: savedMatch._id, automation: swarmAutomation || null });
@@ -8833,17 +8900,9 @@ app.get('/news', async (req, res) => {
     // Fetch from database
     const dbArticles = await News.find().sort({ createdAt: -1 }).lean();
 
-    // Fetch from RSS feed
-    const feed = await parser.parseURL('https://rss.app/feeds/_6ePdUiq5QyfSygcS.xml');
-    const rssArticles = feed.items.map(item => ({
-      title: item.title,
-      description: item.contentSnippet || item.content || item.description,
-      link: item.link,
-      pubDate: item.pubDate,
-      image: item.enclosure?.url || item.media?.content?.url || null,
-      creator: item.creator || null,
-      source: 'rss'
-    }));
+    // Fetch UFC-focused Google News RSS.
+    const feed = await parser.parseURL(process.env.UFC_NEWS_RSS_URL || GOOGLE_NEWS_UFC_RSS_FEED_URL);
+    const rssArticles = ufcEventDiscoveryPrivate.formatRssItemsAsNewsArticles(feed.items || []);
 
     // Optionally add a source flag to DB articles too
     const formattedDbArticles = dbArticles.map(article => ({
@@ -12473,6 +12532,21 @@ registerSwarmPhase2Routes({
   upload,
   cloudinary,
 });
+
+// Google News -> UFC event discovery. This keeps the existing fight calendar and
+// Swarm workflow intact while removing the expired RSS aggregator dependency.
+const ufcEventDiscovery = registerUfcEventDiscovery({
+  app,
+  cron,
+  parser,
+  fetch,
+  Match,
+  Notification,
+  verifyAdminToken,
+  triggerUpcomingEventAutomationForMatch,
+  clearPublicResponseCache,
+});
+app.locals.ufcEventDiscovery = ufcEventDiscovery;
 
 
 

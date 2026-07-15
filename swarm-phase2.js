@@ -1912,12 +1912,17 @@ function normalizeCreateJobBody(body, admin, config) {
   const input = normalizeInput(raw);
   input.sport = normalizeSport(input.sport || input.discipline || sport || vertical);
   input.discipline = input.discipline || input.sport;
+  const hadExplicitFightId = cleanString(input.fightId || raw.fightId || raw.sourceEntity?.fightId);
+  const hadExplicitMatchId = cleanString(input.matchId || raw.matchId || raw.sourceEntity?.matchId);
   const scopeFightId = cleanString(input.fightId || input.matchId || raw.fightId || raw.matchId || raw.sourceEntity?.id || raw.sourceEntity?.fightId || raw.sourceEntity?.matchId);
   if (scopeFightId) {
     input.fightId = input.fightId || scopeFightId;
     input.matchId = input.matchId || scopeFightId;
   }
   const sourceEntity = { ...normalizeSourceEntity(raw, input, vertical, jobType) };
+  if (hadExplicitFightId && !hadExplicitMatchId && vertical !== 'pro_wrestling') {
+    sourceEntity.type = 'combat_fight';
+  }
   if (scopeFightId) {
     sourceEntity.id = sourceEntity.id || scopeFightId;
     sourceEntity.fightId = sourceEntity.fightId || scopeFightId;
@@ -3532,6 +3537,10 @@ function normalizeAutomationTrigger(value) {
     fight_result: 'fight_result_updated',
     result_updated: 'fight_result_updated',
     event_upcoming: 'upcoming_event',
+    auto_discovered_event: 'upcoming_event',
+    google_news_upcoming_event: 'upcoming_event',
+    google_news_ufc_event: 'upcoming_event',
+    ufc_event_discovered: 'upcoming_event',
     pro_wrestling_publish: 'pro_wrestling_match_published',
     wrestling_match_published: 'pro_wrestling_match_published',
     wrestling_result_updated: 'pro_wrestling_result_updated',
