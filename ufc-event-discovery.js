@@ -133,13 +133,19 @@ function registerUfcEventDiscovery(options = {}) {
 
   const cronEnabled = parseBoolean(process.env.UFC_EVENT_DISCOVERY_CRON_ENABLED, true);
   const cronExpression = cleanString(process.env.UFC_EVENT_DISCOVERY_CRON || DEFAULT_DISCOVERY_CRON);
+  const cronTimezone = resolveCronTimezone([
+    process.env.UFC_EVENT_DISCOVERY_TIMEZONE,
+    process.env.TZ,
+    'America/New_York',
+  ], logger);
+
   if (cronEnabled && cron && typeof cron.schedule === 'function') {
     scheduledTask = cron.schedule(cronExpression, () => {
       runRefresh({ reason: 'scheduled-cron' }).catch((error) => {
         logger.error?.('Scheduled UFC event discovery failed:', error.message || error);
       });
     }, {
-      timezone: process.env.UFC_EVENT_DISCOVERY_TIMEZONE || process.env.TZ || 'America/New_York',
+      timezone: cronTimezone,
     });
   }
 
@@ -171,6 +177,7 @@ function registerUfcEventDiscovery(options = {}) {
       feedUrl: getDiscoveryFeedUrl(),
       cronEnabled,
       cronExpression,
+      cronTimezone,
       isRunning,
       lastRun,
       lastError,
@@ -1028,6 +1035,45 @@ function parseBoolean(value, fallback = false) {
   return ['true', '1', 'yes', 'y', 'on'].includes(String(value).trim().toLowerCase());
 }
 
+function normalizeCronTimezone(value) {
+  let timezone = cleanString(value).replace(/^['"]|['"]$/g, '').trim();
+  if (!timezone) return '';
+
+  // Some serverless/Linux environments expose POSIX-style timezone values such
+  // as `:UTC`. `node-cron` validates via Intl.DateTimeFormat, which requires
+  // standard IANA names like `UTC` or `America/New_York`.
+  timezone = timezone.replace(/^:+/, '').trim();
+  if (!timezone) return '';
+  if (timezone.toUpperCase() === 'UTC') return 'UTC';
+
+  return timezone;
+}
+
+function isValidCronTimezone(timezone) {
+  if (!timezone) return false;
+  try {
+    new Intl.DateTimeFormat('en-US', { timeZone: timezone }).format(new Date());
+    return true;
+  } catch (error) {
+    return false;
+  }
+}
+
+function resolveCronTimezone(values = [], logger = console) {
+  for (const value of values) {
+    const timezone = normalizeCronTimezone(value);
+    if (!timezone) continue;
+    if (isValidCronTimezone(timezone)) return timezone;
+
+    const rawValue = cleanString(value);
+    if (rawValue) {
+      logger.warn?.(`Ignoring invalid UFC event discovery timezone "${rawValue}"; falling back to a safe timezone.`);
+    }
+  }
+
+  return 'UTC';
+}
+
 function clampNumber(value, min, max) {
   const number = Number(value);
   if (!Number.isFinite(number)) return min;
@@ -1060,8 +1106,10 @@ module.exports = {
     formatRssItemsAsNewsArticles,
     getDiscoveryFeedUrl,
     hasSufficientEventData,
+    normalizeCronTimezone,
     parseOfficialUfcEventHtml,
     parseUfcEventCandidateFromRssItem,
+    resolveCronTimezone,
     scoreCandidate,
     stripGoogleNewsSourceSuffix,
   },

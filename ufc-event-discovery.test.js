@@ -9,6 +9,47 @@ assert.strictEqual(typeof registerUfcEventDiscovery, 'function');
 assert(GOOGLE_NEWS_UFC_RSS_FEED_URL.includes('news.google.com/rss/search'), 'UFC discovery must use Google News RSS.');
 assert(GOOGLE_NEWS_UFC_RSS_FEED_URL.includes('UFC%20OR%20%22UFC%20Fight%20Night%22'), 'Google News feed must stay UFC-focused.');
 
+assert.strictEqual(_private.normalizeCronTimezone(':UTC'), 'UTC', 'POSIX-style :UTC must normalize for node-cron.');
+assert.strictEqual(_private.normalizeCronTimezone('UTC'), 'UTC', 'UTC must remain valid.');
+assert.strictEqual(_private.normalizeCronTimezone('"UTC"'), 'UTC', 'Quoted UTC must normalize for deployments using quoted env values.');
+assert.strictEqual(_private.resolveCronTimezone([':UTC']), 'UTC', 'Resolved cron timezone must be Intl-compatible.');
+const timezoneWarnings = [];
+assert.strictEqual(
+  _private.resolveCronTimezone(['Invalid/Timezone', 'America/New_York'], { warn: (message) => timezoneWarnings.push(message) }),
+  'America/New_York',
+  'Invalid cron timezone values must fall back to a safe IANA timezone.'
+);
+assert.strictEqual(timezoneWarnings.length, 1, 'Invalid cron timezone should emit one warning.');
+
+{
+  const previousTz = process.env.TZ;
+  const previousDiscoveryTimezone = process.env.UFC_EVENT_DISCOVERY_TIMEZONE;
+  const previousCronEnabled = process.env.UFC_EVENT_DISCOVERY_CRON_ENABLED;
+  const previousRunOnStart = process.env.UFC_EVENT_DISCOVERY_RUN_ON_START;
+  try {
+    process.env.TZ = ':UTC';
+    delete process.env.UFC_EVENT_DISCOVERY_TIMEZONE;
+    process.env.UFC_EVENT_DISCOVERY_CRON_ENABLED = 'true';
+    process.env.UFC_EVENT_DISCOVERY_RUN_ON_START = 'false';
+
+    let scheduledTimezone = null;
+    registerUfcEventDiscovery({
+      app: { get() {}, post() {} },
+      cron: { schedule: (_expression, _handler, options) => { scheduledTimezone = options.timezone; return { stop() {} }; } },
+      parser: {},
+      Match: {},
+      logger: { error() {}, warn() {} },
+    });
+
+    assert.strictEqual(scheduledTimezone, 'UTC', 'registerUfcEventDiscovery must not pass :UTC into node-cron.');
+  } finally {
+    if (previousTz === undefined) delete process.env.TZ; else process.env.TZ = previousTz;
+    if (previousDiscoveryTimezone === undefined) delete process.env.UFC_EVENT_DISCOVERY_TIMEZONE; else process.env.UFC_EVENT_DISCOVERY_TIMEZONE = previousDiscoveryTimezone;
+    if (previousCronEnabled === undefined) delete process.env.UFC_EVENT_DISCOVERY_CRON_ENABLED; else process.env.UFC_EVENT_DISCOVERY_CRON_ENABLED = previousCronEnabled;
+    if (previousRunOnStart === undefined) delete process.env.UFC_EVENT_DISCOVERY_RUN_ON_START; else process.env.UFC_EVENT_DISCOVERY_RUN_ON_START = previousRunOnStart;
+  }
+}
+
 const fightNight = _private.parseUfcEventCandidateFromRssItem({
   title: 'UFC Fight Night: Du Plessis vs Usman set for July 11 in Las Vegas - MMA Fighting',
   contentSnippet: 'The UFC Fight Night card is scheduled for July 11, 2027 at T-Mobile Arena in Las Vegas.',
