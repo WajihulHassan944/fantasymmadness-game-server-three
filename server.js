@@ -718,6 +718,39 @@ function toPlainObject(value) {
   return value;
 }
 
+function normalizeWalletTokenNumber(value, fallback = 0) {
+  const raw = typeof value === 'string' ? value.trim().replace(/,/g, '') : value;
+  const parsed = Number(raw);
+
+  if (!Number.isFinite(parsed) || Number.isNaN(parsed) || parsed < 0) {
+    return fallback;
+  }
+
+  return Math.floor(parsed);
+}
+
+function normalizeWalletTokenString(value, fallback = 0) {
+  return String(normalizeWalletTokenNumber(value, fallback));
+}
+
+function isWalletTokenValueInvalid(value) {
+  return String(value ?? '') !== normalizeWalletTokenString(value);
+}
+
+function addWalletTokens(currentBalance, tokensToAdd) {
+  return String(normalizeWalletTokenNumber(currentBalance) + normalizeWalletTokenNumber(tokensToAdd));
+}
+
+function subtractWalletTokens(currentBalance, tokensToDeduct) {
+  const balance = normalizeWalletTokenNumber(currentBalance);
+  const deduction = normalizeWalletTokenNumber(tokensToDeduct);
+  return {
+    balance,
+    deduction,
+    nextBalance: balance - deduction,
+  };
+}
+
 function sanitizeAccountObject(value) {
   const account = toPlainObject(value);
   if (!account || typeof account !== 'object' || Array.isArray(account)) return account;
@@ -725,6 +758,10 @@ function sanitizeAccountObject(value) {
   SENSITIVE_ACCOUNT_FIELDS.forEach((field) => {
     delete account[field];
   });
+
+  if (Object.prototype.hasOwnProperty.call(account, 'tokens')) {
+    account.tokens = normalizeWalletTokenString(account.tokens);
+  }
 
   if (account.billing && typeof account.billing === 'object') {
     SENSITIVE_BILLING_FIELDS.forEach((field) => {
@@ -2235,7 +2272,7 @@ async function refundMatchScoresIfRequested(match, matchId, updateWallet) {
   await Promise.all(scores.map(async (score) => {
     const user = await User.findById(score.playerId);
     if (user) {
-      user.tokens = String((parseInt(user.tokens) || 0) + matchTokens);
+      user.tokens = addWalletTokens(user.tokens, matchTokens);
       await user.save();
       refundedUsers += 1;
     }
@@ -3443,6 +3480,10 @@ const userSchema = new mongoose.Schema({
 }, { timestamps: true });
 userSchema.index({ playerName: 1 });
 userSchema.index({ createdAt: -1 });
+userSchema.pre('save', function normalizeUserWalletTokens(next) {
+  this.tokens = normalizeWalletTokenString(this.tokens);
+  next();
+});
 attachSafeAccountJsonTransform(userSchema);
 
 const User = mongoose.models.User || mongoose.model('User', userSchema);
@@ -3483,7 +3524,7 @@ app.post('/admin/add-tokens-won', async (req, res) => {
 
     if (existingUser) {
       // User found, add 200 tokens
-      existingUser.tokens = (parseInt(existingUser.tokens) + 200).toString();
+      existingUser.tokens = addWalletTokens(existingUser.tokens, 200);
       await existingUser.save();
 
       // Notify User and Admin
@@ -3679,7 +3720,7 @@ app.post('/admin/add-tokens-won-spin-wheel', async (req, res) => {
 
     if (existingUser) {
       // User found, add 200 tokens
-      existingUser.tokens = (parseInt(existingUser.tokens) + results).toString();
+      existingUser.tokens = addWalletTokens(existingUser.tokens, results);
       await existingUser.save();
 
       // Notify User and Admin
@@ -4164,7 +4205,7 @@ app.post('/api/authorize-net/first-payment', async (req, res) => {
           };
   
           // Add tokens to the user's account
-          user.tokens = (parseInt(user.tokens, 10) + parseInt(amount, 10)).toString();
+          user.tokens = addWalletTokens(user.tokens, amount);
           user.currentPlan = 'Standard';
           await user.save();
   
@@ -4267,7 +4308,7 @@ app.post('/api/authorize-net/transaction', async (req, res) => {
 
       if (responseCode === '1') {
         // Transaction was successful
-        user.tokens = (parseInt(user.tokens, 10) + parseInt(amount, 10)).toString();
+        user.tokens = addWalletTokens(user.tokens, amount);
         await user.save();
 
         return res.status(200).json({
@@ -4379,8 +4420,7 @@ if (req.body.referrerId && req.body.referrerId !== user._id.toString()) {
         rewarded: true,
       });
 
-      const currentTokens = parseInt(referrer.tokens ?? "0", 10);
-      referrer.tokens = (currentTokens + 3).toString();
+      referrer.tokens = addWalletTokens(referrer.tokens, 3);
       await referrer.save();
     }
   } catch (err) {
@@ -4593,7 +4633,7 @@ app.post('/api/reward-tokens/:userId', async (req, res) => {
     }
 
     // Add tokens to the user's account
-    user.tokens = parseInt(user.tokens, 10) + parseInt(tokens, 10);
+    user.tokens = addWalletTokens(user.tokens, tokens);
 
     // Save the updated user
     await user.save();
@@ -4630,7 +4670,7 @@ app.post('/api/reward-tokens-only-forcibly/:userId', async (req, res) => {
     }
 
     // Add tokens to the user's account
-    user.tokens = parseInt(user.tokens, 10) + parseInt(tokens, 10);
+    user.tokens = addWalletTokens(user.tokens, tokens);
 
     // Save the updated user
     await user.save();
@@ -4653,13 +4693,15 @@ app.post('/api/deduct-tokens', async (req, res) => {
       return res.status(404).json({ message: 'User not found' });
     }
 
+    const { balance, deduction, nextBalance } = subtractWalletTokens(user.tokens, matchTokens);
+
     // Check if the user has enough tokens
-    if (user.tokens < matchTokens) {
-      return res.status(400).json({ message: 'Insufficient tokens' });
+    if (balance < deduction) {
+      return res.status(400).json({ message: 'Insufficient tokens', tokensRemaining: String(balance) });
     }
 
     // Deduct the tokens
-    user.tokens -= matchTokens;
+    user.tokens = String(nextBalance);
     await user.save();
 
     return res.status(200).json({ message: 'Tokens deducted successfully', tokensRemaining: user.tokens });
@@ -4855,7 +4897,7 @@ app.get('/notify', async (req, res) => {
 
           // Filter eligible users
           const eligibleUsers = users.filter(
-            (user) => usersJoinedIds.includes(user._id.toString()) && parseInt(user.tokens, 10) >= match.matchTokens
+            (user) => usersJoinedIds.includes(user._id.toString()) && normalizeWalletTokenNumber(user.tokens) >= normalizeWalletTokenNumber(match.matchTokens)
           );
 
           // Users who submitted predictions
@@ -5066,8 +5108,7 @@ app.post('/register', async (req, res) => {
             referredUser: newUser._id,
             rewarded: true,
           });
-          const currentTokens = parseInt(referrer.tokens ?? "0", 10);
-          referrer.tokens = (currentTokens + 3).toString();
+          referrer.tokens = addWalletTokens(referrer.tokens, 3);
           await referrer.save();
           console.log(`🎁 3 tokens awarded to referrer: ${referrer.email}`);
         }
@@ -5463,7 +5504,12 @@ app.get('/profile', verifyToken, async (req, res) => {
       return res.status(404).json({ message: 'User not found' });
     }
 
-    res.status(200).json({ user });
+    if (isWalletTokenValueInvalid(user.tokens)) {
+      user.tokens = normalizeWalletTokenString(user.tokens);
+      await user.save();
+    }
+
+    res.status(200).json({ user: sanitizeAccountObject(user) });
   } catch (error) {
     res.status(500).json({ message: 'Internal server error' });
   }
@@ -5517,9 +5563,9 @@ app.post('/api/reward-tokens-to-admin', async (req, res) => {
     }
 
     // Add tokens to the admin's account and update totalTokens
-    adminToken.tokens = (parseInt(adminToken.tokens, 10) + parseInt(tokens, 10)).toString();
+    adminToken.tokens = addWalletTokens(adminToken.tokens, tokens);
     adminToken.affiliateRewarded = (parseInt(adminToken.affiliateRewarded, 10) + parseInt(affiliateRewarded, 10)).toString();
-    adminToken.totalTokens = (parseInt(adminToken.totalTokens, 10) + parseInt(tokens, 10)).toString();
+    adminToken.totalTokens = addWalletTokens(adminToken.totalTokens, tokens);
 
     await adminToken.save();
 
@@ -6368,7 +6414,7 @@ app.post('/api/reward-tokens-to-affiliate/:affiliateId', async (req, res) => {
     }
 
     // Add tokens to the user's account
-    user.tokens = parseInt(user.tokens, 10) + parseInt(tokens, 10);
+    user.tokens = addWalletTokens(user.tokens, tokens);
 
     // Save the updated user
     await user.save();
