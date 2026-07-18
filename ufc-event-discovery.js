@@ -945,8 +945,15 @@ function getRssItemSource(item = {}, articleUrl = '') {
 }
 
 function formatRssItemsAsNewsArticles(items = []) {
+  const now = new Date();
+
   return (Array.isArray(items) ? items : []).map((item) => {
     const articleUrl = cleanString(item.link || item.guid || '');
+    const candidate = parseUfcEventCandidateFromRssItem(item, { now });
+    const eventDate = candidate?.eventDate
+      ? (candidate.eventDate instanceof Date ? candidate.eventDate.toISOString() : candidate.eventDate)
+      : null;
+
     return {
       title: stripGoogleNewsSourceSuffix(cleanText(item.title || '')),
       description: cleanText(item.contentSnippet || item.content || item.description || ''),
@@ -956,6 +963,23 @@ function formatRssItemsAsNewsArticles(items = []) {
       creator: item.creator || null,
       articleSource: getRssItemSource(item, articleUrl),
       source: 'google-news-rss',
+      eventName: candidate?.eventName || '',
+      eventDate,
+      matchDate: eventDate,
+      matchTime: candidate?.matchTime || '',
+      fighterA: candidate?.fighterA || '',
+      fighterB: candidate?.fighterB || '',
+      fighters: candidate?.fighters || [],
+      venue: candidate?.venue || '',
+      city: candidate?.city || '',
+      eventType: candidate?.eventType || '',
+      ufcEventNumber: candidate?.eventNumber || null,
+      discoveryKey: candidate?.discoveryKey || '',
+      officialEventUrl: candidate?.officialEventUrl || '',
+      articleUrl: candidate?.articleUrl || articleUrl,
+      eventDateConfidence: candidate?.eventDateConfidence || 0,
+      confidence: candidate?.confidence || 0,
+      isCalendarEventCandidate: Boolean(candidate?.eventDate),
     };
   });
 }

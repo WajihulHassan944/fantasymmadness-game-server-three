@@ -487,6 +487,45 @@ function getFightStatusBucket(match = {}) {
   return 'playable';
 }
 
+function normalizePredictionUserId(value) {
+  if (!value) return '';
+  if (typeof value === 'object') {
+    const plain = toPlainObject(value) || value;
+    const nestedId = plain._id || plain.id || plain.userId || plain.playerId;
+    if (nestedId) return String(nestedId).trim();
+    if (typeof value.toString === 'function') {
+      const text = String(value).trim();
+      if (text && text !== '[object Object]') return text;
+    }
+    return '';
+  }
+  return String(value).trim();
+}
+
+function getUserPredictionEntryForFight(match = {}, playerId = '') {
+  const normalizedPlayerId = normalizePredictionUserId(playerId);
+  if (!normalizedPlayerId || !Array.isArray(match.userPredictions)) return null;
+
+  return match.userPredictions.find((prediction) => {
+    const predictionUserId = normalizePredictionUserId(
+      prediction?.userId || prediction?.playerId || prediction?.user || prediction?.player ||
+      (prediction && typeof prediction !== 'object' ? prediction : '')
+    );
+    return predictionUserId === normalizedPlayerId;
+  }) || null;
+}
+
+function getPredictionStatusText(value) {
+  const status = String(value || '').trim().toLowerCase();
+  if (['submitted', 'submit', 'complete', 'completed', 'locked', 'scored', 'settled'].includes(status)) return 'submitted';
+  if (['notsubmitted', 'not_submitted', 'not-submitted', 'pending', 'draft', 'unsubmitted'].includes(status)) return 'not_submitted';
+  return status || 'not_submitted';
+}
+
+function isSubmittedPredictionStatusText(value) {
+  return getPredictionStatusText(value) === 'submitted';
+}
+
 async function attachPlayerPredictionStateToFightItems(items = [], query = {}) {
   const playerId = getRequestedClassicPlayerId(query);
   const baseItems = Array.isArray(items) ? items : [];
@@ -503,17 +542,60 @@ async function attachPlayerPredictionStateToFightItems(items = [], query = {}) {
 
   return baseItems.map((item) => {
     const plain = toPlainObject(item) || {};
-    const predictionSubmitted = submittedMatchIds.has(String(plain._id));
+    const embeddedPrediction = getUserPredictionEntryForFight(plain, playerId);
+    const embeddedStatus = getPredictionStatusText(embeddedPrediction?.predictionStatus || embeddedPrediction?.status);
+    const scoreSubmitted = submittedMatchIds.has(String(plain._id));
+    const predictionSubmitted = Boolean(scoreSubmitted || embeddedStatus === 'submitted');
+    const userPredictionStatus = predictionSubmitted ? 'submitted' : embeddedStatus;
+    const fightStatusBucket = getFightStatusBucket(plain);
+    const canSubmitPrediction = !predictionSubmitted && isPredictionEligibleFightRecord(plain) && !isDraftFightRecord(plain);
+
     return {
       ...plain,
       predictionSubmitted,
       userPredictionSubmitted: predictionSubmitted,
-      userPredictionStatus: predictionSubmitted ? 'submitted' : 'not_submitted',
-      userFightBucket: predictionSubmitted ? 'completed' : 'playable',
-      fightStatusBucket: getFightStatusBucket(plain),
-      canSubmitPrediction: !predictionSubmitted && !isDraftFightRecord(plain),
+      userPredictionStatus,
+      userFightBucket: predictionSubmitted ? 'completed' : (canSubmitPrediction ? 'playable' : fightStatusBucket),
+      fightStatusBucket,
+      canSubmitPrediction,
     };
   });
+}
+
+async function updateClassicFightPredictionStatus(matchId, userId, predictionStatus = 'submitted') {
+  const normalizedMatchId = String(matchId || '').trim();
+  const normalizedUserId = normalizePredictionUserId(userId);
+  if (!normalizedMatchId || !normalizedUserId) return null;
+
+  const normalizedStatus = isSubmittedPredictionStatusText(predictionStatus) ? 'submitted' : 'notSubmitted';
+  let sourceType = 'match';
+  let fight = await Match.findById(normalizedMatchId);
+
+  if (!fight) {
+    sourceType = 'shadow';
+    fight = await Shadow.findById(normalizedMatchId);
+  }
+
+  if (!fight) return null;
+
+  if (!Array.isArray(fight.userPredictions)) fight.userPredictions = [];
+
+  const existingPrediction = fight.userPredictions.find((prediction) => {
+    const predictionUserId = normalizePredictionUserId(
+      prediction?.userId || prediction?.playerId || prediction?.user || prediction?.player
+    );
+    return predictionUserId === normalizedUserId;
+  });
+
+  if (existingPrediction) {
+    existingPrediction.predictionStatus = normalizedStatus;
+  } else {
+    fight.userPredictions.push({ userId: normalizedUserId, predictionStatus: normalizedStatus });
+  }
+
+  await fight.save();
+  clearPublicResponseCache();
+  return { fight, sourceType, predictionStatus: normalizedStatus };
 }
 
 function applyPublicFightStatusIntent(items = [], query = {}) {
@@ -1079,6 +1161,11 @@ const shadowSchema = new mongoose.Schema({
       SP: Number,
    }],
   },
+
+  userPredictions: [{
+    userId: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
+    predictionStatus: { type: String, enum: ['submitted', 'notSubmitted'], default: 'notSubmitted' }
+  }],
 
   // Add AffiliateIds as an array of objects
   AffiliateIds: [
@@ -2945,61 +3032,73 @@ app.get('/match', async (req, res) => {
 // are marked for completed cards; the rest stay playable.
 app.get('/api/public/prediction-fights', async (req, res) => {
   try {
+    const loadPredictionFightPayload = async () => {
+      const limit = Math.min(Math.max(parseInt(req.query.limit, 10) || 20, 1), 100);
+      const queryLimit = Math.min(Math.max(limit * 6, 200), 500);
+      let baseFilter = {};
+      baseFilter = appendAndFilter(baseFilter, buildEffectiveFightCategoryFilter(req.query.category));
+      if (shouldUseStrictPlayableFightFilter(req.query)) {
+        baseFilter = appendAndFilter(baseFilter, buildPredictionEligibleFightFilter());
+      }
+      const visibleFilter = applyFightPublicVisibilityFilter(baseFilter, req.query);
+      const [matches, shadows] = await Promise.all([
+        applyFightFreshSortLean(Match.find(visibleFilter).populate('fighterAId fighterBId')).limit(queryLimit),
+        applyFightFreshSortLean(Shadow.find(visibleFilter).populate('fighterAId fighterBId')).limit(queryLimit).catch(() => []),
+      ]);
+      let items = [
+        ...matches.map((item) => ({ ...item, sourceType: 'match' })),
+        ...shadows.map((item) => ({ ...item, sourceType: 'shadow' })),
+      ].filter((item) => !isDraftFightRecord(item));
+
+      if (shouldUseStrictPlayableFightFilter(req.query)) {
+        items = items.filter((item) => isPredictionEligibleFightRecord(item));
+      }
+
+      if (!isAllFilterValue(req.query.category)) {
+        items = items.filter((item) => isFightRecordInEffectiveCategory(item, req.query.category));
+      }
+
+      items = items.sort((a, b) => {
+        const toTime = (value) => {
+          const date = value ? new Date(value) : null;
+          return date && !Number.isNaN(date.getTime()) ? date.getTime() : 0;
+        };
+        return Math.max(toTime(b.updatedAt), toTime(b.createdAt), toTime(b.matchDate), toTime(b._id?.getTimestamp?.()))
+          - Math.max(toTime(a.updatedAt), toTime(a.createdAt), toTime(a.matchDate), toTime(a._id?.getTimestamp?.()));
+      }).map((item) => attachCombatFighterReadFallbacks(item, item.sourceType || 'match'));
+
+      items = await attachPlayerPredictionStateToFightItems(items, req.query);
+      items = applyPublicFightStatusIntent(items, req.query).slice(0, limit);
+
+      return {
+        ok: true,
+        items,
+        count: items.length,
+        categoryMode: 'matchCategoryTwo-preferred',
+        generatedAt: new Date().toISOString(),
+      };
+    };
+
+    const hasPlayerContext = Boolean(getRequestedClassicPlayerId(req.query));
+    if (hasPlayerContext) {
+      const payload = await loadPredictionFightPayload();
+      res.setHeader('Cache-Control', 'private, no-store, max-age=0, must-revalidate');
+      res.setHeader('Pragma', 'no-cache');
+      res.setHeader('Expires', '0');
+      res.setHeader('X-Backend-Cache', 'BYPASS');
+      return res.json(payload);
+    }
+
     const { payload, cacheState } = await readThroughPublicCache(
       getPublicCacheKey(req, 'public-prediction-fights'),
-      async () => {
-        const limit = Math.min(Math.max(parseInt(req.query.limit, 10) || 20, 1), 100);
-        const queryLimit = Math.min(Math.max(limit * 6, 200), 500);
-        let baseFilter = {};
-        baseFilter = appendAndFilter(baseFilter, buildEffectiveFightCategoryFilter(req.query.category));
-        if (shouldUseStrictPlayableFightFilter(req.query)) {
-          baseFilter = appendAndFilter(baseFilter, buildPredictionEligibleFightFilter());
-        }
-        const visibleFilter = applyFightPublicVisibilityFilter(baseFilter, req.query);
-        const [matches, shadows] = await Promise.all([
-          applyFightFreshSortLean(Match.find(visibleFilter).populate('fighterAId fighterBId')).limit(queryLimit),
-          applyFightFreshSortLean(Shadow.find(visibleFilter).populate('fighterAId fighterBId')).limit(queryLimit).catch(() => []),
-        ]);
-        let items = [
-          ...matches.map((item) => ({ ...item, sourceType: 'match' })),
-          ...shadows.map((item) => ({ ...item, sourceType: 'shadow' })),
-        ].filter((item) => !isDraftFightRecord(item));
-
-        if (shouldUseStrictPlayableFightFilter(req.query)) {
-          items = items.filter((item) => isPredictionEligibleFightRecord(item));
-        }
-
-        if (!isAllFilterValue(req.query.category)) {
-          items = items.filter((item) => isFightRecordInEffectiveCategory(item, req.query.category));
-        }
-
-        items = items.sort((a, b) => {
-          const toTime = (value) => {
-            const date = value ? new Date(value) : null;
-            return date && !Number.isNaN(date.getTime()) ? date.getTime() : 0;
-          };
-          return Math.max(toTime(b.updatedAt), toTime(b.createdAt), toTime(b.matchDate), toTime(b._id?.getTimestamp?.()))
-            - Math.max(toTime(a.updatedAt), toTime(a.createdAt), toTime(a.matchDate), toTime(a._id?.getTimestamp?.()));
-        }).map((item) => attachCombatFighterReadFallbacks(item, item.sourceType || 'match'));
-
-        items = await attachPlayerPredictionStateToFightItems(items, req.query);
-        items = applyPublicFightStatusIntent(items, req.query).slice(0, limit);
-
-        return {
-          ok: true,
-          items,
-          count: items.length,
-          categoryMode: 'matchCategoryTwo-preferred',
-          generatedAt: new Date().toISOString(),
-        };
-      }
+      loadPredictionFightPayload
     );
 
     setPublicCacheHeaders(res, PUBLIC_CACHE_TTL_SECONDS, cacheState);
-    res.json(payload);
+    return res.json(payload);
   } catch (error) {
     console.error('Error loading prediction-ready fights:', error);
-    res.status(500).json({ ok: false, message: 'Failed to load prediction-ready fights.' });
+    return res.status(500).json({ ok: false, message: 'Failed to load prediction-ready fights.' });
   }
 });
 
@@ -3007,29 +3106,32 @@ app.get('/api/public/prediction-fights', async (req, res) => {
 app.post('/api/matches/:matchId/updatePredictionStatus', async (req, res) => {
   try {
     const { matchId } = req.params;
-    const { userId, predictionStatus } = req.body;
+    const userId = String(req.body?.userId || req.body?.playerId || '').trim();
+    const predictionStatus = req.body?.predictionStatus || req.body?.status || 'submitted';
 
-    const match = await Match.findById(matchId);
+    if (!userId) {
+      return res.status(400).json({ message: 'userId is required' });
+    }
 
-    if (!match) {
+    const result = await updateClassicFightPredictionStatus(matchId, userId, predictionStatus);
+
+    if (!result) {
       return res.status(404).json({ message: 'Match not found' });
     }
 
-    const userPrediction = match.userPredictions.find(pred => pred.userId.toString() === userId);
-
-    if (userPrediction) {
-      userPrediction.predictionStatus = predictionStatus;
-    } else {
-      match.userPredictions.push({ userId, predictionStatus });
-    }
-
-    await match.save();
-    res.status(200).json({ message: 'Prediction status updated successfully' });
+    return res.status(200).json({
+      message: 'Prediction status updated successfully',
+      matchId,
+      userId,
+      sourceType: result.sourceType,
+      predictionStatus: result.predictionStatus,
+    });
   } catch (error) {
     console.error('Error updating prediction status:', error);
-    res.status(500).json({ message: 'Failed to update prediction status' });
+    return res.status(500).json({ message: 'Failed to update prediction status' });
   }
 });
+
 
 
 app.post('/match/addRoundResults/:id', async (req, res) => {
@@ -7005,6 +7107,14 @@ app.post('/api/scores', async (req, res) => {
       });
     }
 
+    const syncPredictionStatusMarker = async () => {
+      try {
+        await updateClassicFightPredictionStatus(matchId, playerId, 'submitted');
+      } catch (markerError) {
+        console.warn('Score saved but prediction status marker could not be synced:', markerError.message);
+      }
+    };
+
     // Check if there's an existing record with the same playerId and matchId
     let existingScore = await Score.findOne({ playerId, matchId });
 
@@ -7012,17 +7122,19 @@ app.post('/api/scores', async (req, res) => {
       // If a record exists, update its values
       existingScore.predictions = predictions;
       await existingScore.save();
+      await syncPredictionStatusMarker();
       clearPublicResponseCache();
-      res.status(200).send(existingScore);
-    } else {
-      // If no record exists, create a new one
-      const score = new Score({ playerId, matchId, predictions });
-      await score.save();
-      clearPublicResponseCache();
-      res.status(201).send(score);
+      return res.status(200).send(existingScore);
     }
+
+    // If no record exists, create a new one
+    const score = new Score({ playerId, matchId, predictions });
+    await score.save();
+    await syncPredictionStatusMarker();
+    clearPublicResponseCache();
+    return res.status(201).send(score);
   } catch (error) {
-    res.status(400).send(error);
+    return res.status(400).send(error);
   }
 });
 
@@ -8926,6 +9038,102 @@ app.get('/news', async (req, res) => {
   } catch (error) {
     console.error('Error loading news:', error.message);
     res.status(500).json({ success: false, message: 'Failed to load news.' });
+  }
+});
+
+app.get('/api/public/fight-news-calendar', async (req, res) => {
+  try {
+    const { payload, cacheState } = await readThroughPublicCache(
+      getPublicCacheKey(req, 'public-fight-news-calendar'),
+      async () => {
+        const limit = parsePositiveInteger(req.query.limit, 40, 120);
+        const now = new Date();
+        const [dbArticles, feed] = await Promise.all([
+          News.find().sort({ dateCreated: -1, createdAt: -1 }).limit(limit * 2).lean(),
+          parser.parseURL(process.env.UFC_NEWS_RSS_URL || GOOGLE_NEWS_UFC_RSS_FEED_URL).catch((error) => {
+            console.warn('Fight-news calendar RSS unavailable:', error.message);
+            return { items: [] };
+          }),
+        ]);
+
+        const dbItems = dbArticles.map((article) => ({
+          _id: article._id,
+          title: article.title,
+          description: article.description,
+          contentSnippet: article.description,
+          link: article.link,
+          pubDate: article.pubDate || article.dateCreated || article.createdAt,
+          isoDate: article.pubDate || article.dateCreated || article.createdAt,
+          source: article.source || 'database',
+        }));
+
+        const seen = new Set();
+        const items = [...dbItems, ...(feed.items || [])]
+          .map((article, index) => {
+            const candidate = ufcEventDiscoveryPrivate.parseUfcEventCandidateFromRssItem(article, { now });
+            if (!candidate || !candidate.eventDate) return null;
+
+            const sufficiency = ufcEventDiscoveryPrivate.hasSufficientEventData(candidate, { now });
+            const tooOld = candidate.eventDate.getTime() < now.getTime() - (48 * 60 * 60 * 1000);
+            if (tooOld || (!sufficiency.ok && Number(candidate.confidence || 0) < 45)) return null;
+
+            const dedupeKey = candidate.discoveryKey || candidate.articleUrl || `${candidate.eventName}-${candidate.eventDate.toISOString().slice(0, 10)}`;
+            if (seen.has(dedupeKey)) return null;
+            seen.add(dedupeKey);
+
+            return {
+              _id: `fight-news-${dedupeKey || index}`.replace(/[^a-zA-Z0-9:_-]/g, '-'),
+              sourceType: 'fight-news',
+              title: candidate.eventName || candidate.title || 'Upcoming fight news event',
+              matchName: candidate.eventName || candidate.title || 'Upcoming fight news event',
+              description: candidate.description || candidate.title || '',
+              matchDescription: candidate.description || candidate.title || '',
+              eventDate: candidate.eventDate.toISOString(),
+              matchDate: candidate.eventDate.toISOString(),
+              eventTime: candidate.matchTime || '',
+              matchTime: candidate.matchTime || '',
+              venue: candidate.venue || candidate.city || 'News event',
+              city: candidate.city || '',
+              fighterA: candidate.fighterA || '',
+              fighterB: candidate.fighterB || '',
+              matchFighterA: candidate.fighterA || '',
+              matchFighterB: candidate.fighterB || '',
+              eventName: candidate.eventName || '',
+              eventType: candidate.eventType || '',
+              eventNumber: candidate.eventNumber || null,
+              confidence: candidate.confidence || 0,
+              discoveryKey: candidate.discoveryKey || '',
+              source: candidate.articleSource || 'Google News',
+              articleSource: candidate.articleSource || '',
+              link: candidate.articleUrl || candidate.officialEventUrl || '',
+              officialEventUrl: candidate.officialEventUrl || '',
+              provider: candidate.provider || 'google-news-ufc-rss',
+              calendarEligible: true,
+              isCalendarEvent: true,
+              eventDiscovered: true,
+              pubDate: candidate.publishedAt ? candidate.publishedAt.toISOString() : null,
+            };
+          })
+          .filter(Boolean)
+          .sort((a, b) => new Date(a.matchDate).getTime() - new Date(b.matchDate).getTime())
+          .slice(0, limit);
+
+        return {
+          ok: true,
+          success: true,
+          data: items,
+          items,
+          count: items.length,
+          generatedAt: new Date().toISOString(),
+        };
+      }
+    );
+
+    setPublicCacheHeaders(res, PUBLIC_CACHE_TTL_SECONDS, cacheState);
+    res.status(200).json(payload);
+  } catch (error) {
+    console.error('Error loading fight-news calendar:', error.message);
+    res.status(500).json({ ok: false, success: false, message: 'Failed to load fight-news calendar.' });
   }
 });
 // Update a News article by ID
