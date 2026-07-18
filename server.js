@@ -1100,7 +1100,7 @@ shadowSchema.index({ homepagePromoted: 1, homepagePromotionRank: -1, matchDate: 
 shadowSchema.index({ fighterAId: 1, fighterBId: 1 });
 
 
-const Shadow = mongoose.model('Shadow', shadowSchema);
+const Shadow = mongoose.models.Shadow || mongoose.model('Shadow', shadowSchema);
 app.post('/compare-matches', async (req, res) => {
   try {
       const matches = await Match.find({ shadowTemplatesAdditionStatus: false });
@@ -1590,7 +1590,7 @@ matchSchema.index({ ufcEventNumber: 1 }, { sparse: true });
 matchSchema.index({ autoDiscovered: 1, matchDate: 1 });
 
 
-const Match = mongoose.model('Match', matchSchema);
+const Match = mongoose.models.Match || mongoose.model('Match', matchSchema);
 
 function buildUpcomingEventAutomationPayload(match, context = {}) {
   const item = toPlainObject(match) || {};
@@ -3142,7 +3142,7 @@ const DeviceInfoSchema = new mongoose.Schema({
 DeviceInfoSchema.index({ deviceId: 1 });
 DeviceInfoSchema.index({ email: 1, createdAt: -1 });
 
-const DeviceInfo = mongoose.model('DeviceInfo', DeviceInfoSchema);
+const DeviceInfo = mongoose.models.DeviceInfo || mongoose.model('DeviceInfo', DeviceInfoSchema);
 app.post('/admin/add-device', async (req, res) => {
   try {
     const { deviceId, email } = req.body;
@@ -3223,7 +3223,7 @@ const DeviceInfoSchemaForSpinWheel = new mongoose.Schema({
 DeviceInfoSchemaForSpinWheel.index({ deviceId: 1 });
 DeviceInfoSchemaForSpinWheel.index({ email: 1, createdAt: -1 });
 
-const DeviceInfoSpinWheel = mongoose.model('DeviceInfoSpinWheel', DeviceInfoSchemaForSpinWheel);
+const DeviceInfoSpinWheel = mongoose.models.DeviceInfoSpinWheel || mongoose.model('DeviceInfoSpinWheel', DeviceInfoSchemaForSpinWheel);
 app.post('/admin/add-device-spin-wheel', async (req, res) => {
   try {
     const { deviceId, email } = req.body;
@@ -3343,7 +3343,7 @@ userSchema.index({ playerName: 1 });
 userSchema.index({ createdAt: -1 });
 attachSafeAccountJsonTransform(userSchema);
 
-const User = mongoose.model('User', userSchema);
+const User = mongoose.models.User || mongoose.model('User', userSchema);
 app.put('/update-profile-url', async (req, res) => {
   try {
       const { profileUrl } = req.body;
@@ -5400,7 +5400,7 @@ const adminTokensSchema = new mongoose.Schema({
   totalTokens: { type: String, default: '0' }, // New field to track total tokens
 }, { timestamps: true });
 
-const Admintokens = mongoose.model('Admintokens', adminTokensSchema);
+const Admintokens = mongoose.models.Admintokens || mongoose.model('Admintokens', adminTokensSchema);
 
 // POST API to reward tokens to the admin and update matchReward status
 app.post('/api/reward-tokens-to-admin', async (req, res) => {
@@ -5513,7 +5513,7 @@ affiliateSchema.index({ createdAt: -1 });
 affiliateSchema.index({ totalViews: -1, createdAt: -1 });
 attachSafeAccountJsonTransform(affiliateSchema);
 
-const Affiliate = mongoose.model('Affiliate', affiliateSchema);
+const Affiliate = mongoose.models.Affiliate || mongoose.model('Affiliate', affiliateSchema);
 
 
 app.post('/upload-affiliate-reward', upload.single('image'), async (req, res) => {
@@ -6994,7 +6994,7 @@ scoreSchema.index({ matchId: 1, playerId: 1 });
 scoreSchema.index({ playerId: 1 });
 scoreSchema.index({ matchId: 1 });
 
-const Score = mongoose.model('Score', scoreSchema);
+const Score = mongoose.models.Score || mongoose.model('Score', scoreSchema);
 app.post('/api/scores', async (req, res) => {
   try {
     const { playerId, matchId, predictions } = req.body;
@@ -7255,7 +7255,7 @@ adminSchema.set('toJSON', {
   },
 });
 
-const Admin = mongoose.model('Admin', adminSchema);
+const Admin = mongoose.models.Admin || mongoose.model('Admin', adminSchema);
 
 app.post('/admin/register', async (req, res) => {
   const { firstName, lastName, email, password, profileUrl } = req.body;
@@ -7343,7 +7343,7 @@ youtubeVideosSchema.index({ videoUrl: 1 });
 
 
 
-const YoutubeVideos = mongoose.model('YoutubeVideos', youtubeVideosSchema);
+const YoutubeVideos = mongoose.models.YoutubeVideos || mongoose.model('YoutubeVideos', youtubeVideosSchema);
 
 
 
@@ -7617,7 +7617,7 @@ const userRemovedMatchesSchema = new mongoose.Schema({
 userRemovedMatchesSchema.index({ userId: 1 });
 
 
-const UserRemovedMatches = mongoose.model('UserRemovedMatches', userRemovedMatchesSchema);
+const UserRemovedMatches = mongoose.models.UserRemovedMatches || mongoose.model('UserRemovedMatches', userRemovedMatchesSchema);
 
 
 app.delete('/remove-matches-of-user/:userId', async (req, res) => {
@@ -7757,7 +7757,7 @@ const customUserSchema = new mongoose.Schema({
 }, { timestamps: true });
 
 customUserSchema.index({ createdAt: -1 });
-const Usernonregistered = mongoose.model('Usernonregistered', customUserSchema);
+const Usernonregistered = mongoose.models.Usernonregistered || mongoose.model('Usernonregistered', customUserSchema);
 
 // POST API to create a new non-registered user
 app.post('/api/users/nonregistered', async (req, res) => {
@@ -7854,7 +7854,7 @@ const ForumSchema = new mongoose.Schema({
   ]
 });
 
-const Forum = mongoose.model('Forum', ForumSchema);
+const Forum = mongoose.models.Forum || mongoose.model('Forum', ForumSchema);
 app.post('/threads', async (req, res) => {
   try {
     const newThread = {
@@ -8247,7 +8247,7 @@ const redListSchema = new mongoose.Schema({
   profileUrl: String,
 }, { timestamps: true });
 
-const Redusers = mongoose.model('Redusers', redListSchema);
+const Redusers = mongoose.models.Redusers || mongoose.model('Redusers', redListSchema);
 
 app.post('/redusers', async (req, res) => {
   try {
@@ -8355,7 +8355,7 @@ const siteStatsSchema = new mongoose.Schema({
 });
 
 siteStatsSchema.index({ domain: 1 });
-const SiteStats = mongoose.model('SiteStats', siteStatsSchema);
+const SiteStats = mongoose.models.SiteStats || mongoose.model('SiteStats', siteStatsSchema);
 
 app.post('/track-click', async (req, res) => {
   const { deviceId, domain } = req.body;
@@ -8527,7 +8527,7 @@ const faqSchema = new mongoose.Schema({
 });
 
 faqSchema.index({ title: 1 });
-const Faqs = mongoose.model('Faqs', faqSchema);
+const Faqs = mongoose.models.Faqs || mongoose.model('Faqs', faqSchema);
 
 
 app.delete('/all/delete/faqs', async (req, res) => {
@@ -8649,7 +8649,7 @@ const testimonialSchema = new mongoose.Schema({
 });
 testimonialSchema.index({ author: 1 });
 
-const Testimonials = mongoose.model('Testimonials', testimonialSchema);
+const Testimonials = mongoose.models.Testimonials || mongoose.model('Testimonials', testimonialSchema);
 
 
 app.delete('/all/delete/testimonials', async (req, res) => {
@@ -8756,7 +8756,7 @@ const newsSchema = new mongoose.Schema({
 
 newsSchema.index({ dateCreated: -1 });
 newsSchema.index({ title: 1 });
-const News = mongoose.model('News', newsSchema);
+const News = mongoose.models.News || mongoose.model('News', newsSchema);
 
 
 // Delete all News articles
@@ -8996,7 +8996,7 @@ const sponsorSchema = new mongoose.Schema({
 
 sponsorSchema.index({ email: 1 });
 sponsorSchema.index({ dateCreated: -1 });
-const Sponsors = mongoose.model('Sponsors', sponsorSchema);
+const Sponsors = mongoose.models.Sponsors || mongoose.model('Sponsors', sponsorSchema);
 
 // Get all sponsors by email
 app.get('/sponsors/email/:email', async (req, res) => {
@@ -9281,7 +9281,7 @@ blogSchema.index({ createdAt: -1 });
 blogSchema.index({ metaTitle: 1 });
 
 
-const Blog = mongoose.model('Blog', blogSchema);
+const Blog = mongoose.models.Blog || mongoose.model('Blog', blogSchema);
 
 app.post('/api/create-blog', upload.fields([
   { name: 'blogHeaderImage', maxCount: 1 },
@@ -9505,7 +9505,7 @@ const referralSchema = new mongoose.Schema({
 referralSchema.index({ referrer: 1, createdAt: -1 });
 referralSchema.index({ referredUser: 1 });
 
-const Referral = mongoose.model('Referral', referralSchema);
+const Referral = mongoose.models.Referral || mongoose.model('Referral', referralSchema);
 
 app.get('/api/referrals', async (req, res) => {
   try {
@@ -9600,7 +9600,7 @@ const notificationSchema = new mongoose.Schema({
 }, { timestamps: true });
 
 notificationSchema.index({ read: 1, createdAt: -1 });
-const Notification = mongoose.model('Notification', notificationSchema);
+const Notification = mongoose.models.Notification || mongoose.model('Notification', notificationSchema);
 
 // GET all notifications
 app.get('/api/notifications', async (req, res) => {
@@ -9664,7 +9664,7 @@ const messageSchema = new mongoose.Schema({
   profileUrl: String,
 }, { timestamps: true });
 
-const Message = mongoose.model('Message', messageSchema);
+const Message = mongoose.models.Message || mongoose.model('Message', messageSchema);
 
 
 // --- Pusher config ---
