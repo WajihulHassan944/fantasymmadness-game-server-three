@@ -908,6 +908,8 @@ function pickPublicFightFields(fight = {}, sourceType = 'match') {
     fighterAImage: item.fighterAImage,
     fighterBImage: item.fighterBImage,
     promotionBackground: item.promotionBackground,
+    fightPosterImage: item.fightPosterImage || item.promotionBackground || '',
+    fightPosterMobileImage: item.fightPosterMobileImage || item.fightPosterImage || item.promotionBackground || '',
     matchDescription: item.matchDescription,
     matchType: item.matchType,
     matchTokens: item.matchTokens,
@@ -922,6 +924,8 @@ function pickPublicFightFields(fight = {}, sourceType = 'match') {
       title: item.homepagePromotionTitle || '',
       subtitle: item.homepagePromotionSubtitle || '',
       ctaLabel: item.homepagePromotionCtaLabel || '',
+      posterImage: item.fightPosterImage || item.promotionBackground || '',
+      mobilePosterImage: item.fightPosterMobileImage || item.fightPosterImage || item.promotionBackground || '',
       startsAt: item.homepagePromotionStartsAt || null,
       endsAt: item.homepagePromotionEndsAt || null,
       calendarSource: item.homepagePromotionCalendarSource || '',
@@ -1120,6 +1124,8 @@ const shadowSchema = new mongoose.Schema({
   fighterAId: { type: mongoose.Schema.Types.ObjectId, ref: 'CombatFighter' },
   fighterBId: { type: mongoose.Schema.Types.ObjectId, ref: 'CombatFighter' },
   promotionBackground: String,
+  fightPosterImage: String,
+  fightPosterMobileImage: String,
   matchDescription: String,
   matchVideoUrl: String,
   matchDate: Date,
@@ -1146,7 +1152,9 @@ const shadowSchema = new mongoose.Schema({
   maxRounds: Number,
   fighterAImageDeleteUrl: String, // ImgBB delete URL for Fighter A's image
   fighterBImageDeleteUrl: String, 
-  promotionBackgroundDeleteUrl: String, 
+  promotionBackgroundDeleteUrl: String,
+  fightPosterImageDeleteUrl: String,
+  fightPosterMobileImageDeleteUrl: String,
   matchStatus: { type: String, enum: ['Finished', 'Ongoing', 'Draft', 'Scheduled', 'Live', 'Open', 'Closed'], default: 'Ongoing' },
   
   // Boxing-specific stats
@@ -1647,6 +1655,10 @@ matchReward: { type: String, enum: ['Rewarded', 'NotRewarded'], default: 'NotRew
 
   promotionBackgroundDeleteUrl:String,
   promotionBackground:String,
+  fightPosterImage:String,
+  fightPosterMobileImage:String,
+  fightPosterImageDeleteUrl:String,
+  fightPosterMobileImageDeleteUrl:String,
 
   // Boxing-specific stats
   BoxingMatch: {
