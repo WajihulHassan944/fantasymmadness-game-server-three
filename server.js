@@ -10069,11 +10069,16 @@ app.delete('/api/messages/delete-all', async (req, res) => {
 const {
   WRESTLING_STAT_KEYS,
   WRESTLING_WINNER_VALUES,
+  WRESTLING_FINISH_TYPES,
+  WRESTLING_TIME_RANGES,
   DEFAULT_WRESTLING_SCORING_RULE,
   DEFAULT_WRESTLING_PAYOUT_RULE,
   normalizeWrestlingStats,
   normalizeScoringRule,
   normalizePayoutRule,
+  normalizeWrestlingTimeRange,
+  getWrestlingTimeRange,
+  getWrestlingTimeRangeBySeconds,
   calculateProWrestlingScore,
   rankWrestlingPredictions,
   calculatePayoutDistribution,
@@ -10224,6 +10229,13 @@ const proWrestlingMatchSchema = new mongoose.Schema({
     enum: ['PINFALL', 'SUBMISSION', 'DQ', 'COUNT_OUT', 'DRAW', 'NO_CONTEST', 'OTHER', null],
     default: null,
   },
+  officialMatchDurationSeconds: { type: Number, min: 0, default: null },
+  officialMatchTimeRange: {
+    type: String,
+    enum: [...WRESTLING_TIME_RANGES.map((range) => range.key), null],
+    default: null,
+  },
+  matchEndedAt: Date,
   statsVersion: { type: Number, min: 0, default: 0 },
   description: String,
   bannerImage: String,
@@ -10297,6 +10309,16 @@ const proWrestlingPredictionSchema = new mongoose.Schema({
   competitorA: { type: wrestlingActionStatsSchema, required: true },
   competitorB: { type: wrestlingActionStatsSchema, required: true },
   winnerPrediction: { type: String, enum: WRESTLING_WINNER_VALUES, required: true },
+  finishTypePrediction: {
+    type: String,
+    enum: [...WRESTLING_FINISH_TYPES, null],
+    default: null,
+  },
+  matchTimeRangePrediction: {
+    type: String,
+    enum: [...WRESTLING_TIME_RANGES.map((range) => range.key), null],
+    default: null,
+  },
   predictionStatus: { type: String, enum: PRO_WRESTLING_PREDICTION_STATUSES, default: 'DRAFT' },
   submittedAt: Date,
   lockedAt: Date,
@@ -10478,6 +10500,70 @@ const wrestlingNumber = (value, fallback = 0) => {
   return Number.isFinite(parsed) ? parsed : fallback;
 };
 
+const parseWrestlingDurationSeconds = (value) => {
+  if (value === undefined || value === null || value === '') return null;
+  if (typeof value === 'number' && Number.isFinite(value)) return Math.max(0, Math.floor(value));
+  const raw = String(value).trim();
+  if (/^\d+$/.test(raw)) return Math.max(0, Number.parseInt(raw, 10));
+  const parts = raw.split(':').map((part) => Number.parseInt(part, 10));
+  if (parts.some((part) => !Number.isFinite(part) || part < 0)) return null;
+  if (parts.length === 2) return Math.max(0, (parts[0] * 60) + parts[1]);
+  if (parts.length === 3) return Math.max(0, (parts[0] * 3600) + (parts[1] * 60) + parts[2]);
+  return null;
+};
+
+const formatWrestlingElapsed = (seconds) => {
+  const safe = Math.max(0, Math.floor(wrestlingNumber(seconds, 0)));
+  const hours = Math.floor(safe / 3600);
+  const minutes = Math.floor((safe % 3600) / 60);
+  const remainingSeconds = safe % 60;
+  return hours > 0
+    ? `${String(hours).padStart(2, '0')}:${String(minutes).padStart(2, '0')}:${String(remainingSeconds).padStart(2, '0')}`
+    : `${String(minutes).padStart(2, '0')}:${String(remainingSeconds).padStart(2, '0')}`;
+};
+
+const getWrestlingElapsedState = (match, at = new Date()) => {
+  const document = wrestlingPlainObject(match) || {};
+  const startedAt = document.liveStartedAt ? new Date(document.liveStartedAt) : null;
+  const stoppedAtValue = document.matchEndedAt || document.finalizedAt || null;
+  const stoppedAt = stoppedAtValue ? new Date(stoppedAtValue) : null;
+  let elapsedSeconds = document.officialMatchDurationSeconds;
+  if (!Number.isFinite(Number(elapsedSeconds))) {
+    if (startedAt && !Number.isNaN(startedAt.getTime())) {
+      const end = stoppedAt && !Number.isNaN(stoppedAt.getTime()) ? stoppedAt : new Date(at);
+      elapsedSeconds = Math.max(0, Math.floor((end.getTime() - startedAt.getTime()) / 1000));
+    } else {
+      elapsedSeconds = 0;
+    }
+  }
+  const activeRange = getWrestlingTimeRangeBySeconds(elapsedSeconds);
+  return {
+    startedAt: startedAt && !Number.isNaN(startedAt.getTime()) ? startedAt : null,
+    stoppedAt: stoppedAt && !Number.isNaN(stoppedAt.getTime()) ? stoppedAt : null,
+    elapsedSeconds,
+    elapsedLabel: formatWrestlingElapsed(elapsedSeconds),
+    activeRange,
+    standingsLabel: document.status === 'FINALIZED' ? 'OFFICIAL STANDINGS' : 'LIVE / PROVISIONAL STANDINGS',
+  };
+};
+
+const getWrestlingDisplayScore = (prediction, match, activeRangeKey) => {
+  const existingBreakdown = prediction?.scoreBreakdown || {};
+  const storedTimeBonus = wrestlingNumber(existingBreakdown.timeRangeBonus, 0);
+  const storedScore = wrestlingNumber(prediction?.score, 0);
+  const baseScore = Number.isFinite(Number(existingBreakdown.baseScore))
+    ? wrestlingNumber(existingBreakdown.baseScore, 0)
+    : Math.max(0, storedScore - storedTimeBonus);
+  const configuredBonus = wrestlingNumber(match?.scoringRules?.timeRangeBonus, DEFAULT_WRESTLING_SCORING_RULE.timeRangeBonus || 0);
+  const predictedRange = normalizeWrestlingTimeRange(prediction?.matchTimeRangePrediction);
+  const provisionalBonus = predictedRange && activeRangeKey && predictedRange === activeRangeKey ? configuredBonus : 0;
+  return {
+    score: Math.round((baseScore + provisionalBonus + Number.EPSILON) * 100) / 100,
+    baseScore,
+    provisionalTimeRangePoints: provisionalBonus,
+  };
+};
+
 const wrestlingTokenBalance = (value) => {
   const parsed = Number.parseInt(String(value || '0'), 10);
   return Number.isFinite(parsed) ? Math.max(0, parsed) : 0;
@@ -10631,7 +10717,20 @@ const publicWrestlingMatch = (match, options = {}) => {
     delete document.officialStats;
     delete document.officialWinner;
     delete document.finishType;
+    delete document.officialMatchDurationSeconds;
+    delete document.officialMatchTimeRange;
   }
+  const timing = getWrestlingElapsedState(document);
+  document.liveClock = {
+    startedAt: timing.startedAt,
+    stoppedAt: timing.stoppedAt,
+    elapsedSeconds: timing.elapsedSeconds,
+    elapsedLabel: timing.elapsedLabel,
+    activeRange: timing.activeRange,
+    standingsLabel: timing.standingsLabel,
+  };
+  document.matchTimeRanges = WRESTLING_TIME_RANGES;
+  document.finishTypeOptions = WRESTLING_FINISH_TYPES;
   delete document.createdBy;
   delete document.updatedBy;
   if (!options.includeRules) {
@@ -10690,6 +10789,35 @@ const lockWrestlingMatch = async (match, session) => {
   return match;
 };
 
+const startWrestlingMatch = async (match, session, adminId) => {
+  if (!match) return match;
+  if (match.status === 'OPEN') await lockWrestlingMatch(match, session);
+  if (match.status !== 'LOCKED') {
+    throw wrestlingHttpError(409, `Cannot start wrestling match from ${match.status}.`, 'INVALID_MATCH_START_STATUS');
+  }
+  const startedAt = new Date();
+  match.status = 'LIVE';
+  match.liveStartedAt = startedAt;
+  match.matchEndedAt = null;
+  match.officialMatchDurationSeconds = null;
+  match.officialMatchTimeRange = null;
+  match.updatedBy = adminId || match.updatedBy;
+  await match.save(session ? { session } : undefined);
+  await Promise.all([
+    ProWrestlingEntry.updateMany(
+      { matchId: match._id, status: { $in: ['JOINED', 'PREDICTION_SUBMITTED'] } },
+      { $set: { status: 'LOCKED', lockedAt: startedAt } },
+      session ? { session } : undefined,
+    ),
+    ProWrestlingPrediction.updateMany(
+      { matchId: match._id, predictionStatus: 'SUBMITTED' },
+      { $set: { predictionStatus: 'LOCKED', lockedAt: startedAt } },
+      session ? { session } : undefined,
+    ),
+  ]);
+  return match;
+};
+
 const autoLockWrestlingMatches = async () => {
   const now = new Date();
   const dueMatches = await ProWrestlingMatch.find({ status: 'OPEN', lockAt: { $lte: now } }).limit(100);
@@ -10735,10 +10863,16 @@ const recalculateWrestlingScores = async (match, session) => {
     predictionStatus: { $in: ['SUBMITTED', 'LOCKED', 'SCORED', 'SETTLED'] },
   });
   const predictions = await applyWrestlingSession(predictionQuery, session).lean();
+  const timing = getWrestlingElapsedState(match);
   const actualResult = {
     competitorA: normalizeWrestlingStats(match.officialStats?.competitorA),
     competitorB: normalizeWrestlingStats(match.officialStats?.competitorB),
     officialWinner: match.officialWinner,
+    officialFinishType: match.finishType,
+    officialMatchTimeRange: match.status === 'FINALIZED' || match.status === 'SCORING'
+      ? match.officialMatchTimeRange
+      : undefined,
+    activeMatchTimeRange: match.status === 'LIVE' ? timing.activeRange?.key : undefined,
   };
 
   const calculated = predictions.map((prediction) => {
@@ -11137,16 +11271,19 @@ const saveWrestlingPrediction = async (req, res) => {
       throw wrestlingHttpError(409, 'This contest entry can no longer be edited.', 'ENTRY_LOCKED');
     }
 
+    const requestedStatus = String(req.body.predictionStatus || 'SUBMITTED').toUpperCase();
+    const predictionStatus = requestedStatus === 'DRAFT' ? 'DRAFT' : 'SUBMITTED';
     const payload = {
       competitorA: normalizeWrestlingStats(req.body.competitorA || req.body.wrestlerA),
       competitorB: normalizeWrestlingStats(req.body.competitorB || req.body.wrestlerB),
       winnerPrediction: String(req.body.winnerPrediction || '').toUpperCase(),
+      finishTypePrediction: String(req.body.finishTypePrediction || '').toUpperCase() || null,
+      matchTimeRangePrediction: normalizeWrestlingTimeRange(req.body.matchTimeRangePrediction),
     };
-    const errors = validateWrestlingPredictionPayload(payload);
+    const errors = validateWrestlingPredictionPayload(payload, {
+      requireOutcomeFields: predictionStatus === 'SUBMITTED',
+    });
     if (errors.length) throw wrestlingHttpError(400, 'Invalid wrestling prediction payload.', 'INVALID_PREDICTION', errors);
-
-    const requestedStatus = String(req.body.predictionStatus || 'SUBMITTED').toUpperCase();
-    const predictionStatus = requestedStatus === 'DRAFT' ? 'DRAFT' : 'SUBMITTED';
     const now = new Date();
     const prediction = await ProWrestlingPrediction.findOneAndUpdate(
       { matchId, userId },
@@ -11205,17 +11342,28 @@ app.get('/api/wrestling/matches/:matchId/live', requireProWrestlingEnabled, asyn
       try {
         const decoded = jwt.verify(authHeader.slice(7), process.env.JWT_SECRET);
         myPosition = await ProWrestlingPrediction.findOne({ matchId: match._id, userId: decoded.id })
-          .select('score rank previousRank scoreBreakdown predictionStatus')
+          .select('score rank previousRank scoreBreakdown predictionStatus matchTimeRangePrediction finishTypePrediction')
           .lean();
       } catch (error) {
         myPosition = null;
       }
     }
+    const timing = getWrestlingElapsedState(match);
+    if (myPosition && match.status === 'LIVE') {
+      const display = getWrestlingDisplayScore(myPosition, match, timing.activeRange?.key);
+      myPosition = {
+        ...myPosition,
+        score: display.score,
+        provisionalTimeRangePoints: display.provisionalTimeRangePoints,
+      };
+    }
     res.json({
       match: publicWrestlingMatch(match, { revealStats: true, includeRules: true }),
       statsVersion: match.statsVersion,
       myPosition,
-      pollAfterSeconds: 15,
+      liveClock: timing,
+      standingsLabel: timing.standingsLabel,
+      pollAfterSeconds: 10,
     });
   } catch (error) {
     handleWrestlingError(res, error);
@@ -11227,33 +11375,89 @@ app.get('/api/wrestling/matches/:matchId/leaderboard', requireProWrestlingEnable
     const match = await ProWrestlingMatch.findById(req.params.matchId).lean();
     if (!match) throw wrestlingHttpError(404, 'Wrestling match not found.', 'MATCH_NOT_FOUND');
     if (!['LIVE', 'SCORING', 'FINALIZED'].includes(match.status)) {
-      return res.json({ matchId: match._id, status: match.status, data: [], pagination: { page: 1, limit: 50, total: 0, totalPages: 1 } });
+      return res.json({
+        matchId: match._id,
+        status: match.status,
+        standingsLabel: 'STANDINGS NOT ACTIVE',
+        data: [],
+        pagination: { page: 1, limit: 50, total: 0, totalPages: 1 },
+      });
     }
+
     const page = Math.max(1, Number.parseInt(req.query.page || '1', 10));
     const limit = Math.min(100, Math.max(1, Number.parseInt(req.query.limit || '50', 10)));
-    const query = { matchId: match._id, rank: { $exists: true } };
-    const [predictions, total] = await Promise.all([
-      ProWrestlingPrediction.find(query).sort({ rank: 1 }).skip((page - 1) * limit).limit(limit).lean(),
-      ProWrestlingPrediction.countDocuments(query),
-    ]);
-    const userIds = predictions.map((prediction) => prediction.userId);
-    const users = await User.find({ _id: { $in: userIds } }).select('firstName lastName playerName profileUrl').lean();
-    const userMap = new Map(users.map((user) => [String(user._id), user]));
-    const data = predictions.map((prediction) => {
-      const user = userMap.get(String(prediction.userId));
+    const predictions = await ProWrestlingPrediction.find({
+      matchId: match._id,
+      predictionStatus: { $in: ['LOCKED', 'SCORED', 'SETTLED', 'SUBMITTED'] },
+    }).lean();
+    const timing = getWrestlingElapsedState(match);
+
+    const scoredRows = predictions.map((prediction) => {
+      const display = match.status === 'LIVE'
+        ? getWrestlingDisplayScore(prediction, match, timing.activeRange?.key)
+        : {
+          score: wrestlingNumber(prediction.score, 0),
+          baseScore: wrestlingNumber(prediction?.scoreBreakdown?.baseScore, prediction.score),
+          provisionalTimeRangePoints: 0,
+        };
       return {
-        playerId: prediction.userId,
-        playerName: user?.playerName || `${user?.firstName || ''} ${user?.lastName || ''}`.trim() || 'Fantasy player',
-        profileUrl: user?.profileUrl || null,
-        score: prediction.score,
-        rank: prediction.rank,
-        previousRank: prediction.previousRank,
-        rankMovement: prediction.previousRank ? prediction.previousRank - prediction.rank : 0,
+        id: String(prediction._id),
+        predictionId: prediction._id,
+        userId: prediction.userId,
+        submittedAt: prediction.submittedAt || prediction.createdAt,
+        previousRank: prediction.rank,
+        totalScore: display.score,
+        baseScore: display.baseScore,
+        provisionalTimeRangePoints: display.provisionalTimeRangePoints,
+        normalizedError: prediction.normalizedError,
         exactPredictionCount: prediction.exactPredictionCount,
-        payoutAmount: match.status === 'FINALIZED' ? prediction.payoutAmount : undefined,
+        finisherError: prediction.finisherError,
+        payoutAmount: prediction.payoutAmount,
+        matchTimeRangePrediction: prediction.matchTimeRangePrediction,
+        finishTypePrediction: prediction.finishTypePrediction,
       };
     });
-    res.json({ matchId: match._id, status: match.status, data, pagination: { page, limit, total, totalPages: Math.max(1, Math.ceil(total / limit)) } });
+    const ranked = rankWrestlingPredictions(scoredRows);
+    const total = ranked.length;
+    const pageRows = ranked.slice((page - 1) * limit, page * limit);
+    const userIds = pageRows.map((row) => row.userId);
+    const users = await User.find({ _id: { $in: userIds } })
+      .select('firstName lastName playerName profileUrl')
+      .lean();
+    const userMap = new Map(users.map((user) => [String(user._id), user]));
+    const data = pageRows.map((row) => {
+      const user = userMap.get(String(row.userId));
+      return {
+        playerId: row.userId,
+        playerName: user?.playerName || `${user?.firstName || ''} ${user?.lastName || ''}`.trim() || 'Fantasy player',
+        profileUrl: user?.profileUrl || null,
+        score: row.totalScore,
+        baseScore: row.baseScore,
+        provisionalTimeRangePoints: row.provisionalTimeRangePoints,
+        matchTimeRangePrediction: row.matchTimeRangePrediction,
+        finishTypePrediction: row.finishTypePrediction,
+        rank: row.rank,
+        previousRank: row.previousRank,
+        rankMovement: row.previousRank ? row.previousRank - row.rank : 0,
+        exactPredictionCount: row.exactPredictionCount,
+        payoutAmount: match.status === 'FINALIZED' ? row.payoutAmount : undefined,
+      };
+    });
+
+    res.json({
+      matchId: match._id,
+      status: match.status,
+      standingsLabel: timing.standingsLabel,
+      liveClock: timing,
+      activeMatchTimeRange: timing.activeRange,
+      data,
+      pagination: {
+        page,
+        limit,
+        total,
+        totalPages: Math.max(1, Math.ceil(total / limit)),
+      },
+    });
   } catch (error) {
     handleWrestlingError(res, error);
   }
@@ -11681,9 +11885,10 @@ app.put('/api/admin/wrestling/matches/:id/status', requireProWrestlingEnabled, v
       if (nextStatus === 'OPEN') match.publishedAt = new Date();
       if (nextStatus === 'LOCKED') {
         await lockWrestlingMatch(match, session);
+      } else if (nextStatus === 'LIVE') {
+        await startWrestlingMatch(match, session, req.admin.id);
       } else {
         match.status = nextStatus;
-        if (nextStatus === 'LIVE') match.liveStartedAt = new Date();
         if (nextStatus === 'SCORING') match.scoringStartedAt = new Date();
         match.updatedBy = req.admin.id;
         await match.save(session ? { session } : undefined);
@@ -11730,6 +11935,53 @@ app.put('/api/admin/wrestling/matches/:id/status', requireProWrestlingEnabled, v
   }
 });
 
+app.post('/api/admin/wrestling/matches/:id/start', requireProWrestlingEnabled, verifyAdminToken, async (req, res) => {
+  try {
+    const result = await runWrestlingTransaction(async (session) => {
+      const match = await applyWrestlingSession(ProWrestlingMatch.findById(req.params.id), session);
+      if (!match) throw wrestlingHttpError(404, 'Wrestling match not found.', 'MATCH_NOT_FOUND');
+      if (match.status === 'LIVE' && match.liveStartedAt) return { match, idempotent: true };
+      if (!['OPEN', 'LOCKED'].includes(match.status)) {
+        throw wrestlingHttpError(409, 'Only open or locked wrestling matches can be started.', 'INVALID_MATCH_START_STATUS');
+      }
+      const before = wrestlingPlainObject(match);
+      await startWrestlingMatch(match, session, req.admin.id);
+      await notifyWrestlingEntrants({
+        match,
+        type: 'MATCH_LIVE',
+        title: 'Pro Wrestling match is live',
+        message: `${match.matchTitle} is live. Predictions are locked and provisional standings are active.`,
+        metadata: { liveStartedAt: match.liveStartedAt },
+        session,
+      });
+      match.liveNotificationSent = true;
+      await match.save(session ? { session } : undefined);
+      await recalculateWrestlingScores(match, session);
+      await writeWrestlingAudit({
+        req,
+        action: 'WRESTLING_MATCH_STARTED',
+        entityType: 'ProWrestlingMatch',
+        entityId: match._id,
+        before,
+        after: match,
+        reason: req.body.reason,
+        session,
+      });
+      return { match, idempotent: false };
+    });
+    await safeWrestlingTrigger('match-started', {
+      matchId: String(result.match._id),
+      liveStartedAt: result.match.liveStartedAt,
+    });
+    res.json({
+      ...result,
+      match: publicWrestlingMatch(result.match, { revealStats: true, includeRules: true }),
+    });
+  } catch (error) {
+    handleWrestlingError(res, error);
+  }
+});
+
 app.put('/api/admin/wrestling/matches/:id/live-stats', requireProWrestlingEnabled, verifyAdminToken, async (req, res) => {
   try {
     const statsA = normalizeWrestlingStats(req.body.competitorA || req.body.wrestlerA);
@@ -11748,11 +12000,11 @@ app.put('/api/admin/wrestling/matches/:id/live-stats', requireProWrestlingEnable
       if (req.body.finishType) match.finishType = String(req.body.finishType).toUpperCase();
       match.statsVersion += 1;
       if (['OPEN', 'LOCKED'].includes(match.status)) {
-        match.status = 'LIVE';
-        match.liveStartedAt = new Date();
+        await startWrestlingMatch(match, session, req.admin.id);
+      } else {
+        match.updatedBy = req.admin.id;
+        await match.save(session ? { session } : undefined);
       }
-      match.updatedBy = req.admin.id;
-      await match.save(session ? { session } : undefined);
       const ranked = await recalculateWrestlingScores(match, session);
       await writeWrestlingAudit({ req, action: 'WRESTLING_LIVE_STATS_UPDATED', entityType: 'ProWrestlingMatch', entityId: match._id, before, after: match, reason: req.body.reason, session });
       return { match, rankedCount: ranked.length };
@@ -11768,6 +12020,17 @@ app.put('/api/admin/wrestling/matches/:id/result', requireProWrestlingEnabled, v
   try {
     const officialWinner = String(req.body.officialWinner || '').toUpperCase();
     if (!WRESTLING_WINNER_VALUES.includes(officialWinner)) throw wrestlingHttpError(400, 'Official winner must be A, B, or DRAW.', 'INVALID_WINNER');
+    const finishType = String(req.body.finishType || (officialWinner === 'DRAW' ? 'DRAW' : '')).toUpperCase();
+    if (!WRESTLING_FINISH_TYPES.includes(finishType)) {
+      throw wrestlingHttpError(400, `finishType must be one of: ${WRESTLING_FINISH_TYPES.join(', ')}.`, 'INVALID_FINISH_TYPE');
+    }
+    const officialMatchDurationSeconds = parseWrestlingDurationSeconds(
+      req.body.officialMatchDurationSeconds ?? req.body.officialMatchTime ?? req.body.matchDuration,
+    );
+    if (!Number.isFinite(officialMatchDurationSeconds)) {
+      throw wrestlingHttpError(400, 'Enter the official match duration as seconds or MM:SS.', 'OFFICIAL_MATCH_TIME_REQUIRED');
+    }
+    const officialMatchTimeRange = getWrestlingTimeRangeBySeconds(officialMatchDurationSeconds).key;
     const result = await runWrestlingTransaction(async (session) => {
       const match = await applyWrestlingSession(ProWrestlingMatch.findById(req.params.id), session);
       if (!match) throw wrestlingHttpError(404, 'Wrestling match not found.', 'MATCH_NOT_FOUND');
@@ -11776,7 +12039,10 @@ app.put('/api/admin/wrestling/matches/:id/result', requireProWrestlingEnabled, v
       if (req.body.competitorA || req.body.wrestlerA) match.officialStats.competitorA = normalizeWrestlingStats(req.body.competitorA || req.body.wrestlerA);
       if (req.body.competitorB || req.body.wrestlerB) match.officialStats.competitorB = normalizeWrestlingStats(req.body.competitorB || req.body.wrestlerB);
       match.officialWinner = officialWinner;
-      match.finishType = String(req.body.finishType || (officialWinner === 'DRAW' ? 'DRAW' : 'OTHER')).toUpperCase();
+      match.finishType = finishType;
+      match.officialMatchDurationSeconds = officialMatchDurationSeconds;
+      match.officialMatchTimeRange = officialMatchTimeRange;
+      match.matchEndedAt = new Date();
       match.status = 'SCORING';
       match.scoringStartedAt = new Date();
       match.statsVersion += 1;
@@ -11799,6 +12065,8 @@ app.put('/api/admin/wrestling/matches/:id/result', requireProWrestlingEnabled, v
         promotionName: result.match.promotionName,
         officialWinner: result.match.officialWinner,
         finishType: result.match.finishType,
+        officialMatchDurationSeconds: result.match.officialMatchDurationSeconds,
+        officialMatchTimeRange: result.match.officialMatchTimeRange,
         statsVersion: result.match.statsVersion,
       },
       metadata: { route: '/api/admin/wrestling/matches/:id/result', action: 'wrestling-result-updated' },
@@ -11834,6 +12102,10 @@ app.post('/api/admin/wrestling/matches/:id/finalize', requireProWrestlingEnabled
       if (match.settlement?.status === 'PAID' && match.status === 'FINALIZED') return { match, idempotent: true };
       if (!['LIVE', 'SCORING', 'LOCKED'].includes(match.status)) throw wrestlingHttpError(409, 'Wrestling match is not ready for finalization.', 'INVALID_FINALIZATION_STATUS');
       if (!WRESTLING_WINNER_VALUES.includes(match.officialWinner)) throw wrestlingHttpError(400, 'Set the official wrestling winner before finalizing.', 'OFFICIAL_WINNER_REQUIRED');
+      if (!WRESTLING_FINISH_TYPES.includes(match.finishType)) throw wrestlingHttpError(400, 'Set the official wrestling finish type before finalizing.', 'OFFICIAL_FINISH_TYPE_REQUIRED');
+      if (!Number.isFinite(Number(match.officialMatchDurationSeconds)) || !normalizeWrestlingTimeRange(match.officialMatchTimeRange)) {
+        throw wrestlingHttpError(400, 'Set the official match duration before finalizing.', 'OFFICIAL_MATCH_TIME_REQUIRED');
+      }
       const before = wrestlingPlainObject(match);
       match.status = 'SCORING';
       match.scoringStartedAt = match.scoringStartedAt || new Date();
@@ -12227,13 +12499,19 @@ app.put('/api/admin/wrestling/matches/:id/predictions/:userId', requireProWrestl
         competitorA: normalizeWrestlingStats(req.body.competitorA || prediction.competitorA),
         competitorB: normalizeWrestlingStats(req.body.competitorB || prediction.competitorB),
         winnerPrediction: String(req.body.winnerPrediction || prediction.winnerPrediction).toUpperCase(),
+        finishTypePrediction: String(req.body.finishTypePrediction || prediction.finishTypePrediction || '').toUpperCase() || null,
+        matchTimeRangePrediction: normalizeWrestlingTimeRange(
+          req.body.matchTimeRangePrediction || prediction.matchTimeRangePrediction,
+        ),
       };
-      const errors = validateWrestlingPredictionPayload(payload);
+      const errors = validateWrestlingPredictionPayload(payload, { requireOutcomeFields: true });
       if (errors.length) throw wrestlingHttpError(400, 'Invalid wrestling prediction payload.', 'INVALID_PREDICTION', errors);
       const before = wrestlingPlainObject(prediction);
       prediction.competitorA = payload.competitorA;
       prediction.competitorB = payload.competitorB;
       prediction.winnerPrediction = payload.winnerPrediction;
+      prediction.finishTypePrediction = payload.finishTypePrediction;
+      prediction.matchTimeRangePrediction = payload.matchTimeRangePrediction;
       prediction.predictionStatus = ['LIVE', 'SCORING'].includes(match.status) ? 'SCORED' : 'SUBMITTED';
       prediction.submittedAt = prediction.submittedAt || new Date();
       await prediction.save(session ? { session } : undefined);

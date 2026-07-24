@@ -50,6 +50,7 @@ const requiredRoutes = [
   'POST /api/admin/wrestling/wrestlers',
   'POST /api/admin/wrestling/matches',
   'PUT /api/admin/wrestling/matches/:id/status',
+  'POST /api/admin/wrestling/matches/:id/start',
   'PUT /api/admin/wrestling/matches/:id/live-stats',
   'PUT /api/admin/wrestling/matches/:id/result',
   'POST /api/admin/wrestling/matches/:id/recalculate',
@@ -116,5 +117,10 @@ assert(!source.includes("predictionStatus: { $in: ['DRAFT', 'SUBMITTED'] }"), 'D
 assert(source.includes('runWrestlingTransaction'), 'Transactional wallet/settlement helper is missing.');
 assert(source.includes("type: 'WRESTLING_ADMIN_ADJUSTMENT'"), 'Audited wrestling wallet adjustment is missing.');
 assert(source.includes("gameMode: String"), 'Legacy Match game-mode metadata is missing.');
+
+assert(source.includes('matchTimeRangePrediction'), 'Wrestling time-range prediction field is missing.');
+assert(source.includes('officialMatchDurationSeconds'), 'Official wrestling match duration field is missing.');
+assert(source.includes('LIVE / PROVISIONAL STANDINGS'), 'Provisional standings label is missing.');
+assert(source.includes('provisionalTimeRangePoints'), 'Live provisional time-range scoring is missing.');
 
 console.log(`Pro Wrestling route/regression tests passed (${wrestlingRoutes.length} wrestling endpoints; ${originalRoutes.length} legacy routes preserved).`);
