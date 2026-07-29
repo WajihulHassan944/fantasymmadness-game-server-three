@@ -8222,6 +8222,7 @@ app.get('/dashboard-counts', async (req, res) => {
     const matchesCount = await Match.countDocuments({});
     const usersCount = await User.countDocuments({});
     const shadowTemplatesCount = await Shadow.countDocuments({});
+    const apparelOrdersCount = await ApparelOrder.countDocuments({});
 
     // Fetch total clicks from SiteStats
     const stats = await SiteStats.findOne({}).lean();
@@ -8236,6 +8237,7 @@ app.get('/dashboard-counts', async (req, res) => {
       matchesCount,
       usersCount,
       shadowTemplatesCount,
+      apparelOrdersCount,
       totalClicks,
       unreadNotificationsCount
     });
@@ -10895,6 +10897,131 @@ const verifyWrestlingCronOrAdmin = (req, res, next) => {
   }
   return verifyAdminToken(req, res, next);
 };
+
+const APPAREL_ORDER_STATUSES = ['PENDING', 'CONFIRMED', 'FULFILLING', 'SHIPPED', 'CANCELLED'];
+
+function serializeApparelOrder(order = {}) {
+  const row = typeof order.toObject === 'function' ? order.toObject() : order;
+  return {
+    _id: String(row._id || ''),
+    orderNumber: row.orderNumber,
+    userId: row.userId ? String(row.userId) : '',
+    customerName: row.customerName,
+    email: row.email,
+    phone: row.phone || '',
+    shippingAddress: row.shippingAddress,
+    city: row.city,
+    state: row.state || '',
+    zipCode: row.zipCode,
+    country: row.country || 'United States',
+    notes: row.notes || '',
+    items: Array.isArray(row.items) ? row.items : [],
+    subtotal: Number(row.subtotal || 0),
+    currency: row.currency || 'USD',
+    status: row.status || 'PENDING',
+    source: row.source || 'public-apparel-page',
+    createdAt: row.createdAt,
+    updatedAt: row.updatedAt,
+  };
+}
+
+async function buildApparelOrderAdminSummary() {
+  const [statusCounts, revenueRows] = await Promise.all([
+    ApparelOrder.aggregate([{ $group: { _id: '$status', count: { $sum: 1 } } }]),
+    ApparelOrder.aggregate([
+      { $match: { status: { $ne: 'CANCELLED' } } },
+      { $group: { _id: null, revenue: { $sum: '$subtotal' } } },
+    ]),
+  ]);
+
+  const summary = {
+    total: 0,
+    pending: 0,
+    confirmed: 0,
+    fulfilling: 0,
+    shipped: 0,
+    cancelled: 0,
+    revenue: Number((revenueRows?.[0]?.revenue || 0).toFixed(2)),
+  };
+
+  for (const row of statusCounts || []) {
+    const key = String(row._id || 'PENDING').toLowerCase();
+    summary[key] = Number(row.count || 0);
+    summary.total += Number(row.count || 0);
+  }
+
+  return summary;
+}
+
+function buildApparelOrderAdminFilter(query = {}) {
+  const filter = {};
+  const requestedStatus = String(query.status || '').trim().toUpperCase();
+  if (requestedStatus && APPAREL_ORDER_STATUSES.includes(requestedStatus)) {
+    filter.status = requestedStatus;
+  }
+
+  const search = String(query.search || '').trim();
+  if (search) {
+    const regex = new RegExp(search.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'i');
+    filter.$or = [
+      { orderNumber: regex },
+      { customerName: regex },
+      { email: regex },
+      { phone: regex },
+      { 'items.sku': regex },
+      { 'items.name': regex },
+    ];
+  }
+  return filter;
+}
+
+app.get('/api/admin/apparel-orders', verifyAdminToken, async (req, res) => {
+  try {
+    const page = Math.max(1, Number.parseInt(req.query.page, 10) || 1);
+    const limit = Math.max(1, Math.min(200, Number.parseInt(req.query.limit, 10) || 100));
+    const filter = buildApparelOrderAdminFilter(req.query);
+    const [orders, total, summary] = await Promise.all([
+      ApparelOrder.find(filter).sort({ createdAt: -1 }).skip((page - 1) * limit).limit(limit).lean(),
+      ApparelOrder.countDocuments(filter),
+      buildApparelOrderAdminSummary(),
+    ]);
+
+    res.set('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate');
+    return res.json({
+      ok: true,
+      orders: orders.map(serializeApparelOrder),
+      summary,
+      pagination: { page, limit, total, pages: Math.max(1, Math.ceil(total / limit)) },
+    });
+  } catch (error) {
+    console.error('Error loading admin apparel orders:', error);
+    return res.status(500).json({ ok: false, message: 'Failed to load apparel orders.' });
+  }
+});
+
+app.patch('/api/admin/apparel-orders/:orderId/status', verifyAdminToken, async (req, res) => {
+  try {
+    const { orderId } = req.params;
+    const status = String(req.body?.status || '').trim().toUpperCase();
+    if (!mongoose.isValidObjectId(orderId)) {
+      return res.status(400).json({ ok: false, message: 'Invalid apparel order id.' });
+    }
+    if (!APPAREL_ORDER_STATUSES.includes(status)) {
+      return res.status(400).json({ ok: false, message: 'Invalid apparel order status.' });
+    }
+
+    const order = await ApparelOrder.findByIdAndUpdate(orderId, { status }, { new: true, runValidators: true }).lean();
+    if (!order) {
+      return res.status(404).json({ ok: false, message: 'Apparel order not found.' });
+    }
+
+    clearPublicResponseCache();
+    return res.json({ ok: true, order: serializeApparelOrder(order), summary: await buildApparelOrderAdminSummary() });
+  } catch (error) {
+    console.error('Error updating admin apparel order:', error);
+    return res.status(500).json({ ok: false, message: 'Failed to update apparel order.' });
+  }
+});
 
 const wrestlingRequestIp = (req) => String(req.headers['x-forwarded-for'] || req.socket?.remoteAddress || '').split(',')[0].trim();
 
