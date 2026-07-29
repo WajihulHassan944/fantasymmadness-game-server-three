@@ -4,8 +4,6 @@ const assert = require('assert');
 const {
   DEFAULT_WRESTLING_SCORING_RULE,
   calculateProWrestlingScore,
-  getWrestlingTimeRangeBySeconds,
-  normalizeWrestlingTimeRange,
   rankWrestlingPredictions,
   calculatePayoutDistribution,
   canTransitionWrestlingStatus,
@@ -29,31 +27,6 @@ assert.strictEqual(exactScore.exactPredictionCount, 10);
 assert.strictEqual(exactScore.winnerBonus, 1000);
 assert.strictEqual(exactScore.totalScore, 2340);
 assert.strictEqual(exactScore.normalizedError, 0);
-
-
-assert.strictEqual(getWrestlingTimeRangeBySeconds(299).key, 'UNDER_5');
-assert.strictEqual(getWrestlingTimeRangeBySeconds(300).key, '5_TO_9_59');
-assert.strictEqual(getWrestlingTimeRangeBySeconds(899).key, '10_TO_14_59');
-assert.strictEqual(getWrestlingTimeRangeBySeconds(900).key, '15_TO_19_59');
-assert.strictEqual(getWrestlingTimeRangeBySeconds(1800).key, '30_PLUS');
-assert.strictEqual(normalizeWrestlingTimeRange('10_to_14_59'), '10_TO_14_59');
-
-const outcomePrediction = {
-  ...exactPrediction,
-  finishTypePrediction: 'PINFALL',
-  matchTimeRangePrediction: '10_TO_14_59',
-};
-const outcomeResult = {
-  ...actualResult,
-  finishType: 'PINFALL',
-  officialMatchTimeRange: '10_TO_14_59',
-};
-const outcomeScore = calculateProWrestlingScore(outcomePrediction, outcomeResult, DEFAULT_WRESTLING_SCORING_RULE);
-assert.strictEqual(outcomeScore.finishTypeBonus, 250);
-assert.strictEqual(outcomeScore.timeRangeBonus, 250);
-assert.strictEqual(outcomeScore.totalScore, exactScore.totalScore + 500);
-assert.strictEqual(outcomeScore.finishTypeCorrect, true);
-assert.strictEqual(outcomeScore.timeRangeCorrect, true);
 
 const zeroActual = calculateProWrestlingScore({
   competitorA: { HP: 0, BP: 0, K: 0, PM: 0, FM: 0 },
@@ -86,9 +59,7 @@ assert.strictEqual(canTransitionWrestlingStatus('FINALIZED', 'OPEN'), false);
 assert.strictEqual(isWrestlingPredictionLocked({ status: 'OPEN', lockAt: '2020-01-01T00:00:00Z' }), true);
 assert.strictEqual(isWrestlingPredictionLocked({ status: 'OPEN', lockAt: '2999-01-01T00:00:00Z' }), false);
 
-assert.deepStrictEqual(validateWrestlingPredictionPayload(exactPrediction, { requireOutcomeFields: false }), []);
-assert.deepStrictEqual(validateWrestlingPredictionPayload(outcomePrediction, { requireOutcomeFields: true }), []);
-assert(validateWrestlingPredictionPayload(exactPrediction, { requireOutcomeFields: true }).length >= 2);
+assert.deepStrictEqual(validateWrestlingPredictionPayload(exactPrediction), []);
 assert(validateWrestlingPredictionPayload({ competitorA: {}, competitorB: {}, winnerPrediction: 'X' }).length > 0);
 
 console.log('Pro Wrestling core tests passed.');

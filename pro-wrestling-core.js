@@ -2,23 +2,12 @@
 
 const WRESTLING_STAT_KEYS = Object.freeze(['HP', 'BP', 'K', 'PM', 'FM']);
 const WRESTLING_WINNER_VALUES = Object.freeze(['A', 'B', 'DRAW']);
-const WRESTLING_FINISH_TYPES = Object.freeze(['PINFALL', 'SUBMISSION', 'DQ', 'COUNT_OUT', 'DRAW', 'NO_CONTEST', 'OTHER']);
-const WRESTLING_TIME_RANGES = Object.freeze([
-  { key: 'UNDER_5', label: 'Under 5 minutes', minSeconds: 0, maxSeconds: 299 },
-  { key: '5_TO_9_59', label: '5:00–9:59', minSeconds: 300, maxSeconds: 599 },
-  { key: '10_TO_14_59', label: '10:00–14:59', minSeconds: 600, maxSeconds: 899 },
-  { key: '15_TO_19_59', label: '15:00–19:59', minSeconds: 900, maxSeconds: 1199 },
-  { key: '20_TO_29_59', label: '20:00–29:59', minSeconds: 1200, maxSeconds: 1799 },
-  { key: '30_PLUS', label: '30 minutes or more', minSeconds: 1800, maxSeconds: null },
-]);
 
 const DEFAULT_WRESTLING_SCORING_RULE = Object.freeze({
   ruleId: 'WRESTLING_V1',
   name: 'Pro Wrestling V1',
   baseCategoryScore: 100,
   winnerBonus: 1000,
-  finishTypeBonus: 250,
-  timeRangeBonus: 250,
   multipliers: {
     exact: 1,
     within20Percent: 0.75,
@@ -86,8 +75,6 @@ function normalizeScoringRule(rule) {
   base.name = String(incoming.name || base.name);
   base.baseCategoryScore = Math.max(0, finiteNumber(incoming.baseCategoryScore, base.baseCategoryScore));
   base.winnerBonus = Math.max(0, finiteNumber(incoming.winnerBonus, base.winnerBonus));
-  base.finishTypeBonus = Math.max(0, finiteNumber(incoming.finishTypeBonus, base.finishTypeBonus));
-  base.timeRangeBonus = Math.max(0, finiteNumber(incoming.timeRangeBonus, base.timeRangeBonus));
   base.multipliers = {
     exact: Math.max(0, finiteNumber(multipliers.exact, base.multipliers.exact)),
     within20Percent: Math.max(0, finiteNumber(multipliers.within20Percent, base.multipliers.within20Percent)),
@@ -178,25 +165,6 @@ function scoreCompetitor(prediction, actual, scoringRule) {
   };
 }
 
-function normalizeWrestlingTimeRange(value) {
-  const candidate = String(value || '').trim().toUpperCase();
-  return WRESTLING_TIME_RANGES.some((range) => range.key === candidate) ? candidate : null;
-}
-
-function getWrestlingTimeRangeBySeconds(value) {
-  const seconds = Math.max(0, Math.floor(finiteNumber(value, 0)));
-  return WRESTLING_TIME_RANGES.find((range) => (
-    seconds >= range.minSeconds && (range.maxSeconds === null || seconds <= range.maxSeconds)
-  )) || WRESTLING_TIME_RANGES[WRESTLING_TIME_RANGES.length - 1];
-}
-
-function getWrestlingTimeRange(value) {
-  if (typeof value === 'string' && normalizeWrestlingTimeRange(value)) {
-    return WRESTLING_TIME_RANGES.find((range) => range.key === normalizeWrestlingTimeRange(value));
-  }
-  return getWrestlingTimeRangeBySeconds(value);
-}
-
 function calculateProWrestlingScore(prediction, actualResult, rule) {
   const scoringRule = normalizeScoringRule(rule);
   const actual = actualResult && typeof actualResult === 'object' ? actualResult : {};
@@ -206,41 +174,15 @@ function calculateProWrestlingScore(prediction, actualResult, rule) {
   const officialWinner = String(actual.officialWinner || '').toUpperCase();
   const winnerCorrect = Boolean(officialWinner && WRESTLING_WINNER_VALUES.includes(officialWinner) && predictedWinner === officialWinner);
   const winnerBonus = winnerCorrect ? scoringRule.winnerBonus : 0;
-  const predictedFinishType = String((prediction && prediction.finishTypePrediction) || '').toUpperCase();
-  const officialFinishType = String(actual.officialFinishType || actual.finishType || '').toUpperCase();
-  const finishTypeCorrect = Boolean(
-    predictedFinishType && officialFinishType && predictedFinishType === officialFinishType,
-  );
-  const finishTypeBonus = finishTypeCorrect ? scoringRule.finishTypeBonus : 0;
-  const predictedTimeRange = normalizeWrestlingTimeRange(
-    prediction && prediction.matchTimeRangePrediction,
-  );
-  const officialTimeRange = normalizeWrestlingTimeRange(
-    actual.officialMatchTimeRange || actual.activeMatchTimeRange,
-  );
-  const timeRangeCorrect = Boolean(
-    predictedTimeRange && officialTimeRange && predictedTimeRange === officialTimeRange,
-  );
-  const timeRangeBonus = timeRangeCorrect ? scoringRule.timeRangeBonus : 0;
-  const baseScore = roundScore(sideA.score + sideB.score + winnerBonus + finishTypeBonus);
-  const totalScore = roundScore(baseScore + timeRangeBonus);
+  const totalScore = roundScore(sideA.score + sideB.score + winnerBonus);
 
   return {
     totalScore,
-    baseScore,
     normalizedError: roundScore(sideA.normalizedError + sideB.normalizedError),
     exactPredictionCount: sideA.exactPredictionCount + sideB.exactPredictionCount,
     finisherError: sideA.finisherError + sideB.finisherError,
     winnerBonus,
     winnerCorrect,
-    finishTypeBonus,
-    finishTypeCorrect,
-    predictedFinishType: predictedFinishType || null,
-    officialFinishType: officialFinishType || null,
-    timeRangeBonus,
-    timeRangeCorrect,
-    predictedTimeRange,
-    officialTimeRange,
     predictedWinner: predictedWinner || null,
     officialWinner: officialWinner || null,
     competitorA: sideA,
@@ -353,7 +295,7 @@ function isWrestlingPredictionLocked(match, now = new Date()) {
   return Boolean(lockAt && !Number.isNaN(lockAt.getTime()) && lockAt.getTime() <= new Date(now).getTime());
 }
 
-function validateWrestlingPredictionPayload(payload, options = {}) {
+function validateWrestlingPredictionPayload(payload) {
   const errors = [];
   const source = payload && typeof payload === 'object' ? payload : {};
   ['competitorA', 'competitorB'].forEach((side) => {
@@ -376,32 +318,17 @@ function validateWrestlingPredictionPayload(payload, options = {}) {
     errors.push('winnerPrediction must be A, B, or DRAW');
   }
 
-  const requireOutcomeFields = options.requireOutcomeFields !== false;
-  const finishType = String(source.finishTypePrediction || '').toUpperCase();
-  if (requireOutcomeFields && !WRESTLING_FINISH_TYPES.includes(finishType)) {
-    errors.push(`finishTypePrediction must be one of: ${WRESTLING_FINISH_TYPES.join(', ')}`);
-  }
-  const timeRange = normalizeWrestlingTimeRange(source.matchTimeRangePrediction);
-  if (requireOutcomeFields && !timeRange) {
-    errors.push(`matchTimeRangePrediction must be one of: ${WRESTLING_TIME_RANGES.map((range) => range.key).join(', ')}`);
-  }
-
   return errors;
 }
 
 module.exports = {
   WRESTLING_STAT_KEYS,
   WRESTLING_WINNER_VALUES,
-  WRESTLING_FINISH_TYPES,
-  WRESTLING_TIME_RANGES,
   DEFAULT_WRESTLING_SCORING_RULE,
   DEFAULT_WRESTLING_PAYOUT_RULE,
   normalizeWrestlingStats,
   normalizeScoringRule,
   normalizePayoutRule,
-  normalizeWrestlingTimeRange,
-  getWrestlingTimeRange,
-  getWrestlingTimeRangeBySeconds,
   calculateProWrestlingScore,
   rankWrestlingPredictions,
   determineWinnerCount,

@@ -96,7 +96,7 @@ const normalizedJulyGrowthCampaign = _private.normalizeCreateCampaignBody({
 assert.strictEqual(normalizedJulyGrowthCampaign.campaignType, 'july_10000_signup_growth_system');
 assert.strictEqual(normalizedJulyGrowthCampaign.mode, 'DRAFT_ONLY');
 assert.strictEqual(normalizedJulyGrowthCampaign.sourceEntity.type, 'growth_campaign');
-assert.strictEqual(normalizedJulyGrowthCampaign.input.requiredYouTubeEndingLine, 'Make your picks on Fantasy MMadness before the event starts.');
+assert.strictEqual(normalizedJulyGrowthCampaign.input.requiredYouTubeEndingLine, 'Make your picks on Fantasy MMAdness before the event starts.');
 assert(normalizedJulyGrowthCampaign.automationKeys.includes('social.youtubeGrowthVideoDraft'));
 assert(_private.buildJulyGrowthConfig().jobTypes.includes('social.youtube-growth-video-draft'));
 assert(_private.DEFAULT_JOB_TYPE_ARRAY.includes('analytics.july-10000-signup-growth-plan'));

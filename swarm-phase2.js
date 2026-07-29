@@ -119,7 +119,7 @@ const JULY_10000_GROWTH_AUTOMATION_KEYS = Object.freeze([
   'media.brandedPostImagePrompt',
 ]);
 
-const JULY_10000_REQUIRED_YOUTUBE_CTA = 'Make your picks on Fantasy MMadness before the event starts.';
+const JULY_10000_REQUIRED_YOUTUBE_CTA = 'Make your picks on Fantasy MMAdness before the event starts.';
 
 const PHASE1_SEO_FOUNDATION_JOB_TYPES = Object.freeze([
   'seo.technical-foundation-audit',
@@ -1782,7 +1782,7 @@ function buildJulyGrowthInput(rawBody) {
   const raw = isPlainObject(rawBody) ? rawBody : {};
   const input = isPlainObject(raw.input) ? raw.input : {};
   const config = buildJulyGrowthConfig();
-  const topic = cleanString(raw.topic || input.topic || raw.title || input.title) || 'Fantasy MMadness July 10,000 signup growth system';
+  const topic = cleanString(raw.topic || input.topic || raw.title || input.title) || 'Fantasy MMAdness July 10,000 signup growth system';
   return {
     ...input,
     topic,
@@ -1827,7 +1827,7 @@ function mergeJulyGrowthCampaignBody(rawBody) {
   return {
     ...raw,
     campaignType: 'july_10000_signup_growth_system',
-    title: raw.title || 'Fantasy MMadness July 10,000 signup growth system',
+    title: raw.title || 'Fantasy MMAdness July 10,000 signup growth system',
     includeAll: raw.includeAll !== false,
     sections: normalizeCampaignSections(raw.sections) || ['content', 'seo', 'social', 'media', 'analytics', 'notification', 'data'],
     automationKeys: normalizeStringArray(raw.automationKeys) || JULY_10000_GROWTH_AUTOMATION_KEYS,
@@ -2264,7 +2264,7 @@ async function buildGeneratedBlogBannerPatch({ artifact, mongoose, admin, reason
 async function buildGeneratedBlogBannerPayload({ artifact, mongoose }) {
   const payload = { ...(artifact.payload || {}) };
   const fight = await loadFightContextForArtifact({ artifact, mongoose });
-  const title = cleanString(payload.header || payload.metaTitle || artifact.title || fight?.title || 'Fantasy MMADNESS Fight Card');
+  const title = cleanString(payload.header || payload.metaTitle || artifact.title || fight?.title || 'Fantasy MMAdness Fight Card');
   const fighterAName = cleanString(fight?.fighterAName || payload.fighterAName || payload.fighterA || payload.matchFighterA || 'Fighter A');
   const fighterBName = cleanString(fight?.fighterBName || payload.fighterBName || payload.fighterB || payload.matchFighterB || 'Fighter B');
   const fighterAImage = cleanString(fight?.fighterAImage || payload.fighterAImage || payload.fighterAImageUrl || payload.sourceImages?.[0]);
@@ -2282,7 +2282,7 @@ async function buildGeneratedBlogBannerPayload({ artifact, mongoose }) {
     fighterBImage: embeddedFighterBImage,
   });
   payload.blogHeaderImage = bannerDataUri;
-  payload.blogHeaderImageAlt = payload.blogHeaderImageAlt || `${fighterAName} vs ${fighterBName} Fantasy MMADNESS fight-card banner`;
+  payload.blogHeaderImageAlt = payload.blogHeaderImageAlt || `${fighterAName} vs ${fighterBName} Fantasy MMAdness fight-card banner`;
   payload.blogImagePrompt = payload.blogImagePrompt || bannerPrompt;
   payload.blogImage = {
     ...(isPlainObject(payload.blogImage) ? payload.blogImage : {}),
@@ -2348,7 +2348,7 @@ async function loadFightContextForArtifact({ artifact, mongoose }) {
 
 function buildBlogBannerPrompt({ title, fighterAName, fighterBName, category, fighterAImage, fighterBImage }) {
   return [
-    `Create a premium Fantasy MMADNESS blog banner for ${title}.`,
+    `Create a premium Fantasy MMAdness blog banner for ${title}.`,
     `Main matchup: ${fighterAName} vs ${fighterBName}.`,
     `Discipline: ${category}.`,
     'Use a dark arena background, red/blue fight lighting, cinematic contrast, strong sports-poster composition, and space for the blog headline.',
