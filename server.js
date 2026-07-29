@@ -4782,6 +4782,208 @@ const transporter = nodemailer.createTransport({
   },
 });
 
+const PUBLIC_APPAREL_PRODUCTS = [
+  { sku: 'FMM-HOODIE-001', name: 'MMAdness Hoodie', price: 49.99, currency: 'USD', image: '/images/mobile-home/app-fixed-v15/ap1-hq.webp', sizes: ['S', 'M', 'L', 'XL', '2XL'] },
+  { sku: 'FMM-TEE-001', name: 'Fight Tee', price: 29.99, currency: 'USD', image: '/images/mobile-home/app-fixed-v15/ap2-hq.webp', sizes: ['S', 'M', 'L', 'XL', '2XL'] },
+  { sku: 'FMM-CAP-001', name: 'Snapback Cap', price: 24.99, currency: 'USD', image: '/images/mobile-home/app-fixed-v15/ap3-hq.webp', sizes: ['One Size'] },
+  { sku: 'FMM-SHORTS-001', name: 'Fight Shorts', price: 39.99, currency: 'USD', image: '/images/mobile-home/app-fixed-v15/ap1-2-hq.webp', sizes: ['S', 'M', 'L', 'XL', '2XL'] },
+  { sku: 'FMM-GLOVES-001', name: 'Training Gloves', price: 34.99, currency: 'USD', image: '/images/mobile-home/app-fixed-v15/ap2-2-hq.webp', sizes: ['S/M', 'L/XL'] },
+];
+
+const apparelOrderItemSchema = new mongoose.Schema({
+  sku: { type: String, required: true, trim: true },
+  name: { type: String, required: true, trim: true },
+  size: { type: String, required: true, trim: true },
+  quantity: { type: Number, min: 1, max: 20, required: true },
+  unitPrice: { type: Number, min: 0, required: true },
+  lineTotal: { type: Number, min: 0, required: true },
+}, { _id: false });
+
+const apparelOrderSchema = new mongoose.Schema({
+  orderNumber: { type: String, required: true, unique: true, index: true },
+  userId: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
+  customerName: { type: String, required: true, trim: true },
+  email: { type: String, required: true, trim: true, lowercase: true },
+  phone: { type: String, trim: true },
+  shippingAddress: { type: String, required: true, trim: true },
+  city: { type: String, required: true, trim: true },
+  state: { type: String, trim: true },
+  zipCode: { type: String, required: true, trim: true },
+  country: { type: String, required: true, trim: true, default: 'United States' },
+  notes: { type: String, trim: true },
+  items: { type: [apparelOrderItemSchema], default: [] },
+  subtotal: { type: Number, min: 0, required: true },
+  currency: { type: String, default: 'USD' },
+  status: { type: String, enum: ['PENDING', 'CONFIRMED', 'FULFILLING', 'SHIPPED', 'CANCELLED'], default: 'PENDING', index: true },
+  source: { type: String, default: 'public-apparel-page' },
+}, { timestamps: true });
+apparelOrderSchema.index({ email: 1, createdAt: -1 });
+const ApparelOrder = mongoose.models.ApparelOrder || mongoose.model('ApparelOrder', apparelOrderSchema);
+
+function escapeHtml(value = '') {
+  return String(value ?? '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+
+function normalizeApparelQuantity(value) {
+  const parsed = Number.parseInt(value, 10);
+  if (!Number.isFinite(parsed) || parsed < 1) return 1;
+  return Math.min(parsed, 20);
+}
+
+function buildApparelOrderNumber() {
+  return `FMM-${Date.now()}-${Math.random().toString(36).slice(2, 7).toUpperCase()}`;
+}
+
+function resolveApparelOrderItems(rawItems = []) {
+  if (!Array.isArray(rawItems) || !rawItems.length) {
+    const error = new Error('At least one apparel item is required.');
+    error.status = 400;
+    throw error;
+  }
+
+  return rawItems.map((rawItem) => {
+    const sku = String(rawItem?.sku || '').trim();
+    const product = PUBLIC_APPAREL_PRODUCTS.find((item) => item.sku === sku);
+    if (!product) {
+      const error = new Error(`Unknown apparel product: ${sku || 'missing sku'}.`);
+      error.status = 400;
+      throw error;
+    }
+
+    const requestedSize = String(rawItem?.size || product.sizes?.[0] || 'One Size').trim();
+    const size = product.sizes.includes(requestedSize) ? requestedSize : product.sizes[0];
+    const quantity = normalizeApparelQuantity(rawItem?.quantity);
+    const lineTotal = Number((product.price * quantity).toFixed(2));
+
+    return {
+      sku: product.sku,
+      name: product.name,
+      size,
+      quantity,
+      unitPrice: product.price,
+      lineTotal,
+    };
+  });
+}
+
+function renderApparelOrderRows(items = []) {
+  return items.map((item) => `
+    <tr>
+      <td style="padding:10px;border-bottom:1px solid #eee;">${escapeHtml(item.name)}<br/><small>SKU: ${escapeHtml(item.sku)} · Size: ${escapeHtml(item.size)}</small></td>
+      <td style="padding:10px;border-bottom:1px solid #eee;text-align:center;">${item.quantity}</td>
+      <td style="padding:10px;border-bottom:1px solid #eee;text-align:right;">$${item.lineTotal.toFixed(2)}</td>
+    </tr>
+  `).join('');
+}
+
+app.get('/api/public/apparel-products', (_req, res) => {
+  res.json({ ok: true, products: PUBLIC_APPAREL_PRODUCTS });
+});
+
+app.post('/api/public/apparel-orders', async (req, res) => {
+  try {
+    const {
+      customerName,
+      email,
+      phone,
+      shippingAddress,
+      city,
+      state,
+      zipCode,
+      country,
+      notes,
+      items,
+      userId,
+    } = req.body || {};
+
+    if (!customerName || !email || !shippingAddress || !city || !zipCode) {
+      return res.status(400).json({
+        ok: false,
+        message: 'Customer name, email, shipping address, city, and ZIP/postal code are required.',
+      });
+    }
+
+    const orderItems = resolveApparelOrderItems(items);
+    const subtotal = Number(orderItems.reduce((sum, item) => sum + item.lineTotal, 0).toFixed(2));
+    const order = await ApparelOrder.create({
+      orderNumber: buildApparelOrderNumber(),
+      userId: mongoose.isValidObjectId(userId) ? userId : undefined,
+      customerName,
+      email,
+      phone,
+      shippingAddress,
+      city,
+      state,
+      zipCode,
+      country: country || 'United States',
+      notes,
+      items: orderItems,
+      subtotal,
+      currency: 'USD',
+    });
+
+    const orderRows = renderApparelOrderRows(orderItems);
+    const adminHtml = `
+      <table width="100%" cellpadding="0" cellspacing="0" border="0" style="width:100%;max-width:680px;margin:auto;font-family:Arial,sans-serif;color:#222;">
+        <tr><td style="padding:18px 0;text-align:center;"><h2 style="margin:0;">New Fantasy MMAdness Apparel Order</h2><p style="margin:6px 0 0;">Order ${escapeHtml(order.orderNumber)}</p></td></tr>
+        <tr><td style="padding:16px;background:#f8f8f8;border-radius:12px;">
+          <p><strong>Name:</strong> ${escapeHtml(customerName)}</p>
+          <p><strong>Email:</strong> ${escapeHtml(email)}</p>
+          <p><strong>Phone:</strong> ${escapeHtml(phone || 'Not provided')}</p>
+          <p><strong>Ship to:</strong> ${escapeHtml(shippingAddress)}, ${escapeHtml(city)}, ${escapeHtml(state || '')} ${escapeHtml(zipCode)}, ${escapeHtml(country || 'United States')}</p>
+          ${notes ? `<p><strong>Notes:</strong> ${escapeHtml(notes)}</p>` : ''}
+        </td></tr>
+        <tr><td style="padding-top:18px;"><table width="100%" cellpadding="0" cellspacing="0" style="border-collapse:collapse;"><thead><tr><th align="left">Item</th><th>Qty</th><th align="right">Total</th></tr></thead><tbody>${orderRows}</tbody></table></td></tr>
+        <tr><td style="padding-top:16px;text-align:right;"><strong>Subtotal: $${subtotal.toFixed(2)}</strong></td></tr>
+      </table>
+    `;
+    const customerHtml = `
+      <table width="100%" cellpadding="0" cellspacing="0" border="0" style="width:100%;max-width:680px;margin:auto;font-family:Arial,sans-serif;color:#222;">
+        <tr><td style="padding:18px 0;text-align:center;"><h2 style="margin:0;">Your Fantasy MMAdness order is received</h2><p style="margin:6px 0 0;">Order ${escapeHtml(order.orderNumber)}</p></td></tr>
+        <tr><td style="padding:16px;background:#f8f8f8;border-radius:12px;"><p>Hi ${escapeHtml(customerName)},</p><p>We received your apparel order. The Fantasy MMAdness team will follow up with payment and shipping confirmation.</p></td></tr>
+        <tr><td style="padding-top:18px;"><table width="100%" cellpadding="0" cellspacing="0" style="border-collapse:collapse;"><thead><tr><th align="left">Item</th><th>Qty</th><th align="right">Total</th></tr></thead><tbody>${orderRows}</tbody></table></td></tr>
+        <tr><td style="padding-top:16px;text-align:right;"><strong>Subtotal: $${subtotal.toFixed(2)}</strong></td></tr>
+      </table>
+    `;
+
+    await Promise.allSettled([
+      transporter.sendMail({
+        from: process.env.SMTP_USER || 'Fantasymmadness2@gmail.com',
+        to: process.env.APPAREL_ORDER_EMAIL || process.env.SMTP_USER || 'Fantasymmadness2@gmail.com',
+        subject: `New apparel order ${order.orderNumber}`,
+        html: adminHtml,
+      }),
+      transporter.sendMail({
+        from: process.env.SMTP_USER || 'Fantasymmadness2@gmail.com',
+        to: email,
+        subject: `Fantasy MMAdness apparel order ${order.orderNumber}`,
+        html: customerHtml,
+      }),
+    ]);
+
+    clearPublicResponseCache();
+    return res.status(201).json({
+      ok: true,
+      message: 'Order received.',
+      orderNumber: order.orderNumber,
+      status: order.status,
+      subtotal: order.subtotal,
+      items: order.items,
+    });
+  } catch (error) {
+    console.error('Error creating apparel order:', error);
+    return res.status(error.status || 500).json({
+      ok: false,
+      message: error.message || 'Failed to create apparel order.',
+    });
+  }
+});
+
 app.post('/contact-us-fantasymmadness', (req, res) => {
   const { fullName, email, subject, message } = req.body;
 
@@ -7278,87 +7480,278 @@ app.get('/api/scores', async (req, res) => {
 });
 
 
-async function buildClassicLeaderboard({ limit = 10 } = {}) {
-  const scoreRows = await Score.find().select('playerId matchId predictions').lean();
-  if (!scoreRows.length) {
-    const fallback = getFallbackPublicLeaderboard(limit);
-    return { leaderboard: fallback, playerCount: fallback.length };
+function normalizeLeaderboardPlayerId(value) {
+  const raw = String(value?._id || value?.id || value || '').trim();
+  return raw && !['null', 'undefined', 'none'].includes(raw.toLowerCase()) ? raw : '';
+}
+
+function readNumericField(source = {}, fields = []) {
+  for (const field of fields) {
+    const raw = source?.[field];
+    if (raw === null || raw === undefined || raw === '') continue;
+    const parsed = Number(typeof raw === 'string' ? raw.replace(/,/g, '').trim() : raw);
+    if (Number.isFinite(parsed) && parsed >= 0) return parsed;
+  }
+  return null;
+}
+
+function estimatePredictionActivityPoints(predictions = []) {
+  if (!Array.isArray(predictions)) return 0;
+
+  return predictions.reduce((total, roundPrediction) => {
+    if (!roundPrediction || typeof roundPrediction !== 'object') return total;
+
+    const numericValues = Object.entries(roundPrediction)
+      .filter(([key]) => !['_id', 'id', 'round'].includes(String(key)))
+      .map(([, value]) => Number(value))
+      .filter((value) => Number.isFinite(value) && value > 0);
+
+    // This is only used when official fight result stats are not available yet.
+    // It prevents a real submitted-prediction leaderboard from being replaced by fake fallback rows.
+    return total + numericValues.reduce((sum, value) => sum + value, 0);
+  }, 0);
+}
+
+function getClassicFightOfficialStats(match = {}) {
+  const categoryText = String(
+    match.matchCategoryTwo || match.matchCategory || match.effectiveCategory || match.displayCategory || ''
+  ).toLowerCase();
+  const isBoxing = categoryText.includes('box');
+  const isMma = categoryText.includes('mma') || categoryText.includes('ufc');
+
+  if (isBoxing) {
+    return {
+      category: 'boxing',
+      fighterOneStats: match.BoxingMatch?.fighterOneStats || [],
+      fighterTwoStats: match.BoxingMatch?.fighterTwoStats || [],
+    };
   }
 
-  const validMatchObjectIds = [...new Set(scoreRows
+  if (isMma) {
+    return {
+      category: 'mma',
+      fighterOneStats: match.MMAMatch?.fighterOneStats || [],
+      fighterTwoStats: match.MMAMatch?.fighterTwoStats || [],
+    };
+  }
+
+  return {
+    category: match.matchCategory || match.matchCategoryTwo || '',
+    fighterOneStats: match.BoxingMatch?.fighterOneStats || match.MMAMatch?.fighterOneStats || [],
+    fighterTwoStats: match.BoxingMatch?.fighterTwoStats || match.MMAMatch?.fighterTwoStats || [],
+  };
+}
+
+function hasOfficialStats(stats = {}) {
+  return Array.isArray(stats.fighterOneStats) &&
+    Array.isArray(stats.fighterTwoStats) &&
+    stats.fighterOneStats.length > 0 &&
+    stats.fighterTwoStats.length > 0;
+}
+
+function buildLeaderboardDisplayName(user = {}, fallbackId = '') {
+  return [user.firstName, user.lastName].filter(Boolean).join(' ').trim() ||
+    user.playerName ||
+    user.username ||
+    (user.email ? String(user.email).split('@')[0] : '') ||
+    `Player ${String(fallbackId).slice(-6)}`;
+}
+
+async function buildClassicLeaderboard({ limit = 10 } = {}) {
+  const resolvedLimit = parsePositiveInteger(limit, 10, 100);
+
+  const [scoreRows, wrestlingRows] = await Promise.all([
+    Score.find().select('playerId matchId predictions totalPoints totalScore score points createdAt updatedAt').lean().catch((error) => {
+      console.warn('Classic score rows unavailable for public leaderboard:', error.message);
+      return [];
+    }),
+    (typeof ProWrestlingPrediction !== 'undefined'
+      ? ProWrestlingPrediction.find({ predictionStatus: { $in: ['SUBMITTED', 'LOCKED', 'SCORED', 'SETTLED'] } })
+        .select('userId matchId score predictionStatus createdAt updatedAt')
+        .lean()
+        .catch((error) => {
+          console.warn('Pro Wrestling prediction rows unavailable for public leaderboard:', error.message);
+          return [];
+        })
+      : Promise.resolve([])),
+  ]);
+
+  const matchIdStrings = [...new Set((Array.isArray(scoreRows) ? scoreRows : [])
     .map((score) => String(score.matchId || '').trim())
-    .filter((matchId) => mongoose.isValidObjectId(matchId)))]
+    .filter(Boolean))];
+  const validMatchObjectIds = matchIdStrings
+    .filter((matchId) => mongoose.isValidObjectId(matchId))
     .map((matchId) => new mongoose.Types.ObjectId(matchId));
 
-  const matchRows = validMatchObjectIds.length
-    ? await Match.find({ _id: { $in: validMatchObjectIds } })
-      .select('matchName matchFighterA matchFighterB matchDate matchCategory matchCategoryTwo matchStatus matchShadowStatus matchShadowOpenStatus fighterAImage fighterBImage promotionBackground matchType matchTokens fighterAId fighterBId BoxingMatch.fighterOneStats BoxingMatch.fighterTwoStats MMAMatch.fighterOneStats MMAMatch.fighterTwoStats createdAt updatedAt')
-      .populate('fighterAId fighterBId')
-      .lean()
-    : [];
+  const [matchRows, shadowRows] = validMatchObjectIds.length
+    ? await Promise.all([
+      Match.find({ _id: { $in: validMatchObjectIds } })
+        .select('matchName matchFighterA matchFighterB matchDate matchCategory matchCategoryTwo matchStatus matchShadowStatus matchShadowOpenStatus fighterAImage fighterBImage promotionBackground matchType matchTokens fighterAId fighterBId BoxingMatch.fighterOneStats BoxingMatch.fighterTwoStats MMAMatch.fighterOneStats MMAMatch.fighterTwoStats createdAt updatedAt')
+        .populate('fighterAId fighterBId')
+        .lean()
+        .catch(() => []),
+      Shadow.find({ _id: { $in: validMatchObjectIds } })
+        .select('matchName matchFighterA matchFighterB matchDate matchCategory matchCategoryTwo matchStatus matchShadowStatus matchShadowOpenStatus fighterAImage fighterBImage promotionBackground matchType matchTokens fighterAId fighterBId BoxingMatch.fighterOneStats BoxingMatch.fighterTwoStats MMAMatch.fighterOneStats MMAMatch.fighterTwoStats createdAt updatedAt')
+        .populate('fighterAId fighterBId')
+        .lean()
+        .catch(() => []),
+    ])
+    : [[], []];
 
-  const matchById = new Map(matchRows
-    .filter((match) => !isDraftFightRecord(match))
+  const matchById = new Map([...matchRows, ...shadowRows]
+    .filter((match) => match && !isDraftFightRecord(match))
     .map((match) => [String(match._id), match]));
 
-  const playerIds = [...new Set(scoreRows.map((score) => String(score.playerId || '').trim()).filter(Boolean))];
+  const embeddedPredictionQuery = { userPredictions: { $elemMatch: { predictionStatus: 'submitted' } } };
+  const embeddedFightSelect = 'matchName matchFighterA matchFighterB matchDate matchCategory matchCategoryTwo matchStatus matchShadowStatus matchShadowOpenStatus fighterAImage fighterBImage promotionBackground matchType userPredictions createdAt updatedAt';
+  const [embeddedMatchRows, embeddedShadowRows] = await Promise.all([
+    Match.find(embeddedPredictionQuery).select(embeddedFightSelect).limit(1000).lean().catch(() => []),
+    Shadow.find(embeddedPredictionQuery).select(embeddedFightSelect).limit(1000).lean().catch(() => []),
+  ]);
+
+  const embeddedPredictionRows = [...embeddedMatchRows, ...embeddedShadowRows]
+    .filter((match) => match && !isDraftFightRecord(match))
+    .flatMap((match) => (Array.isArray(match.userPredictions) ? match.userPredictions : [])
+      .filter((prediction) => getPredictionStatusText(prediction?.predictionStatus || prediction?.status) === 'submitted')
+      .map((prediction) => ({
+        playerId: normalizeLeaderboardPlayerId(prediction?.userId || prediction?.playerId || prediction?.user || prediction?.player),
+        matchId: String(match._id),
+        match,
+      })))
+    .filter((entry) => entry.playerId);
+
+  const playerIds = [...new Set([
+    ...(Array.isArray(scoreRows) ? scoreRows : []).map((score) => normalizeLeaderboardPlayerId(score.playerId)),
+    ...(Array.isArray(wrestlingRows) ? wrestlingRows : []).map((prediction) => normalizeLeaderboardPlayerId(prediction.userId)),
+    ...embeddedPredictionRows.map((entry) => entry.playerId),
+  ].filter(Boolean))];
   const validPlayerObjectIds = playerIds
     .filter((playerId) => mongoose.isValidObjectId(playerId))
     .map((playerId) => new mongoose.Types.ObjectId(playerId));
 
   const userRows = validPlayerObjectIds.length
-    ? await User.find({ _id: { $in: validPlayerObjectIds } }).select(USER_SAFE_SELECT).lean()
+    ? await User.find({ _id: { $in: validPlayerObjectIds } }).select(USER_SAFE_SELECT).lean().catch(() => [])
     : [];
   const userById = new Map(sanitizeAccountList(userRows).map((user) => [String(user._id), user]));
+  const rowsByPlayer = new Map();
 
-  const pointsByPlayer = new Map();
-  const playerMatchId = new Map();
+  const getOrCreateRow = (playerId) => {
+    const id = normalizeLeaderboardPlayerId(playerId);
+    if (!id) return null;
 
-  scoreRows.forEach((score) => {
-    const match = matchById.get(String(score.matchId));
-    if (!match) return;
+    if (!rowsByPlayer.has(id)) {
+      const user = userById.get(id) || { _id: id };
+      rowsByPlayer.set(id, {
+        ...user,
+        _id: user._id || id,
+        playerName: user.playerName || user.username || buildLeaderboardDisplayName(user, id),
+        displayName: buildLeaderboardDisplayName(user, id),
+        totalPoints: 0,
+        matchesPlayed: 0,
+        scoredMatches: 0,
+        pendingScorecards: 0,
+        classicPoints: 0,
+        proWrestlingPoints: 0,
+        latestMatchId: null,
+        latestMatch: null,
+        source: 'real-user-scores',
+      });
+    }
 
-    const fighterOneStats = String(match.matchCategory || '').toLowerCase() === 'boxing'
-      ? match.BoxingMatch?.fighterOneStats
-      : match.MMAMatch?.fighterOneStats;
-    const fighterTwoStats = String(match.matchCategory || '').toLowerCase() === 'boxing'
-      ? match.BoxingMatch?.fighterTwoStats
-      : match.MMAMatch?.fighterTwoStats;
+    return rowsByPlayer.get(id);
+  };
 
-    const pointsEarned = calculateClassicPredictionPoints(
-      score.predictions,
-      fighterOneStats,
-      fighterTwoStats,
-      match.matchCategory
-    );
+  const classicScorePairs = new Set();
 
-    if (pointsEarned <= 0) return;
+  (Array.isArray(scoreRows) ? scoreRows : []).forEach((score) => {
+    const playerId = normalizeLeaderboardPlayerId(score.playerId);
+    const matchId = String(score.matchId || '').trim();
+    if (playerId && matchId) classicScorePairs.add(`${playerId}:${matchId}`);
+    const row = getOrCreateRow(playerId);
+    if (!row) return;
 
-    const playerId = String(score.playerId);
-    pointsByPlayer.set(playerId, (pointsByPlayer.get(playerId) || 0) + pointsEarned);
-    playerMatchId.set(playerId, String(match._id));
+    const explicitScore = readNumericField(score, ['totalPoints', 'totalScore', 'score', 'points']);
+    const match = matchById.get(String(score.matchId || ''));
+    const officialStats = match ? getClassicFightOfficialStats(match) : null;
+    const officialPoints = officialStats && hasOfficialStats(officialStats)
+      ? calculateClassicPredictionPoints(
+        score.predictions,
+        officialStats.fighterOneStats,
+        officialStats.fighterTwoStats,
+        officialStats.category,
+      )
+      : 0;
+    const activityPoints = estimatePredictionActivityPoints(score.predictions);
+    const pointsEarned = Number.isFinite(explicitScore) && explicitScore > 0
+      ? explicitScore
+      : officialPoints > 0
+        ? officialPoints
+        : activityPoints;
+
+    row.totalPoints += Math.max(0, Math.round(pointsEarned));
+    row.classicPoints += Math.max(0, Math.round(pointsEarned));
+    row.matchesPlayed += 1;
+    if (officialPoints > 0 || (Number.isFinite(explicitScore) && explicitScore > 0)) row.scoredMatches += 1;
+    else row.pendingScorecards += 1;
+
+    if (match) {
+      row.latestMatchId = String(match._id);
+      row.latestMatch = pickPublicFightFields(match, 'match');
+      row.matchId = String(match._id);
+      row.match = row.latestMatch;
+    } else if (score.matchId) {
+      row.latestMatchId = String(score.matchId);
+      row.matchId = String(score.matchId);
+    }
   });
 
-  const leaderboard = [...pointsByPlayer.entries()]
-    .map(([playerId, totalPoints]) => {
-      const user = userById.get(playerId) || { _id: playerId };
-      const match = matchById.get(playerMatchId.get(playerId));
-      return {
-        ...user,
-        totalPoints,
-        matchId: match ? String(match._id) : playerMatchId.get(playerId),
-        match: match ? pickPublicFightFields(match, 'match') : null,
-      };
-    })
-    .sort((a, b) => b.totalPoints - a.totalPoints)
-    .slice(0, limit);
+  embeddedPredictionRows.forEach((entry) => {
+    if (classicScorePairs.has(`${entry.playerId}:${entry.matchId}`)) return;
+    const row = getOrCreateRow(entry.playerId);
+    if (!row) return;
 
-  if (!leaderboard.length) {
-    const fallback = getFallbackPublicLeaderboard(limit);
-    return { leaderboard: fallback, playerCount: fallback.length };
-  }
+    row.matchesPlayed += 1;
+    row.pendingScorecards += 1;
+    row.latestMatchId = entry.matchId;
+    row.matchId = entry.matchId;
+    if (entry.match) {
+      row.latestMatch = pickPublicFightFields(entry.match, 'embedded-prediction');
+      row.match = row.latestMatch;
+    }
+  });
 
-  return { leaderboard, playerCount: pointsByPlayer.size };
+  (Array.isArray(wrestlingRows) ? wrestlingRows : []).forEach((prediction) => {
+    const row = getOrCreateRow(prediction.userId);
+    if (!row) return;
+
+    const pointsEarned = readNumericField(prediction, ['score', 'totalScore', 'totalPoints', 'points']) || 0;
+
+    row.totalPoints += Math.max(0, Math.round(pointsEarned));
+    row.proWrestlingPoints += Math.max(0, Math.round(pointsEarned));
+    row.matchesPlayed += 1;
+    if (pointsEarned > 0) row.scoredMatches += 1;
+    else row.pendingScorecards += 1;
+    row.latestMatchId = prediction.matchId ? String(prediction.matchId) : row.latestMatchId;
+    row.matchId = row.latestMatchId;
+  });
+
+  const leaderboard = [...rowsByPlayer.values()]
+    .filter((row) => Number(row.matchesPlayed || 0) > 0)
+    .sort((a, b) =>
+      Number(b.totalPoints || 0) - Number(a.totalPoints || 0) ||
+      Number(b.scoredMatches || 0) - Number(a.scoredMatches || 0) ||
+      Number(b.matchesPlayed || 0) - Number(a.matchesPlayed || 0)
+    )
+    .slice(0, resolvedLimit)
+    .map((row, index) => ({ ...row, rank: index + 1 }));
+
+  return {
+    leaderboard,
+    playerCount: rowsByPlayer.size,
+    scoreRows: Array.isArray(scoreRows) ? scoreRows.length : 0,
+    embeddedPredictionRows: embeddedPredictionRows.length,
+    wrestlingRows: Array.isArray(wrestlingRows) ? wrestlingRows.length : 0,
+  };
 }
 
 async function loadPublicFightCards({ limit = 6, category } = {}) {
@@ -7399,23 +7792,25 @@ async function loadPublicFightCards({ limit = 6, category } = {}) {
 
 app.get('/api/public/leaderboard', async (req, res) => {
   try {
-    const { payload, cacheState } = await readThroughPublicCache(
-      getPublicCacheKey(req, 'public-leaderboard'),
-      async () => {
-        const limit = parsePositiveInteger(req.query.limit, 10, 100);
-        const result = await buildClassicLeaderboard({ limit });
-
-        return {
-          ok: true,
-          leaderboard: result.leaderboard,
-          playerCount: result.playerCount,
-          generatedAt: new Date().toISOString(),
-        };
-      }
-    );
-
-    setPublicCacheHeaders(res, PUBLIC_CACHE_TTL_SECONDS, cacheState);
-    res.json(payload);
+    const limit = parsePositiveInteger(req.query.limit, 25, 100);
+    const result = await buildClassicLeaderboard({ limit });
+    res.setHeader('Cache-Control', 'no-store, no-cache, max-age=0, must-revalidate');
+    res.setHeader('Pragma', 'no-cache');
+    res.setHeader('Expires', '0');
+    res.setHeader('X-Backend-Cache', 'BYPASS');
+    return res.json({
+      ok: true,
+      leaderboard: result.leaderboard,
+      playerCount: result.playerCount,
+      source: 'real-user-scores',
+      diagnostics: {
+        scoreRows: result.scoreRows || 0,
+        wrestlingRows: result.wrestlingRows || 0,
+        embeddedPredictionRows: result.embeddedPredictionRows || 0,
+        realPlayerRows: result.playerCount || 0,
+      },
+      generatedAt: new Date().toISOString(),
+    });
   } catch (error) {
     console.error('Error building public leaderboard:', error);
     res.status(500).json({ ok: false, message: 'Failed to build public leaderboard.' });
