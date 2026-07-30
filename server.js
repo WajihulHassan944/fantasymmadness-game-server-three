@@ -3151,7 +3151,12 @@ app.get('/api/public/prediction-fights', async (req, res) => {
       }).map((item) => attachCombatFighterReadFallbacks(item, item.sourceType || 'match'));
 
       items = await attachPlayerPredictionStateToFightItems(items, req.query);
-      items = applyPublicFightStatusIntent(items, req.query).slice(0, limit);
+      const requestedTimeline = String(req.query.status || req.query.bucket || req.query.view || '').trim().toLowerCase();
+      items = applyPublicFightStatusIntent(items, req.query);
+      if (!requestedTimeline || ['upcoming', 'future', 'scheduled', 'active-contests', 'playable', 'prediction', 'predictions'].includes(requestedTimeline)) {
+        items = items.filter((item) => getFightTimelineBucket(item) !== 'past');
+      }
+      items = items.slice(0, limit);
 
       return {
         ok: true,
@@ -7559,6 +7564,7 @@ function buildLeaderboardDisplayName(user = {}, fallbackId = '') {
 
 async function buildClassicLeaderboard({ limit = 10 } = {}) {
   const resolvedLimit = parsePositiveInteger(limit, 10, 100);
+  const ENTRY_ACTIVITY_POINTS = 100;
 
   const [scoreRows, wrestlingRows] = await Promise.all([
     Score.find().select('playerId matchId predictions totalPoints totalScore score points createdAt updatedAt').lean().catch((error) => {
@@ -7567,7 +7573,7 @@ async function buildClassicLeaderboard({ limit = 10 } = {}) {
     }),
     (typeof ProWrestlingPrediction !== 'undefined'
       ? ProWrestlingPrediction.find({ predictionStatus: { $in: ['SUBMITTED', 'LOCKED', 'SCORED', 'SETTLED'] } })
-        .select('userId matchId score predictionStatus createdAt updatedAt')
+        .select('userId matchId score totalScore totalPoints points predictionStatus createdAt updatedAt')
         .lean()
         .catch((error) => {
           console.warn('Pro Wrestling prediction rows unavailable for public leaderboard:', error.message);
@@ -7576,47 +7582,48 @@ async function buildClassicLeaderboard({ limit = 10 } = {}) {
       : Promise.resolve([])),
   ]);
 
-  const matchIdStrings = [...new Set((Array.isArray(scoreRows) ? scoreRows : [])
+  const scoreMatchIds = [...new Set((Array.isArray(scoreRows) ? scoreRows : [])
     .map((score) => String(score.matchId || '').trim())
     .filter(Boolean))];
-  const validMatchObjectIds = matchIdStrings
+  const validScoreMatchObjectIds = scoreMatchIds
     .filter((matchId) => mongoose.isValidObjectId(matchId))
     .map((matchId) => new mongoose.Types.ObjectId(matchId));
 
-  const [matchRows, shadowRows] = validMatchObjectIds.length
-    ? await Promise.all([
-      Match.find({ _id: { $in: validMatchObjectIds } })
-        .select('matchName matchFighterA matchFighterB matchDate matchCategory matchCategoryTwo matchStatus matchShadowStatus matchShadowOpenStatus fighterAImage fighterBImage promotionBackground matchType matchTokens fighterAId fighterBId BoxingMatch.fighterOneStats BoxingMatch.fighterTwoStats MMAMatch.fighterOneStats MMAMatch.fighterTwoStats createdAt updatedAt')
-        .populate('fighterAId fighterBId')
-        .lean()
-        .catch(() => []),
-      Shadow.find({ _id: { $in: validMatchObjectIds } })
-        .select('matchName matchFighterA matchFighterB matchDate matchCategory matchCategoryTwo matchStatus matchShadowStatus matchShadowOpenStatus fighterAImage fighterBImage promotionBackground matchType matchTokens fighterAId fighterBId BoxingMatch.fighterOneStats BoxingMatch.fighterTwoStats MMAMatch.fighterOneStats MMAMatch.fighterTwoStats createdAt updatedAt')
-        .populate('fighterAId fighterBId')
-        .lean()
-        .catch(() => []),
-    ])
-    : [[], []];
+  const matchSelect = 'matchName matchFighterA matchFighterB matchDate matchCategory matchCategoryTwo matchStatus matchShadowStatus matchShadowOpenStatus fighterAImage fighterBImage promotionBackground matchType matchTokens fighterAId fighterBId BoxingMatch.fighterOneStats BoxingMatch.fighterTwoStats MMAMatch.fighterOneStats MMAMatch.fighterTwoStats userPredictions createdAt updatedAt';
 
-  const matchById = new Map([...matchRows, ...shadowRows]
+  const [scoreMatchRows, scoreShadowRows, embeddedMatchRows, embeddedShadowRows] = await Promise.all([
+    validScoreMatchObjectIds.length
+      ? Match.find({ _id: { $in: validScoreMatchObjectIds } }).select(matchSelect).populate('fighterAId fighterBId').lean().catch(() => [])
+      : Promise.resolve([]),
+    validScoreMatchObjectIds.length
+      ? Shadow.find({ _id: { $in: validScoreMatchObjectIds } }).select(matchSelect).populate('fighterAId fighterBId').lean().catch(() => [])
+      : Promise.resolve([]),
+    Match.find({ 'userPredictions.0': { $exists: true } }).select(matchSelect).populate('fighterAId fighterBId').limit(1500).lean().catch(() => []),
+    Shadow.find({ 'userPredictions.0': { $exists: true } }).select(matchSelect).populate('fighterAId fighterBId').limit(1500).lean().catch(() => []),
+  ]);
+
+  const matchById = new Map([...scoreMatchRows, ...scoreShadowRows, ...embeddedMatchRows, ...embeddedShadowRows]
     .filter((match) => match && !isDraftFightRecord(match))
     .map((match) => [String(match._id), match]));
 
-  const embeddedPredictionQuery = { userPredictions: { $elemMatch: { predictionStatus: 'submitted' } } };
-  const embeddedFightSelect = 'matchName matchFighterA matchFighterB matchDate matchCategory matchCategoryTwo matchStatus matchShadowStatus matchShadowOpenStatus fighterAImage fighterBImage promotionBackground matchType userPredictions createdAt updatedAt';
-  const [embeddedMatchRows, embeddedShadowRows] = await Promise.all([
-    Match.find(embeddedPredictionQuery).select(embeddedFightSelect).limit(1000).lean().catch(() => []),
-    Shadow.find(embeddedPredictionQuery).select(embeddedFightSelect).limit(1000).lean().catch(() => []),
-  ]);
+  const isRealSubmittedEmbeddedPrediction = (prediction = {}) => {
+    const playerId = normalizeLeaderboardPlayerId(prediction?.userId || prediction?.playerId || prediction?.user || prediction?.player);
+    if (!playerId) return false;
+    const rawStatus = prediction?.predictionStatus ?? prediction?.status;
+    const normalizedStatus = getPredictionStatusText(rawStatus);
+    if (!rawStatus) return true;
+    return normalizedStatus === 'submitted';
+  };
 
   const embeddedPredictionRows = [...embeddedMatchRows, ...embeddedShadowRows]
     .filter((match) => match && !isDraftFightRecord(match))
     .flatMap((match) => (Array.isArray(match.userPredictions) ? match.userPredictions : [])
-      .filter((prediction) => getPredictionStatusText(prediction?.predictionStatus || prediction?.status) === 'submitted')
+      .filter(isRealSubmittedEmbeddedPrediction)
       .map((prediction) => ({
         playerId: normalizeLeaderboardPlayerId(prediction?.userId || prediction?.playerId || prediction?.user || prediction?.player),
         matchId: String(match._id),
         match,
+        prediction,
       })))
     .filter((entry) => entry.playerId);
 
@@ -7638,7 +7645,6 @@ async function buildClassicLeaderboard({ limit = 10 } = {}) {
   const getOrCreateRow = (playerId) => {
     const id = normalizeLeaderboardPlayerId(playerId);
     if (!id) return null;
-
     if (!rowsByPlayer.has(id)) {
       const user = userById.get(id) || { _id: id };
       rowsByPlayer.set(id, {
@@ -7647,6 +7653,7 @@ async function buildClassicLeaderboard({ limit = 10 } = {}) {
         playerName: user.playerName || user.username || buildLeaderboardDisplayName(user, id),
         displayName: buildLeaderboardDisplayName(user, id),
         totalPoints: 0,
+        points: 0,
         matchesPlayed: 0,
         scoredMatches: 0,
         pendingScorecards: 0,
@@ -7657,82 +7664,97 @@ async function buildClassicLeaderboard({ limit = 10 } = {}) {
         source: 'real-user-scores',
       });
     }
-
     return rowsByPlayer.get(id);
   };
 
-  const classicScorePairs = new Set();
+  const registerLatestMatch = (row, matchId, match, sourceType = 'match') => {
+    if (!row || !matchId) return;
+    row.latestMatchId = String(matchId);
+    row.matchId = String(matchId);
+    if (match) {
+      row.latestMatch = pickPublicFightFields(match, sourceType);
+      row.match = row.latestMatch;
+    }
+  };
+
+  const countedPairs = new Set();
 
   (Array.isArray(scoreRows) ? scoreRows : []).forEach((score) => {
     const playerId = normalizeLeaderboardPlayerId(score.playerId);
     const matchId = String(score.matchId || '').trim();
-    if (playerId && matchId) classicScorePairs.add(`${playerId}:${matchId}`);
+    if (!playerId || !matchId) return;
+    countedPairs.add(`${playerId}:${matchId}`);
     const row = getOrCreateRow(playerId);
     if (!row) return;
 
     const explicitScore = readNumericField(score, ['totalPoints', 'totalScore', 'score', 'points']);
-    const match = matchById.get(String(score.matchId || ''));
+    const match = matchById.get(matchId);
     const officialStats = match ? getClassicFightOfficialStats(match) : null;
     const officialPoints = officialStats && hasOfficialStats(officialStats)
-      ? calculateClassicPredictionPoints(
-        score.predictions,
-        officialStats.fighterOneStats,
-        officialStats.fighterTwoStats,
-        officialStats.category,
-      )
+      ? calculateClassicPredictionPoints(score.predictions, officialStats.fighterOneStats, officialStats.fighterTwoStats, officialStats.category)
       : 0;
     const activityPoints = estimatePredictionActivityPoints(score.predictions);
     const pointsEarned = Number.isFinite(explicitScore) && explicitScore > 0
       ? explicitScore
       : officialPoints > 0
         ? officialPoints
-        : activityPoints;
+        : activityPoints > 0
+          ? activityPoints
+          : ENTRY_ACTIVITY_POINTS;
 
     row.totalPoints += Math.max(0, Math.round(pointsEarned));
+    row.points = row.totalPoints;
     row.classicPoints += Math.max(0, Math.round(pointsEarned));
     row.matchesPlayed += 1;
     if (officialPoints > 0 || (Number.isFinite(explicitScore) && explicitScore > 0)) row.scoredMatches += 1;
     else row.pendingScorecards += 1;
-
-    if (match) {
-      row.latestMatchId = String(match._id);
-      row.latestMatch = pickPublicFightFields(match, 'match');
-      row.matchId = String(match._id);
-      row.match = row.latestMatch;
-    } else if (score.matchId) {
-      row.latestMatchId = String(score.matchId);
-      row.matchId = String(score.matchId);
-    }
+    registerLatestMatch(row, matchId, match, 'match');
   });
 
   embeddedPredictionRows.forEach((entry) => {
-    if (classicScorePairs.has(`${entry.playerId}:${entry.matchId}`)) return;
+    if (countedPairs.has(`${entry.playerId}:${entry.matchId}`)) return;
+    countedPairs.add(`${entry.playerId}:${entry.matchId}`);
     const row = getOrCreateRow(entry.playerId);
     if (!row) return;
 
+    const explicitPredictionPoints = readNumericField(entry.prediction, ['totalPoints', 'totalScore', 'score', 'points']);
+    const predictionActivityPoints = estimatePredictionActivityPoints(
+      Array.isArray(entry.prediction?.predictions) ? entry.prediction.predictions :
+        Array.isArray(entry.prediction?.rounds) ? entry.prediction.rounds : []
+    );
+    const pointsEarned = Number.isFinite(explicitPredictionPoints) && explicitPredictionPoints > 0
+      ? explicitPredictionPoints
+      : predictionActivityPoints > 0
+        ? predictionActivityPoints
+        : ENTRY_ACTIVITY_POINTS;
+
+    row.totalPoints += Math.max(0, Math.round(pointsEarned));
+    row.points = row.totalPoints;
+    row.classicPoints += Math.max(0, Math.round(pointsEarned));
     row.matchesPlayed += 1;
     row.pendingScorecards += 1;
-    row.latestMatchId = entry.matchId;
-    row.matchId = entry.matchId;
-    if (entry.match) {
-      row.latestMatch = pickPublicFightFields(entry.match, 'embedded-prediction');
-      row.match = row.latestMatch;
-    }
+    registerLatestMatch(row, entry.matchId, entry.match, 'embedded-prediction');
   });
 
   (Array.isArray(wrestlingRows) ? wrestlingRows : []).forEach((prediction) => {
-    const row = getOrCreateRow(prediction.userId);
+    const playerId = normalizeLeaderboardPlayerId(prediction.userId);
+    const matchId = String(prediction.matchId || '').trim();
+    if (!playerId) return;
+    const pairKey = matchId ? `${playerId}:pw:${matchId}` : `${playerId}:pw:${prediction._id || Math.random()}`;
+    if (countedPairs.has(pairKey)) return;
+    countedPairs.add(pairKey);
+
+    const row = getOrCreateRow(playerId);
     if (!row) return;
 
-    const pointsEarned = readNumericField(prediction, ['score', 'totalScore', 'totalPoints', 'points']) || 0;
-
+    const pointsEarned = readNumericField(prediction, ['score', 'totalScore', 'totalPoints', 'points']) || ENTRY_ACTIVITY_POINTS;
     row.totalPoints += Math.max(0, Math.round(pointsEarned));
+    row.points = row.totalPoints;
     row.proWrestlingPoints += Math.max(0, Math.round(pointsEarned));
     row.matchesPlayed += 1;
-    if (pointsEarned > 0) row.scoredMatches += 1;
+    if (pointsEarned > ENTRY_ACTIVITY_POINTS) row.scoredMatches += 1;
     else row.pendingScorecards += 1;
-    row.latestMatchId = prediction.matchId ? String(prediction.matchId) : row.latestMatchId;
-    row.matchId = row.latestMatchId;
+    if (matchId) registerLatestMatch(row, matchId, null, 'pro-wrestling');
   });
 
   const leaderboard = [...rowsByPlayer.values()]
@@ -7740,10 +7762,11 @@ async function buildClassicLeaderboard({ limit = 10 } = {}) {
     .sort((a, b) =>
       Number(b.totalPoints || 0) - Number(a.totalPoints || 0) ||
       Number(b.scoredMatches || 0) - Number(a.scoredMatches || 0) ||
-      Number(b.matchesPlayed || 0) - Number(a.matchesPlayed || 0)
+      Number(b.matchesPlayed || 0) - Number(a.matchesPlayed || 0) ||
+      String(a.displayName || '').localeCompare(String(b.displayName || ''))
     )
     .slice(0, resolvedLimit)
-    .map((row, index) => ({ ...row, rank: index + 1 }));
+    .map((row, index) => ({ ...row, rank: index + 1, totalPoints: Math.round(row.totalPoints || 0), points: Math.round(row.totalPoints || 0) }));
 
   return {
     leaderboard,
@@ -13268,7 +13291,7 @@ app.get('/api/public/homepage/promoted-fights', async (req, res) => {
           ...matches.map((fight) => pickPublicFightFields(fight, 'match')),
           ...shadows.map((fight) => pickPublicFightFields(fight, 'shadow')),
         ]
-          .filter((fight) => isHomepagePromotionVisible(fight, now))
+          .filter((fight) => isHomepagePromotionVisible(fight, now) && getFightTimelineBucket(fight, now) !== 'past')
           .sort(compareHomepagePromotedFights)
           .slice(0, limit);
         return { ok: true, items, count: items.length, generatedAt: now.toISOString() };
