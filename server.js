@@ -439,17 +439,61 @@ function getRequestedClassicPlayerId(query = {}) {
   return String(query.playerId || query.userId || query.accountId || query.viewerId || '').trim();
 }
 
+function parseMonthDayTextDate(text = '') {
+  const match = String(text).match(/\b(jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|jun(?:e)?|jul(?:y)?|aug(?:ust)?|sep(?:t)?(?:ember)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?)\.?\s+(\d{1,2})\b/i);
+  if (!match) return null;
+  const date = new Date(`${match[1]} ${match[2]}, ${new Date().getFullYear()}`);
+  return Number.isNaN(date.getTime()) ? null : date;
+}
+
 function parseFightDateTime(match = {}) {
-  const rawDate = match.matchDate || match.date || match.fightDate || match.scheduledAt || match.homepagePromotionStartsAt;
-  if (!rawDate) return null;
-  const date = new Date(rawDate);
-  if (Number.isNaN(date.getTime())) return null;
+  const rawDate = match.matchDate
+    || match.date
+    || match.fightDate
+    || match.scheduledAt
+    || match.startDate
+    || match.eventDate
+    || match.iso
+    || match.dateLabel
+    || match.scheduleLabel
+    || match.matchDateLabel
+    || match.homepagePromotionStartsAt
+    || match.homepagePromotion?.startsAt
+    || match.homepagePromotion?.subtitle
+    || match.homepagePromotionSubtitle;
+  const searchableText = [
+    rawDate,
+    match.matchName,
+    match.matchDescription,
+    match.homepagePromotion?.title,
+    match.homepagePromotion?.subtitle,
+    match.homepagePromotionTitle,
+    match.homepagePromotionSubtitle,
+  ].filter(Boolean).join(' ').trim();
+  if (!searchableText) return null;
+
+  const rawText = String(rawDate || searchableText).trim();
   const timeText = String(match.matchTime || match.time || match.fightTime || '').trim();
   const timeMatch = timeText.match(/^(\d{1,2}):(\d{2})/);
-  if (timeMatch) {
+  const isIsoLike = /^\d{4}-\d{2}-\d{2}/.test(rawText) || rawText.includes('T');
+  let date = null;
+
+  if (isIsoLike) {
+    const hh = String(timeMatch?.[1] || '23').padStart(2, '0');
+    const mm = String(timeMatch?.[2] || '59').padStart(2, '0');
+    date = new Date(rawText.includes('T') ? rawText : `${rawText}T${hh}:${mm}:00`);
+  }
+
+  if (!date || Number.isNaN(date.getTime())) date = new Date(rawText);
+  if (!date || Number.isNaN(date.getTime())) date = parseMonthDayTextDate(rawText) || parseMonthDayTextDate(searchableText);
+  if (!date || Number.isNaN(date.getTime())) return null;
+
+  if (timeMatch && !rawText.includes('T')) {
     const hours = Number(timeMatch[1]);
     const minutes = Number(timeMatch[2]);
     if (Number.isFinite(hours) && Number.isFinite(minutes)) date.setHours(hours, minutes, 0, 0);
+  } else if (!rawText.includes('T')) {
+    date.setHours(23, 59, 59, 999);
   }
   return date;
 }
@@ -3167,22 +3211,11 @@ app.get('/api/public/prediction-fights', async (req, res) => {
       };
     };
 
-    const hasPlayerContext = Boolean(getRequestedClassicPlayerId(req.query));
-    if (hasPlayerContext) {
-      const payload = await loadPredictionFightPayload();
-      res.setHeader('Cache-Control', 'private, no-store, max-age=0, must-revalidate');
-      res.setHeader('Pragma', 'no-cache');
-      res.setHeader('Expires', '0');
-      res.setHeader('X-Backend-Cache', 'BYPASS');
-      return res.json(payload);
-    }
-
-    const { payload, cacheState } = await readThroughPublicCache(
-      getPublicCacheKey(req, 'public-prediction-fights'),
-      loadPredictionFightPayload
-    );
-
-    setPublicCacheHeaders(res, PUBLIC_CACHE_TTL_SECONDS, cacheState);
+    const payload = await loadPredictionFightPayload();
+    res.setHeader('Cache-Control', 'private, no-store, no-cache, max-age=0, must-revalidate');
+    res.setHeader('Pragma', 'no-cache');
+    res.setHeader('Expires', '0');
+    res.setHeader('X-Backend-Cache', 'BYPASS');
     return res.json(payload);
   } catch (error) {
     console.error('Error loading prediction-ready fights:', error);
@@ -7842,35 +7875,31 @@ app.get('/api/public/leaderboard', async (req, res) => {
 
 app.get('/api/public/home-summary', async (req, res) => {
   try {
-    const { payload, cacheState } = await readThroughPublicCache(
-      getPublicCacheKey(req, 'public-home-summary'),
-      async () => {
-        const fightLimit = parsePositiveInteger(req.query.fightLimit || req.query.limit, 6, 24);
-        const leaderboardLimit = parsePositiveInteger(req.query.leaderboardLimit, 5, 25);
+    const fightLimit = parsePositiveInteger(req.query.fightLimit || req.query.limit, 6, 24);
+    const leaderboardLimit = parsePositiveInteger(req.query.leaderboardLimit, 5, 25);
 
-        const [featuredFights, leaderboardResult, totalPlayers, activeClassicFights] = await Promise.all([
-          loadPublicFightCards({ limit: fightLimit, category: req.query.category }),
-          buildClassicLeaderboard({ limit: leaderboardLimit }),
-          User.countDocuments(),
-          Match.countDocuments(applyFightPublicVisibilityFilter({}, { playable: 'true' })),
-        ]);
+    const [featuredFights, leaderboardResult, totalPlayers, activeClassicFights] = await Promise.all([
+      loadPublicFightCards({ limit: fightLimit, category: req.query.category }),
+      buildClassicLeaderboard({ limit: leaderboardLimit }),
+      User.countDocuments(),
+      Match.countDocuments(applyFightPublicVisibilityFilter({}, { playable: 'true' })),
+    ]);
 
-        return {
-          ok: true,
-          featuredFights,
-          leaderboard: leaderboardResult.leaderboard,
-          stats: {
-            players: totalPlayers,
-            activeFights: activeClassicFights,
-            leaderboardPlayers: leaderboardResult.playerCount,
-          },
-          generatedAt: new Date().toISOString(),
-        };
-      }
-    );
-
-    setPublicCacheHeaders(res, PUBLIC_CACHE_TTL_SECONDS, cacheState);
-    res.json(payload);
+    res.setHeader('Cache-Control', 'private, no-store, no-cache, max-age=0, must-revalidate');
+    res.setHeader('Pragma', 'no-cache');
+    res.setHeader('Expires', '0');
+    res.setHeader('X-Backend-Cache', 'BYPASS');
+    res.json({
+      ok: true,
+      featuredFights,
+      leaderboard: leaderboardResult.leaderboard,
+      stats: {
+        players: totalPlayers,
+        activeFights: activeClassicFights,
+        leaderboardPlayers: leaderboardResult.playerCount,
+      },
+      generatedAt: new Date().toISOString(),
+    });
   } catch (error) {
     console.error('Error building public home summary:', error);
     res.status(500).json({ ok: false, message: 'Failed to build public home summary.' });
@@ -13276,29 +13305,27 @@ app.get('/api/public/fight-calendar', async (req, res) => {
 
 app.get('/api/public/homepage/promoted-fights', async (req, res) => {
   try {
-    const { payload, cacheState } = await readThroughPublicCache(
-      getPublicCacheKey(req, 'public-homepage-promoted-fights'),
-      async () => {
-        const limit = parsePositiveInteger(req.query.limit, 8, 24);
-        const now = new Date();
-        const visiblePromotedFilter = applyFightPublicVisibilityFilter({ homepagePromoted: true }, { playable: 'true' });
-        const queryLimit = Math.min(Math.max(limit * 4, limit), 120);
-        const [matches, shadows] = await Promise.all([
-          applyFightFreshSortLean(Match.find(visiblePromotedFilter).populate('fighterAId fighterBId')).limit(queryLimit),
-          applyFightFreshSortLean(Shadow.find(visiblePromotedFilter).populate('fighterAId fighterBId')).limit(queryLimit).catch(() => []),
-        ]);
-        const items = [
-          ...matches.map((fight) => pickPublicFightFields(fight, 'match')),
-          ...shadows.map((fight) => pickPublicFightFields(fight, 'shadow')),
-        ]
-          .filter((fight) => isHomepagePromotionVisible(fight, now) && getFightTimelineBucket(fight, now) !== 'past')
-          .sort(compareHomepagePromotedFights)
-          .slice(0, limit);
-        return { ok: true, items, count: items.length, generatedAt: now.toISOString() };
-      }
-    );
-    setPublicCacheHeaders(res, PUBLIC_CACHE_TTL_SECONDS, cacheState);
-    res.json(payload);
+    const limit = parsePositiveInteger(req.query.limit, 8, 24);
+    const now = new Date();
+    const visiblePromotedFilter = applyFightPublicVisibilityFilter({ homepagePromoted: true }, { playable: 'true' });
+    const queryLimit = Math.min(Math.max(limit * 4, limit), 120);
+    const [matches, shadows] = await Promise.all([
+      applyFightFreshSortLean(Match.find(visiblePromotedFilter).populate('fighterAId fighterBId')).limit(queryLimit),
+      applyFightFreshSortLean(Shadow.find(visiblePromotedFilter).populate('fighterAId fighterBId')).limit(queryLimit).catch(() => []),
+    ]);
+    const items = [
+      ...matches.map((fight) => pickPublicFightFields(fight, 'match')),
+      ...shadows.map((fight) => pickPublicFightFields(fight, 'shadow')),
+    ]
+      .filter((fight) => isHomepagePromotionVisible(fight, now) && getFightTimelineBucket(fight, now) !== 'past')
+      .sort(compareHomepagePromotedFights)
+      .slice(0, limit);
+
+    res.setHeader('Cache-Control', 'private, no-store, no-cache, max-age=0, must-revalidate');
+    res.setHeader('Pragma', 'no-cache');
+    res.setHeader('Expires', '0');
+    res.setHeader('X-Backend-Cache', 'BYPASS');
+    res.json({ ok: true, items, count: items.length, generatedAt: now.toISOString() });
   } catch (error) {
     console.error('Error loading promoted homepage fights:', error);
     res.status(500).json({ ok: false, message: 'Failed to load promoted homepage fights.' });
