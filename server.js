@@ -526,6 +526,39 @@ function getFightTimelineBucket(match = {}, now = new Date()) {
   return 'upcoming';
 }
 
+function hasExpiredMonthDayText(match = {}, now = new Date()) {
+  const searchableText = [
+    match.matchDate,
+    match.date,
+    match.fightDate,
+    match.scheduledAt,
+    match.startDate,
+    match.eventDate,
+    match.dateLabel,
+    match.scheduleLabel,
+    match.matchDateLabel,
+    match.matchName,
+    match.matchDescription,
+    match.homepagePromotion?.title,
+    match.homepagePromotion?.subtitle,
+    match.homepagePromotionTitle,
+    match.homepagePromotionSubtitle,
+  ].filter(Boolean).join(' ');
+
+  const monthDay = parseMonthDayTextDate(searchableText);
+  if (!monthDay) return false;
+  monthDay.setHours(23, 59, 59, 999);
+  const normalizedNow = now instanceof Date ? now : new Date(now || Date.now());
+  return !Number.isNaN(normalizedNow.getTime()) && monthDay.getTime() < normalizedNow.getTime();
+}
+
+function isPublicHomeActiveFightRecord(match = {}, now = new Date()) {
+  if (!match || isDraftFightRecord(match)) return false;
+  if (getFightTimelineBucket(match, now) === 'past') return false;
+  if (hasExpiredMonthDayText(match, now)) return false;
+  return true;
+}
+
 function getFightStatusBucket(match = {}) {
   const timeline = getFightTimelineBucket(match);
   if (timeline === 'past') return 'completed';
@@ -3144,7 +3177,15 @@ app.get('/match', async (req, res) => {
     let responseItems = match.map((item) => attachCombatFighterReadFallbacks(item, item.sourceType || 'match'));
     responseItems = await attachPlayerPredictionStateToFightItems(responseItems, req.query);
     responseItems = applyPublicFightStatusIntent(responseItems, req.query);
+    const requestedTimeline = String(req.query.status || req.query.bucket || req.query.view || '').trim().toLowerCase();
+    if (!requestedTimeline || ['upcoming', 'future', 'scheduled', 'active-contests', 'playable', 'prediction', 'predictions', 'all'].includes(requestedTimeline)) {
+      responseItems = responseItems.filter((item) => isPublicHomeActiveFightRecord(item));
+    }
 
+    res.setHeader('Cache-Control', 'private, no-store, no-cache, max-age=0, must-revalidate');
+    res.setHeader('Pragma', 'no-cache');
+    res.setHeader('Expires', '0');
+    res.setHeader('X-Backend-Cache', 'BYPASS');
     res.send(responseItems);
   } catch (error) {
     console.error('Error fetching matches:', error);
@@ -3175,7 +3216,7 @@ app.get('/api/public/prediction-fights', async (req, res) => {
       let items = [
         ...matches.map((item) => ({ ...item, sourceType: 'match' })),
         ...shadows.map((item) => ({ ...item, sourceType: 'shadow' })),
-      ].filter((item) => !isDraftFightRecord(item));
+      ].filter((item) => isPublicHomeActiveFightRecord(item));
 
       if (shouldUseStrictPlayableFightFilter(req.query)) {
         items = items.filter((item) => isPredictionEligibleFightRecord(item));
@@ -3197,8 +3238,8 @@ app.get('/api/public/prediction-fights', async (req, res) => {
       items = await attachPlayerPredictionStateToFightItems(items, req.query);
       const requestedTimeline = String(req.query.status || req.query.bucket || req.query.view || '').trim().toLowerCase();
       items = applyPublicFightStatusIntent(items, req.query);
-      if (!requestedTimeline || ['upcoming', 'future', 'scheduled', 'active-contests', 'playable', 'prediction', 'predictions'].includes(requestedTimeline)) {
-        items = items.filter((item) => getFightTimelineBucket(item) !== 'past');
+      if (!requestedTimeline || ['upcoming', 'future', 'scheduled', 'active-contests', 'playable', 'prediction', 'predictions', 'all'].includes(requestedTimeline)) {
+        items = items.filter((item) => isPublicHomeActiveFightRecord(item));
       }
       items = items.slice(0, limit);
 
@@ -7826,7 +7867,7 @@ async function loadPublicFightCards({ limit = 6, category } = {}) {
     ...shadows.map((item) => ({ ...pickPublicFightFields(item, 'shadow'), __raw: item })),
   ].filter((item) => {
     const raw = item.__raw || item;
-    return !isDraftFightRecord(raw) && getFightTimelineBucket(raw) !== 'past';
+    return isPublicHomeActiveFightRecord(raw);
   });
 
   if (!isAllFilterValue(category)) {
@@ -13317,7 +13358,7 @@ app.get('/api/public/homepage/promoted-fights', async (req, res) => {
       ...matches.map((fight) => pickPublicFightFields(fight, 'match')),
       ...shadows.map((fight) => pickPublicFightFields(fight, 'shadow')),
     ]
-      .filter((fight) => isHomepagePromotionVisible(fight, now) && getFightTimelineBucket(fight, now) !== 'past')
+      .filter((fight) => isHomepagePromotionVisible(fight, now) && isPublicHomeActiveFightRecord(fight, now))
       .sort(compareHomepagePromotedFights)
       .slice(0, limit);
 
