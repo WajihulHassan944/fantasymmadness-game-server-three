@@ -8,7 +8,7 @@
  */
 
 const DEFAULT_SCORING_CONFIG = Object.freeze({
-  version: 'combat-round-outcome-v1',
+  version: 'official-round-finish-scorecard-v3',
   points: {
     KO: 500,
     SP: 25,
@@ -16,17 +16,17 @@ const DEFAULT_SCORING_CONFIG = Object.freeze({
     RL: 25,
   },
   labels: {
-    KO: 'Knockout / finish bonus',
-    SP: 'Survival points when fighter was not knocked out in the round',
-    RW: 'Round win points',
-    RL: 'Round loss participation points',
+    KO: 'Finish Bonus — correct actual KO/TKO/submission finish-round pick',
+    SP: 'Survival Bonus — wrong pick when the round is not the finish round',
+    RW: 'Round Winner pick',
+    RL: 'Round Loser paired credit',
   },
   ui: {
     outcomeInput: 'radio',
     roundWinnerOptions: ['fighterA', 'fighterB', 'draw', 'none'],
-    knockoutOptions: ['none', 'fighterA_KO', 'fighterB_KO'],
+    finishOptions: ['none', 'fighterA_FINISH', 'fighterB_FINISH'],
     deriveOpponentOutcome: true,
-    survivalDerivedFromKnockout: true,
+    survivalDerivedFromFinish: true,
   },
 });
 
