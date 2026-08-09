@@ -4861,13 +4861,248 @@ const transporter = nodemailer.createTransport({
   },
 });
 
-const PUBLIC_APPAREL_PRODUCTS = [
-  { sku: 'FMM-HOODIE-001', name: 'MMAdness Hoodie', price: 49.99, currency: 'USD', image: '/images/mobile-home/app-fixed-v15/ap1-hq.webp', sizes: ['S', 'M', 'L', 'XL', '2XL'] },
-  { sku: 'FMM-TEE-001', name: 'Fight Tee', price: 29.99, currency: 'USD', image: '/images/mobile-home/app-fixed-v15/ap2-hq.webp', sizes: ['S', 'M', 'L', 'XL', '2XL'] },
-  { sku: 'FMM-CAP-001', name: 'Snapback Cap', price: 24.99, currency: 'USD', image: '/images/mobile-home/app-fixed-v15/ap3-hq.webp', sizes: ['One Size'] },
-  { sku: 'FMM-SHORTS-001', name: 'Fight Shorts', price: 39.99, currency: 'USD', image: '/images/mobile-home/app-fixed-v15/ap1-2-hq.webp', sizes: ['S', 'M', 'L', 'XL', '2XL'] },
-  { sku: 'FMM-GLOVES-001', name: 'Training Gloves', price: 34.99, currency: 'USD', image: '/images/mobile-home/app-fixed-v15/ap2-2-hq.webp', sizes: ['S/M', 'L/XL'] },
+const STATIC_PUBLIC_APPAREL_PRODUCTS = [
+  { sku: 'FMM-HOODIE-001', name: 'MMAdness Hoodie', price: 49.99, currency: 'USD', image: '/images/mobile-home/app-fixed-v15/ap1-hq.webp', sizes: ['S', 'M', 'L', 'XL', '2XL'], source: 'fallback' },
+  { sku: 'FMM-TEE-001', name: 'Fight Tee', price: 29.99, currency: 'USD', image: '/images/mobile-home/app-fixed-v15/ap2-hq.webp', sizes: ['S', 'M', 'L', 'XL', '2XL'], source: 'fallback' },
+  { sku: 'FMM-CAP-001', name: 'Snapback Cap', price: 24.99, currency: 'USD', image: '/images/mobile-home/app-fixed-v15/ap3-hq.webp', sizes: ['One Size'], source: 'fallback' },
+  { sku: 'FMM-SHORTS-001', name: 'Fight Shorts', price: 39.99, currency: 'USD', image: '/images/mobile-home/app-fixed-v15/ap1-2-hq.webp', sizes: ['S', 'M', 'L', 'XL', '2XL'], source: 'fallback' },
+  { sku: 'FMM-GLOVES-001', name: 'Training Gloves', price: 34.99, currency: 'USD', image: '/images/mobile-home/app-fixed-v15/ap2-2-hq.webp', sizes: ['S/M', 'L/XL'], source: 'fallback' },
 ];
+const PUBLIC_APPAREL_PRODUCTS = STATIC_PUBLIC_APPAREL_PRODUCTS;
+const ETSY_API_BASE_URL = String(process.env.ETSY_API_BASE_URL || 'https://api.etsy.com/v3/application').replace(/\/$/, '');
+const ETSY_DEFAULT_SHOP_NAME = process.env.ETSY_SHOP_NAME || 'FANTASYMMADNESS';
+const ETSY_PRODUCTS_CACHE_TTL_MS = Number(process.env.ETSY_PRODUCTS_CACHE_TTL_MS || 15 * 60 * 1000);
+let etsyApparelCache = { expiresAt: 0, data: null, error: null };
+let etsyShopIdCache = null;
+
+function getEtsyApiKeyHeader() {
+  const keystring = String(process.env.ETSY_API_KEYSTRING || process.env.ETSY_KEYSTRING || process.env.ETSY_API_KEY || '').trim();
+  const sharedSecret = String(process.env.ETSY_SHARED_SECRET || process.env.ETSY_API_SHARED_SECRET || '').trim();
+  return keystring && sharedSecret ? `${keystring}:${sharedSecret}` : '';
+}
+
+function isEtsyCatalogEnabled() {
+  const disabled = ['false', '0', 'off'].includes(String(process.env.ETSY_APPAREL_SYNC_ENABLED || 'true').toLowerCase());
+  return !disabled && Boolean(getEtsyApiKeyHeader());
+}
+
+function buildEtsyUrl(pathname, query = {}) {
+  const url = new URL(`${ETSY_API_BASE_URL}${pathname.startsWith('/') ? pathname : `/${pathname}`}`);
+  Object.entries(query).forEach(([key, value]) => {
+    if (value === undefined || value === null || value === '') return;
+    url.searchParams.set(key, Array.isArray(value) ? value.join(',') : String(value));
+  });
+  return url.toString();
+}
+
+async function fetchEtsyJson(pathname, query = {}) {
+  const apiKey = getEtsyApiKeyHeader();
+  if (!apiKey) {
+    const error = new Error('ETSY_API_KEYSTRING and ETSY_SHARED_SECRET are required for Etsy apparel sync.');
+    error.status = 503;
+    throw error;
+  }
+
+  const timeoutMs = Number(process.env.ETSY_API_TIMEOUT_MS || 12000);
+  const request = fetch(buildEtsyUrl(pathname, query), {
+    headers: {
+      'x-api-key': apiKey,
+      Accept: 'application/json',
+    },
+  });
+  const timeout = new Promise((_, reject) => {
+    setTimeout(() => reject(new Error(`Etsy API request timed out after ${timeoutMs}ms.`)), timeoutMs);
+  });
+  const response = await Promise.race([request, timeout]);
+  const text = await response.text();
+  let payload = null;
+  try {
+    payload = text ? JSON.parse(text) : null;
+  } catch (_error) {
+    payload = { raw: text };
+  }
+  if (!response.ok) {
+    const message = payload?.error || payload?.message || response.statusText || 'Etsy API request failed.';
+    const error = new Error(`Etsy API ${response.status}: ${message}`);
+    error.status = response.status;
+    error.payload = payload;
+    throw error;
+  }
+  return payload;
+}
+
+function extractEtsyResults(payload) {
+  if (Array.isArray(payload)) return payload;
+  if (Array.isArray(payload?.results)) return payload.results;
+  if (Array.isArray(payload?.data)) return payload.data;
+  return [];
+}
+
+async function resolveEtsyShopId() {
+  const configuredShopId = String(process.env.ETSY_SHOP_ID || '').trim();
+  if (configuredShopId) return configuredShopId;
+  if (etsyShopIdCache) return etsyShopIdCache;
+
+  const shopName = String(ETSY_DEFAULT_SHOP_NAME || '').trim();
+  const searchPayload = await fetchEtsyJson('/shops', { shop_name: shopName, limit: 10 });
+  const shops = extractEtsyResults(searchPayload);
+  const matchedShop = shops.find((shop) => String(shop.shop_name || '').toLowerCase() === shopName.toLowerCase()) || shops[0];
+  if (!matchedShop?.shop_id) {
+    throw new Error(`Etsy shop ${shopName || '(missing shop name)'} was not found.`);
+  }
+  etsyShopIdCache = String(matchedShop.shop_id);
+  return etsyShopIdCache;
+}
+
+function normalizeEtsyPrice(price, fallbackCurrency = 'USD') {
+  if (price && typeof price === 'object') {
+    const divisor = Number(price.divisor || 100) || 100;
+    const amount = Number(price.amount ?? price.value ?? price.price ?? 0);
+    return {
+      amount: Number((amount / divisor).toFixed(2)),
+      currency: price.currency_code || price.currency || fallbackCurrency,
+    };
+  }
+  const parsed = Number(String(price || '').replace(/[^0-9.]/g, ''));
+  return {
+    amount: Number.isFinite(parsed) ? Number(parsed.toFixed(2)) : 0,
+    currency: fallbackCurrency,
+  };
+}
+
+function pickEtsyListingImage(listing = {}) {
+  const imageCollections = [
+    listing.Images,
+    listing.images,
+    listing.ListingImages,
+    listing.listing_images,
+  ].filter(Array.isArray);
+  const firstImage = imageCollections.flat()[0] || listing.image || listing.primary_image || null;
+  if (!firstImage) return '';
+  if (typeof firstImage === 'string') return firstImage;
+  return firstImage.url_fullxfull || firstImage.url_170x135 || firstImage.url_570xN || firstImage.url_680x540 || firstImage.url_75x75 || '';
+}
+
+function normalizeEtsyListing(listing = {}) {
+  const listingId = String(listing.listing_id || listing.id || '').trim();
+  const price = normalizeEtsyPrice(listing.price || listing.price_money || listing.BuyerPrice, listing.currency_code || 'USD');
+  const title = String(listing.title || listing.name || 'Fantasy MMAdness Apparel').replace(/\s+/g, ' ').trim();
+  const listingUrl = listing.url || listing.listing_url || (listingId ? `https://www.etsy.com/listing/${listingId}` : 'https://www.etsy.com/shop/FANTASYMMADNESS');
+  const quantity = Number(listing.quantity ?? listing.inventory?.quantity ?? 1);
+  const isAvailable = !Number.isFinite(quantity) || quantity > 0;
+  return {
+    sku: `ETSY-${listingId || title.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '')}`,
+    etsyListingId: listingId,
+    source: 'etsy',
+    name: title,
+    tag: 'Official Etsy shop',
+    price: price.amount,
+    currency: price.currency,
+    image: pickEtsyListingImage(listing) || '/images/mobile-home/app-fixed-v15/ap2-hq.webp',
+    images: [pickEtsyListingImage(listing)].filter(Boolean),
+    url: listingUrl,
+    externalUrl: listingUrl,
+    buyUrl: listingUrl,
+    isExternalCheckout: true,
+    available: isAvailable,
+    quantity: Number.isFinite(quantity) ? quantity : undefined,
+    sizes: ['See Etsy options'],
+  };
+}
+
+async function hydrateEtsyListingDetails(listings = []) {
+  const ids = listings.map((listing) => listing.listing_id || listing.id).filter(Boolean).slice(0, 100);
+  if (!ids.length) return listings;
+  try {
+    const batchPayload = await fetchEtsyJson('/listings/batch', {
+      listing_ids: ids.join(','),
+      includes: 'Images,BuyerPrice',
+    });
+    const detailedListings = extractEtsyResults(batchPayload);
+    if (!detailedListings.length) return listings;
+    const detailsById = new Map(detailedListings.map((listing) => [String(listing.listing_id || listing.id), listing]));
+    return listings.map((listing) => ({
+      ...listing,
+      ...(detailsById.get(String(listing.listing_id || listing.id)) || {}),
+    }));
+  } catch (error) {
+    console.warn('[etsy] Unable to hydrate listing images/details:', error.message);
+    return listings;
+  }
+}
+
+async function fetchEtsyApparelProductsFresh({ limit = 100 } = {}) {
+  const shopId = await resolveEtsyShopId();
+  const perPage = Math.min(Math.max(Number(limit) || 100, 1), 100);
+  const payload = await fetchEtsyJson(`/shops/${shopId}/listings/active`, {
+    limit: perPage,
+    offset: 0,
+  });
+  const activeListings = extractEtsyResults(payload);
+  const hydratedListings = await hydrateEtsyListingDetails(activeListings);
+  const products = hydratedListings
+    .map(normalizeEtsyListing)
+    .filter((product) => product.etsyListingId && product.available !== false);
+
+  return {
+    source: 'etsy',
+    products,
+    shop: {
+      id: shopId,
+      name: ETSY_DEFAULT_SHOP_NAME,
+      url: `https://www.etsy.com/shop/${ETSY_DEFAULT_SHOP_NAME}`,
+    },
+    syncedAt: new Date().toISOString(),
+  };
+}
+
+async function getPublicApparelProducts({ force = false, limit = 100 } = {}) {
+  if (!isEtsyCatalogEnabled()) {
+    return {
+      source: 'fallback',
+      products: STATIC_PUBLIC_APPAREL_PRODUCTS,
+      shop: { name: 'Fantasy MMAdness', url: 'https://www.etsy.com/shop/FANTASYMMADNESS' },
+      syncedAt: null,
+      reason: 'etsy_not_configured',
+    };
+  }
+
+  const now = Date.now();
+  if (!force && etsyApparelCache.data && etsyApparelCache.expiresAt > now) {
+    return {
+      ...etsyApparelCache.data,
+      products: etsyApparelCache.data.products.slice(0, limit),
+      cached: true,
+    };
+  }
+
+  try {
+    const data = await fetchEtsyApparelProductsFresh({ limit });
+    const fallbackSafeData = data.products.length ? data : {
+      ...data,
+      source: 'fallback',
+      products: STATIC_PUBLIC_APPAREL_PRODUCTS,
+      reason: 'etsy_empty_catalog',
+    };
+    etsyApparelCache = {
+      data: fallbackSafeData,
+      error: null,
+      expiresAt: now + ETSY_PRODUCTS_CACHE_TTL_MS,
+    };
+    return fallbackSafeData;
+  } catch (error) {
+    console.warn('[etsy] Falling back to local apparel products:', error.message);
+    etsyApparelCache.error = error.message;
+    return {
+      source: 'fallback',
+      products: STATIC_PUBLIC_APPAREL_PRODUCTS,
+      shop: { name: 'Fantasy MMAdness', url: 'https://www.etsy.com/shop/FANTASYMMADNESS' },
+      syncedAt: null,
+      reason: 'etsy_fetch_failed',
+      error: error.message,
+    };
+  }
+}
 
 const apparelOrderItemSchema = new mongoose.Schema({
   sku: { type: String, required: true, trim: true },
@@ -4918,33 +5153,40 @@ function buildApparelOrderNumber() {
   return `FMM-${Date.now()}-${Math.random().toString(36).slice(2, 7).toUpperCase()}`;
 }
 
-function resolveApparelOrderItems(rawItems = []) {
+async function resolveApparelOrderItems(rawItems = []) {
   if (!Array.isArray(rawItems) || !rawItems.length) {
     const error = new Error('At least one apparel item is required.');
     error.status = 400;
     throw error;
   }
 
+  const catalog = await getPublicApparelProducts({ force: false, limit: 100 });
+  const products = Array.isArray(catalog?.products) && catalog.products.length
+    ? catalog.products
+    : PUBLIC_APPAREL_PRODUCTS;
+
   return rawItems.map((rawItem) => {
     const sku = String(rawItem?.sku || '').trim();
-    const product = PUBLIC_APPAREL_PRODUCTS.find((item) => item.sku === sku);
+    const product = products.find((item) => item.sku === sku) || PUBLIC_APPAREL_PRODUCTS.find((item) => item.sku === sku);
     if (!product) {
       const error = new Error(`Unknown apparel product: ${sku || 'missing sku'}.`);
       error.status = 400;
       throw error;
     }
 
-    const requestedSize = String(rawItem?.size || product.sizes?.[0] || 'One Size').trim();
-    const size = product.sizes.includes(requestedSize) ? requestedSize : product.sizes[0];
+    const productSizes = Array.isArray(product.sizes) && product.sizes.length ? product.sizes : ['One Size'];
+    const requestedSize = String(rawItem?.size || productSizes[0] || 'One Size').trim();
+    const size = productSizes.includes(requestedSize) ? requestedSize : productSizes[0];
     const quantity = normalizeApparelQuantity(rawItem?.quantity);
-    const lineTotal = Number((product.price * quantity).toFixed(2));
+    const unitPrice = Number(product.price || 0);
+    const lineTotal = Number((unitPrice * quantity).toFixed(2));
 
     return {
       sku: product.sku,
       name: product.name,
       size,
       quantity,
-      unitPrice: product.price,
+      unitPrice,
       lineTotal,
     };
   });
@@ -4960,8 +5202,30 @@ function renderApparelOrderRows(items = []) {
   `).join('');
 }
 
-app.get('/api/public/apparel-products', (_req, res) => {
-  res.json({ ok: true, products: PUBLIC_APPAREL_PRODUCTS });
+app.get('/api/public/apparel-products', async (req, res) => {
+  try {
+    const limit = Math.min(Math.max(Number(req.query.limit || 100), 1), 100);
+    const force = String(req.query.refresh || '').toLowerCase() === 'true';
+    const catalog = await getPublicApparelProducts({ force, limit });
+    res.set('Cache-Control', catalog.source === 'etsy' ? 'public, max-age=300, stale-while-revalidate=900' : 'no-store');
+    return res.json({
+      ok: true,
+      source: catalog.source,
+      shop: catalog.shop,
+      syncedAt: catalog.syncedAt,
+      cached: Boolean(catalog.cached),
+      reason: catalog.reason,
+      products: catalog.products.slice(0, limit),
+    });
+  } catch (error) {
+    console.error('[apparel-products] catalog failed:', error);
+    return res.status(500).json({
+      ok: false,
+      source: 'fallback',
+      message: 'Unable to load apparel catalog.',
+      products: PUBLIC_APPAREL_PRODUCTS,
+    });
+  }
 });
 
 app.post('/api/public/apparel-orders', async (req, res) => {
@@ -4987,7 +5251,7 @@ app.post('/api/public/apparel-orders', async (req, res) => {
       });
     }
 
-    const orderItems = resolveApparelOrderItems(items);
+    const orderItems = await resolveApparelOrderItems(items);
     const subtotal = Number(orderItems.reduce((sum, item) => sum + item.lineTotal, 0).toFixed(2));
     const order = await ApparelOrder.create({
       orderNumber: buildApparelOrderNumber(),
