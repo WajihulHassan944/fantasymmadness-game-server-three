@@ -4862,11 +4862,11 @@ const transporter = nodemailer.createTransport({
 });
 
 const STATIC_PUBLIC_APPAREL_PRODUCTS = [
-  { sku: 'FMM-HOODIE-001', name: 'MMAdness Hoodie', price: 49.99, currency: 'USD', image: '/images/mobile-home/app-fixed-v15/ap1-hq.webp', sizes: ['S', 'M', 'L', 'XL', '2XL'], source: 'fallback' },
-  { sku: 'FMM-TEE-001', name: 'Fight Tee', price: 29.99, currency: 'USD', image: '/images/mobile-home/app-fixed-v15/ap2-hq.webp', sizes: ['S', 'M', 'L', 'XL', '2XL'], source: 'fallback' },
-  { sku: 'FMM-CAP-001', name: 'Snapback Cap', price: 24.99, currency: 'USD', image: '/images/mobile-home/app-fixed-v15/ap3-hq.webp', sizes: ['One Size'], source: 'fallback' },
-  { sku: 'FMM-SHORTS-001', name: 'Fight Shorts', price: 39.99, currency: 'USD', image: '/images/mobile-home/app-fixed-v15/ap1-2-hq.webp', sizes: ['S', 'M', 'L', 'XL', '2XL'], source: 'fallback' },
-  { sku: 'FMM-GLOVES-001', name: 'Training Gloves', price: 34.99, currency: 'USD', image: '/images/mobile-home/app-fixed-v15/ap2-2-hq.webp', sizes: ['S/M', 'L/XL'], source: 'fallback' },
+  { sku: 'FMM-HOODIE-001', name: 'MMAdness Hoodie', price: 49.99, currency: 'USD', image: '/images/mobile-home/app-fixed-v32/ap1-hq.webp', sizes: ['S', 'M', 'L', 'XL', '2XL'], source: 'fallback' },
+  { sku: 'FMM-TEE-001', name: 'Fight Tee', price: 29.99, currency: 'USD', image: '/images/mobile-home/app-fixed-v32/ap2-hq.webp', sizes: ['S', 'M', 'L', 'XL', '2XL'], source: 'fallback' },
+  { sku: 'FMM-CAP-001', name: 'Snapback Cap', price: 24.99, currency: 'USD', image: '/images/mobile-home/app-fixed-v32/ap3-hq.webp', sizes: ['One Size'], source: 'fallback' },
+  { sku: 'FMM-SHORTS-001', name: 'Fight Shorts', price: 39.99, currency: 'USD', image: '/images/mobile-home/app-fixed-v32/ap1-2-hq.webp', sizes: ['S', 'M', 'L', 'XL', '2XL'], source: 'fallback' },
+  { sku: 'FMM-GLOVES-001', name: 'Training Gloves', price: 34.99, currency: 'USD', image: '/images/mobile-home/app-fixed-v32/ap2-2-hq.webp', sizes: ['S/M', 'L/XL'], source: 'fallback' },
 ];
 const PUBLIC_APPAREL_PRODUCTS = STATIC_PUBLIC_APPAREL_PRODUCTS;
 const ETSY_API_BASE_URL = String(process.env.ETSY_API_BASE_URL || 'https://api.etsy.com/v3/application').replace(/\/$/, '');
@@ -4970,26 +4970,70 @@ function normalizeEtsyPrice(price, fallbackCurrency = 'USD') {
   };
 }
 
-function pickEtsyListingImage(listing = {}) {
-  const imageCollections = [
+const APPAREL_FALLBACK_IMAGES = STATIC_PUBLIC_APPAREL_PRODUCTS.map((product) => product.image);
+
+function getApparelFallbackImage(index = 0) {
+  return APPAREL_FALLBACK_IMAGES[index % APPAREL_FALLBACK_IMAGES.length] || '/images/mobile-home/app-fixed-v32/ap2-hq.webp';
+}
+
+function getEtsyImageUrl(image) {
+  if (!image) return '';
+  if (typeof image === 'string') return image.trim();
+  if (typeof image !== 'object') return '';
+  return String(
+    image.url_fullxfull ||
+    image.url_300x300 ||
+    image.url_570xN ||
+    image.url_680x540 ||
+    image.url_340x270 ||
+    image.url_170x135 ||
+    image.url_75x75 ||
+    image.url ||
+    image.src ||
+    ''
+  ).trim();
+}
+
+function collectEtsyListingImages(listing = {}) {
+  const collections = [
     listing.Images,
     listing.images,
     listing.ListingImages,
     listing.listing_images,
+    listing.listingImages,
+    listing.MainImage ? [listing.MainImage] : null,
+    listing.main_image ? [listing.main_image] : null,
+    listing.primary_image ? [listing.primary_image] : null,
+    listing.image ? [listing.image] : null,
   ].filter(Array.isArray);
-  const firstImage = imageCollections.flat()[0] || listing.image || listing.primary_image || null;
-  if (!firstImage) return '';
-  if (typeof firstImage === 'string') return firstImage;
-  return firstImage.url_fullxfull || firstImage.url_170x135 || firstImage.url_570xN || firstImage.url_680x540 || firstImage.url_75x75 || '';
+
+  const directFields = [
+    listing.image_url,
+    listing.imageUrl,
+    listing.url_fullxfull,
+    listing.url_570xN,
+    listing.url_300x300,
+    listing.primary_image_url,
+  ];
+
+  const urls = [...collections.flat().map(getEtsyImageUrl), ...directFields.map(getEtsyImageUrl)]
+    .filter((url) => /^https?:\/\//i.test(url));
+  return Array.from(new Set(urls));
 }
 
-function normalizeEtsyListing(listing = {}) {
+function pickEtsyListingImage(listing = {}, fallbackIndex = 0) {
+  return collectEtsyListingImages(listing)[0] || getApparelFallbackImage(fallbackIndex);
+}
+
+function normalizeEtsyListing(listing = {}, fallbackIndex = 0) {
   const listingId = String(listing.listing_id || listing.id || '').trim();
   const price = normalizeEtsyPrice(listing.price || listing.price_money || listing.BuyerPrice, listing.currency_code || 'USD');
   const title = String(listing.title || listing.name || 'Fantasy MMAdness Apparel').replace(/\s+/g, ' ').trim();
   const listingUrl = listing.url || listing.listing_url || (listingId ? `https://www.etsy.com/listing/${listingId}` : 'https://www.etsy.com/shop/FANTASYMMADNESS');
   const quantity = Number(listing.quantity ?? listing.inventory?.quantity ?? 1);
   const isAvailable = !Number.isFinite(quantity) || quantity > 0;
+  const images = collectEtsyListingImages(listing);
+  const primaryImage = images[0] || getApparelFallbackImage(fallbackIndex);
   return {
     sku: `ETSY-${listingId || title.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '')}`,
     etsyListingId: listingId,
@@ -4998,8 +5042,8 @@ function normalizeEtsyListing(listing = {}) {
     tag: 'Official Etsy shop',
     price: price.amount,
     currency: price.currency,
-    image: pickEtsyListingImage(listing) || '/images/mobile-home/app-fixed-v15/ap2-hq.webp',
-    images: [pickEtsyListingImage(listing)].filter(Boolean),
+    image: primaryImage,
+    images: images.length ? images : [primaryImage],
     url: listingUrl,
     externalUrl: listingUrl,
     buyUrl: listingUrl,
@@ -5010,25 +5054,64 @@ function normalizeEtsyListing(listing = {}) {
   };
 }
 
+async function fetchEtsyListingImages(listingId) {
+  if (!listingId) return [];
+  const payload = await fetchEtsyJson(`/listings/${listingId}/images`);
+  return extractEtsyResults(payload).filter(Boolean);
+}
+
 async function hydrateEtsyListingDetails(listings = []) {
   const ids = listings.map((listing) => listing.listing_id || listing.id).filter(Boolean).slice(0, 100);
   if (!ids.length) return listings;
+
+  let mergedListings = listings;
   try {
     const batchPayload = await fetchEtsyJson('/listings/batch', {
       listing_ids: ids.join(','),
       includes: 'Images,BuyerPrice',
     });
     const detailedListings = extractEtsyResults(batchPayload);
-    if (!detailedListings.length) return listings;
-    const detailsById = new Map(detailedListings.map((listing) => [String(listing.listing_id || listing.id), listing]));
-    return listings.map((listing) => ({
-      ...listing,
-      ...(detailsById.get(String(listing.listing_id || listing.id)) || {}),
-    }));
+    if (detailedListings.length) {
+      const detailsById = new Map(detailedListings.map((listing) => [String(listing.listing_id || listing.id), listing]));
+      mergedListings = listings.map((listing) => {
+        const detail = detailsById.get(String(listing.listing_id || listing.id)) || {};
+        return {
+          ...listing,
+          ...detail,
+          Images: detail.Images || detail.images || listing.Images || listing.images,
+        };
+      });
+    }
   } catch (error) {
-    console.warn('[etsy] Unable to hydrate listing images/details:', error.message);
-    return listings;
+    console.warn('[etsy] Listing batch hydration failed; trying image endpoints:', error.message);
   }
+
+  const missingImageListings = mergedListings.filter((listing) => !collectEtsyListingImages(listing).length);
+  if (!missingImageListings.length) return mergedListings;
+
+  const imagesById = new Map();
+  const concurrency = Math.min(5, missingImageListings.length);
+  let cursor = 0;
+  async function worker() {
+    while (cursor < missingImageListings.length) {
+      const listing = missingImageListings[cursor++];
+      const listingId = String(listing.listing_id || listing.id || '').trim();
+      if (!listingId) continue;
+      try {
+        const images = await fetchEtsyListingImages(listingId);
+        if (images.length) imagesById.set(listingId, images);
+      } catch (error) {
+        console.warn(`[etsy] Image hydration failed for listing ${listingId}:`, error.message);
+      }
+    }
+  }
+  await Promise.all(Array.from({ length: concurrency }, () => worker()));
+
+  return mergedListings.map((listing) => {
+    const listingId = String(listing.listing_id || listing.id || '').trim();
+    const images = imagesById.get(listingId);
+    return images?.length ? { ...listing, Images: images } : listing;
+  });
 }
 
 async function fetchEtsyApparelProductsFresh({ limit = 100 } = {}) {
@@ -5037,11 +5120,12 @@ async function fetchEtsyApparelProductsFresh({ limit = 100 } = {}) {
   const payload = await fetchEtsyJson(`/shops/${shopId}/listings/active`, {
     limit: perPage,
     offset: 0,
+    includes: 'Images',
   });
   const activeListings = extractEtsyResults(payload);
   const hydratedListings = await hydrateEtsyListingDetails(activeListings);
   const products = hydratedListings
-    .map(normalizeEtsyListing)
+    .map((listing, index) => normalizeEtsyListing(listing, index))
     .filter((product) => product.etsyListingId && product.available !== false);
 
   return {
@@ -5205,9 +5289,9 @@ function renderApparelOrderRows(items = []) {
 app.get('/api/public/apparel-products', async (req, res) => {
   try {
     const limit = Math.min(Math.max(Number(req.query.limit || 100), 1), 100);
-    const force = String(req.query.refresh || '').toLowerCase() === 'true';
+    const force = ['true', '1', 'yes'].includes(String(req.query.refresh || req.query.force || '').toLowerCase());
     const catalog = await getPublicApparelProducts({ force, limit });
-    res.set('Cache-Control', catalog.source === 'etsy' ? 'public, max-age=300, stale-while-revalidate=900' : 'no-store');
+    res.set('Cache-Control', 'no-store');
     return res.json({
       ok: true,
       source: catalog.source,
