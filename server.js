@@ -11210,6 +11210,7 @@ const proWrestlingPredictionSchema = new mongoose.Schema({
   competitorA: { type: wrestlingActionStatsSchema, required: true },
   competitorB: { type: wrestlingActionStatsSchema, required: true },
   winnerPrediction: { type: String, enum: WRESTLING_WINNER_VALUES, required: true },
+  finishTypePrediction: { type: String, enum: ['PINFALL', 'SUBMISSION', 'DQ', 'COUNT_OUT', 'OTHER', 'NO_CONTEST'], default: 'PINFALL' },
   predictionStatus: { type: String, enum: PRO_WRESTLING_PREDICTION_STATUSES, default: 'DRAFT' },
   submittedAt: Date,
   lockedAt: Date,
@@ -11601,7 +11602,10 @@ const ensureWrestlingDefaultRules = async () => {
   await Promise.all([
     ProWrestlingScoringRule.findOneAndUpdate(
       { ruleId: scoring.ruleId },
-      { $setOnInsert: { ruleId: scoring.ruleId, name: scoring.name, active: true, config: scoring } },
+      {
+        $set: { name: scoring.name, active: true, config: scoring },
+        $setOnInsert: { ruleId: scoring.ruleId },
+      },
       { upsert: true, new: true },
     ),
     ProWrestlingPayoutRule.findOneAndUpdate(
@@ -11777,6 +11781,7 @@ const recalculateWrestlingScores = async (match, session) => {
     competitorA: normalizeWrestlingStats(match.officialStats?.competitorA),
     competitorB: normalizeWrestlingStats(match.officialStats?.competitorB),
     officialWinner: match.officialWinner,
+    finishType: match.finishType,
   };
 
   const calculated = predictions.map((prediction) => {
@@ -12179,6 +12184,7 @@ const saveWrestlingPrediction = async (req, res) => {
       competitorA: normalizeWrestlingStats(req.body.competitorA || req.body.wrestlerA),
       competitorB: normalizeWrestlingStats(req.body.competitorB || req.body.wrestlerB),
       winnerPrediction: String(req.body.winnerPrediction || '').toUpperCase(),
+      finishTypePrediction: String(req.body.finishTypePrediction || 'PINFALL').toUpperCase(),
     };
     const errors = validateWrestlingPredictionPayload(payload);
     if (errors.length) throw wrestlingHttpError(400, 'Invalid wrestling prediction payload.', 'INVALID_PREDICTION', errors);
@@ -12774,7 +12780,7 @@ app.put('/api/admin/wrestling/matches/:id/live-stats', requireProWrestlingEnable
     const statsB = normalizeWrestlingStats(req.body.competitorB || req.body.wrestlerB);
     const officialWinner = req.body.officialWinner ? String(req.body.officialWinner).toUpperCase() : undefined;
     if (officialWinner && ![...WRESTLING_WINNER_VALUES, 'NO_CONTEST'].includes(officialWinner)) {
-      throw wrestlingHttpError(400, 'officialWinner must be A, B, DRAW, or NO_CONTEST.', 'INVALID_WINNER');
+      throw wrestlingHttpError(400, 'officialWinner must be A, B, or NO_CONTEST.', 'INVALID_WINNER');
     }
     const result = await runWrestlingTransaction(async (session) => {
       const match = await applyWrestlingSession(ProWrestlingMatch.findById(req.params.id), session);
@@ -12805,7 +12811,7 @@ app.put('/api/admin/wrestling/matches/:id/live-stats', requireProWrestlingEnable
 app.put('/api/admin/wrestling/matches/:id/result', requireProWrestlingEnabled, verifyAdminToken, async (req, res) => {
   try {
     const officialWinner = String(req.body.officialWinner || '').toUpperCase();
-    if (!WRESTLING_WINNER_VALUES.includes(officialWinner)) throw wrestlingHttpError(400, 'Official winner must be A, B, or DRAW.', 'INVALID_WINNER');
+    if (!WRESTLING_WINNER_VALUES.includes(officialWinner)) throw wrestlingHttpError(400, 'Official winner must be A or B.', 'INVALID_WINNER');
     const result = await runWrestlingTransaction(async (session) => {
       const match = await applyWrestlingSession(ProWrestlingMatch.findById(req.params.id), session);
       if (!match) throw wrestlingHttpError(404, 'Wrestling match not found.', 'MATCH_NOT_FOUND');
@@ -12814,7 +12820,7 @@ app.put('/api/admin/wrestling/matches/:id/result', requireProWrestlingEnabled, v
       if (req.body.competitorA || req.body.wrestlerA) match.officialStats.competitorA = normalizeWrestlingStats(req.body.competitorA || req.body.wrestlerA);
       if (req.body.competitorB || req.body.wrestlerB) match.officialStats.competitorB = normalizeWrestlingStats(req.body.competitorB || req.body.wrestlerB);
       match.officialWinner = officialWinner;
-      match.finishType = String(req.body.finishType || (officialWinner === 'DRAW' ? 'DRAW' : 'OTHER')).toUpperCase();
+      match.finishType = String(req.body.finishType || 'OTHER').toUpperCase();
       match.status = 'SCORING';
       match.scoringStartedAt = new Date();
       match.statsVersion += 1;
@@ -13265,6 +13271,7 @@ app.put('/api/admin/wrestling/matches/:id/predictions/:userId', requireProWrestl
         competitorA: normalizeWrestlingStats(req.body.competitorA || prediction.competitorA),
         competitorB: normalizeWrestlingStats(req.body.competitorB || prediction.competitorB),
         winnerPrediction: String(req.body.winnerPrediction || prediction.winnerPrediction).toUpperCase(),
+        finishTypePrediction: String(req.body.finishTypePrediction || prediction.finishTypePrediction || 'PINFALL').toUpperCase(),
       };
       const errors = validateWrestlingPredictionPayload(payload);
       if (errors.length) throw wrestlingHttpError(400, 'Invalid wrestling prediction payload.', 'INVALID_PREDICTION', errors);
@@ -13272,6 +13279,7 @@ app.put('/api/admin/wrestling/matches/:id/predictions/:userId', requireProWrestl
       prediction.competitorA = payload.competitorA;
       prediction.competitorB = payload.competitorB;
       prediction.winnerPrediction = payload.winnerPrediction;
+      prediction.finishTypePrediction = payload.finishTypePrediction;
       prediction.predictionStatus = ['LIVE', 'SCORING'].includes(match.status) ? 'SCORED' : 'SUBMITTED';
       prediction.submittedAt = prediction.submittedAt || new Date();
       await prediction.save(session ? { session } : undefined);

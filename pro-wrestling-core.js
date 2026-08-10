@@ -1,19 +1,18 @@
 'use strict';
 
 const WRESTLING_STAT_KEYS = Object.freeze(['HP', 'BP', 'K', 'PM', 'FM']);
-const WRESTLING_WINNER_VALUES = Object.freeze(['A', 'B', 'DRAW']);
+const WRESTLING_WINNER_VALUES = Object.freeze(['A', 'B']);
 
 const DEFAULT_WRESTLING_SCORING_RULE = Object.freeze({
   ruleId: 'WRESTLING_V1',
-  name: 'Pro Wrestling V1',
-  baseCategoryScore: 100,
-  winnerBonus: 1000,
-  multipliers: {
-    exact: 1,
-    within20Percent: 0.75,
-    within50Percent: 0.4,
-    outside50Percent: 0.1,
-  },
+  name: 'Pro Wrestling Final 25-Minute Rules',
+  statScoring: 'floor-prediction-points',
+  scheduledMatchMinutes: 25,
+  winnerBonus: 100,
+  finishBonus: 500,
+  survivalBonus: 25,
+  finishTypes: ['PINFALL', 'SUBMISSION'],
+  nonFinishTypes: ['DQ', 'COUNT_OUT', 'OTHER', 'NO_CONTEST'],
   categories: {
     HP: { label: 'Head Punches', weight: 1 },
     BP: { label: 'Body Punches', weight: 1 },
@@ -73,14 +72,17 @@ function normalizeScoringRule(rule) {
 
   base.ruleId = String(incoming.ruleId || base.ruleId);
   base.name = String(incoming.name || base.name);
-  base.baseCategoryScore = Math.max(0, finiteNumber(incoming.baseCategoryScore, base.baseCategoryScore));
+  base.statScoring = String(incoming.statScoring || base.statScoring);
+  base.scheduledMatchMinutes = Math.max(1, finiteNumber(incoming.scheduledMatchMinutes, base.scheduledMatchMinutes));
   base.winnerBonus = Math.max(0, finiteNumber(incoming.winnerBonus, base.winnerBonus));
-  base.multipliers = {
-    exact: Math.max(0, finiteNumber(multipliers.exact, base.multipliers.exact)),
-    within20Percent: Math.max(0, finiteNumber(multipliers.within20Percent, base.multipliers.within20Percent)),
-    within50Percent: Math.max(0, finiteNumber(multipliers.within50Percent, base.multipliers.within50Percent)),
-    outside50Percent: Math.max(0, finiteNumber(multipliers.outside50Percent, base.multipliers.outside50Percent)),
-  };
+  base.finishBonus = Math.max(0, finiteNumber(incoming.finishBonus, base.finishBonus));
+  base.survivalBonus = Math.max(0, finiteNumber(incoming.survivalBonus, base.survivalBonus));
+  base.finishTypes = Array.isArray(incoming.finishTypes) && incoming.finishTypes.length
+    ? incoming.finishTypes.map((item) => String(item).toUpperCase())
+    : base.finishTypes;
+  base.nonFinishTypes = Array.isArray(incoming.nonFinishTypes) && incoming.nonFinishTypes.length
+    ? incoming.nonFinishTypes.map((item) => String(item).toUpperCase())
+    : base.nonFinishTypes;
 
   WRESTLING_STAT_KEYS.forEach((key) => {
     const incomingCategory = categories[key] || {};
@@ -108,25 +110,6 @@ function normalizePayoutRule(rule) {
   return base;
 }
 
-function categoryAccuracy(predictedValue, actualValue, scoringRule) {
-  const predicted = nonNegativeInteger(predictedValue, 0);
-  const actual = nonNegativeInteger(actualValue, 0);
-  const difference = Math.abs(predicted - actual);
-  const normalizedError = actual === 0 ? (difference === 0 ? 0 : difference) : difference / actual;
-  const multipliers = scoringRule.multipliers;
-
-  if (difference === 0) {
-    return { multiplier: multipliers.exact, tier: 'EXACT', difference, normalizedError };
-  }
-  if (actual > 0 && normalizedError <= 0.2) {
-    return { multiplier: multipliers.within20Percent, tier: 'WITHIN_20_PERCENT', difference, normalizedError };
-  }
-  if (actual > 0 && normalizedError <= 0.5) {
-    return { multiplier: multipliers.within50Percent, tier: 'WITHIN_50_PERCENT', difference, normalizedError };
-  }
-  return { multiplier: multipliers.outside50Percent, tier: 'OUTSIDE_50_PERCENT', difference, normalizedError };
-}
-
 function scoreCompetitor(prediction, actual, scoringRule) {
   const normalizedPrediction = normalizeWrestlingStats(prediction);
   const normalizedActual = normalizeWrestlingStats(actual);
@@ -137,20 +120,24 @@ function scoreCompetitor(prediction, actual, scoringRule) {
 
   WRESTLING_STAT_KEYS.forEach((key) => {
     const categoryRule = scoringRule.categories[key];
-    const accuracy = categoryAccuracy(normalizedPrediction[key], normalizedActual[key], scoringRule);
-    const categoryScore = roundScore(scoringRule.baseCategoryScore * categoryRule.weight * accuracy.multiplier);
-    if (accuracy.tier === 'EXACT') exactPredictionCount += 1;
+    const predicted = normalizedPrediction[key];
+    const actualValue = normalizedActual[key];
+    const scored = actualValue >= predicted;
+    const categoryScore = scored ? predicted : 0;
+    const difference = Math.abs(predicted - actualValue);
+    const normalizedCategoryError = actualValue === 0 ? (difference === 0 ? 0 : difference) : difference / actualValue;
+    if (difference === 0) exactPredictionCount += 1;
     score += categoryScore;
-    normalizedError += accuracy.normalizedError;
+    normalizedError += normalizedCategoryError;
     categories[key] = {
       code: key,
       label: categoryRule.label,
-      predicted: normalizedPrediction[key],
-      actual: normalizedActual[key],
-      difference: accuracy.difference,
-      normalizedError: roundScore(accuracy.normalizedError),
-      tier: accuracy.tier,
-      multiplier: accuracy.multiplier,
+      predicted,
+      actual: actualValue,
+      difference,
+      normalizedError: roundScore(normalizedCategoryError),
+      tier: scored ? 'CLEARED_FLOOR' : 'TOO_HIGH',
+      multiplier: scored ? 1 : 0,
       weight: categoryRule.weight,
       points: categoryScore,
     };
@@ -174,7 +161,15 @@ function calculateProWrestlingScore(prediction, actualResult, rule) {
   const officialWinner = String(actual.officialWinner || '').toUpperCase();
   const winnerCorrect = Boolean(officialWinner && WRESTLING_WINNER_VALUES.includes(officialWinner) && predictedWinner === officialWinner);
   const winnerBonus = winnerCorrect ? scoringRule.winnerBonus : 0;
-  const totalScore = roundScore(sideA.score + sideB.score + winnerBonus);
+
+  const predictedFinishType = String((prediction && prediction.finishTypePrediction) || '').toUpperCase();
+  const actualFinishType = String(actual.finishType || '').toUpperCase();
+  const isActualFinish = scoringRule.finishTypes.includes(actualFinishType);
+  const finishCorrect = Boolean(isActualFinish && predictedFinishType && predictedFinishType === actualFinishType);
+  const survivalApplied = Boolean(actualFinishType && !isActualFinish);
+  const finishMarketPoints = finishCorrect ? scoringRule.finishBonus : survivalApplied ? scoringRule.survivalBonus : 0;
+
+  const totalScore = roundScore(sideA.score + sideB.score + winnerBonus + finishMarketPoints);
 
   return {
     totalScore,
@@ -183,6 +178,11 @@ function calculateProWrestlingScore(prediction, actualResult, rule) {
     finisherError: sideA.finisherError + sideB.finisherError,
     winnerBonus,
     winnerCorrect,
+    finishMarketPoints,
+    finishCorrect,
+    survivalApplied,
+    predictedFinishType: predictedFinishType || null,
+    actualFinishType: actualFinishType || null,
     predictedWinner: predictedWinner || null,
     officialWinner: officialWinner || null,
     competitorA: sideA,
@@ -315,7 +315,11 @@ function validateWrestlingPredictionPayload(payload) {
 
   const winner = String(source.winnerPrediction || '').toUpperCase();
   if (!WRESTLING_WINNER_VALUES.includes(winner)) {
-    errors.push('winnerPrediction must be A, B, or DRAW');
+    errors.push('winnerPrediction must be A or B');
+  }
+  const finishType = String(source.finishTypePrediction || '').toUpperCase();
+  if (finishType && !['PINFALL', 'SUBMISSION', 'DQ', 'COUNT_OUT', 'OTHER', 'NO_CONTEST'].includes(finishType)) {
+    errors.push('finishTypePrediction must be PINFALL, SUBMISSION, DQ, COUNT_OUT, OTHER, or NO_CONTEST');
   }
 
   return errors;
