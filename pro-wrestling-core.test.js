@@ -24,8 +24,8 @@ const actualResult = {
 
 const exactScore = calculateProWrestlingScore(exactPrediction, actualResult, DEFAULT_WRESTLING_SCORING_RULE);
 assert.strictEqual(exactScore.exactPredictionCount, 10);
-assert.strictEqual(exactScore.winnerBonus, 1000);
-assert.strictEqual(exactScore.totalScore, 2340);
+assert.strictEqual(exactScore.winnerBonus, 100);
+assert.strictEqual(exactScore.totalScore, 147);
 assert.strictEqual(exactScore.normalizedError, 0);
 
 const zeroActual = calculateProWrestlingScore({
@@ -38,7 +38,7 @@ const zeroActual = calculateProWrestlingScore({
   officialWinner: 'B',
 });
 assert(Number.isFinite(zeroActual.totalScore));
-assert.strictEqual(zeroActual.competitorB.categories.HP.tier, 'OUTSIDE_50_PERCENT');
+assert.strictEqual(zeroActual.competitorB.categories.HP.tier, 'TOO_HIGH');
 
 const ranked = rankWrestlingPredictions([
   { id: 'late', totalScore: 100, normalizedError: 1, exactPredictionCount: 2, finisherError: 1, submittedAt: '2026-01-02T00:00:00Z' },
