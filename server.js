@@ -41,6 +41,13 @@ const { registerSwarmPhase2Routes } = require('./swarm-phase2');
 const { registerSeoPerformancePhase2Routes } = require('./seo-performance-phase2');
 const { registerFightDataQualityRoutes } = require('./fight-data-quality');
 const { registerUfcEventDiscovery, GOOGLE_NEWS_UFC_RSS_FEED_URL, _private: ufcEventDiscoveryPrivate } = require('./ufc-event-discovery');
+const {
+  FM_COIN_PRODUCTS,
+  extractCalendarDateKey,
+  normalizeCalendarDateInput,
+  resolveCoinCart,
+  timingSafeSignatureMatch,
+} = require('./client-feedback-core');
 
 const ALGORITHM = 'aes-256-cbc'; // AES algorithm
 const ENCRYPTION_KEY = process.env.ENCRYPTION_KEY; // Must be 32 bytes
@@ -855,38 +862,6 @@ function sanitizeAccountList(values) {
   return Array.isArray(values) ? values.map((value) => sanitizeAccountObject(value)) : [];
 }
 
-const FALLBACK_PUBLIC_LEADERBOARD = [
-  { _id: 'fallback-ko-beast', firstName: 'KO', lastName: 'Beast', playerName: 'KO_Beast', username: 'KO_Beast', totalPoints: 9850 },
-  { _id: 'fallback-fight-wizard', firstName: 'Fight', lastName: 'Wizard', playerName: 'FightWizard', username: 'FightWizard', totalPoints: 8420 },
-  { _id: 'fallback-champ-mind', firstName: 'Champ', lastName: 'Mind', playerName: 'ChampMind', username: 'ChampMind', totalPoints: 7910 },
-  { _id: 'fallback-kelly-d', firstName: 'Kelly', lastName: 'D', playerName: 'KellyD', username: 'KellyD', totalPoints: 2450 },
-  { _id: 'fallback-the-ghost', firstName: 'The', lastName: 'Ghost', playerName: 'TheGhost', username: 'TheGhost', totalPoints: 1347 },
-];
-
-function getFallbackPublicLeaderboard(limit = 10) {
-  return FALLBACK_PUBLIC_LEADERBOARD.slice(0, parsePositiveInteger(limit, 10, 100)).map((row, index) => ({
-    ...row,
-    rank: index + 1,
-  }));
-}
-
-const FALLBACK_PUBLIC_LEAGUE_USERS = [
-  { _id: 'league-user-1', firstName: 'KO', lastName: 'Beast', playerName: 'KO_Beast', profileUrl: '/images/fmm-experience/fighter-jadden-addison.webp' },
-  { _id: 'league-user-2', firstName: 'Fight', lastName: 'Wizard', playerName: 'FightWizard', profileUrl: '/images/fmm-experience/fighter-zaveer-davis.webp' },
-  { _id: 'league-user-3', firstName: 'Champ', lastName: 'Mind', playerName: 'ChampMind', profileUrl: '/images/fmm-experience/fighter-conor-benn.webp' },
-  { _id: 'league-user-4', firstName: 'Kelly', lastName: 'D', playerName: 'KellyD', profileUrl: '/images/fmm-experience/fighter-chris-eubank-jr.webp' },
-  { _id: 'league-user-5', firstName: 'The', lastName: 'Ghost', playerName: 'TheGhost', profileUrl: '/images/fmm-experience/fighter-anthony-yarde.webp' },
-];
-
-function getFallbackPublicLeagues(limit = 12) {
-  const leagues = [
-    { _id: 'league-boxing-main-event', firstName: 'Main Event', lastName: 'Boxing Room', playerName: 'Main Event Boxing League', rewardTitle: 'Weekly boxing leaderboard rewards', profileUrl: '/images/mobile-home/categories/fmm-category-boxing-reference-v2.png', usersJoined: FALLBACK_PUBLIC_LEAGUE_USERS.slice(0, 4).map((member) => ({ userId: member._id })) },
-    { _id: 'league-mma-sharp-picks', firstName: 'MMA', lastName: 'Sharp Picks', playerName: 'MMA Sharp Picks League', rewardTitle: 'Top predictor badge', profileUrl: '/images/mobile-home/categories/fmm-category-mma-reference-v2.png', usersJoined: FALLBACK_PUBLIC_LEAGUE_USERS.slice(1, 5).map((member) => ({ userId: member._id })) },
-    { _id: 'league-bare-knuckle-fight-room', firstName: 'Bare Knuckle', lastName: 'Fight Room', playerName: 'Bare Knuckle Fight Room', rewardTitle: 'Creator challenge rewards', profileUrl: '/images/mobile-home/categories/fmm-category-bare-knuckle-reference-v2.png', usersJoined: FALLBACK_PUBLIC_LEAGUE_USERS.slice(0, 3).map((member) => ({ userId: member._id })) },
-  ];
-  return leagues.slice(0, parsePositiveInteger(limit, 12, 100));
-}
-
 function attachSafeAccountJsonTransform(schema) {
   schema.set('toJSON', {
     virtuals: true,
@@ -972,6 +947,12 @@ function attachCombatFighterReadFallbacks(fight = {}, sourceType = 'match') {
   const fighterB = normalizeCombatFighterReadRef(item.fighterBId);
   const effectiveCategory = getEffectiveFightCategory(item);
   const effectiveCategorySlug = getEffectiveFightCategorySlug(item);
+  const matchDateKey = item.matchDateKey || extractCalendarDateKey(item.matchDate);
+  const submittedEntryCount = Array.isArray(item.userPredictions)
+    ? item.userPredictions.filter((prediction) => String(prediction?.predictionStatus || '').toLowerCase() === 'submitted').length
+    : 0;
+  const entryFee = Number.isFinite(Number(item.matchTokens)) ? Math.max(0, Number(item.matchTokens)) : 0;
+  const prizePool = Number.isFinite(Number(item.pot)) ? Math.max(0, Number(item.pot)) : 0;
   return {
     ...item,
     sourceType: item.sourceType || sourceType,
@@ -986,6 +967,12 @@ function attachCombatFighterReadFallbacks(fight = {}, sourceType = 'match') {
     displayCategory: effectiveCategory,
     categoryLabel: effectiveCategory,
     categorySlug: effectiveCategorySlug,
+    matchDateKey,
+    entryFee,
+    entryFeeTokens: entryFee,
+    prizePool,
+    entryCount: submittedEntryCount,
+    playerCount: submittedEntryCount,
     hasSecondaryCategory: hasSecondaryFightCategory(item),
     // Public/admin cards keep their old field names for compatibility, but the
     // fighter library is now the source of truth whenever refs are populated.
@@ -998,6 +985,11 @@ function attachCombatFighterReadFallbacks(fight = {}, sourceType = 'match') {
 
 function pickPublicFightFields(fight = {}, sourceType = 'match') {
   const item = attachCombatFighterReadFallbacks(fight, sourceType);
+  const entryCount = Array.isArray(item.userPredictions)
+    ? item.userPredictions.filter((prediction) => String(prediction?.predictionStatus || '').toLowerCase() === 'submitted').length
+    : 0;
+  const entryFee = Number.isFinite(Number(item.matchTokens)) ? Math.max(0, Number(item.matchTokens)) : 0;
+  const prizePool = Number.isFinite(Number(item.pot)) ? Math.max(0, Number(item.pot)) : 0;
   return {
     _id: item._id,
     sourceType,
@@ -1024,9 +1016,17 @@ function pickPublicFightFields(fight = {}, sourceType = 'match') {
     matchDescription: item.matchDescription,
     matchType: item.matchType,
     matchTokens: item.matchTokens,
+    entryFee,
+    entryFeeTokens: entryFee,
+    pot: prizePool,
+    prizePool,
+    entryCount,
+    playerCount: entryCount,
     matchDate: item.matchDate,
+    matchDateKey: item.matchDateKey,
     matchTime: item.matchTime,
     venue: item.venue,
+    maxRounds: item.maxRounds,
     homepagePromoted: Boolean(item.homepagePromoted),
     homepagePromotionRank: Number(item.homepagePromotionRank || 0),
     homepagePromotion: {
@@ -1240,6 +1240,8 @@ const shadowSchema = new mongoose.Schema({
   matchDescription: String,
   matchVideoUrl: String,
   matchDate: Date,
+  matchDateKey: { type: String, index: true },
+  eventTimeZone: String,
   matchTime: String,
   venue: String,
   sourceMatchId: { type: mongoose.Schema.Types.ObjectId, ref: 'Match', index: true },
@@ -1504,7 +1506,12 @@ app.post(
       assignIfProvided(existingMatch, 'maxRounds', maxRounds);
       assignIfProvided(existingMatch, 'matchCategoryTwo', matchCategoryTwo);
       assignIfProvided(existingMatch, 'matchVideoUrl', matchVideoUrl);
-      assignIfProvided(existingMatch, 'matchDate', matchDate);
+      if (matchDate !== undefined && matchDate !== null && matchDate !== '') {
+        const normalizedDate = normalizeCalendarDateInput(matchDate);
+        if (!normalizedDate.date) return res.status(400).json({ error: 'A valid match date is required.' });
+        existingMatch.matchDate = normalizedDate.date;
+        existingMatch.matchDateKey = normalizedDate.key;
+      }
       assignIfProvided(existingMatch, 'matchTime', matchTime);
       assignIfProvided(existingMatch, 'venue', venue);
       assignIfProvided(existingMatch, 'matchStatus', matchStatus);
@@ -1725,6 +1732,8 @@ matchReward: { type: String, enum: ['Rewarded', 'NotRewarded'], default: 'NotRew
   matchVideoUrl: String,
   matchPromotionalVideoUrl: String,
   matchDate: Date,
+  matchDateKey: { type: String, index: true },
+  eventTimeZone: String,
   matchTime: String,  // Store the match time as a string in 'HH:MM' format
   venue: String,
   // Auto-discovered UFC/upcoming-event metadata. These fields are additive and
@@ -2642,6 +2651,10 @@ app.post(
       const fighterSelection = await resolveCombatFighterSelectionForMatchInput({ fighterAId, fighterBId });
       const requestedMatchDate = matchDate || req.body?.fightDate || req.body?.scheduledDate;
       const requestedMatchTime = matchTime || req.body?.fightTime || req.body?.scheduledTime;
+      const normalizedRequestedDate = normalizeCalendarDateInput(requestedMatchDate);
+      if (requestedMatchDate && !normalizedRequestedDate.date) {
+        return res.status(400).json({ message: 'A valid match date is required.' });
+      }
 
       // Admin-created/affiliate-promoted public fight cards are LIVE by design.
       // Historical/template records live in Shadow and are created by the rollover job.
@@ -2656,7 +2669,9 @@ app.post(
         matchFighterB,
         matchDescription,
         matchVideoUrl,
-        matchDate: requestedMatchDate,
+        matchDate: normalizedRequestedDate.date || requestedMatchDate,
+        matchDateKey: normalizedRequestedDate.key || undefined,
+        eventTimeZone: req.body?.eventTimeZone || req.body?.timezone || undefined,
         matchTime: requestedMatchTime,
         matchTokens,
         matchStatus: normalizedLiveStatus,
@@ -3024,7 +3039,13 @@ app.post(
       assignIfProvided(existingMatch, 'matchFighterA', matchFighterA);
       assignIfProvided(existingMatch, 'matchFighterB', matchFighterB);
       assignIfProvided(existingMatch, 'matchDescription', matchDescription);
-      assignIfProvided(existingMatch, 'matchDate', matchDate);
+      if (matchDate !== undefined && matchDate !== null && matchDate !== '') {
+        const normalizedDate = normalizeCalendarDateInput(matchDate);
+        if (!normalizedDate.date) return res.status(400).json({ error: 'A valid match date is required.' });
+        existingMatch.matchDate = normalizedDate.date;
+        existingMatch.matchDateKey = normalizedDate.key;
+      }
+      assignIfProvided(existingMatch, 'eventTimeZone', req.body?.eventTimeZone || req.body?.timezone);
       assignIfProvided(existingMatch, 'matchTime', matchTime);
       assignIfProvided(existingMatch, 'matchTokens', matchTokens);
       assignIfProvided(existingMatch, 'pot', pot);
@@ -3592,6 +3613,8 @@ const userSchema = new mongoose.Schema({
   resetPasswordToken: { type: String, select: false },
   resetPasswordExpires: { type: Date, select: false },
   hasSubmittedTestimonial: { type: Boolean, default: false },
+  signupBonusGranted: { type: Boolean, default: false },
+  hasReceivedFirstPurchaseBonus: { type: Boolean, default: false },
   billing: {
     cardNumber: { type: String, select: false },  // Encrypted
     expirationDate: { type: String, select: false },  // Encrypted
@@ -4528,6 +4551,8 @@ app.post('/google-login', async (req, res) => {
         isNotificationsEnabled: true, // Notifications enabled
         isSubscribed: true, // Subscribed to updates
         isAgreed: true, // Agreed to terms and conditions
+        tokens: '500',
+        signupBonusGranted: true,
       });
 
       await user.save();
@@ -5764,6 +5789,8 @@ app.post('/register', async (req, res) => {
       verified: false,
       verificationToken,
       password: hashedPassword,
+      tokens: '500',
+      signupBonusGranted: true,
     });
 
     await newUser.save();
@@ -6048,6 +6075,8 @@ function buildShadowTemplatePayloadFromLiveMatch(match = {}) {
     matchDescription: match.matchDescription,
     matchVideoUrl: match.matchVideoUrl,
     matchDate: match.matchDate,
+    matchDateKey: match.matchDateKey || extractCalendarDateKey(match.matchDate),
+    eventTimeZone: match.eventTimeZone,
     matchTime: match.matchTime,
     venue: match.venue,
     fighterAImage: match.fighterAImage,
@@ -6168,6 +6197,334 @@ const verifyToken = (req, res, next) => {
     next();
   });
 };
+
+const optionalVerifyToken = (req, res, next) => {
+  const authHeader = req.headers.authorization;
+  const token = authHeader && authHeader.split(' ')[1];
+  if (!token) return next();
+  return jwt.verify(token, process.env.JWT_SECRET, (error, user) => {
+    if (error) return res.status(403).json({ ok: false, message: 'Your session is invalid. Please sign in again.' });
+    req.user = user;
+    return next();
+  });
+};
+
+const coinOrderItemSchema = new mongoose.Schema({
+  sku: { type: String, required: true },
+  label: { type: String, required: true },
+  coins: { type: Number, required: true, min: 1 },
+  quantity: { type: Number, required: true, min: 1, max: 20 },
+  unitPriceCents: { type: Number, required: true, min: 1 },
+  lineCoins: { type: Number, required: true, min: 1 },
+  lineTotalCents: { type: Number, required: true, min: 1 },
+}, { _id: false });
+
+const coinPurchaseOrderSchema = new mongoose.Schema({
+  orderNumber: { type: String, required: true, unique: true, index: true },
+  idempotencyKey: { type: String, required: true, unique: true, index: true },
+  userId: { type: mongoose.Schema.Types.ObjectId, ref: 'User', index: true },
+  email: { type: String, required: true, lowercase: true, trim: true, index: true },
+  firstName: { type: String, trim: true },
+  lastName: { type: String, trim: true },
+  billing: {
+    address: String,
+    city: String,
+    state: String,
+    zipCode: String,
+    country: String,
+  },
+  items: { type: [coinOrderItemSchema], required: true },
+  baseCoins: { type: Number, required: true, min: 1 },
+  bonusCoins: { type: Number, default: 0, min: 0 },
+  creditedCoins: { type: Number, default: 0, min: 0 },
+  subtotalCents: { type: Number, required: true, min: 1 },
+  currency: { type: String, default: 'USD' },
+  firstPurchaseOffer: { type: Boolean, default: false },
+  status: {
+    type: String,
+    enum: ['CREATED', 'PROCESSING', 'CREDITED', 'FAILED', 'CANCELLED'],
+    default: 'CREATED',
+    index: true,
+  },
+  provider: { type: String, default: 'kurv' },
+  providerReference: String,
+  providerEventId: String,
+  checkoutUrl: String,
+  returnUrl: String,
+  creditedAt: Date,
+  failureReason: String,
+}, { timestamps: true });
+coinPurchaseOrderSchema.index({ email: 1, createdAt: -1 });
+const CoinPurchaseOrder = mongoose.models.CoinPurchaseOrder || mongoose.model('CoinPurchaseOrder', coinPurchaseOrderSchema);
+
+function normalizeCheckoutEmail(value) {
+  return String(value || '').trim().toLowerCase();
+}
+
+function buildCoinOrderNumber() {
+  return `FMM-COIN-${Date.now()}-${crypto.randomBytes(3).toString('hex').toUpperCase()}`;
+}
+
+function getSafeCheckoutReturnUrl(value) {
+  const appOrigin = String(process.env.PUBLIC_APP_URL || 'https://www.fantasymmadness.com').replace(/\/$/, '');
+  const fallback = `${appOrigin}/checkout?status=return`;
+  try {
+    const requested = new URL(String(value || fallback));
+    const allowed = new Set([
+      'fantasymmadness.com',
+      'www.fantasymmadness.com',
+      ...(process.env.NODE_ENV === 'production' ? [] : ['localhost', '127.0.0.1']),
+    ]);
+    return allowed.has(requested.hostname) ? requested.toString() : fallback;
+  } catch (_error) {
+    return fallback;
+  }
+}
+
+function buildKurvHostedCheckoutUrl(order) {
+  const hostedUrl = process.env.KURV_HOSTED_CHECKOUT_URL;
+  if (!hostedUrl) return '';
+  const url = new URL(hostedUrl);
+  url.searchParams.set('reference', order.orderNumber);
+  url.searchParams.set('merchant_reference', order.orderNumber);
+  url.searchParams.set('amount', (order.subtotalCents / 100).toFixed(2));
+  url.searchParams.set('currency', order.currency);
+  url.searchParams.set('email', order.email);
+  url.searchParams.set('description', `${order.baseCoins.toLocaleString('en-US')} FM coins`);
+  url.searchParams.set('return_url', order.returnUrl);
+  return url.toString();
+}
+
+function readKurvWebhookReference(payload = {}) {
+  const data = payload.data || payload.payment || payload.transaction || {};
+  return String(
+    data.merchant_reference || data.merchantReference || data.reference || data.orderNumber ||
+    payload.merchant_reference || payload.merchantReference || payload.reference || payload.orderNumber || ''
+  ).trim();
+}
+
+function readKurvWebhookAmountCents(payload = {}) {
+  const data = payload.data || payload.payment || payload.transaction || {};
+  const cents = data.amount_cents ?? data.amountCents ?? payload.amount_cents ?? payload.amountCents;
+  if (Number.isFinite(Number(cents))) return Math.round(Number(cents));
+  const amount = data.amount ?? payload.amount;
+  return Number.isFinite(Number(amount)) ? Math.round(Number(amount) * 100) : null;
+}
+
+function isKurvPaymentSuccess(payload = {}) {
+  const eventType = String(payload.type || payload.event || payload.eventType || '').trim().toLowerCase();
+  const status = String(payload.status || payload.data?.status || payload.payment?.status || '').trim().toLowerCase();
+  return ['payment.completed', 'payment.succeeded', 'checkout.completed', 'transaction.approved'].includes(eventType)
+    || ['paid', 'completed', 'succeeded', 'approved'].includes(status);
+}
+
+async function sendCoinCheckoutAccountEmail({ user, resetToken, order }) {
+  if (!resetToken) return;
+  const appOrigin = String(process.env.PUBLIC_APP_URL || 'https://www.fantasymmadness.com').replace(/\/$/, '');
+  const passwordUrl = `${appOrigin}/resetPassword-user/${resetToken}`;
+  await transporter.sendMail({
+    from: process.env.SMTP_USER || 'Fantasymmadness2@gmail.com',
+    to: user.email,
+    subject: 'Set your Fantasy MMAdness player password',
+    text: `Your payment was confirmed and your player wallet was created. Set your password using this single-use link within 24 hours: ${passwordUrl}\n\nOrder: ${order.orderNumber}\nWallet credit: ${order.creditedCoins} FM`,
+  });
+}
+
+async function settlePaidCoinOrder(orderNumber, providerEventId = '') {
+  let createdAccountEmail = null;
+  let createdAccountResetToken = null;
+
+  const settled = await mongoose.connection.transaction(async (session) => {
+    const order = await CoinPurchaseOrder.findOne({ orderNumber }).session(session);
+    if (!order) {
+      const error = new Error('Coin order not found.');
+      error.status = 404;
+      throw error;
+    }
+    if (order.status === 'CREDITED') return { order, alreadyCredited: true };
+    if (!['CREATED', 'PROCESSING'].includes(order.status)) {
+      const error = new Error(`Coin order cannot be credited from status ${order.status}.`);
+      error.status = 409;
+      throw error;
+    }
+    order.status = 'PROCESSING';
+    order.providerEventId = providerEventId || order.providerEventId;
+    await order.save({ session });
+
+    let user = order.userId ? await User.findById(order.userId).session(session) : null;
+    if (!user) user = await User.findOne({ email: order.email }).select('+password +resetPasswordToken +resetPasswordExpires').session(session);
+
+    if (!user) {
+      const resetToken = crypto.randomBytes(32).toString('hex');
+      const resetTokenHash = crypto.createHash('sha256').update(resetToken).digest('hex');
+      const randomPassword = crypto.randomBytes(32).toString('hex');
+      const documents = await User.create([{
+        firstName: order.firstName || order.email.split('@')[0],
+        lastName: order.lastName || '',
+        playerName: order.firstName || order.email.split('@')[0],
+        email: order.email,
+        password: await bcrypt.hash(randomPassword, 10),
+        verified: true,
+        tokens: '500',
+        signupBonusGranted: true,
+        resetPasswordToken: resetTokenHash,
+        resetPasswordExpires: Date.now() + 24 * 60 * 60 * 1000,
+        isAgreed: true,
+      }], { session });
+      user = documents[0];
+      createdAccountEmail = user.email;
+      createdAccountResetToken = resetToken;
+    }
+
+    const firstPurchase = !user.hasReceivedFirstPurchaseBonus;
+    const bonusCoins = firstPurchase ? order.baseCoins : 0;
+    const creditedCoins = order.baseCoins + bonusCoins;
+    user.tokens = addWalletTokens(user.tokens, creditedCoins);
+    user.hasReceivedFirstPurchaseBonus = true;
+    await user.save({ session });
+
+    order.userId = user._id;
+    order.firstPurchaseOffer = firstPurchase;
+    order.bonusCoins = bonusCoins;
+    order.creditedCoins = creditedCoins;
+    order.status = 'CREDITED';
+    order.creditedAt = new Date();
+    await order.save({ session });
+    return { order, user, alreadyCredited: false };
+  });
+
+  if (createdAccountResetToken && settled?.user?.email === createdAccountEmail) {
+    sendCoinCheckoutAccountEmail({ user: settled.user, resetToken: createdAccountResetToken, order: settled.order })
+      .catch((error) => console.error('[coin-checkout] Password-set email failed:', error.message));
+  }
+  return settled;
+}
+
+app.get('/api/public/coin-products', (_req, res) => {
+  const products = Object.values(FM_COIN_PRODUCTS).map((product) => ({
+    ...product,
+    mostPopular: product.sku === 'fm-5000',
+  }));
+  res.json({ ok: true, currency: 'USD', firstPurchaseMultiplier: 2, signupBonusCoins: 500, products });
+});
+
+app.post('/api/checkout/coin-orders', optionalVerifyToken, async (req, res) => {
+  try {
+    if (!process.env.KURV_HOSTED_CHECKOUT_URL) {
+      return res.status(503).json({
+        ok: false,
+        code: 'KURV_NOT_CONFIGURED',
+        message: 'Secure coin checkout is awaiting the Kurv hosted-checkout URL.',
+      });
+    }
+
+    const idempotencyKey = String(req.headers['idempotency-key'] || req.body?.idempotencyKey || '').trim();
+    if (!idempotencyKey || idempotencyKey.length < 12 || idempotencyKey.length > 160) {
+      return res.status(400).json({ ok: false, message: 'A valid idempotency key is required.' });
+    }
+    const existingOrder = await CoinPurchaseOrder.findOne({ idempotencyKey }).lean();
+    if (existingOrder) {
+      return res.status(200).json({
+        ok: true,
+        orderNumber: existingOrder.orderNumber,
+        checkoutUrl: existingOrder.checkoutUrl,
+        subtotalCents: existingOrder.subtotalCents,
+        baseCoins: existingOrder.baseCoins,
+        reused: true,
+      });
+    }
+
+    const cart = resolveCoinCart(req.body?.items);
+    const billing = req.body?.billing || {};
+    const authenticatedUser = req.user?.id ? await User.findById(req.user.id).lean() : null;
+    const email = normalizeCheckoutEmail(authenticatedUser?.email || req.body?.email || billing.email);
+    if (!email || !/^\S+@\S+\.\S+$/.test(email)) {
+      return res.status(400).json({ ok: false, message: 'A valid email address is required.' });
+    }
+    if (!authenticatedUser) {
+      const existingUser = await User.findOne({ email }).select('_id').lean();
+      if (existingUser) {
+        return res.status(409).json({ ok: false, code: 'SIGN_IN_REQUIRED', message: 'This email already has a player account. Sign in before buying coins.' });
+      }
+    }
+
+    const firstName = String(authenticatedUser?.firstName || billing.firstName || req.body?.firstName || '').trim();
+    const lastName = String(authenticatedUser?.lastName || billing.lastName || req.body?.lastName || '').trim();
+    if (!authenticatedUser && (!firstName || !lastName)) {
+      return res.status(400).json({ ok: false, message: 'First and last name are required to create the player wallet after payment.' });
+    }
+
+    const order = new CoinPurchaseOrder({
+      orderNumber: buildCoinOrderNumber(),
+      idempotencyKey,
+      userId: authenticatedUser?._id,
+      email,
+      firstName,
+      lastName,
+      billing: {
+        address: String(billing.address || '').trim(),
+        city: String(billing.city || '').trim(),
+        state: String(billing.state || '').trim(),
+        zipCode: String(billing.zipCode || billing.zip || '').trim(),
+        country: String(billing.country || 'US').trim(),
+      },
+      items: cart.items,
+      baseCoins: cart.baseCoins,
+      subtotalCents: cart.subtotalCents,
+      firstPurchaseOffer: authenticatedUser ? !authenticatedUser.hasReceivedFirstPurchaseBonus : true,
+      returnUrl: getSafeCheckoutReturnUrl(req.body?.returnUrl),
+    });
+    order.checkoutUrl = buildKurvHostedCheckoutUrl(order);
+    await order.save();
+
+    return res.status(201).json({
+      ok: true,
+      orderNumber: order.orderNumber,
+      checkoutUrl: order.checkoutUrl,
+      subtotalCents: order.subtotalCents,
+      baseCoins: order.baseCoins,
+      firstPurchaseOffer: order.firstPurchaseOffer,
+    });
+  } catch (error) {
+    if (error?.code === 11000 && error?.keyPattern?.idempotencyKey) {
+      const reused = await CoinPurchaseOrder.findOne({ idempotencyKey: String(req.headers['idempotency-key'] || req.body?.idempotencyKey || '').trim() }).lean();
+      if (reused) return res.status(200).json({ ok: true, orderNumber: reused.orderNumber, checkoutUrl: reused.checkoutUrl, reused: true });
+    }
+    console.error('[coin-checkout] Create order failed:', error);
+    return res.status(error.status || 500).json({ ok: false, message: error.message || 'Unable to create coin checkout.' });
+  }
+});
+
+app.post('/api/webhooks/kurv', async (req, res) => {
+  try {
+    const signature = req.headers['x-kurv-signature'] || req.headers['x-signature'];
+    if (!timingSafeSignatureMatch(req.rawBody, signature, process.env.KURV_WEBHOOK_SECRET)) {
+      return res.status(401).json({ ok: false, message: 'Invalid webhook signature.' });
+    }
+    if (!isKurvPaymentSuccess(req.body || {})) {
+      return res.status(202).json({ ok: true, ignored: true });
+    }
+    const orderNumber = readKurvWebhookReference(req.body || {});
+    const order = orderNumber ? await CoinPurchaseOrder.findOne({ orderNumber }).lean() : null;
+    if (!order) return res.status(404).json({ ok: false, message: 'Coin order not found.' });
+
+    const paidAmountCents = readKurvWebhookAmountCents(req.body || {});
+    if (paidAmountCents !== null && paidAmountCents !== Number(order.subtotalCents)) {
+      return res.status(409).json({ ok: false, message: 'Paid amount does not match the server-priced order.' });
+    }
+    const providerEventId = String(req.body?.id || req.body?.eventId || req.body?.data?.id || '').trim();
+    const result = await settlePaidCoinOrder(orderNumber, providerEventId);
+    return res.json({
+      ok: true,
+      orderNumber,
+      creditedCoins: result.order.creditedCoins,
+      alreadyCredited: result.alreadyCredited,
+    });
+  } catch (error) {
+    console.error('[coin-checkout] Webhook settlement failed:', error);
+    return res.status(error.status || 500).json({ ok: false, message: error.message || 'Coin settlement failed.' });
+  }
+});
 
 
 // Profile API
@@ -7421,7 +7778,7 @@ app.get('/api/public/leagues', async (req, res) => {
     const limit = parsePositiveInteger(req.query.limit, 12, 100);
     const affiliates = await Affiliate.find().select(AFFILIATE_SAFE_SELECT).lean();
     const sanitizedAffiliates = sanitizeAccountList(affiliates);
-    const leagues = sanitizedAffiliates.length ? sanitizedAffiliates.slice(0, limit) : getFallbackPublicLeagues(limit);
+    const leagues = sanitizedAffiliates.slice(0, limit);
     const joinedUserIds = [...new Set(leagues
       .flatMap((league) => Array.isArray(league.usersJoined) ? league.usersJoined : [])
       .map((entry) => String(entry?.userId || '').trim())
@@ -7430,7 +7787,7 @@ app.get('/api/public/leagues', async (req, res) => {
     const userRows = userObjectIds.length
       ? await User.find({ _id: { $in: userObjectIds } }).select(USER_SAFE_SELECT).lean()
       : [];
-    const users = userRows.length ? sanitizeAccountList(userRows) : FALLBACK_PUBLIC_LEAGUE_USERS;
+    const users = sanitizeAccountList(userRows);
 
     res.json({
       ok: true,
@@ -7441,8 +7798,7 @@ app.get('/api/public/leagues', async (req, res) => {
     });
   } catch (error) {
     console.error('Error fetching public leagues:', error);
-    const leagues = getFallbackPublicLeagues(parsePositiveInteger(req.query.limit, 12, 100));
-    res.json({ ok: true, leagues, users: FALLBACK_PUBLIC_LEAGUE_USERS, count: leagues.length, generatedAt: new Date().toISOString(), fallback: true });
+    res.status(500).json({ ok: false, leagues: [], users: [], count: 0, message: 'Unable to load live league data.' });
   }
 });
 
@@ -8539,6 +8895,11 @@ app.post('/addShadow', upload.fields([
       promotionBackgroundDeleteUrl = resultBackground.public_id;
     }
 
+    const normalizedShadowDate = normalizeCalendarDateInput(matchDate);
+    if (matchDate && !normalizedShadowDate.date) {
+      return res.status(400).json({ message: 'A valid match date is required.' });
+    }
+
     const newMatch = new Shadow({
       matchCategory,
       matchCategoryTwo,
@@ -8547,7 +8908,9 @@ app.post('/addShadow', upload.fields([
       matchFighterB,
       matchDescription,
       matchVideoUrl,
-      matchDate,
+      matchDate: normalizedShadowDate.date || matchDate,
+      matchDateKey: normalizedShadowDate.key || undefined,
+      eventTimeZone: req.body?.eventTimeZone || req.body?.timezone || undefined,
       matchTime,
       venue,
       fighterAImage,
