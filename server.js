@@ -6631,7 +6631,7 @@ app.post('/api/checkout/coin-orders', optionalVerifyToken, async (req, res) => {
       return res.status(503).json({
         ok: false,
         code: 'KURV_NOT_CONFIGURED',
-        message: 'Secure coin checkout is awaiting the Kurv hosted-checkout URL.',
+        message: 'Secure coin checkout is awaiting payment configuration.',
       });
     }
 
@@ -6715,14 +6715,14 @@ app.post('/api/checkout/coin-orders', optionalVerifyToken, async (req, res) => {
 app.post('/api/checkout/fm-plus-orders', optionalVerifyToken, async (req, res) => {
   try {
     if (!process.env.KURV_HOSTED_CHECKOUT_URL) {
-      return res.status(503).json({ ok: false, code: 'KURV_NOT_CONFIGURED', message: 'Secure FM+ checkout is awaiting the Kurv hosted-checkout URL.' });
+      return res.status(503).json({ ok: false, code: 'KURV_NOT_CONFIGURED', message: 'Secure FM+ checkout is awaiting payment configuration.' });
     }
     const plan = resolveFmPlusPlan(req.body?.plan);
     if (plan.recurring && String(process.env.KURV_RECURRING_ENABLED || '').toLowerCase() !== 'true') {
       return res.status(409).json({
         ok: false,
         code: 'KURV_RECURRING_NOT_ENABLED',
-        message: 'Monthly auto-renew is awaiting Kurv recurring-billing approval. Choose the 30-day pass to continue today.',
+        message: 'Monthly auto-renew is awaiting recurring-payment approval. Choose the 30-day pass to continue today.',
       });
     }
     const idempotencyKey = String(req.headers['idempotency-key'] || req.body?.idempotencyKey || '').trim();
