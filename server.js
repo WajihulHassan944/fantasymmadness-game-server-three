@@ -43,10 +43,16 @@ const { registerFightDataQualityRoutes } = require('./fight-data-quality');
 const { registerUfcEventDiscovery, GOOGLE_NEWS_UFC_RSS_FEED_URL, _private: ufcEventDiscoveryPrivate } = require('./ufc-event-discovery');
 const {
   FM_COIN_PRODUCTS,
+  FM_PLUS_PLANS,
+  buildScoutingPayload,
+  buildTemplateScoutingReport,
+  derivePredictionPickSide,
   extractCalendarDateKey,
   normalizeCalendarDateInput,
+  resolveFmPlusPlan,
   resolveCoinCart,
   timingSafeSignatureMatch,
+  validateScoutingReportNumbers,
 } = require('./client-feedback-core');
 
 const ALGORITHM = 'aes-256-cbc'; // AES algorithm
@@ -614,16 +620,27 @@ function isSubmittedPredictionStatusText(value) {
 
 async function attachPlayerPredictionStateToFightItems(items = [], query = {}) {
   const playerId = getRequestedClassicPlayerId(query);
+  const includePrivateEntry = query.includePrivateEntry === true;
   const baseItems = Array.isArray(items) ? items : [];
   if (!baseItems.length) return [];
 
   let submittedMatchIds = new Set();
+  const userScoreByMatchId = new Map();
+  const scoresByMatchId = new Map();
+  const matchIds = [...new Set(baseItems.map((item) => String(item && item._id || '').trim()).filter(Boolean))];
+  if (matchIds.length) {
+    const allScores = await Score.find({ matchId: { $in: matchIds } })
+      .select('matchId playerId predictions totalPoints totalScore score points createdAt updatedAt')
+      .lean();
+    allScores.forEach((score) => {
+      const key = String(score.matchId || '');
+      if (!scoresByMatchId.has(key)) scoresByMatchId.set(key, []);
+      scoresByMatchId.get(key).push(score);
+      if (playerId && normalizePredictionUserId(score.playerId) === playerId) userScoreByMatchId.set(key, score);
+    });
+  }
   if (playerId) {
-    const matchIds = [...new Set(baseItems.map((item) => String(item && item._id || '').trim()).filter(Boolean))];
-    if (matchIds.length) {
-      const scores = await Score.find({ playerId, matchId: { $in: matchIds } }).select('matchId').lean();
-      submittedMatchIds = new Set(scores.map((score) => String(score.matchId)));
-    }
+    submittedMatchIds = new Set([...userScoreByMatchId.keys()]);
   }
 
   return baseItems.map((item) => {
@@ -635,6 +652,28 @@ async function attachPlayerPredictionStateToFightItems(items = [], query = {}) {
     const userPredictionStatus = predictionSubmitted ? 'submitted' : embeddedStatus;
     const fightStatusBucket = getFightStatusBucket(plain);
     const canSubmitPrediction = !predictionSubmitted && isPredictionEligibleFightRecord(plain) && !isDraftFightRecord(plain);
+    const score = userScoreByMatchId.get(String(plain._id));
+    const pickSide = derivePredictionPickSide(score?.predictions);
+    const explicitLivePoints = score
+      ? readNumericField(score, ['totalPoints', 'totalScore', 'score', 'points'])
+      : null;
+    const officialStats = score ? getClassicFightOfficialStats(plain) : null;
+    const calculatedLivePoints = score && officialStats && hasOfficialStats(officialStats)
+      ? calculateClassicPredictionPoints(score.predictions, officialStats.fighterOneStats, officialStats.fighterTwoStats, officialStats.category)
+      : 0;
+    const scoutingPayload = buildScoutingPayload(plain, scoresByMatchId.get(String(plain._id)) || []);
+    const liveReport = buildTemplateScoutingReport(scoutingPayload);
+    const storedReport = plain.aiScoutingReport && typeof plain.aiScoutingReport === 'object'
+      ? plain.aiScoutingReport
+      : null;
+    const aiScoutingReport = liveReport ? {
+      ...liveReport,
+      ...(storedReport || {}),
+      pickSplitNote: liveReport.pickSplitNote,
+      underdogAngle: liveReport.underdogAngle,
+      pickCount: scoutingPayload.pickCount,
+      pickSplit: scoutingPayload.pickSplit,
+    } : null;
 
     return {
       ...plain,
@@ -644,6 +683,15 @@ async function attachPlayerPredictionStateToFightItems(items = [], query = {}) {
       userFightBucket: predictionSubmitted ? 'completed' : (canSubmitPrediction ? 'playable' : fightStatusBucket),
       fightStatusBucket,
       canSubmitPrediction,
+      aiScoutingReport,
+      userEntry: score && includePrivateEntry ? {
+        status: 'submitted',
+        pickSide,
+        pickName: pickSide === 'a' ? plain.matchFighterA : pickSide === 'b' ? plain.matchFighterB : '',
+        predictions: score.predictions || [],
+        livePoints: Number.isFinite(explicitLivePoints) ? explicitLivePoints : calculatedLivePoints,
+        submittedAt: score.updatedAt || score.createdAt || null,
+      } : null,
     };
   });
 }
@@ -754,6 +802,9 @@ const USER_SAFE_SELECT = [
   'verified',
   'profileUrl',
   'currentPlan',
+  'fmPlusPlan',
+  'fmPlusExpiresAt',
+  'fmPlusLastCoinCreditAt',
   'freePlanExpiryDate',
   'hasAvailedFreePlan',
   'preferredPaymentMethod',
@@ -1027,7 +1078,16 @@ function pickPublicFightFields(fight = {}, sourceType = 'match') {
     matchTime: item.matchTime,
     venue: item.venue,
     maxRounds: item.maxRounds,
+    aiScoutingReport: item.aiScoutingReport && typeof item.aiScoutingReport === 'object' ? item.aiScoutingReport : null,
     homepagePromoted: Boolean(item.homepagePromoted),
+    featuredThisWeek: Boolean(item.featuredThisWeek),
+    featuredFight: Boolean(item.featuredFight),
+    featuredThisWeekImage: item.featuredThisWeekImage || '',
+    featuredFightBackgroundImage: item.featuredFightBackgroundImage || '',
+    featuredFightFighterAImage: item.featuredFightFighterAImage || '',
+    featuredFightFighterBImage: item.featuredFightFighterBImage || '',
+    division: item.division || item.weightClass || '',
+    weightClass: item.weightClass || item.division || '',
     homepagePromotionRank: Number(item.homepagePromotionRank || 0),
     homepagePromotion: {
       isPromoted: Boolean(item.homepagePromoted),
@@ -1249,6 +1309,14 @@ const shadowSchema = new mongoose.Schema({
   affiliatePromotionDate: Date,
   affiliatePromotionTime: String,
   homepagePromoted: { type: Boolean, default: false, index: true },
+  featuredThisWeek: { type: Boolean, default: false, index: true },
+  featuredFight: { type: Boolean, default: false, index: true },
+  featuredThisWeekImage: String,
+  featuredFightBackgroundImage: String,
+  featuredFightFighterAImage: String,
+  featuredFightFighterBImage: String,
+  division: String,
+  weightClass: String,
   homepagePromotionRank: { type: Number, default: 0 },
   homepagePromotionTitle: String,
   homepagePromotionSubtitle: String,
@@ -1269,6 +1337,7 @@ const shadowSchema = new mongoose.Schema({
   fightPosterImageDeleteUrl: String,
   fightPosterMobileImageDeleteUrl: String,
   matchStatus: { type: String, enum: ['Finished', 'Ongoing', 'Draft', 'Scheduled', 'Live', 'Open', 'Closed'], default: 'Ongoing' },
+  aiScoutingReport: mongoose.Schema.Types.Mixed,
   
   // Boxing-specific stats
   BoxingMatch: {
@@ -1343,6 +1412,13 @@ shadowSchema.index({ matchStatus: 1, matchShadowOpenStatus: 1, updatedAt: -1 });
 shadowSchema.index({ matchDate: -1, updatedAt: -1 });
 shadowSchema.index({ homepagePromoted: 1, homepagePromotionRank: -1, matchDate: 1, updatedAt: -1 });
 shadowSchema.index({ fighterAId: 1, fighterBId: 1 });
+shadowSchema.pre('save', function cacheInitialShadowScoutingReport(next) {
+  if (!this.aiScoutingReport) {
+    const report = buildTemplateScoutingReport(buildScoutingPayload(this.toObject ? this.toObject() : this, []));
+    if (report) this.aiScoutingReport = report;
+  }
+  next();
+});
 
 
 const Shadow = mongoose.models.Shadow || mongoose.model('Shadow', shadowSchema);
@@ -1727,6 +1803,7 @@ const matchSchema = new mongoose.Schema({
   matchBy: { type: String, enum: ['admin', 'affiliate'], default: 'admin' },
   matchShadowStatus: { type: String, enum: ['active', 'inactive', 'draft'], default: 'active' },
   matchStatus: { type: String, enum: ['Finished', 'Ongoing', 'Draft', 'Scheduled', 'Live', 'Open', 'Closed'], default: 'Ongoing' },
+  aiScoutingReport: mongoose.Schema.Types.Mixed,
 matchShadowOpenStatus: { type: String, enum: ['open', 'closed'], default: 'open' },
 matchReward: { type: String, enum: ['Rewarded', 'NotRewarded'], default: 'NotRewarded' },
   matchVideoUrl: String,
@@ -1752,6 +1829,14 @@ matchReward: { type: String, enum: ['Rewarded', 'NotRewarded'], default: 'NotRew
   officialEventUrl: String,
   eventCity: String,
   homepagePromoted: { type: Boolean, default: false, index: true },
+  featuredThisWeek: { type: Boolean, default: false, index: true },
+  featuredFight: { type: Boolean, default: false, index: true },
+  featuredThisWeekImage: String,
+  featuredFightBackgroundImage: String,
+  featuredFightFighterAImage: String,
+  featuredFightFighterBImage: String,
+  division: String,
+  weightClass: String,
   homepagePromotionRank: { type: Number, default: 0 },
   homepagePromotionTitle: String,
   homepagePromotionSubtitle: String,
@@ -1844,6 +1929,13 @@ matchSchema.index({ affiliateId: 1, updatedAt: -1 });
 matchSchema.index({ autoDiscoveryKey: 1 }, { sparse: true });
 matchSchema.index({ ufcEventNumber: 1 }, { sparse: true });
 matchSchema.index({ autoDiscovered: 1, matchDate: 1 });
+matchSchema.pre('save', function cacheInitialMatchScoutingReport(next) {
+  if (!this.aiScoutingReport) {
+    const report = buildTemplateScoutingReport(buildScoutingPayload(this.toObject ? this.toObject() : this, []));
+    if (report) this.aiScoutingReport = report;
+  }
+  next();
+});
 
 
 const Match = mongoose.models.Match || mongoose.model('Match', matchSchema);
@@ -3606,6 +3698,9 @@ const userSchema = new mongoose.Schema({
   profileUrl: String,
   profileDeleteUrl: { type: String, select: false },
   currentPlan: { type: String, default: 'None' }, // Current subscription plan
+  fmPlusPlan: { type: String, enum: ['monthly', 'pass', 'none'], default: 'none' },
+  fmPlusExpiresAt: Date,
+  fmPlusLastCoinCreditAt: Date,
   freePlanExpiryDate: Date, // Date when the free plan expires
   hasAvailedFreePlan: { type: Boolean, default: false }, // Indicates if the user has availed the free plan
   preferredPaymentMethod: String,
@@ -4847,7 +4942,7 @@ app.post('/api/deduct-tokens', async (req, res) => {
 
     // Check if the user has enough tokens
     if (balance < deduction) {
-      return res.status(400).json({ message: 'Insufficient tokens', tokensRemaining: String(balance) });
+      return res.status(402).json({ code: 'INSUFFICIENT_FM', message: 'Insufficient tokens', tokensRemaining: String(balance) });
     }
 
     // Deduct the tokens
@@ -6257,12 +6352,44 @@ const coinPurchaseOrderSchema = new mongoose.Schema({
 coinPurchaseOrderSchema.index({ email: 1, createdAt: -1 });
 const CoinPurchaseOrder = mongoose.models.CoinPurchaseOrder || mongoose.model('CoinPurchaseOrder', coinPurchaseOrderSchema);
 
+const fmPlusOrderSchema = new mongoose.Schema({
+  orderNumber: { type: String, required: true, unique: true, index: true },
+  idempotencyKey: { type: String, required: true, unique: true, index: true },
+  userId: { type: mongoose.Schema.Types.ObjectId, ref: 'User', index: true },
+  email: { type: String, required: true, lowercase: true, trim: true, index: true },
+  firstName: { type: String, trim: true },
+  lastName: { type: String, trim: true },
+  billing: { address: String, city: String, state: String, zipCode: String, country: String },
+  plan: { type: String, enum: ['monthly', 'pass'], required: true },
+  recurring: { type: Boolean, default: false },
+  durationDays: { type: Number, default: 30 },
+  bonusCoins: { type: Number, default: 1000 },
+  subtotalCents: { type: Number, required: true, min: 1 },
+  currency: { type: String, default: 'USD' },
+  status: { type: String, enum: ['CREATED', 'PROCESSING', 'CREDITED', 'FAILED', 'CANCELLED'], default: 'CREATED', index: true },
+  provider: { type: String, default: 'kurv' },
+  providerReference: String,
+  providerEventId: String,
+  checkoutUrl: String,
+  returnUrl: String,
+  benefitStartsAt: Date,
+  benefitExpiresAt: Date,
+  creditedAt: Date,
+  failureReason: String,
+}, { timestamps: true });
+fmPlusOrderSchema.index({ email: 1, createdAt: -1 });
+const FmPlusOrder = mongoose.models.FmPlusOrder || mongoose.model('FmPlusOrder', fmPlusOrderSchema);
+
 function normalizeCheckoutEmail(value) {
   return String(value || '').trim().toLowerCase();
 }
 
 function buildCoinOrderNumber() {
   return `FMM-COIN-${Date.now()}-${crypto.randomBytes(3).toString('hex').toUpperCase()}`;
+}
+
+function buildFmPlusOrderNumber() {
+  return `FMM-PLUS-${Date.now()}-${crypto.randomBytes(3).toString('hex').toUpperCase()}`;
 }
 
 function getSafeCheckoutReturnUrl(value) {
@@ -6290,7 +6417,15 @@ function buildKurvHostedCheckoutUrl(order) {
   url.searchParams.set('amount', (order.subtotalCents / 100).toFixed(2));
   url.searchParams.set('currency', order.currency);
   url.searchParams.set('email', order.email);
-  url.searchParams.set('description', `${order.baseCoins.toLocaleString('en-US')} FM coins`);
+  const isMembership = Boolean(order.plan);
+  url.searchParams.set('description', isMembership
+    ? `${order.plan === 'monthly' ? 'FM+ Monthly' : 'FM+ 30-Day Pass'} membership`
+    : `${order.baseCoins.toLocaleString('en-US')} FM coins`);
+  if (isMembership) {
+    url.searchParams.set('product', 'fm-plus');
+    url.searchParams.set('plan', order.plan);
+    url.searchParams.set('recurring', order.recurring ? 'true' : 'false');
+  }
   url.searchParams.set('return_url', order.returnUrl);
   return url.toString();
 }
@@ -6400,12 +6535,94 @@ async function settlePaidCoinOrder(orderNumber, providerEventId = '') {
   return settled;
 }
 
+async function settlePaidFmPlusOrder(orderNumber, providerEventId = '') {
+  let createdAccountResetToken = null;
+  const settled = await mongoose.connection.transaction(async (session) => {
+    const order = await FmPlusOrder.findOne({ orderNumber }).session(session);
+    if (!order) {
+      const error = new Error('FM+ order not found.');
+      error.status = 404;
+      throw error;
+    }
+    if (order.status === 'CREDITED') return { order, alreadyCredited: true };
+    if (!['CREATED', 'PROCESSING'].includes(order.status)) {
+      const error = new Error(`FM+ order cannot be credited from status ${order.status}.`);
+      error.status = 409;
+      throw error;
+    }
+    order.status = 'PROCESSING';
+    order.providerEventId = providerEventId || order.providerEventId;
+    await order.save({ session });
+
+    let user = order.userId ? await User.findById(order.userId).session(session) : null;
+    if (!user) user = await User.findOne({ email: order.email }).select('+password +resetPasswordToken +resetPasswordExpires').session(session);
+    if (!user) {
+      const resetToken = crypto.randomBytes(32).toString('hex');
+      const resetTokenHash = crypto.createHash('sha256').update(resetToken).digest('hex');
+      const randomPassword = crypto.randomBytes(32).toString('hex');
+      const documents = await User.create([{
+        firstName: order.firstName || order.email.split('@')[0],
+        lastName: order.lastName || '',
+        playerName: order.firstName || order.email.split('@')[0],
+        email: order.email,
+        password: await bcrypt.hash(randomPassword, 10),
+        verified: true,
+        tokens: '500',
+        signupBonusGranted: true,
+        resetPasswordToken: resetTokenHash,
+        resetPasswordExpires: Date.now() + 24 * 60 * 60 * 1000,
+        isAgreed: true,
+      }], { session });
+      user = documents[0];
+      createdAccountResetToken = resetToken;
+    }
+
+    const now = new Date();
+    const currentExpiry = user.fmPlusExpiresAt && new Date(user.fmPlusExpiresAt) > now
+      ? new Date(user.fmPlusExpiresAt)
+      : now;
+    const expiry = new Date(currentExpiry.getTime() + Number(order.durationDays || 30) * 24 * 60 * 60 * 1000);
+    user.tokens = addWalletTokens(user.tokens, order.bonusCoins);
+    user.isSubscribed = true;
+    user.currentPlan = 'FM+';
+    user.fmPlusPlan = order.plan;
+    user.fmPlusExpiresAt = expiry;
+    user.fmPlusLastCoinCreditAt = now;
+    await user.save({ session });
+
+    order.userId = user._id;
+    order.status = 'CREDITED';
+    order.benefitStartsAt = now;
+    order.benefitExpiresAt = expiry;
+    order.creditedAt = now;
+    await order.save({ session });
+    return { order, user, alreadyCredited: false };
+  });
+
+  if (createdAccountResetToken && settled?.user) {
+    sendCoinCheckoutAccountEmail({ user: settled.user, resetToken: createdAccountResetToken, order: {
+      ...settled.order.toObject(),
+      creditedCoins: settled.order.bonusCoins,
+    } }).catch((error) => console.error('[fm-plus-checkout] Password-set email failed:', error.message));
+  }
+  return settled;
+}
+
 app.get('/api/public/coin-products', (_req, res) => {
   const products = Object.values(FM_COIN_PRODUCTS).map((product) => ({
     ...product,
     mostPopular: product.sku === 'fm-5000',
   }));
   res.json({ ok: true, currency: 'USD', firstPurchaseMultiplier: 2, signupBonusCoins: 500, products });
+});
+
+app.get('/api/public/fm-plus-plans', (_req, res) => {
+  res.json({
+    ok: true,
+    currency: 'USD',
+    plans: Object.values(FM_PLUS_PLANS),
+    entitlements: ['1,000 FM bonus', 'Early Fantasy Card access', 'Exclusive FM+ leagues', 'No ads', '25 FM streak save'],
+  });
 });
 
 app.post('/api/checkout/coin-orders', optionalVerifyToken, async (req, res) => {
@@ -6495,6 +6712,82 @@ app.post('/api/checkout/coin-orders', optionalVerifyToken, async (req, res) => {
   }
 });
 
+app.post('/api/checkout/fm-plus-orders', optionalVerifyToken, async (req, res) => {
+  try {
+    if (!process.env.KURV_HOSTED_CHECKOUT_URL) {
+      return res.status(503).json({ ok: false, code: 'KURV_NOT_CONFIGURED', message: 'Secure FM+ checkout is awaiting the Kurv hosted-checkout URL.' });
+    }
+    const plan = resolveFmPlusPlan(req.body?.plan);
+    if (plan.recurring && String(process.env.KURV_RECURRING_ENABLED || '').toLowerCase() !== 'true') {
+      return res.status(409).json({
+        ok: false,
+        code: 'KURV_RECURRING_NOT_ENABLED',
+        message: 'Monthly auto-renew is awaiting Kurv recurring-billing approval. Choose the 30-day pass to continue today.',
+      });
+    }
+    const idempotencyKey = String(req.headers['idempotency-key'] || req.body?.idempotencyKey || '').trim();
+    if (!idempotencyKey || idempotencyKey.length < 12 || idempotencyKey.length > 160) {
+      return res.status(400).json({ ok: false, message: 'A valid idempotency key is required.' });
+    }
+    const existingOrder = await FmPlusOrder.findOne({ idempotencyKey }).lean();
+    if (existingOrder) {
+      return res.status(200).json({ ok: true, orderNumber: existingOrder.orderNumber, checkoutUrl: existingOrder.checkoutUrl, plan: existingOrder.plan, reused: true });
+    }
+
+    const billing = req.body?.billing || {};
+    const authenticatedUser = req.user?.id ? await User.findById(req.user.id).lean() : null;
+    const email = normalizeCheckoutEmail(authenticatedUser?.email || req.body?.email || billing.email);
+    if (!email || !/^\S+@\S+\.\S+$/.test(email)) {
+      return res.status(400).json({ ok: false, message: 'A valid email address is required.' });
+    }
+    if (!authenticatedUser) {
+      const existingUser = await User.findOne({ email }).select('_id').lean();
+      if (existingUser) return res.status(409).json({ ok: false, code: 'SIGN_IN_REQUIRED', message: 'This email already has a player account. Sign in before joining FM+.' });
+    }
+    const firstName = String(authenticatedUser?.firstName || billing.firstName || req.body?.firstName || '').trim();
+    const lastName = String(authenticatedUser?.lastName || billing.lastName || req.body?.lastName || '').trim();
+    if (!authenticatedUser && (!firstName || !lastName)) {
+      return res.status(400).json({ ok: false, message: 'First and last name are required to create the player account after payment.' });
+    }
+
+    const order = new FmPlusOrder({
+      orderNumber: buildFmPlusOrderNumber(),
+      idempotencyKey,
+      userId: authenticatedUser?._id,
+      email,
+      firstName,
+      lastName,
+      billing: {
+        address: String(billing.address || '').trim(), city: String(billing.city || '').trim(),
+        state: String(billing.state || '').trim(), zipCode: String(billing.zipCode || billing.zip || '').trim(),
+        country: String(billing.country || 'US').trim(),
+      },
+      plan: plan.id,
+      recurring: plan.recurring,
+      durationDays: plan.durationDays,
+      bonusCoins: plan.bonusCoins,
+      subtotalCents: plan.priceCents,
+      returnUrl: getSafeCheckoutReturnUrl(req.body?.returnUrl),
+    });
+    order.checkoutUrl = buildKurvHostedCheckoutUrl(order);
+    await order.save();
+    return res.status(201).json({
+      ok: true,
+      orderNumber: order.orderNumber,
+      checkoutUrl: order.checkoutUrl,
+      plan: order.plan,
+      subtotalCents: order.subtotalCents,
+    });
+  } catch (error) {
+    if (error?.code === 11000 && error?.keyPattern?.idempotencyKey) {
+      const reused = await FmPlusOrder.findOne({ idempotencyKey: String(req.headers['idempotency-key'] || req.body?.idempotencyKey || '').trim() }).lean();
+      if (reused) return res.status(200).json({ ok: true, orderNumber: reused.orderNumber, checkoutUrl: reused.checkoutUrl, plan: reused.plan, reused: true });
+    }
+    console.error('[fm-plus-checkout] Create order failed:', error);
+    return res.status(error.status || 500).json({ ok: false, message: error.message || 'Unable to create FM+ checkout.' });
+  }
+});
+
 app.post('/api/webhooks/kurv', async (req, res) => {
   try {
     const signature = req.headers['x-kurv-signature'] || req.headers['x-signature'];
@@ -6505,19 +6798,25 @@ app.post('/api/webhooks/kurv', async (req, res) => {
       return res.status(202).json({ ok: true, ignored: true });
     }
     const orderNumber = readKurvWebhookReference(req.body || {});
-    const order = orderNumber ? await CoinPurchaseOrder.findOne({ orderNumber }).lean() : null;
-    if (!order) return res.status(404).json({ ok: false, message: 'Coin order not found.' });
+    const isFmPlus = orderNumber.startsWith('FMM-PLUS-');
+    const order = orderNumber
+      ? await (isFmPlus ? FmPlusOrder : CoinPurchaseOrder).findOne({ orderNumber }).lean()
+      : null;
+    if (!order) return res.status(404).json({ ok: false, message: 'Checkout order not found.' });
 
     const paidAmountCents = readKurvWebhookAmountCents(req.body || {});
     if (paidAmountCents !== null && paidAmountCents !== Number(order.subtotalCents)) {
       return res.status(409).json({ ok: false, message: 'Paid amount does not match the server-priced order.' });
     }
     const providerEventId = String(req.body?.id || req.body?.eventId || req.body?.data?.id || '').trim();
-    const result = await settlePaidCoinOrder(orderNumber, providerEventId);
+    const result = isFmPlus
+      ? await settlePaidFmPlusOrder(orderNumber, providerEventId)
+      : await settlePaidCoinOrder(orderNumber, providerEventId);
     return res.json({
       ok: true,
       orderNumber,
-      creditedCoins: result.order.creditedCoins,
+      creditedCoins: isFmPlus ? result.order.bonusCoins : result.order.creditedCoins,
+      benefitExpiresAt: isFmPlus ? result.order.benefitExpiresAt : undefined,
       alreadyCredited: result.alreadyCredited,
     });
   } catch (error) {
@@ -6538,6 +6837,17 @@ app.get('/profile', verifyToken, async (req, res) => {
 
     if (isWalletTokenValueInvalid(user.tokens)) {
       user.tokens = normalizeWalletTokenString(user.tokens);
+      await user.save();
+    }
+
+    if (
+      String(user.currentPlan || '').toUpperCase() === 'FM+' &&
+      user.fmPlusExpiresAt &&
+      new Date(user.fmPlusExpiresAt).getTime() <= Date.now()
+    ) {
+      user.isSubscribed = false;
+      user.currentPlan = 'None';
+      user.fmPlusPlan = 'none';
       await user.save();
     }
 
@@ -8198,12 +8508,51 @@ const scoreSchema = new mongoose.Schema({
     elPrediction1: Number,  // For MMA only (EL)
     elPrediction2: Number   // For MMA only (EL)
   }],
-});
+}, { timestamps: true });
 scoreSchema.index({ matchId: 1, playerId: 1 });
 scoreSchema.index({ playerId: 1 });
 scoreSchema.index({ matchId: 1 });
 
 const Score = mongoose.models.Score || mongoose.model('Score', scoreSchema);
+
+// Signed-in entry feed used by the v7 MY ENTRIES and Watch Party screens.
+// The user id comes only from the verified token; callers cannot inspect another
+// player's scorecard by changing a query string.
+app.get('/api/users/me/fight-entries', verifyToken, async (req, res) => {
+  try {
+    const playerId = normalizePredictionUserId(req.user?.id || req.user?._id);
+    if (!playerId) return res.status(401).json({ ok: false, message: 'Sign in to view your entries.' });
+    const limit = Math.min(Math.max(parseInt(req.query.limit, 10) || 100, 1), 200);
+    const scores = await Score.find({ playerId }).select('matchId').sort({ updatedAt: -1, _id: -1 }).limit(limit).lean();
+    const matchIds = [...new Set(scores.map((score) => String(score.matchId || '')).filter(Boolean))];
+    if (!matchIds.length) return res.json({ ok: true, entries: [], count: 0 });
+
+    const objectIds = matchIds.filter((id) => mongoose.Types.ObjectId.isValid(id));
+    const [matches, shadows] = await Promise.all([
+      Match.find({ _id: { $in: objectIds } }).populate('fighterAId fighterBId').lean(),
+      Shadow.find({ _id: { $in: objectIds } }).populate('fighterAId fighterBId').lean(),
+    ]);
+    const rows = [
+      ...matches.map((item) => ({ ...item, sourceType: 'match' })),
+      ...shadows.map((item) => ({ ...item, sourceType: 'shadow' })),
+    ].map((item) => attachCombatFighterReadFallbacks(item, item.sourceType));
+    const withEntryState = await attachPlayerPredictionStateToFightItems(rows, { userId: playerId, includePrivateEntry: true });
+    const order = new Map(matchIds.map((id, index) => [id, index]));
+    const entries = withEntryState
+      .filter((item) => item.userEntry)
+      .sort((left, right) => (order.get(String(left._id)) ?? 9999) - (order.get(String(right._id)) ?? 9999))
+      .map((item) => {
+        const { userPredictions, ...safeItem } = item;
+        return safeItem;
+      });
+
+    res.setHeader('Cache-Control', 'private, no-store');
+    return res.json({ ok: true, entries, count: entries.length });
+  } catch (error) {
+    console.error('[fight-entries] Failed to load signed-in entries:', error);
+    return res.status(500).json({ ok: false, message: 'Unable to load your fight entries.' });
+  }
+});
 app.post('/api/scores', async (req, res) => {
   try {
     const { playerId, matchId, predictions } = req.body;
@@ -8595,10 +8944,7 @@ app.get('/api/public/leaderboard', async (req, res) => {
   try {
     const limit = parsePositiveInteger(req.query.limit, 25, 100);
     const result = await buildClassicLeaderboard({ limit });
-    res.setHeader('Cache-Control', 'no-store, no-cache, max-age=0, must-revalidate');
-    res.setHeader('Pragma', 'no-cache');
-    res.setHeader('Expires', '0');
-    res.setHeader('X-Backend-Cache', 'BYPASS');
+    res.setHeader('Cache-Control', 'public, max-age=15, stale-while-revalidate=45');
     return res.json({
       ok: true,
       leaderboard: result.leaderboard,
@@ -8630,10 +8976,7 @@ app.get('/api/public/home-summary', async (req, res) => {
       Match.countDocuments(applyFightPublicVisibilityFilter({}, { playable: 'true' })),
     ]);
 
-    res.setHeader('Cache-Control', 'private, no-store, no-cache, max-age=0, must-revalidate');
-    res.setHeader('Pragma', 'no-cache');
-    res.setHeader('Expires', '0');
-    res.setHeader('X-Backend-Cache', 'BYPASS');
+    res.setHeader('Cache-Control', 'public, max-age=15, stale-while-revalidate=45');
     res.json({
       ok: true,
       featuredFights,
@@ -13918,7 +14261,7 @@ function buildAutoHomepagePromotionFields({ body = {}, admin = null, actor = '' 
 }
 
 function isHomepagePromotionVisible(fight = {}, now = new Date()) {
-  if (!fight || !fight.homepagePromoted || isDraftFightRecord(fight)) return false;
+  if (!fight || (!fight.homepagePromoted && !fight.featuredThisWeek && !fight.featuredFight) || isDraftFightRecord(fight)) return false;
   const startsAt = fight.homepagePromotionStartsAt ? new Date(fight.homepagePromotionStartsAt) : null;
   const endsAt = fight.homepagePromotionEndsAt ? new Date(fight.homepagePromotionEndsAt) : null;
   if (startsAt && !Number.isNaN(startsAt.getTime()) && startsAt.getTime() > now.getTime()) return false;
@@ -14024,6 +14367,127 @@ app.post('/api/admin/fights/:id/homepage-promotion', verifyAdminToken, async (re
   }
 });
 
+// Independent v7 homepage placements. Selecting one surface never changes the
+// other; Upcoming Events remains the automatic future-date feed.
+app.patch('/api/admin/fights/:id/homepage-placement', verifyAdminToken, async (req, res) => {
+  try {
+    const surface = String(req.body?.surface || '').trim().toLowerCase();
+    const placementField = surface === 'featured-this-week'
+      ? 'featuredThisWeek'
+      : surface === 'featured-fight'
+        ? 'featuredFight'
+        : '';
+    if (!placementField) return res.status(400).json({ ok: false, message: 'Surface must be featured-this-week or featured-fight.' });
+    const resolved = await resolveFightDocumentForAdminPromotion(req.params.id, req.body?.sourceType || req.query.sourceType);
+    if (!resolved) return res.status(404).json({ ok: false, message: 'Fight not found.' });
+    const selected = parseHomepagePromotionBoolean(req.body?.selected, true);
+    if (selected) {
+      const clear = { $set: { [placementField]: false } };
+      await Promise.all([
+        Match.updateMany({ _id: { $ne: resolved.doc._id }, [placementField]: true }, clear),
+        Shadow.updateMany({ _id: { $ne: resolved.doc._id }, [placementField]: true }, clear),
+      ]);
+    }
+    resolved.doc[placementField] = selected;
+    if (surface === 'featured-this-week' && req.body?.image !== undefined) resolved.doc.featuredThisWeekImage = String(req.body.image || '').trim();
+    if (surface === 'featured-fight') {
+      if (req.body?.backgroundImage !== undefined) resolved.doc.featuredFightBackgroundImage = String(req.body.backgroundImage || '').trim();
+      if (req.body?.fighterAImage !== undefined) resolved.doc.featuredFightFighterAImage = String(req.body.fighterAImage || '').trim();
+      if (req.body?.fighterBImage !== undefined) resolved.doc.featuredFightFighterBImage = String(req.body.fighterBImage || '').trim();
+      if (req.body?.division !== undefined) resolved.doc.division = String(req.body.division || '').trim();
+      if (req.body?.weightClass !== undefined) resolved.doc.weightClass = String(req.body.weightClass || '').trim();
+    }
+    resolved.doc.homepagePromotionUpdatedAt = new Date();
+    resolved.doc.homepagePromotionUpdatedBy = req.admin?.id || req.admin?._id || req.admin?.email || 'admin';
+    await resolved.doc.save();
+    clearPublicResponseCache();
+    return res.json({ ok: true, surface, selected, sourceType: resolved.sourceType, fight: pickPublicFightFields(resolved.doc, resolved.sourceType) });
+  } catch (error) {
+    console.error('Error updating homepage placement:', error);
+    return res.status(500).json({ ok: false, message: 'Failed to update homepage placement.' });
+  }
+});
+
+function parseScoutingModelJson(value = '') {
+  const raw = String(value || '').trim();
+  if (!raw) return null;
+  const withoutFence = raw.replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/i, '').trim();
+  try {
+    const parsed = JSON.parse(withoutFence);
+    return parsed && typeof parsed === 'object' ? parsed : null;
+  } catch (_error) {
+    return null;
+  }
+}
+
+async function generateValidatedScoutingReport(payload = {}) {
+  const fallback = buildTemplateScoutingReport(payload);
+  const apiKey = String(process.env.OPENAI_API_KEY || '').trim();
+  if (!apiKey || !fallback) return fallback;
+
+  const systemPrompt = [
+    'You write a concise combat-sports scouting preview from only the supplied JSON.',
+    'Return JSON with exactly summary, pickSplitNote, and underdogAngle string fields.',
+    'Never invent records, odds, injuries, news, rankings, dates, percentages, or statistics.',
+    'Use no numbers except numbers that appear in the supplied JSON. If the data is insufficient, say so plainly.',
+  ].join(' ');
+
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    try {
+      const response = await fetch('https://api.openai.com/v1/chat/completions', {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${apiKey}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          model: process.env.OPENAI_SCOUTING_MODEL || 'gpt-4o-mini',
+          temperature: 0.2,
+          response_format: { type: 'json_object' },
+          messages: [
+            { role: 'system', content: systemPrompt },
+            { role: 'user', content: JSON.stringify(payload) },
+          ],
+        }),
+      });
+      if (!response.ok) continue;
+      const body = await response.json();
+      const candidate = parseScoutingModelJson(body?.choices?.[0]?.message?.content);
+      if (!candidate || !validateScoutingReportNumbers(candidate, payload)) continue;
+      return {
+        summary: String(candidate.summary || '').trim(),
+        pickSplitNote: String(candidate.pickSplitNote || '').trim(),
+        underdogAngle: String(candidate.underdogAngle || '').trim(),
+        source: 'validated-model',
+        payloadVersion: 1,
+        generatedAt: new Date().toISOString(),
+      };
+    } catch (error) {
+      console.warn('[ai-scouting] Generation attempt failed:', error.message);
+    }
+  }
+  return fallback;
+}
+
+// Admin-triggered, per-fight generation. The saved report is always derived
+// from the registered fight and submitted scorecards; invalid model output is
+// discarded in favor of the validated deterministic fallback.
+app.post('/api/admin/fights/:id/ai-scouting-report', verifyAdminToken, async (req, res) => {
+  try {
+    const resolved = await resolveFightDocumentForAdminPromotion(req.params.id, req.body?.sourceType || req.query.sourceType);
+    if (!resolved) return res.status(404).json({ ok: false, message: 'Fight not found.' });
+    const scores = await Score.find({ matchId: String(resolved.doc._id) }).select('predictions').lean();
+    const payload = buildScoutingPayload(resolved.doc, scores);
+    const generatedReport = await generateValidatedScoutingReport(payload);
+    if (!generatedReport) return res.status(422).json({ ok: false, message: 'The fight needs both registered fighter names before a report can be generated.' });
+    const report = { ...generatedReport, pickCount: payload.pickCount, pickSplit: payload.pickSplit };
+    resolved.doc.aiScoutingReport = report;
+    await resolved.doc.save();
+    clearPublicResponseCache();
+    return res.json({ ok: true, sourceType: resolved.sourceType, report, pickCount: payload.pickCount, pickSplit: payload.pickSplit });
+  } catch (error) {
+    console.error('[ai-scouting] Failed to generate report:', error);
+    return res.status(500).json({ ok: false, message: 'Unable to generate this fight scouting report.' });
+  }
+});
+
 app.get('/api/public/fight-calendar', async (req, res) => {
   try {
     const limit = parsePositiveInteger(req.query.limit, 500, 1000);
@@ -14067,7 +14531,9 @@ app.get('/api/public/homepage/promoted-fights', async (req, res) => {
   try {
     const limit = parsePositiveInteger(req.query.limit, 8, 24);
     const now = new Date();
-    const visiblePromotedFilter = applyFightPublicVisibilityFilter({ homepagePromoted: true }, { playable: 'true' });
+    const visiblePromotedFilter = applyFightPublicVisibilityFilter({
+      $or: [{ homepagePromoted: true }, { featuredThisWeek: true }, { featuredFight: true }],
+    }, { playable: 'true' });
     const queryLimit = Math.min(Math.max(limit * 4, limit), 120);
     const [matches, shadows] = await Promise.all([
       applyFightFreshSortLean(Match.find(visiblePromotedFilter).populate('fighterAId fighterBId')).limit(queryLimit),
