@@ -7,13 +7,13 @@
 - The public leagues endpoint returns database leagues and members only. Empty and error states no longer substitute demo leagues.
 - New-user registration and first Google sign-in grant the specified one-time 500 FM welcome balance on the server.
 - The FM coin cart supports only the three server-priced packs: 1,000 FM / $0.99, 5,000 FM / $3.99, and 15,000 FM / $9.99.
-- Checkout creation requires an idempotency key, ignores all client-reported pricing, and redirects to Kurv hosted checkout. The webhook validates its HMAC signature and paid amount before a MongoDB transaction credits the wallet.
+- Checkout creation requires an idempotency key, ignores all client-reported pricing, and creates an Authorize.Net Accept Hosted form token. The signed webhook verifies the authoritative transaction and paid amount before a MongoDB transaction credits the wallet.
 - A player's first confirmed coin purchase receives a one-time server-enforced 2× coin credit. A logged-out purchaser gets a player account, the 500 FM welcome credit, and a single-use password-set email only after confirmed payment.
 - Apparel is deliberately excluded from the FM cart. Merchandise continues to link to Etsy.
 
 ## Deployment requirements
 
-Set `KURV_HOSTED_CHECKOUT_URL`, `KURV_WEBHOOK_SECRET`, `PUBLIC_APP_URL`, `JWT_SECRET`, and working SMTP credentials. Register `POST /api/webhooks/kurv` as the payment-success webhook in Kurv. Confirm Kurv's exact hosted-checkout query names and signature header against the merchant-specific documentation before enabling live charges.
+Set `AUTHORIZE_NET_ENVIRONMENT`, `AUTHORIZE_NET_API_LOGIN_ID`, `AUTHORIZE_NET_TRANSACTION_KEY`, `AUTHORIZE_NET_SIGNATURE_KEY`, `PUBLIC_APP_URL`, `JWT_SECRET`, and working SMTP credentials. Register `POST /api/webhooks/authorize-net` for `net.authorize.payment.authcapture.created`. Keep live secrets only in the deployment host's encrypted environment settings.
 
 The wallet settlement uses a MongoDB transaction and therefore requires a replica-set deployment such as MongoDB Atlas.
 

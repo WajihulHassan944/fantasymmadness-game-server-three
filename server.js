@@ -3711,9 +3711,6 @@ const userSchema = new mongoose.Schema({
   signupBonusGranted: { type: Boolean, default: false },
   hasReceivedFirstPurchaseBonus: { type: Boolean, default: false },
   billing: {
-    cardNumber: { type: String, select: false },  // Encrypted
-    expirationDate: { type: String, select: false },  // Encrypted
-    cardCode: { type: String, select: false },  // Encrypted
     address: String,
     city: String,
     state: String,
@@ -4362,6 +4359,19 @@ app.post('/resetPassword-user/:token', async (req, res) => {
   }
 });
 
+
+// Permanently block the legacy direct-card routes. They accepted raw PAN/CVV
+// values and are retained below only so older route manifests remain stable;
+// all new purchases must use Accept Hosted through /api/checkout/*.
+app.use('/api/authorize-net', (req, res, next) => {
+  const disabled = req.method === 'POST' && ['/first-payment', '/transaction'].includes(req.path);
+  if (!disabled) return next();
+  return res.status(410).json({
+    ok: false,
+    code: 'LEGACY_CARD_FLOW_DISABLED',
+    message: 'This payment route has been retired. Continue through the secure FM checkout.',
+  });
+});
 
 app.post('/api/authorize-net/first-payment', async (req, res) => {
   const { email, amount, cardNumber, expirationDate, cardCode, address, city, state, zip, country } = req.body;
@@ -6341,10 +6351,13 @@ const coinPurchaseOrderSchema = new mongoose.Schema({
     default: 'CREATED',
     index: true,
   },
-  provider: { type: String, default: 'kurv' },
+  provider: { type: String, default: 'authorize-net' },
   providerReference: String,
   providerEventId: String,
+  providerInvoiceNumber: { type: String, index: true },
   checkoutUrl: String,
+  checkoutToken: { type: String, select: false },
+  checkoutTokenCreatedAt: Date,
   returnUrl: String,
   creditedAt: Date,
   failureReason: String,
@@ -6367,10 +6380,13 @@ const fmPlusOrderSchema = new mongoose.Schema({
   subtotalCents: { type: Number, required: true, min: 1 },
   currency: { type: String, default: 'USD' },
   status: { type: String, enum: ['CREATED', 'PROCESSING', 'CREDITED', 'FAILED', 'CANCELLED'], default: 'CREATED', index: true },
-  provider: { type: String, default: 'kurv' },
+  provider: { type: String, default: 'authorize-net' },
   providerReference: String,
   providerEventId: String,
+  providerInvoiceNumber: { type: String, index: true },
   checkoutUrl: String,
+  checkoutToken: { type: String, select: false },
+  checkoutTokenCreatedAt: Date,
   returnUrl: String,
   benefitStartsAt: Date,
   benefitExpiresAt: Date,
@@ -6451,6 +6467,163 @@ function isKurvPaymentSuccess(payload = {}) {
   const status = String(payload.status || payload.data?.status || payload.payment?.status || '').trim().toLowerCase();
   return ['payment.completed', 'payment.succeeded', 'checkout.completed', 'transaction.approved'].includes(eventType)
     || ['paid', 'completed', 'succeeded', 'approved'].includes(status);
+}
+
+function getAuthorizeNetEnvironment() {
+  const requested = String(process.env.AUTHORIZE_NET_ENVIRONMENT || 'sandbox').trim().toLowerCase();
+  const live = ['production', 'prod', 'live'].includes(requested);
+  return {
+    live,
+    apiUrl: live
+      ? 'https://api.authorize.net/xml/v1/request.api'
+      : 'https://apitest.authorize.net/xml/v1/request.api',
+    hostedPaymentUrl: live
+      ? 'https://accept.authorize.net/payment/payment'
+      : 'https://test.authorize.net/payment/payment',
+  };
+}
+
+function hasAuthorizeNetCredentials() {
+  return Boolean(
+    String(process.env.AUTHORIZE_NET_API_LOGIN_ID || '').trim()
+    && String(process.env.AUTHORIZE_NET_TRANSACTION_KEY || '').trim()
+    && String(process.env.AUTHORIZE_NET_SIGNATURE_KEY || '').trim(),
+  );
+}
+
+function buildAuthorizeNetInvoiceNumber(order = {}) {
+  const prefix = order.plan ? 'FP' : 'FC';
+  const digest = crypto.createHash('sha256').update(String(order.orderNumber || '')).digest('hex').slice(0, 16).toUpperCase();
+  return `${prefix}${digest}`;
+}
+
+function buildCheckoutResultUrl(order = {}, status = 'return') {
+  const url = new URL(getSafeCheckoutReturnUrl(order.returnUrl));
+  url.searchParams.set('status', status);
+  url.searchParams.set('order', order.orderNumber);
+  return url.toString();
+}
+
+function authorizeNetMerchantAuthentication() {
+  return {
+    name: String(process.env.AUTHORIZE_NET_API_LOGIN_ID || '').trim(),
+    transactionKey: String(process.env.AUTHORIZE_NET_TRANSACTION_KEY || '').trim(),
+  };
+}
+
+function getAuthorizeNetMessage(payload = {}) {
+  const messages = payload?.messages?.message;
+  const first = Array.isArray(messages) ? messages[0] : messages;
+  return String(first?.text || first?.description || 'The secure payment form could not be created.').trim();
+}
+
+async function requestAuthorizeNetHostedToken(order) {
+  if (!hasAuthorizeNetCredentials()) {
+    const error = new Error('Secure payment is awaiting merchant gateway configuration.');
+    error.status = 503;
+    error.code = 'AUTHORIZE_NET_NOT_CONFIGURED';
+    throw error;
+  }
+
+  const environment = getAuthorizeNetEnvironment();
+  const invoiceNumber = order.providerInvoiceNumber || buildAuthorizeNetInvoiceNumber(order);
+  const description = order.plan
+    ? `${order.plan === 'monthly' ? 'FM+ Monthly' : 'FM+ 30-Day Pass'} membership`
+    : `${Number(order.baseCoins || 0).toLocaleString('en-US')} FM coins`;
+  const requestBody = {
+    getHostedPaymentPageRequest: {
+      merchantAuthentication: authorizeNetMerchantAuthentication(),
+      transactionRequest: {
+        transactionType: 'authCaptureTransaction',
+        amount: (Number(order.subtotalCents || 0) / 100).toFixed(2),
+        order: { invoiceNumber, description },
+        customer: { email: order.email },
+        billTo: {
+          firstName: order.firstName || '',
+          lastName: order.lastName || '',
+          address: order.billing?.address || '',
+          city: order.billing?.city || '',
+          state: order.billing?.state || '',
+          zip: order.billing?.zipCode || '',
+          country: order.billing?.country || 'US',
+        },
+      },
+      hostedPaymentSettings: {
+        setting: [
+          {
+            settingName: 'hostedPaymentReturnOptions',
+            settingValue: JSON.stringify({
+              showReceipt: true,
+              url: buildCheckoutResultUrl(order, 'return'),
+              urlText: 'Return to Fantasy MMAdness',
+              cancelUrl: buildCheckoutResultUrl(order, 'cancelled'),
+              cancelUrlText: 'Cancel',
+            }),
+          },
+          { settingName: 'hostedPaymentButtonOptions', settingValue: JSON.stringify({ text: `Pay ${(Number(order.subtotalCents || 0) / 100).toFixed(2)} USD` }) },
+          { settingName: 'hostedPaymentPaymentOptions', settingValue: JSON.stringify({ cardCodeRequired: true, showCreditCard: true, showBankAccount: false }) },
+          { settingName: 'hostedPaymentSecurityOptions', settingValue: JSON.stringify({ captcha: false }) },
+          { settingName: 'hostedPaymentShippingAddressOptions', settingValue: JSON.stringify({ show: false, required: false }) },
+          { settingName: 'hostedPaymentBillingAddressOptions', settingValue: JSON.stringify({ show: true, required: true }) },
+          { settingName: 'hostedPaymentCustomerOptions', settingValue: JSON.stringify({ showEmail: false, requiredEmail: false, addPaymentProfile: false }) },
+          { settingName: 'hostedPaymentOrderOptions', settingValue: JSON.stringify({ show: true, merchantName: 'Fantasy MMAdness' }) },
+        ],
+      },
+    },
+  };
+
+  const response = await axios.post(environment.apiUrl, requestBody, {
+    headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+    timeout: 15000,
+  });
+  const payload = response.data || {};
+  if (String(payload?.messages?.resultCode || '').toLowerCase() !== 'ok' || !payload.token) {
+    const error = new Error(getAuthorizeNetMessage(payload));
+    error.status = 502;
+    throw error;
+  }
+  return { token: payload.token, checkoutUrl: environment.hostedPaymentUrl, invoiceNumber };
+}
+
+async function attachAuthorizeNetHostedCheckout(order) {
+  const hosted = await requestAuthorizeNetHostedToken(order);
+  order.provider = 'authorize-net';
+  order.providerInvoiceNumber = hosted.invoiceNumber;
+  order.checkoutUrl = hosted.checkoutUrl;
+  order.checkoutToken = hosted.token;
+  order.checkoutTokenCreatedAt = new Date();
+  await order.save();
+  return hosted;
+}
+
+function verifyAuthorizeNetWebhookSignature(rawBody, signatureHeader) {
+  const signatureKey = String(process.env.AUTHORIZE_NET_SIGNATURE_KEY || '').replace(/\s+/g, '').trim();
+  const received = String(signatureHeader || '').replace(/^sha512=/i, '').trim().toLowerCase();
+  if (!signatureKey || !/^[a-f0-9]+$/i.test(signatureKey) || signatureKey.length % 2 !== 0 || !/^[a-f0-9]{128}$/i.test(received)) return false;
+  const expected = crypto.createHmac('sha512', Buffer.from(signatureKey, 'hex')).update(String(rawBody || ''), 'utf8').digest('hex').toLowerCase();
+  const expectedBuffer = Buffer.from(expected, 'hex');
+  const receivedBuffer = Buffer.from(received, 'hex');
+  return expectedBuffer.length === receivedBuffer.length && crypto.timingSafeEqual(expectedBuffer, receivedBuffer);
+}
+
+async function getAuthorizeNetTransactionDetails(transactionId) {
+  const environment = getAuthorizeNetEnvironment();
+  const response = await axios.post(environment.apiUrl, {
+    getTransactionDetailsRequest: {
+      merchantAuthentication: authorizeNetMerchantAuthentication(),
+      transId: String(transactionId || '').trim(),
+    },
+  }, {
+    headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+    timeout: 15000,
+  });
+  const payload = response.data || {};
+  if (String(payload?.messages?.resultCode || '').toLowerCase() !== 'ok' || !payload.transaction) {
+    const error = new Error(getAuthorizeNetMessage(payload));
+    error.status = 502;
+    throw error;
+  }
+  return payload.transaction;
 }
 
 async function sendCoinCheckoutAccountEmail({ user, resetToken, order }) {
@@ -6627,11 +6800,11 @@ app.get('/api/public/fm-plus-plans', (_req, res) => {
 
 app.post('/api/checkout/coin-orders', optionalVerifyToken, async (req, res) => {
   try {
-    if (!process.env.KURV_HOSTED_CHECKOUT_URL) {
+    if (!hasAuthorizeNetCredentials()) {
       return res.status(503).json({
         ok: false,
-        code: 'KURV_NOT_CONFIGURED',
-        message: 'Secure coin checkout is awaiting payment configuration.',
+        code: 'AUTHORIZE_NET_NOT_CONFIGURED',
+        message: 'Secure coin checkout is awaiting merchant gateway configuration.',
       });
     }
 
@@ -6639,12 +6812,18 @@ app.post('/api/checkout/coin-orders', optionalVerifyToken, async (req, res) => {
     if (!idempotencyKey || idempotencyKey.length < 12 || idempotencyKey.length > 160) {
       return res.status(400).json({ ok: false, message: 'A valid idempotency key is required.' });
     }
-    const existingOrder = await CoinPurchaseOrder.findOne({ idempotencyKey }).lean();
+    const existingOrder = await CoinPurchaseOrder.findOne({ idempotencyKey }).select('+checkoutToken');
     if (existingOrder) {
+      const tokenAge = Date.now() - new Date(existingOrder.checkoutTokenCreatedAt || 0).getTime();
+      const hosted = existingOrder.checkoutToken && tokenAge < 12 * 60 * 1000
+        ? { token: existingOrder.checkoutToken, checkoutUrl: existingOrder.checkoutUrl }
+        : await attachAuthorizeNetHostedCheckout(existingOrder);
       return res.status(200).json({
         ok: true,
         orderNumber: existingOrder.orderNumber,
-        checkoutUrl: existingOrder.checkoutUrl,
+        checkoutUrl: hosted.checkoutUrl,
+        checkoutMethod: 'POST',
+        formToken: hosted.token,
         subtotalCents: existingOrder.subtotalCents,
         baseCoins: existingOrder.baseCoins,
         reused: true,
@@ -6689,23 +6868,30 @@ app.post('/api/checkout/coin-orders', optionalVerifyToken, async (req, res) => {
       baseCoins: cart.baseCoins,
       subtotalCents: cart.subtotalCents,
       firstPurchaseOffer: authenticatedUser ? !authenticatedUser.hasReceivedFirstPurchaseBonus : true,
+      provider: 'authorize-net',
       returnUrl: getSafeCheckoutReturnUrl(req.body?.returnUrl),
     });
-    order.checkoutUrl = buildKurvHostedCheckoutUrl(order);
+    order.providerInvoiceNumber = buildAuthorizeNetInvoiceNumber(order);
     await order.save();
+    const hosted = await attachAuthorizeNetHostedCheckout(order);
 
     return res.status(201).json({
       ok: true,
       orderNumber: order.orderNumber,
-      checkoutUrl: order.checkoutUrl,
+      checkoutUrl: hosted.checkoutUrl,
+      checkoutMethod: 'POST',
+      formToken: hosted.token,
       subtotalCents: order.subtotalCents,
       baseCoins: order.baseCoins,
       firstPurchaseOffer: order.firstPurchaseOffer,
     });
   } catch (error) {
     if (error?.code === 11000 && error?.keyPattern?.idempotencyKey) {
-      const reused = await CoinPurchaseOrder.findOne({ idempotencyKey: String(req.headers['idempotency-key'] || req.body?.idempotencyKey || '').trim() }).lean();
-      if (reused) return res.status(200).json({ ok: true, orderNumber: reused.orderNumber, checkoutUrl: reused.checkoutUrl, reused: true });
+      const reused = await CoinPurchaseOrder.findOne({ idempotencyKey: String(req.headers['idempotency-key'] || req.body?.idempotencyKey || '').trim() }).select('+checkoutToken');
+      if (reused) {
+        const hosted = reused.checkoutToken ? { token: reused.checkoutToken, checkoutUrl: reused.checkoutUrl } : await attachAuthorizeNetHostedCheckout(reused);
+        return res.status(200).json({ ok: true, orderNumber: reused.orderNumber, checkoutUrl: hosted.checkoutUrl, checkoutMethod: 'POST', formToken: hosted.token, reused: true });
+      }
     }
     console.error('[coin-checkout] Create order failed:', error);
     return res.status(error.status || 500).json({ ok: false, message: error.message || 'Unable to create coin checkout.' });
@@ -6714,24 +6900,28 @@ app.post('/api/checkout/coin-orders', optionalVerifyToken, async (req, res) => {
 
 app.post('/api/checkout/fm-plus-orders', optionalVerifyToken, async (req, res) => {
   try {
-    if (!process.env.KURV_HOSTED_CHECKOUT_URL) {
-      return res.status(503).json({ ok: false, code: 'KURV_NOT_CONFIGURED', message: 'Secure FM+ checkout is awaiting payment configuration.' });
+    if (!hasAuthorizeNetCredentials()) {
+      return res.status(503).json({ ok: false, code: 'AUTHORIZE_NET_NOT_CONFIGURED', message: 'Secure FM+ checkout is awaiting merchant gateway configuration.' });
     }
     const plan = resolveFmPlusPlan(req.body?.plan);
-    if (plan.recurring && String(process.env.KURV_RECURRING_ENABLED || '').toLowerCase() !== 'true') {
+    if (plan.recurring) {
       return res.status(409).json({
         ok: false,
-        code: 'KURV_RECURRING_NOT_ENABLED',
-        message: 'Monthly auto-renew is awaiting recurring-payment approval. Choose the 30-day pass to continue today.',
+        code: 'AUTHORIZE_NET_RECURRING_NOT_ENABLED',
+        message: 'Monthly auto-renew requires a separate recurring-billing setup. Choose the 30-day pass to continue today.',
       });
     }
     const idempotencyKey = String(req.headers['idempotency-key'] || req.body?.idempotencyKey || '').trim();
     if (!idempotencyKey || idempotencyKey.length < 12 || idempotencyKey.length > 160) {
       return res.status(400).json({ ok: false, message: 'A valid idempotency key is required.' });
     }
-    const existingOrder = await FmPlusOrder.findOne({ idempotencyKey }).lean();
+    const existingOrder = await FmPlusOrder.findOne({ idempotencyKey }).select('+checkoutToken');
     if (existingOrder) {
-      return res.status(200).json({ ok: true, orderNumber: existingOrder.orderNumber, checkoutUrl: existingOrder.checkoutUrl, plan: existingOrder.plan, reused: true });
+      const tokenAge = Date.now() - new Date(existingOrder.checkoutTokenCreatedAt || 0).getTime();
+      const hosted = existingOrder.checkoutToken && tokenAge < 12 * 60 * 1000
+        ? { token: existingOrder.checkoutToken, checkoutUrl: existingOrder.checkoutUrl }
+        : await attachAuthorizeNetHostedCheckout(existingOrder);
+      return res.status(200).json({ ok: true, orderNumber: existingOrder.orderNumber, checkoutUrl: hosted.checkoutUrl, checkoutMethod: 'POST', formToken: hosted.token, plan: existingOrder.plan, reused: true });
     }
 
     const billing = req.body?.billing || {};
@@ -6767,24 +6957,109 @@ app.post('/api/checkout/fm-plus-orders', optionalVerifyToken, async (req, res) =
       durationDays: plan.durationDays,
       bonusCoins: plan.bonusCoins,
       subtotalCents: plan.priceCents,
+      provider: 'authorize-net',
       returnUrl: getSafeCheckoutReturnUrl(req.body?.returnUrl),
     });
-    order.checkoutUrl = buildKurvHostedCheckoutUrl(order);
+    order.providerInvoiceNumber = buildAuthorizeNetInvoiceNumber(order);
     await order.save();
+    const hosted = await attachAuthorizeNetHostedCheckout(order);
     return res.status(201).json({
       ok: true,
       orderNumber: order.orderNumber,
-      checkoutUrl: order.checkoutUrl,
+      checkoutUrl: hosted.checkoutUrl,
+      checkoutMethod: 'POST',
+      formToken: hosted.token,
       plan: order.plan,
       subtotalCents: order.subtotalCents,
     });
   } catch (error) {
     if (error?.code === 11000 && error?.keyPattern?.idempotencyKey) {
-      const reused = await FmPlusOrder.findOne({ idempotencyKey: String(req.headers['idempotency-key'] || req.body?.idempotencyKey || '').trim() }).lean();
-      if (reused) return res.status(200).json({ ok: true, orderNumber: reused.orderNumber, checkoutUrl: reused.checkoutUrl, plan: reused.plan, reused: true });
+      const reused = await FmPlusOrder.findOne({ idempotencyKey: String(req.headers['idempotency-key'] || req.body?.idempotencyKey || '').trim() }).select('+checkoutToken');
+      if (reused) {
+        const hosted = reused.checkoutToken ? { token: reused.checkoutToken, checkoutUrl: reused.checkoutUrl } : await attachAuthorizeNetHostedCheckout(reused);
+        return res.status(200).json({ ok: true, orderNumber: reused.orderNumber, checkoutUrl: hosted.checkoutUrl, checkoutMethod: 'POST', formToken: hosted.token, plan: reused.plan, reused: true });
+      }
     }
     console.error('[fm-plus-checkout] Create order failed:', error);
     return res.status(error.status || 500).json({ ok: false, message: error.message || 'Unable to create FM+ checkout.' });
+  }
+});
+
+app.get('/api/checkout/orders/:orderNumber/status', async (req, res) => {
+  try {
+    const orderNumber = String(req.params.orderNumber || '').trim();
+    if (!/^FMM-(?:COIN|PLUS)-[A-Z0-9-]{12,80}$/i.test(orderNumber)) {
+      return res.status(400).json({ ok: false, message: 'Invalid checkout order reference.' });
+    }
+    const isFmPlus = orderNumber.startsWith('FMM-PLUS-');
+    const order = await (isFmPlus ? FmPlusOrder : CoinPurchaseOrder)
+      .findOne({ orderNumber })
+      .select('orderNumber status creditedCoins bonusCoins creditedAt benefitExpiresAt failureReason')
+      .lean();
+    if (!order) return res.status(404).json({ ok: false, message: 'Checkout order not found.' });
+    return res.json({
+      ok: true,
+      orderNumber,
+      status: order.status,
+      creditedCoins: isFmPlus ? Number(order.bonusCoins || 0) : Number(order.creditedCoins || 0),
+      creditedAt: order.creditedAt,
+      benefitExpiresAt: isFmPlus ? order.benefitExpiresAt : undefined,
+      message: order.status === 'FAILED' ? 'Payment confirmation could not be completed. Please contact support with the order reference.' : undefined,
+    });
+  } catch (error) {
+    return res.status(500).json({ ok: false, message: 'Checkout status is temporarily unavailable.' });
+  }
+});
+
+app.post('/api/webhooks/authorize-net', async (req, res) => {
+  try {
+    if (!verifyAuthorizeNetWebhookSignature(req.rawBody, req.headers['x-anet-signature'])) {
+      return res.status(401).json({ ok: false, message: 'Invalid webhook signature.' });
+    }
+    const eventType = String(req.body?.eventType || '').trim();
+    if (eventType !== 'net.authorize.payment.authcapture.created') {
+      return res.status(200).json({ ok: true, ignored: true });
+    }
+
+    const transactionId = String(req.body?.payload?.id || '').trim();
+    if (!/^\d+$/.test(transactionId)) return res.status(400).json({ ok: false, message: 'Transaction reference is missing.' });
+    const transaction = await getAuthorizeNetTransactionDetails(transactionId);
+    const invoiceNumber = String(transaction?.order?.invoiceNumber || '').trim();
+    const order = invoiceNumber
+      ? await (invoiceNumber.startsWith('FP') ? FmPlusOrder : CoinPurchaseOrder).findOne({ providerInvoiceNumber: invoiceNumber }).lean()
+      : null;
+    if (!order) return res.status(404).json({ ok: false, message: 'Checkout order not found.' });
+
+    const responseCode = String(transaction.responseCode || req.body?.payload?.responseCode || '').trim();
+    const transactionStatus = String(transaction.transactionStatus || '').trim().toLowerCase();
+    if (responseCode !== '1' || !['capturedpendingsettlement', 'settledsuccessfully'].includes(transactionStatus)) {
+      return res.status(409).json({ ok: false, message: 'The transaction is not an approved captured payment.' });
+    }
+    const paidAmount = Number(transaction.authAmount ?? transaction.settleAmount ?? req.body?.payload?.authAmount);
+    if (!Number.isFinite(paidAmount) || Math.round(paidAmount * 100) !== Number(order.subtotalCents)) {
+      return res.status(409).json({ ok: false, message: 'Paid amount does not match the server-priced order.' });
+    }
+
+    const Model = invoiceNumber.startsWith('FP') ? FmPlusOrder : CoinPurchaseOrder;
+    await Model.updateOne({ orderNumber: order.orderNumber }, {
+      $set: {
+        provider: 'authorize-net',
+        providerReference: transactionId,
+        providerEventId: String(req.body?.notificationId || transactionId),
+      },
+    });
+    const result = invoiceNumber.startsWith('FP')
+      ? await settlePaidFmPlusOrder(order.orderNumber, String(req.body?.notificationId || transactionId))
+      : await settlePaidCoinOrder(order.orderNumber, String(req.body?.notificationId || transactionId));
+    return res.status(200).json({
+      ok: true,
+      orderNumber: order.orderNumber,
+      creditedCoins: invoiceNumber.startsWith('FP') ? result.order.bonusCoins : result.order.creditedCoins,
+      alreadyCredited: result.alreadyCredited,
+    });
+  } catch (error) {
+    console.error('[authorize-net-checkout] Webhook settlement failed:', error);
+    return res.status(error.status || 500).json({ ok: false, message: error.message || 'Payment settlement failed.' });
   }
 });
 
