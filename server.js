@@ -666,7 +666,8 @@ async function attachPlayerPredictionStateToFightItems(items = [], query = {}) {
     const storedReport = plain.aiScoutingReport && typeof plain.aiScoutingReport === 'object'
       ? plain.aiScoutingReport
       : null;
-    const aiScoutingReport = liveReport ? {
+    const identityHidden = Boolean(plain.shadowIdentityHidden) && !predictionSubmitted;
+    const aiScoutingReport = !identityHidden && liveReport ? {
       ...liveReport,
       ...(storedReport || {}),
       pickSplitNote: liveReport.pickSplitNote,
@@ -677,6 +678,21 @@ async function attachPlayerPredictionStateToFightItems(items = [], query = {}) {
 
     return {
       ...plain,
+      ...(identityHidden ? {
+        matchName: 'MYSTERY SHADOW FIGHT',
+        matchFighterA: 'MYSTERY RED CORNER',
+        matchFighterB: 'MYSTERY BLUE CORNER',
+        fighterA: null,
+        fighterB: null,
+        fighterAId: null,
+        fighterBId: null,
+        fighterAImage: '',
+        fighterBImage: '',
+        matchDescription: 'Archived mystery fight. Competitor identities reveal after entry.',
+        promotionBackground: '',
+        fightPosterImage: '',
+        fightPosterMobileImage: '',
+      } : {}),
       predictionSubmitted,
       userPredictionSubmitted: predictionSubmitted,
       userPredictionStatus,
@@ -805,6 +821,14 @@ const USER_SAFE_SELECT = [
   'fmPlusPlan',
   'fmPlusExpiresAt',
   'fmPlusLastCoinCreditAt',
+  'hasReceivedFirstPurchaseBonus',
+  'skillTier',
+  'skillTierUpdatedAt',
+  'rollingPerformancePercentile',
+  'loginStreak',
+  'streakExpiresAt',
+  'dailyRewardClaimedAt',
+  'streakSkipUnlockedAt',
   'freePlanExpiryDate',
   'hasAvailedFreePlan',
   'preferredPaymentMethod',
@@ -1036,6 +1060,7 @@ function attachCombatFighterReadFallbacks(fight = {}, sourceType = 'match') {
 
 function pickPublicFightFields(fight = {}, sourceType = 'match') {
   const item = attachCombatFighterReadFallbacks(fight, sourceType);
+  const identityHidden = sourceType === 'shadow' && Boolean(item.shadowIdentityHidden);
   const entryCount = Array.isArray(item.userPredictions)
     ? item.userPredictions.filter((prediction) => String(prediction?.predictionStatus || '').toLowerCase() === 'submitted').length
     : 0;
@@ -1052,19 +1077,19 @@ function pickPublicFightFields(fight = {}, sourceType = 'match') {
     categoryLabel: item.categoryLabel,
     categorySlug: item.categorySlug,
     hasSecondaryCategory: item.hasSecondaryCategory,
-    matchName: item.matchName,
-    matchFighterA: item.matchFighterA,
-    matchFighterB: item.matchFighterB,
-    fighterAId: item.fighterAId,
-    fighterBId: item.fighterBId,
-    fighterA: item.fighterA,
-    fighterB: item.fighterB,
-    fighterAImage: item.fighterAImage,
-    fighterBImage: item.fighterBImage,
-    promotionBackground: item.promotionBackground,
-    fightPosterImage: item.fightPosterImage || item.promotionBackground || '',
-    fightPosterMobileImage: item.fightPosterMobileImage || item.fightPosterImage || item.promotionBackground || '',
-    matchDescription: item.matchDescription,
+    matchName: identityHidden ? 'MYSTERY SHADOW FIGHT' : item.matchName,
+    matchFighterA: identityHidden ? 'MYSTERY RED CORNER' : item.matchFighterA,
+    matchFighterB: identityHidden ? 'MYSTERY BLUE CORNER' : item.matchFighterB,
+    fighterAId: identityHidden ? null : item.fighterAId,
+    fighterBId: identityHidden ? null : item.fighterBId,
+    fighterA: identityHidden ? null : item.fighterA,
+    fighterB: identityHidden ? null : item.fighterB,
+    fighterAImage: identityHidden ? '' : item.fighterAImage,
+    fighterBImage: identityHidden ? '' : item.fighterBImage,
+    promotionBackground: identityHidden ? '' : item.promotionBackground,
+    fightPosterImage: identityHidden ? '' : (item.fightPosterImage || item.promotionBackground || ''),
+    fightPosterMobileImage: identityHidden ? '' : (item.fightPosterMobileImage || item.fightPosterImage || item.promotionBackground || ''),
+    matchDescription: identityHidden ? 'Archived mystery fight. Competitor identities reveal after entry.' : item.matchDescription,
     matchType: item.matchType,
     matchTokens: item.matchTokens,
     entryFee,
@@ -1078,14 +1103,20 @@ function pickPublicFightFields(fight = {}, sourceType = 'match') {
     matchTime: item.matchTime,
     venue: item.venue,
     maxRounds: item.maxRounds,
-    aiScoutingReport: item.aiScoutingReport && typeof item.aiScoutingReport === 'object' ? item.aiScoutingReport : null,
+    aiScoutingReport: !identityHidden && item.aiScoutingReport && typeof item.aiScoutingReport === 'object' ? item.aiScoutingReport : null,
+    isShadow: sourceType === 'shadow' || String(item.matchType || '').toLowerCase() === 'shadow',
+    shadowIdentityHidden: identityHidden,
+    shadowAutoPublished: Boolean(item.shadowAutoPublished),
+    shadowPublishedAt: item.shadowPublishedAt || null,
+    shadowExpiresAt: item.shadowExpiresAt || null,
+    shadowLastUsedAt: item.shadowLastUsedAt || null,
     homepagePromoted: Boolean(item.homepagePromoted),
     featuredThisWeek: Boolean(item.featuredThisWeek),
     featuredFight: Boolean(item.featuredFight),
-    featuredThisWeekImage: item.featuredThisWeekImage || '',
-    featuredFightBackgroundImage: item.featuredFightBackgroundImage || '',
-    featuredFightFighterAImage: item.featuredFightFighterAImage || '',
-    featuredFightFighterBImage: item.featuredFightFighterBImage || '',
+    featuredThisWeekImage: identityHidden ? '' : (item.featuredThisWeekImage || ''),
+    featuredFightBackgroundImage: identityHidden ? '' : (item.featuredFightBackgroundImage || ''),
+    featuredFightFighterAImage: identityHidden ? '' : (item.featuredFightFighterAImage || ''),
+    featuredFightFighterBImage: identityHidden ? '' : (item.featuredFightFighterBImage || ''),
     division: item.division || item.weightClass || '',
     weightClass: item.weightClass || item.division || '',
     homepagePromotionRank: Number(item.homepagePromotionRank || 0),
@@ -1095,8 +1126,8 @@ function pickPublicFightFields(fight = {}, sourceType = 'match') {
       title: item.homepagePromotionTitle || '',
       subtitle: item.homepagePromotionSubtitle || '',
       ctaLabel: item.homepagePromotionCtaLabel || '',
-      posterImage: item.fightPosterImage || item.promotionBackground || '',
-      mobilePosterImage: item.fightPosterMobileImage || item.fightPosterImage || item.promotionBackground || '',
+      posterImage: identityHidden ? '' : (item.fightPosterImage || item.promotionBackground || ''),
+      mobilePosterImage: identityHidden ? '' : (item.fightPosterMobileImage || item.fightPosterImage || item.promotionBackground || ''),
       startsAt: item.homepagePromotionStartsAt || null,
       endsAt: item.homepagePromotionEndsAt || null,
       calendarSource: item.homepagePromotionCalendarSource || '',
@@ -1330,6 +1361,8 @@ const shadowSchema = new mongoose.Schema({
   fighterAImage: String,  // URL of Fighter A's image
   fighterBImage: String,  // URL of Fighter B's image
   matchType: String,      // LIVE or SHADOW
+  matchTokens: { type: Number, min: 0, default: 0 },
+  pot: { type: Number, min: 0, default: 0 },
   maxRounds: Number,
   fighterAImageDeleteUrl: String, // ImgBB delete URL for Fighter A's image
   fighterBImageDeleteUrl: String, 
@@ -1337,6 +1370,14 @@ const shadowSchema = new mongoose.Schema({
   fightPosterImageDeleteUrl: String,
   fightPosterMobileImageDeleteUrl: String,
   matchStatus: { type: String, enum: ['Finished', 'Ongoing', 'Draft', 'Scheduled', 'Live', 'Open', 'Closed'], default: 'Ongoing' },
+  matchShadowStatus: { type: String, enum: ['active', 'inactive', 'draft'], default: 'active' },
+  matchShadowOpenStatus: { type: String, enum: ['open', 'closed'], default: 'open' },
+  shadowIdentityHidden: { type: Boolean, default: false, index: true },
+  shadowAutoPublished: { type: Boolean, default: false, index: true },
+  shadowPublishedAt: Date,
+  shadowExpiresAt: Date,
+  shadowLastUsedAt: { type: Date, index: true },
+  shadowOriginalMatchDate: Date,
   aiScoutingReport: mongoose.Schema.Types.Mixed,
   
   // Boxing-specific stats
@@ -3701,6 +3742,13 @@ const userSchema = new mongoose.Schema({
   fmPlusPlan: { type: String, enum: ['monthly', 'pass', 'none'], default: 'none' },
   fmPlusExpiresAt: Date,
   fmPlusLastCoinCreditAt: Date,
+  skillTier: { type: String, enum: ['rookie', 'regular', 'expert'], default: 'rookie', index: true },
+  skillTierUpdatedAt: Date,
+  rollingPerformancePercentile: { type: Number, min: 0, max: 100 },
+  loginStreak: { type: Number, min: 0, max: 3650, default: 0 },
+  streakExpiresAt: Date,
+  dailyRewardClaimedAt: Date,
+  streakSkipUnlockedAt: Date,
   freePlanExpiryDate: Date, // Date when the free plan expires
   hasAvailedFreePlan: { type: Boolean, default: false }, // Indicates if the user has availed the free plan
   preferredPaymentMethod: String,
@@ -6187,6 +6235,8 @@ function buildShadowTemplatePayloadFromLiveMatch(match = {}) {
     fighterAImage: match.fighterAImage,
     fighterBImage: match.fighterBImage,
     matchType: 'SHADOW',
+    matchTokens: Number.isFinite(Number(match.matchTokens)) ? Math.max(0, Number(match.matchTokens)) : 0,
+    pot: Number.isFinite(Number(match.pot)) ? Math.max(0, Number(match.pot)) : 0,
     maxRounds: match.maxRounds,
     fighterAImageDeleteUrl: match.fighterAImageDeleteUrl,
     fighterBImageDeleteUrl: match.fighterBImageDeleteUrl,
@@ -7129,6 +7179,106 @@ app.get('/profile', verifyToken, async (req, res) => {
     res.status(200).json({ user: sanitizeAccountObject(user) });
   } catch (error) {
     res.status(500).json({ message: 'Internal server error' });
+  }
+});
+
+app.put('/api/users/me/profile', verifyToken, async (req, res) => {
+  try {
+    const updates = {};
+    ['firstName', 'lastName', 'playerName'].forEach((field) => {
+      if (req.body?.[field] === undefined) return;
+      updates[field] = String(req.body[field] || '').trim().slice(0, field === 'playerName' ? 40 : 80);
+    });
+    if (!Object.keys(updates).length) return res.status(400).json({ ok: false, message: 'No profile fields were provided.' });
+    const user = await User.findByIdAndUpdate(req.user.id, { $set: updates }, { new: true, runValidators: true }).select(USER_SAFE_SELECT);
+    if (!user) return res.status(404).json({ ok: false, message: 'User not found.' });
+    return res.json({ ok: true, user: sanitizeAccountObject(user) });
+  } catch (error) {
+    console.error('[profile] Signed-in profile update failed:', error);
+    return res.status(500).json({ ok: false, message: 'Unable to update your profile.' });
+  }
+});
+
+function utcDayKey(value = new Date()) {
+  const date = value instanceof Date ? value : new Date(value);
+  if (Number.isNaN(date.getTime())) return '';
+  return `${date.getUTCFullYear()}-${String(date.getUTCMonth() + 1).padStart(2, '0')}-${String(date.getUTCDate()).padStart(2, '0')}`;
+}
+
+function hasActiveFmPlusBenefits(user = {}, now = new Date()) {
+  if (!user.isSubscribed || String(user.currentPlan || '').toUpperCase() !== 'FM+') return false;
+  if (!user.fmPlusExpiresAt) return true;
+  return new Date(user.fmPlusExpiresAt).getTime() > now.getTime();
+}
+
+async function loadStreakUser(req, res) {
+  const user = await User.findById(req.user?.id).select(USER_SAFE_SELECT);
+  if (!user) {
+    res.status(404).json({ ok: false, message: 'User not found.' });
+    return null;
+  }
+  return user;
+}
+
+app.post('/api/users/me/streak/claim', verifyToken, async (req, res) => {
+  try {
+    const user = await loadStreakUser(req, res);
+    if (!user) return;
+    const now = new Date();
+    const lastClaim = user.dailyRewardClaimedAt ? new Date(user.dailyRewardClaimedAt) : null;
+    const skipUnlocked = user.streakSkipUnlockedAt ? new Date(user.streakSkipUnlockedAt) : null;
+    const claimedToday = lastClaim && utcDayKey(lastClaim) === utcDayKey(now);
+    const hasUnusedSkip = claimedToday && skipUnlocked && skipUnlocked.getTime() > lastClaim.getTime();
+    if (claimedToday && !hasUnusedSkip) return res.status(409).json({ ok: false, message: 'Today’s reward has already been claimed.' });
+
+    const yesterday = new Date(now.getTime() - 86400000);
+    const consecutive = lastClaim && (utcDayKey(lastClaim) === utcDayKey(yesterday) || claimedToday);
+    user.loginStreak = consecutive ? Math.min(3650, Number(user.loginStreak || 0) + 1) : 1;
+    user.dailyRewardClaimedAt = now;
+    user.streakExpiresAt = new Date(now.getTime() + 24 * 60 * 60 * 1000);
+    user.tokens = normalizeWalletTokenString(Number(normalizeWalletTokenString(user.tokens)) + 250);
+    await user.save();
+    clearPublicResponseCache();
+    return res.json({ ok: true, creditedCoins: 250, user: sanitizeAccountObject(user) });
+  } catch (error) {
+    console.error('[streak] Reward claim failed:', error);
+    return res.status(500).json({ ok: false, message: 'Unable to claim the reward.' });
+  }
+});
+
+app.post('/api/users/me/streak/save', verifyToken, async (req, res) => {
+  try {
+    const user = await loadStreakUser(req, res);
+    if (!user) return;
+    const now = new Date();
+    const cost = hasActiveFmPlusBenefits(user, now) ? 25 : 50;
+    const balance = Number(normalizeWalletTokenString(user.tokens));
+    if (balance < cost) return res.status(409).json({ ok: false, message: `You need ${cost} FM to save this streak.` });
+    user.tokens = normalizeWalletTokenString(balance - cost);
+    user.streakExpiresAt = new Date(now.getTime() + 24 * 60 * 60 * 1000);
+    await user.save();
+    clearPublicResponseCache();
+    return res.json({ ok: true, debitedCoins: cost, user: sanitizeAccountObject(user) });
+  } catch (error) {
+    console.error('[streak] Streak save failed:', error);
+    return res.status(500).json({ ok: false, message: 'Unable to save the streak.' });
+  }
+});
+
+app.post('/api/users/me/streak/skip-wait', verifyToken, async (req, res) => {
+  try {
+    const user = await loadStreakUser(req, res);
+    if (!user) return;
+    const balance = Number(normalizeWalletTokenString(user.tokens));
+    if (balance < 75) return res.status(409).json({ ok: false, message: 'You need 75 FM to skip the wait.' });
+    user.tokens = normalizeWalletTokenString(balance - 75);
+    user.streakSkipUnlockedAt = new Date();
+    await user.save();
+    clearPublicResponseCache();
+    return res.json({ ok: true, debitedCoins: 75, user: sanitizeAccountObject(user) });
+  } catch (error) {
+    console.error('[streak] Skip-wait failed:', error);
+    return res.status(500).json({ ok: false, message: 'Unable to skip the wait.' });
   }
 });
 
@@ -8964,9 +9114,8 @@ function buildLeaderboardDisplayName(user = {}, fallbackId = '') {
     `Player ${String(fallbackId).slice(-6)}`;
 }
 
-async function buildClassicLeaderboard({ limit = 10 } = {}) {
+async function buildClassicLeaderboard({ limit = 10, tier = 'global' } = {}) {
   const resolvedLimit = parsePositiveInteger(limit, 10, 100);
-  const ENTRY_ACTIVITY_POINTS = 100;
 
   const [scoreRows, wrestlingRows] = await Promise.all([
     Score.find().select('playerId matchId predictions totalPoints totalScore score points createdAt updatedAt').lean().catch((error) => {
@@ -9061,6 +9210,7 @@ async function buildClassicLeaderboard({ limit = 10 } = {}) {
         pendingScorecards: 0,
         classicPoints: 0,
         proWrestlingPoints: 0,
+        scoredHistory: [],
         latestMatchId: null,
         latestMatch: null,
         source: 'real-user-scores',
@@ -9080,6 +9230,15 @@ async function buildClassicLeaderboard({ limit = 10 } = {}) {
   };
 
   const countedPairs = new Set();
+  const recordScoredResult = (row, points, occurredAt) => {
+    if (!row) return;
+    const safePoints = Math.max(0, Math.round(Number(points) || 0));
+    row.totalPoints += safePoints;
+    row.points = row.totalPoints;
+    row.scoredMatches += 1;
+    const date = new Date(occurredAt || 0);
+    row.scoredHistory.push({ points: safePoints, at: Number.isNaN(date.getTime()) ? 0 : date.getTime() });
+  };
 
   (Array.isArray(scoreRows) ? scoreRows : []).forEach((score) => {
     const playerId = normalizeLeaderboardPlayerId(score.playerId);
@@ -9095,20 +9254,17 @@ async function buildClassicLeaderboard({ limit = 10 } = {}) {
     const officialPoints = officialStats && hasOfficialStats(officialStats)
       ? calculateClassicPredictionPoints(score.predictions, officialStats.fighterOneStats, officialStats.fighterTwoStats, officialStats.category)
       : 0;
-    const activityPoints = estimatePredictionActivityPoints(score.predictions);
-    const pointsEarned = Number.isFinite(explicitScore) && explicitScore > 0
+    const hasOfficialFightStats = Boolean(officialStats && hasOfficialStats(officialStats));
+    const hasOfficialScore = explicitScore !== null || hasOfficialFightStats;
+    const pointsEarned = explicitScore !== null
       ? explicitScore
-      : officialPoints > 0
+      : hasOfficialFightStats
         ? officialPoints
-        : activityPoints > 0
-          ? activityPoints
-          : ENTRY_ACTIVITY_POINTS;
+        : 0;
 
-    row.totalPoints += Math.max(0, Math.round(pointsEarned));
-    row.points = row.totalPoints;
     row.classicPoints += Math.max(0, Math.round(pointsEarned));
     row.matchesPlayed += 1;
-    if (officialPoints > 0 || (Number.isFinite(explicitScore) && explicitScore > 0)) row.scoredMatches += 1;
+    if (hasOfficialScore) recordScoredResult(row, pointsEarned, score.updatedAt || score.createdAt || match?.matchDate);
     else row.pendingScorecards += 1;
     registerLatestMatch(row, matchId, match, 'match');
   });
@@ -9120,21 +9276,24 @@ async function buildClassicLeaderboard({ limit = 10 } = {}) {
     if (!row) return;
 
     const explicitPredictionPoints = readNumericField(entry.prediction, ['totalPoints', 'totalScore', 'score', 'points']);
-    const predictionActivityPoints = estimatePredictionActivityPoints(
-      Array.isArray(entry.prediction?.predictions) ? entry.prediction.predictions :
-        Array.isArray(entry.prediction?.rounds) ? entry.prediction.rounds : []
-    );
-    const pointsEarned = Number.isFinite(explicitPredictionPoints) && explicitPredictionPoints > 0
+    const predictionRows = Array.isArray(entry.prediction?.predictions) ? entry.prediction.predictions :
+      Array.isArray(entry.prediction?.rounds) ? entry.prediction.rounds : [];
+    const officialStats = entry.match ? getClassicFightOfficialStats(entry.match) : null;
+    const hasOfficialFightStats = Boolean(officialStats && hasOfficialStats(officialStats));
+    const officialPoints = hasOfficialFightStats
+      ? calculateClassicPredictionPoints(predictionRows, officialStats.fighterOneStats, officialStats.fighterTwoStats, officialStats.category)
+      : 0;
+    const hasOfficialScore = explicitPredictionPoints !== null || hasOfficialFightStats;
+    const pointsEarned = explicitPredictionPoints !== null
       ? explicitPredictionPoints
-      : predictionActivityPoints > 0
-        ? predictionActivityPoints
-        : ENTRY_ACTIVITY_POINTS;
+      : hasOfficialFightStats
+        ? officialPoints
+        : 0;
 
-    row.totalPoints += Math.max(0, Math.round(pointsEarned));
-    row.points = row.totalPoints;
     row.classicPoints += Math.max(0, Math.round(pointsEarned));
     row.matchesPlayed += 1;
-    row.pendingScorecards += 1;
+    if (hasOfficialScore) recordScoredResult(row, pointsEarned, entry.prediction?.updatedAt || entry.prediction?.createdAt || entry.match?.matchDate);
+    else row.pendingScorecards += 1;
     registerLatestMatch(row, entry.matchId, entry.match, 'embedded-prediction');
   });
 
@@ -9149,29 +9308,102 @@ async function buildClassicLeaderboard({ limit = 10 } = {}) {
     const row = getOrCreateRow(playerId);
     if (!row) return;
 
-    const pointsEarned = readNumericField(prediction, ['score', 'totalScore', 'totalPoints', 'points']) || ENTRY_ACTIVITY_POINTS;
-    row.totalPoints += Math.max(0, Math.round(pointsEarned));
-    row.points = row.totalPoints;
+    const predictionStatus = String(prediction.predictionStatus || '').toUpperCase();
+    const hasOfficialScore = ['SCORED', 'SETTLED'].includes(predictionStatus);
+    const explicitPoints = readNumericField(prediction, ['score', 'totalScore', 'totalPoints', 'points']);
+    const pointsEarned = hasOfficialScore && explicitPoints !== null ? explicitPoints : 0;
     row.proWrestlingPoints += Math.max(0, Math.round(pointsEarned));
     row.matchesPlayed += 1;
-    if (pointsEarned > ENTRY_ACTIVITY_POINTS) row.scoredMatches += 1;
+    if (hasOfficialScore) recordScoredResult(row, pointsEarned, prediction.updatedAt || prediction.createdAt);
     else row.pendingScorecards += 1;
     if (matchId) registerLatestMatch(row, matchId, null, 'pro-wrestling');
   });
 
-  const leaderboard = [...rowsByPlayer.values()]
-    .filter((row) => Number(row.matchesPlayed || 0) > 0)
+  const rankedRows = [...rowsByPlayer.values()]
+    .filter((row) => Number(row.scoredMatches || 0) > 0)
+    .map((row) => {
+      const recentScores = [...row.scoredHistory]
+        .sort((left, right) => right.at - left.at)
+        .slice(0, 10);
+      const rollingAverageScore = recentScores.length
+        ? recentScores.reduce((sum, item) => sum + item.points, 0) / recentScores.length
+        : 0;
+      const { scoredHistory, ...safeRow } = row;
+      return { ...safeRow, rollingAverageScore: Math.round(rollingAverageScore * 100) / 100 };
+    })
     .sort((a, b) =>
       Number(b.totalPoints || 0) - Number(a.totalPoints || 0) ||
       Number(b.scoredMatches || 0) - Number(a.scoredMatches || 0) ||
       Number(b.matchesPlayed || 0) - Number(a.matchesPlayed || 0) ||
       String(a.displayName || '').localeCompare(String(b.displayName || ''))
-    )
-    .slice(0, resolvedLimit)
-    .map((row, index) => ({ ...row, rank: index + 1, totalPoints: Math.round(row.totalPoints || 0), points: Math.round(row.totalPoints || 0) }));
+    );
+
+  const totalRankedPlayers = rankedRows.length;
+  const rollingOrder = [...rankedRows].sort((left, right) =>
+    Number(right.rollingAverageScore || 0) - Number(left.rollingAverageScore || 0) ||
+    Number(right.scoredMatches || 0) - Number(left.scoredMatches || 0)
+  );
+  const rollingIndexByPlayer = new Map(rollingOrder.map((row, index) => [String(row._id), index]));
+  const tierCounts = { rookie: 0, regular: 0, expert: 0 };
+  const rowsWithTiers = rankedRows.map((row, index) => {
+    const rollingIndex = rollingIndexByPlayer.get(String(row._id)) ?? index;
+    const performancePercentile = totalRankedPlayers <= 1
+      ? 100
+      : Math.round((1 - rollingIndex / (totalRankedPlayers - 1)) * 10000) / 100;
+    // New and lightly-scored users remain Rookie. Experienced players move to
+    // Expert only after sustained top-20% performance; everyone else is Regular.
+    const skillTier = Number(row.scoredMatches || 0) < 5
+      ? 'rookie'
+      : Number(row.scoredMatches || 0) >= 10 && performancePercentile >= 80
+        ? 'expert'
+        : 'regular';
+    tierCounts[skillTier] += 1;
+    return {
+      ...row,
+      rank: index + 1,
+      globalRank: index + 1,
+      skillTier,
+      rollingPerformancePercentile: performancePercentile,
+      totalPoints: Math.round(row.totalPoints || 0),
+      points: Math.round(row.totalPoints || 0),
+    };
+  });
+
+  const nextTierRank = { rookie: 0, regular: 0, expert: 0 };
+  rowsWithTiers.forEach((row) => {
+    nextTierRank[row.skillTier] += 1;
+    row.tierRank = nextTierRank[row.skillTier];
+  });
+
+  const tierUpdates = rowsWithTiers
+    .filter((row) => mongoose.isValidObjectId(row._id) && (
+      row.skillTier !== userById.get(String(row._id))?.skillTier ||
+      Number(userById.get(String(row._id))?.rollingPerformancePercentile) !== Number(row.rollingPerformancePercentile)
+    ))
+    .map((row) => ({
+      updateOne: {
+        filter: { _id: row._id },
+        update: { $set: { skillTier: row.skillTier, rollingPerformancePercentile: row.rollingPerformancePercentile, skillTierUpdatedAt: new Date() } },
+      },
+    }));
+  if (tierUpdates.length) {
+    await User.bulkWrite(tierUpdates, { ordered: false }).catch((error) => {
+      console.warn('Skill-tier profile sync skipped:', error.message);
+    });
+  }
+
+  const requestedTier = ['rookie', 'regular', 'expert'].includes(String(tier || '').toLowerCase())
+    ? String(tier).toLowerCase()
+    : 'global';
+  const leaderboard = (requestedTier === 'global'
+    ? rowsWithTiers
+    : rowsWithTiers.filter((row) => row.skillTier === requestedTier))
+    .slice(0, resolvedLimit);
 
   return {
     leaderboard,
+    tier: requestedTier,
+    tierCounts,
     playerCount: rowsByPlayer.size,
     scoreRows: Array.isArray(scoreRows) ? scoreRows.length : 0,
     embeddedPredictionRows: embeddedPredictionRows.length,
@@ -9215,15 +9447,126 @@ async function loadPublicFightCards({ limit = 6, category } = {}) {
     .map(({ __raw, ...item }) => item);
 }
 
+async function getRealFightCalendarState(now = new Date()) {
+  const rows = await Match.find(applyFightPublicVisibilityFilter({}, { includeDrafts: 'false' }))
+    .select('matchDate matchDateKey matchTime eventTimeZone matchType matchStatus matchShadowOpenStatus createdAt updatedAt')
+    .limit(1500)
+    .lean()
+    .catch(() => []);
+  const futureTimes = rows
+    .filter((fight) => String(fight.matchType || '').toLowerCase() !== 'shadow' && !isDraftFightRecord(fight))
+    .map((fight) => parseFightDateTime(fight))
+    .filter((date) => date && !Number.isNaN(date.getTime()) && date.getTime() >= now.getTime())
+    .map((date) => date.getTime())
+    .sort((left, right) => left - right);
+  const nextFightAt = futureTimes.length ? new Date(futureTimes[0]) : null;
+  const daysToNextLiveFight = nextFightAt
+    ? Math.max(0, Math.ceil((nextFightAt.getTime() - now.getTime()) / 86400000))
+    : null;
+  return {
+    nextFightAt,
+    daysToNextLiveFight,
+    deadWeek: daysToNextLiveFight === null || daysToNextLiveFight > 7,
+  };
+}
+
+async function ensureDeadWeekShadowFight(now = new Date()) {
+  const calendar = await getRealFightCalendarState(now);
+  await Shadow.updateMany(
+    { shadowAutoPublished: true, shadowExpiresAt: { $lte: now } },
+    { $set: { matchStatus: 'Closed', matchShadowOpenStatus: 'closed', homepagePromoted: false } },
+  ).catch(() => null);
+  if (!calendar.deadWeek) return { ...calendar, shadow: null, published: false };
+
+  const active = await Shadow.findOne({
+    shadowAutoPublished: true,
+    shadowExpiresAt: { $gt: now },
+    matchShadowOpenStatus: 'open',
+    matchStatus: { $ne: 'Draft' },
+  }).populate('fighterAId fighterBId');
+  if (active) return { ...calendar, shadow: active, published: false };
+
+  const repeatCutoff = new Date(now.getTime() - 60 * 86400000);
+  const baseFilter = {
+    matchStatus: { $ne: 'Draft' },
+    matchFighterA: { $exists: true, $ne: '' },
+    matchFighterB: { $exists: true, $ne: '' },
+  };
+  let candidate = await Shadow.findOne({
+    ...baseFilter,
+    $or: [{ shadowLastUsedAt: { $exists: false } }, { shadowLastUsedAt: null }, { shadowLastUsedAt: { $lte: repeatCutoff } }],
+  }).sort({ shadowLastUsedAt: 1, convertedFromLiveAt: -1, updatedAt: -1 }).populate('fighterAId fighterBId');
+  if (!candidate) {
+    candidate = await Shadow.findOne(baseFilter).sort({ shadowLastUsedAt: 1, convertedFromLiveAt: -1, updatedAt: -1 }).populate('fighterAId fighterBId');
+  }
+  if (!candidate) return { ...calendar, shadow: null, published: false };
+
+  const expiresAt = new Date(now.getTime() + 7 * 86400000);
+  if (!candidate.shadowOriginalMatchDate && candidate.matchDate) candidate.shadowOriginalMatchDate = candidate.matchDate;
+  candidate.matchDate = expiresAt;
+  candidate.matchDateKey = extractCalendarDateKey(expiresAt);
+  candidate.matchStatus = 'Open';
+  candidate.matchShadowStatus = 'active';
+  candidate.matchShadowOpenStatus = 'open';
+  candidate.matchType = 'SHADOW';
+  candidate.shadowIdentityHidden = true;
+  candidate.shadowAutoPublished = true;
+  candidate.shadowPublishedAt = now;
+  candidate.shadowExpiresAt = expiresAt;
+  candidate.shadowLastUsedAt = now;
+  candidate.homepagePromoted = true;
+  candidate.homepagePromotionTitle = 'MYSTERY SHADOW FIGHT';
+  candidate.homepagePromotionSubtitle = 'No live fight this week — test your skills on an archived mystery card.';
+  candidate.homepagePromotionUpdatedAt = now;
+  candidate.homepagePromotionUpdatedBy = 'dead-week-retention';
+  await candidate.save();
+  clearPublicResponseCache();
+  return { ...calendar, shadow: candidate, published: true };
+}
+
+async function buildRetentionState() {
+  const result = await ensureDeadWeekShadowFight(new Date());
+  return {
+    deadWeek: result.deadWeek,
+    daysToNextLiveFight: result.daysToNextLiveFight,
+    nextLiveFightAt: result.nextFightAt ? result.nextFightAt.toISOString() : null,
+    shadowFight: result.shadow ? pickPublicFightFields(result.shadow, 'shadow') : null,
+    shadowPublishedNow: Boolean(result.published),
+  };
+}
+
+cron.schedule('15 0 * * *', async () => {
+  try {
+    await ensureDeadWeekShadowFight(new Date());
+  } catch (error) {
+    console.error('[retention] Daily Shadow Fight rotation failed:', error);
+  }
+});
+
+app.get('/api/cron/retention', async (req, res) => {
+  const configuredSecret = String(process.env.CRON_SECRET || '').trim();
+  const suppliedSecret = String(req.headers.authorization || '').replace(/^Bearer\s+/i, '').trim();
+  if (configuredSecret && suppliedSecret !== configuredSecret) return res.status(401).json({ ok: false, message: 'Unauthorized.' });
+  try {
+    const result = await ensureDeadWeekShadowFight(new Date());
+    return res.json({ ok: true, deadWeek: result.deadWeek, published: result.published, shadowFightId: result.shadow?._id || null });
+  } catch (error) {
+    console.error('[retention] Scheduled rotation failed:', error);
+    return res.status(500).json({ ok: false, message: 'Retention rotation failed.' });
+  }
+});
+
 app.get('/api/public/leaderboard', async (req, res) => {
   try {
     const limit = parsePositiveInteger(req.query.limit, 25, 100);
-    const result = await buildClassicLeaderboard({ limit });
+    const result = await buildClassicLeaderboard({ limit, tier: req.query.tier });
     res.setHeader('Cache-Control', 'public, max-age=15, stale-while-revalidate=45');
     return res.json({
       ok: true,
       leaderboard: result.leaderboard,
       playerCount: result.playerCount,
+      tier: result.tier,
+      tierCounts: result.tierCounts,
       source: 'real-user-scores',
       diagnostics: {
         scoreRows: result.scoreRows || 0,
@@ -9244,11 +9587,12 @@ app.get('/api/public/home-summary', async (req, res) => {
     const fightLimit = parsePositiveInteger(req.query.fightLimit || req.query.limit, 6, 24);
     const leaderboardLimit = parsePositiveInteger(req.query.leaderboardLimit, 5, 25);
 
-    const [featuredFights, leaderboardResult, totalPlayers, activeClassicFights] = await Promise.all([
+    const [featuredFights, leaderboardResult, totalPlayers, activeClassicFights, retention] = await Promise.all([
       loadPublicFightCards({ limit: fightLimit, category: req.query.category }),
       buildClassicLeaderboard({ limit: leaderboardLimit }),
       User.countDocuments(),
       Match.countDocuments(applyFightPublicVisibilityFilter({}, { playable: 'true' })),
+      buildRetentionState(),
     ]);
 
     res.setHeader('Cache-Control', 'public, max-age=15, stale-while-revalidate=45');
@@ -9256,6 +9600,7 @@ app.get('/api/public/home-summary', async (req, res) => {
       ok: true,
       featuredFights,
       leaderboard: leaderboardResult.leaderboard,
+      retention,
       stats: {
         players: totalPlayers,
         activeFights: activeClassicFights,
