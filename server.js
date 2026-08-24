@@ -139,6 +139,30 @@ mongoose.connect(MONGODB_URI, {
 app.use(bodyParser.urlencoded({ extended: false, limit: URLENCODED_BODY_LIMIT }));
 app.use(bodyParser.json({ limit: JSON_BODY_LIMIT }));
 
+// Session lifetime. 1h was far too short for a fight-night app: a player who
+// signed in early got 401s the moment they tried to enter a fight later, right
+// at the money step. Admin tokens stay short (see JWT_SECRET_ADMIN usage).
+const SESSION_TOKEN_TTL = process.env.SESSION_TOKEN_TTL || '30d';
+const SESSION_COOKIE_MAX_AGE = Number(process.env.SESSION_COOKIE_MAX_AGE || 30 * 24 * 60 * 60 * 1000);
+
+// Defined here (not further down) because routes above the old definition
+// now use it; `const` is not hoisted, so a later definition would throw
+// "Cannot access 'verifyToken' before initialization" at boot.
+const verifyToken = (req, res, next) => {
+  console.log('Request headers:', req.headers); // Debugging line
+  const authHeader = req.headers['authorization'];
+  const token = authHeader && authHeader.split(' ')[1]; // Extract token from Bearer scheme
+
+  if (token == null) return res.sendStatus(401); // No token, unauthorized
+
+  jwt.verify(token, process.env.JWT_SECRET, (err, user) => {
+    if (err) return res.sendStatus(403); // Token invalid, forbidden
+
+    req.user = user; // Attach user info to request object
+    next();
+  });
+};
+
 
 
 
@@ -2438,7 +2462,7 @@ app.get('/api/shadow/:id', async (req, res) => {
   }
 });
 
-app.put('/api/admin/matches/:id/video', async (req, res) => {
+app.put('/api/admin/matches/:id/video', verifyAdminToken, async (req, res) => {
   try {
     const updatedMatch = await updateFightVideoFields(Match, req.params.id, req.body);
     res.status(200).json({ message: 'Fight video updated successfully', match: updatedMatch });
@@ -2447,7 +2471,7 @@ app.put('/api/admin/matches/:id/video', async (req, res) => {
   }
 });
 
-app.post('/api/admin/matches/:id/video', async (req, res) => {
+app.post('/api/admin/matches/:id/video', verifyAdminToken, async (req, res) => {
   try {
     const updatedMatch = await updateFightVideoFields(Match, req.params.id, req.body);
     res.status(200).json({ message: 'Fight video updated successfully', match: updatedMatch });
@@ -2456,7 +2480,7 @@ app.post('/api/admin/matches/:id/video', async (req, res) => {
   }
 });
 
-app.put('/api/admin/shadow/:id/video', async (req, res) => {
+app.put('/api/admin/shadow/:id/video', verifyAdminToken, async (req, res) => {
   try {
     const updatedMatch = await updateFightVideoFields(Shadow, req.params.id, req.body);
     res.status(200).json({ message: 'Shadow fight video updated successfully', match: updatedMatch });
@@ -2465,7 +2489,7 @@ app.put('/api/admin/shadow/:id/video', async (req, res) => {
   }
 });
 
-app.post('/api/admin/shadow/:id/video', async (req, res) => {
+app.post('/api/admin/shadow/:id/video', verifyAdminToken, async (req, res) => {
   try {
     const updatedMatch = await updateFightVideoFields(Shadow, req.params.id, req.body);
     res.status(200).json({ message: 'Shadow fight video updated successfully', match: updatedMatch });
@@ -2474,7 +2498,7 @@ app.post('/api/admin/shadow/:id/video', async (req, res) => {
   }
 });
 
-app.put('/api/admin/matches/:id/scoring', async (req, res) => {
+app.put('/api/admin/matches/:id/scoring', verifyAdminToken, async (req, res) => {
   try {
     const updatedMatch = await updateFightScoringFields(Match, req.params.id, req.body);
     res.status(200).json({ message: 'Fight scoring updated successfully', match: updatedMatch, manualTotalPunches: true });
@@ -2483,7 +2507,7 @@ app.put('/api/admin/matches/:id/scoring', async (req, res) => {
   }
 });
 
-app.post('/api/admin/matches/:id/scoring', async (req, res) => {
+app.post('/api/admin/matches/:id/scoring', verifyAdminToken, async (req, res) => {
   try {
     const updatedMatch = await updateFightScoringFields(Match, req.params.id, req.body);
     res.status(200).json({ message: 'Fight scoring updated successfully', match: updatedMatch, manualTotalPunches: true });
@@ -2492,7 +2516,7 @@ app.post('/api/admin/matches/:id/scoring', async (req, res) => {
   }
 });
 
-app.put('/api/admin/shadow/:id/scoring', async (req, res) => {
+app.put('/api/admin/shadow/:id/scoring', verifyAdminToken, async (req, res) => {
   try {
     const updatedMatch = await updateFightScoringFields(Shadow, req.params.id, req.body);
     res.status(200).json({ message: 'Shadow fight scoring updated successfully', match: updatedMatch, manualTotalPunches: true });
@@ -2501,7 +2525,7 @@ app.put('/api/admin/shadow/:id/scoring', async (req, res) => {
   }
 });
 
-app.post('/api/admin/shadow/:id/scoring', async (req, res) => {
+app.post('/api/admin/shadow/:id/scoring', verifyAdminToken, async (req, res) => {
   try {
     const updatedMatch = await updateFightScoringFields(Shadow, req.params.id, req.body);
     res.status(200).json({ message: 'Shadow fight scoring updated successfully', match: updatedMatch, manualTotalPunches: true });
@@ -2670,10 +2694,11 @@ async function handleBulkFightDelete(req, res) {
   }
 }
 
-app.post('/api/admin/fights/bulk-delete', handleBulkFightDelete);
-app.delete('/api/admin/fights/bulk-delete', handleBulkFightDelete);
-app.post('/api/matches/bulk-delete', handleBulkFightDelete);
-app.delete('/api/matches/bulk-delete', handleBulkFightDelete);
+// SECURITY: admin-only. Deleting fights destroys the entries attached to them.
+app.post('/api/admin/fights/bulk-delete', verifyAdminToken, handleBulkFightDelete);
+app.delete('/api/admin/fights/bulk-delete', verifyAdminToken, handleBulkFightDelete);
+app.post('/api/matches/bulk-delete', verifyAdminToken, handleBulkFightDelete);
+app.delete('/api/matches/bulk-delete', verifyAdminToken, handleBulkFightDelete);
 
 app.delete('/api/matches/:id', async (req, res) => {
   try {
@@ -3419,14 +3444,16 @@ app.get('/api/public/prediction-fights', async (req, res) => {
 });
 
 // Update user prediction status
-app.post('/api/matches/:matchId/updatePredictionStatus', async (req, res) => {
+// SECURITY: authenticated. The user is taken from the verified token so a caller
+// cannot flip another player's prediction status by passing their id.
+app.post('/api/matches/:matchId/updatePredictionStatus', verifyToken, async (req, res) => {
   try {
     const { matchId } = req.params;
-    const userId = String(req.body?.userId || req.body?.playerId || '').trim();
+    const userId = String(req.user?.id || req.user?._id || '').trim();
     const predictionStatus = req.body?.predictionStatus || req.body?.status || 'submitted';
 
     if (!userId) {
-      return res.status(400).json({ message: 'userId is required' });
+      return res.status(401).json({ message: 'Authentication is required.' });
     }
 
     const result = await updateClassicFightPredictionStatus(matchId, userId, predictionStatus);
@@ -3561,7 +3588,7 @@ DeviceInfoSchema.index({ deviceId: 1 });
 DeviceInfoSchema.index({ email: 1, createdAt: -1 });
 
 const DeviceInfo = mongoose.models.DeviceInfo || mongoose.model('DeviceInfo', DeviceInfoSchema);
-app.post('/admin/add-device', async (req, res) => {
+app.post('/admin/add-device', verifyAdminToken, async (req, res) => {
   try {
     const { deviceId, email } = req.body;
 
@@ -3642,7 +3669,7 @@ DeviceInfoSchemaForSpinWheel.index({ deviceId: 1 });
 DeviceInfoSchemaForSpinWheel.index({ email: 1, createdAt: -1 });
 
 const DeviceInfoSpinWheel = mongoose.models.DeviceInfoSpinWheel || mongoose.model('DeviceInfoSpinWheel', DeviceInfoSchemaForSpinWheel);
-app.post('/admin/add-device-spin-wheel', async (req, res) => {
+app.post('/admin/add-device-spin-wheel', verifyAdminToken, async (req, res) => {
   try {
     const { deviceId, email } = req.body;
 
@@ -3734,6 +3761,15 @@ const userSchema = new mongoose.Schema({
   isSubscribed: Boolean,
   isUSCitizen: Boolean,
   isAgreed: Boolean,
+  // --- Eligibility & responsible play -------------------------------------
+  dateOfBirth: Date,                       // required for real age verification
+  ageVerifiedAt: Date,
+  residenceState: { type: String, uppercase: true, trim: true }, // 2-letter code
+  eligibilityCheckedAt: Date,
+  selfExcludedUntil: Date,                 // set = blocked from paid entries
+  selfExclusionReason: String,
+  dailyDepositLimitCents: { type: Number, min: 0, default: 0 },   // 0 = no limit
+  monthlyDepositLimitCents: { type: Number, min: 0, default: 0 },
   verificationToken: { type: String, select: false },
   verified: { type: Boolean, default: false },
   profileUrl: String,
@@ -3791,8 +3827,11 @@ app.put('/update-profile-url', async (req, res) => {
       res.status(500).json({ message: 'Internal Server Error', error: error.message });
   }
 });
-app.post('/admin/add-tokens-won', async (req, res) => {
-  const { email, deviceId } = req.body;
+// SECURITY: authenticated, and bound to the signed-in account. The email used
+// to come from the request body, so a spoofed device id could credit anyone.
+app.post('/admin/add-tokens-won', verifyToken, async (req, res) => {
+  const { deviceId } = req.body;
+  const email = String(req.user?.email || req.body?.email || '').trim();
 
   if (!email || !deviceId) {
     return res.status(400).json({ message: 'Email and deviceId are required.' });
@@ -3987,11 +4026,28 @@ app.post('/admin/add-tokens-won', async (req, res) => {
 });
 
 
-app.post('/admin/add-tokens-won-spin-wheel', async (req, res) => {
-  const { email, deviceId, results } = req.body;
+// SECURITY: authenticated, and the prize is validated against the server's own
+// wheel segments. Previously the browser named its own prize, so a caller could
+// claim the top value on every spin.
+const SPIN_WHEEL_PRIZES = Object.freeze([0, 1, 2, 3, 4, 5, 7, 10, 200]);
+
+app.post('/admin/add-tokens-won-spin-wheel', verifyToken, async (req, res) => {
+  const { deviceId } = req.body;
+  const email = String(req.user?.email || req.body?.email || '').trim();
+  const prize = Math.floor(Number(req.body?.results));
 
   if (!email || !deviceId) {
     return res.status(400).json({ message: 'Email and deviceId are required.' });
+  }
+
+  if (!Number.isFinite(prize) || !SPIN_WHEEL_PRIZES.includes(prize)) {
+    return res.status(400).json({ message: 'That prize is not a valid wheel segment.', code: 'INVALID_PRIZE' });
+  }
+
+  // The wallet may only be credited for the signed-in user.
+  const tokenUser = await User.findById(String(req.user?.id || req.user?._id || '')).select('email').lean();
+  if (!tokenUser || String(tokenUser.email).toLowerCase() !== email.toLowerCase()) {
+    return res.status(403).json({ message: 'You can only claim a spin for your own account.', code: 'ACCOUNT_MISMATCH' });
   }
 
   try {
@@ -4008,7 +4064,7 @@ app.post('/admin/add-tokens-won-spin-wheel', async (req, res) => {
 
     if (existingUser) {
       // User found, add 200 tokens
-      existingUser.tokens = addWalletTokens(existingUser.tokens, results);
+      existingUser.tokens = addWalletTokens(existingUser.tokens, prize);
       await existingUser.save();
 
       // Notify User and Admin
@@ -4183,7 +4239,7 @@ app.post('/admin/add-tokens-won-spin-wheel', async (req, res) => {
 });
 
 
-app.post('/admin/add-user', async (req, res) => {
+app.post('/admin/add-user', verifyAdminToken, async (req, res) => {
   const { firstName, lastName, email, password } = req.body;
 
   if (!firstName || !lastName || !email || !password) {
@@ -4786,7 +4842,7 @@ const notification = new Notification({
     }
 
     // Generate JWT token
-    const jwtToken = jwt.sign({ id: user._id }, process.env.JWT_SECRET, { expiresIn: '1h' });
+    const jwtToken = jwt.sign({ id: user._id }, process.env.JWT_SECRET, { expiresIn: SESSION_TOKEN_TTL });
 
     // Return JWT token and user info
     res.status(200).json({
@@ -4923,7 +4979,9 @@ app.put('/update-profile/:userId', upload.single('image'), async (req, res) => {
 });
 
 // POST API to reward tokens to the user and update matchReward status
-app.post('/api/reward-tokens/:userId', async (req, res) => {
+// SECURITY: admin-only. Credits a wallet from an amount in the request body,
+// so an unauthenticated caller could mint unlimited coins.
+app.post('/api/reward-tokens/:userId', verifyAdminToken, async (req, res) => {
   try {
     const { userId } = req.params;
     const { tokens, matchId } = req.body;
@@ -4960,7 +5018,8 @@ app.post('/api/reward-tokens/:userId', async (req, res) => {
 });
 
 // POST API to reward tokens to the user and update matchReward status
-app.post('/api/reward-tokens-only-forcibly/:userId', async (req, res) => {
+// SECURITY: admin-only (called from the admin RegisteredUsers screen).
+app.post('/api/reward-tokens-only-forcibly/:userId', verifyAdminToken, async (req, res) => {
   try {
     const { userId } = req.params;
     const { tokens } = req.body;
@@ -4985,9 +5044,12 @@ app.post('/api/reward-tokens-only-forcibly/:userId', async (req, res) => {
 });
 
 
-app.post('/api/deduct-tokens', async (req, res) => {
+// SECURITY: authenticated. userId now comes from the verified token, not the
+// body — otherwise any caller could drain another player's wallet.
+app.post('/api/deduct-tokens', verifyToken, async (req, res) => {
   try {
-    const { userId, matchTokens } = req.body;
+    const { matchTokens } = req.body;
+    const userId = String(req.user?.id || req.user?._id || '').trim();
 
     // Find the user by ID
     const user = await User.findById(userId);
@@ -5886,6 +5948,19 @@ app.post('/register', async (req, res) => {
       referrerId
     } = req.body;
 
+    // Duplicate-account guard: blocks device reuse and email aliasing
+    // (gmail dots / +tags). Fails open so a check error never blocks a real user.
+    try {
+      const dupe = await checkDuplicateSignup({
+        email,
+        deviceId: String(req.body?.deviceId || '').slice(0, 128),
+        ip: req.headers['x-forwarded-for'] || req.socket?.remoteAddress,
+      });
+      if (dupe) return res.status(409).json({ message: dupe.message, code: dupe.code });
+    } catch (dupeError) {
+      console.warn('Duplicate check skipped:', dupeError.message);
+    }
+
     // Basic input validation to prevent malformed requests
     if (!email || !password || !firstName || !lastName) {
       console.warn("Missing required fields:", { email, password, firstName, lastName });
@@ -6300,7 +6375,7 @@ app.get('/api/cron-job', async (req, res) => {
 
 
 // Login API
-app.post('/login', async (req, res) => {
+app.post('/login', loginLimiter, async (req, res) => {
   const { email, password } = req.body;
 
   try {
@@ -6320,9 +6395,9 @@ app.post('/login', async (req, res) => {
       return res.status(400).json({ message: 'Invalid email or password' });
     }
 
-    const token = jwt.sign({ id: user._id }, process.env.JWT_SECRET, { expiresIn: '1h' });
+    const token = jwt.sign({ id: user._id }, process.env.JWT_SECRET, { expiresIn: SESSION_TOKEN_TTL });
 
-    res.cookie('token', token, { httpOnly: true, maxAge: 3600000 }); // 1 hour
+    res.cookie('token', token, { httpOnly: true, maxAge: SESSION_COOKIE_MAX_AGE });
 
     res.status(200).json({
       message: 'Login successful',
@@ -6338,20 +6413,59 @@ app.post('/login', async (req, res) => {
 });
 
 
-const verifyToken = (req, res, next) => {
-  console.log('Request headers:', req.headers); // Debugging line
-  const authHeader = req.headers['authorization'];
-  const token = authHeader && authHeader.split(' ')[1]; // Extract token from Bearer scheme
 
-  if (token == null) return res.sendStatus(401); // No token, unauthorized
 
-  jwt.verify(token, process.env.JWT_SECRET, (err, user) => {
-    if (err) return res.sendStatus(403); // Token invalid, forbidden
+// --------------------------------------------------------------------------
+// RATE LIMITING
+// No dependency added on purpose — this is a small in-memory limiter. If you
+// run more than one instance, move it to Redis so the counters are shared.
+// --------------------------------------------------------------------------
+const rateBuckets = new Map();
 
-    req.user = user; // Attach user info to request object
-    next();
-  });
+setInterval(() => {
+  const now = Date.now();
+  for (const [key, bucket] of rateBuckets) {
+    if (bucket.resetAt < now) rateBuckets.delete(key);
+  }
+}, 5 * 60 * 1000).unref?.();
+
+const rateLimit = ({ windowMs = 60000, max = 30, keyPrefix = 'rl', message } = {}) => (req, res, next) => {
+  const ip = String(
+    req.headers['x-forwarded-for'] || req.socket?.remoteAddress || 'unknown'
+  ).split(',')[0].trim();
+  const key = `${keyPrefix}:${ip}`;
+  const now = Date.now();
+
+  let bucket = rateBuckets.get(key);
+  if (!bucket || bucket.resetAt < now) {
+    bucket = { count: 0, resetAt: now + windowMs };
+    rateBuckets.set(key, bucket);
+  }
+
+  bucket.count += 1;
+  if (bucket.count > max) {
+    const retryAfter = Math.ceil((bucket.resetAt - now) / 1000);
+    res.setHeader('Retry-After', String(retryAfter));
+    return res.status(429).json({
+      message: message || 'Too many attempts. Please wait and try again.',
+      code: 'RATE_LIMITED',
+      retryAfterSeconds: retryAfter,
+    });
+  }
+  return next();
 };
+
+// Credential endpoints: strict. Brute-forcing a login is how accounts with real
+// coin balances get taken.
+const loginLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 10,
+  keyPrefix: 'login',
+  message: 'Too many sign-in attempts. Please wait 15 minutes and try again.',
+});
+
+// Support/contact: stops inbox flooding without blocking genuine users.
+const submitLimiter = rateLimit({ windowMs: 10 * 60 * 1000, max: 8, keyPrefix: 'submit' });
 
 const optionalVerifyToken = (req, res, next) => {
   const authHeader = req.headers.authorization;
@@ -6755,6 +6869,23 @@ async function settlePaidCoinOrder(orderNumber, providerEventId = '') {
     sendCoinCheckoutAccountEmail({ user: settled.user, resetToken: createdAccountResetToken, order: settled.order })
       .catch((error) => console.error('[coin-checkout] Password-set email failed:', error.message));
   }
+
+  // Receipt. People expect something in writing after paying.
+  if (settled && !settled.alreadyCredited && settled.user?.email) {
+    const credited = Number(settled.order?.creditedCoins || 0);
+    const bonus = Number(settled.order?.bonusCoins || 0);
+    sendMoneyNotice({
+      to: settled.user.email,
+      subject: 'Your FM coins have been added',
+      heading: 'PURCHASE CONFIRMED',
+      lines: [
+        `<strong>${credited.toLocaleString()} FM</strong> has been added to your wallet.`,
+        bonus > 0 ? `That includes a <strong>${bonus.toLocaleString()} FM</strong> bonus.` : '',
+        `Order: ${settled.order?.orderNumber || 'n/a'}`,
+        'Your coins are ready to use — jump back in and enter a fight.',
+      ].filter(Boolean),
+    });
+  }
   return settled;
 }
 
@@ -6821,6 +6952,24 @@ async function settlePaidFmPlusOrder(orderNumber, providerEventId = '') {
     await order.save({ session });
     return { order, user, alreadyCredited: false };
   });
+
+  if (settled && !settled.alreadyCredited && settled.user?.email) {
+    sendMoneyNotice({
+      to: settled.user.email,
+      subject: 'FM+ is active on your account',
+      heading: 'FM+ ACTIVE',
+      lines: [
+        'Your FM+ membership is now active.',
+        Number(settled.order?.bonusCoins || 0) > 0
+          ? `<strong>${Number(settled.order.bonusCoins).toLocaleString()} FM</strong> in bonus coins has been added to your wallet.`
+          : '',
+        settled.user.fmPlusExpiresAt
+          ? `Your membership runs until <strong>${new Date(settled.user.fmPlusExpiresAt).toLocaleDateString()}</strong>.`
+          : '',
+        'Streak saves are half price for you, and you get early access to new fight cards.',
+      ].filter(Boolean),
+    });
+  }
 
   if (createdAccountResetToken && settled?.user) {
     sendCoinCheckoutAccountEmail({ user: settled.user, resetToken: createdAccountResetToken, order: {
@@ -7056,6 +7205,9 @@ app.get('/api/checkout/orders/:orderNumber/status', async (req, res) => {
       benefitExpiresAt: isFmPlus ? order.benefitExpiresAt : undefined,
       message: order.status === 'FAILED' ? 'Payment confirmation could not be completed. Please contact support with the order reference.' : undefined,
     });
+    if (order.status === 'FAILED') {
+      recordPaymentFailure({ orderNumber, reason: 'Order settled as FAILED' });
+    }
   } catch (error) {
     return res.status(500).json({ ok: false, message: 'Checkout status is temporarily unavailable.' });
   }
@@ -7318,7 +7470,8 @@ const adminTokensSchema = new mongoose.Schema({
 const Admintokens = mongoose.models.Admintokens || mongoose.model('Admintokens', adminTokensSchema);
 
 // POST API to reward tokens to the admin and update matchReward status
-app.post('/api/reward-tokens-to-admin', async (req, res) => {
+// SECURITY: admin-only.
+app.post('/api/reward-tokens-to-admin', verifyAdminToken, async (req, res) => {
   try {
     const { tokens, matchId, matchName, affiliateRewarded } = req.body;
 
@@ -7399,6 +7552,18 @@ const affiliateSchema = new mongoose.Schema({
   isSubscribed: Boolean,
   isUSCitizen: Boolean,
   isAgreed: Boolean,
+  // --- Tax reporting (1099-NEC at $600/yr) ---------------------------------
+  // taxIdLast4 is what admin screens display. The full value is write-only and
+  // must never be returned by an API (it is excluded from AFFILIATE_SAFE_SELECT).
+  taxIdEncrypted: { type: String, select: false },
+  taxIdLast4: String,
+  taxIdType: { type: String, enum: ['SSN', 'EIN', ''], default: '' },
+  taxFormW9SignedAt: Date,
+  taxLegalName: String,
+  taxBusinessName: String,
+  taxAddress: String,
+  earningsYtdCents: { type: Number, min: 0, default: 0 },
+  taxYear: Number,
   totalViews: { type: Number, default: 0 },
 verified: { type: Boolean, default: false },
   profileUrl: String,
@@ -7420,7 +7585,10 @@ rewardImageDeleteUrl: { type: String, select: false },
   payouts: [{
     amount: Number, // Example of amount paid
     createdAt: { type: Date, default: Date.now }, // Timestamp for payout creation
-    status: { type: String, default: 'pending' } // Status of the payout, default is 'pending'
+    status: { type: String, default: 'pending' }, // pending | paid | rejected
+    resolvedAt: Date,      // when an admin approved or rejected it
+    resolvedBy: String,    // admin id that actioned it
+    reason: String         // rejection reason, or payment reference on approval
   }]
 }, { timestamps: true });
 affiliateSchema.index({ email: 1 });
@@ -7485,7 +7653,7 @@ app.post('/upload-affiliate-reward', upload.single('image'), async (req, res) =>
 
 
 
-app.post('/admin/add-affiliate', async (req, res) => {
+app.post('/admin/add-affiliate', verifyAdminToken, async (req, res) => {
   const { firstName, lastName, email, password } = req.body;
 
   if (!firstName || !lastName || !email || !password) {
@@ -7766,7 +7934,7 @@ const notification = new Notification({
     }
 
     // Generate JWT token
-    const jwtToken = jwt.sign({ id: affiliate._id }, process.env.JWT_SECRET, { expiresIn: '1h' });
+    const jwtToken = jwt.sign({ id: affiliate._id }, process.env.JWT_SECRET, { expiresIn: SESSION_TOKEN_TTL });
 
     // Return JWT token and affiliate info
     res.status(200).json({
@@ -7956,24 +8124,59 @@ app.delete('/affiliates/:id/payouts-to-delete', async (req, res) => {
 
 
 
-app.post('/affiliate/:id/payout', async (req, res) => {
+// SECURITY + MONEY: authenticated, and the affiliate comes from the verified
+// token rather than the :id in the URL. The amount is validated against the real
+// balance and debited immediately, so the same balance cannot be requested twice.
+// (:id is kept in the path for backward compatibility but is no longer trusted.)
+app.post('/affiliate/:id/payout', verifyToken, async (req, res) => {
   try {
-    const { amount } = req.body; // The payout amount should be passed in the request body
-    const affiliateId = req.params.id;
+    const affiliateId = String(req.user?.id || req.user?._id || '').trim();
+    if (!affiliateId) {
+      return res.status(401).json({ message: 'Authentication is required to request a payout.' });
+    }
 
-    // Find the affiliate by ID
     const affiliate = await Affiliate.findById(affiliateId);
 
     if (!affiliate) {
       return res.status(404).json({ message: 'Affiliate not found' });
     }
 
-    // Add the new payout to the payouts array
-    const payout = { amount, createdAt: new Date() };
+    const balance = Number.parseInt(String(affiliate.tokens || '0'), 10) || 0;
+    const requested = Math.floor(Number(req.body?.amount));
+
+    if (!Number.isFinite(requested) || requested <= 0) {
+      return res.status(400).json({ message: 'Enter a payout amount greater than zero.', code: 'INVALID_AMOUNT' });
+    }
+    if (requested > balance) {
+      return res.status(400).json({
+        message: 'Payout amount is more than your available balance.',
+        code: 'INSUFFICIENT_BALANCE',
+        balance,
+        requested,
+      });
+    }
+
+    // Block a second request while one is still outstanding.
+    const hasPending = Array.isArray(affiliate.payouts)
+      && affiliate.payouts.some((item) => String(item?.status || 'pending').toLowerCase() === 'pending');
+    if (hasPending) {
+      return res.status(409).json({
+        message: 'You already have a payout request awaiting review.',
+        code: 'PAYOUT_ALREADY_PENDING',
+      });
+    }
+
+    // Debit now so the same balance cannot be requested again before the admin
+    // processes it. A rejected payout must credit this back.
+    affiliate.tokens = String(balance - requested);
+
+    const payout = { amount: requested, status: 'pending', createdAt: new Date() };
     affiliate.payouts.push(payout);
 
     // Save the updated affiliate
     await affiliate.save();
+
+    const amount = requested;
 
     // Send email notification
     const mailOptions = {
@@ -8168,7 +8371,8 @@ app.post('/clean-affiliate-users', async (req, res) => {
 });
 
 // POST API to reward tokens to the user and update matchReward status
-app.post('/api/reward-tokens-to-affiliate/:affiliateId', async (req, res) => {
+// SECURITY: admin-only.
+app.post('/api/reward-tokens-to-affiliate/:affiliateId', verifyAdminToken, async (req, res) => {
   try {
     const { affiliateId } = req.params;
     const { tokens } = req.body;
@@ -8861,7 +9065,7 @@ app.get('/approveAffiliate/:id', async (req, res) => {
 });
 
 // Login API
-app.post('/loginAffiliate', async (req, res) => {
+app.post('/loginAffiliate', loginLimiter, async (req, res) => {
   const { email, password } = req.body;
 
   try {
@@ -8877,9 +9081,9 @@ app.post('/loginAffiliate', async (req, res) => {
       return res.status(400).json({ message: 'Invalid email or password' });
     }
 
-    const token = jwt.sign({ id: user._id }, process.env.JWT_SECRET, { expiresIn: '1h' });
+    const token = jwt.sign({ id: user._id }, process.env.JWT_SECRET, { expiresIn: SESSION_TOKEN_TTL });
 
-    res.cookie('token', token, { httpOnly: true, maxAge: 3600000 }); // 1 hour
+    res.cookie('token', token, { httpOnly: true, maxAge: SESSION_COOKIE_MAX_AGE });
 
     res.status(200).json({
       message: 'Login successful',
@@ -8933,6 +9137,10 @@ const scoreSchema = new mongoose.Schema({
     elPrediction1: Number,  // For MMA only (EL)
     elPrediction2: Number   // For MMA only (EL)
   }],
+  // Refund bookkeeping. A refunded entry is voided but kept for history.
+  refunded: { type: Boolean, default: false, index: true },
+  refundedAt: Date,
+  refundReason: String,
 }, { timestamps: true });
 scoreSchema.index({ matchId: 1, playerId: 1 });
 scoreSchema.index({ playerId: 1 });
@@ -8978,44 +9186,69 @@ app.get('/api/users/me/fight-entries', verifyToken, async (req, res) => {
     return res.status(500).json({ ok: false, message: 'Unable to load your fight entries.' });
   }
 });
-app.post('/api/scores', async (req, res) => {
+// LEGACY. Kept only so the existing website prediction room keeps working.
+// SECURITY + REVENUE: this used to save a prediction with no auth and no charge,
+// so every paid entry was free. It now:
+//   * requires a token and derives the player from it (body ids ignored)
+//   * delegates NEW entries to createFightEntry(), which charges atomically
+//   * still allows a player to EDIT their own existing entry for free
+// Prefer POST /api/fights/:fightId/entries. Retire this once the website moves.
+app.post('/api/scores', verifyToken, async (req, res) => {
   try {
-    const { playerId, matchId, predictions } = req.body;
+    const { matchId, predictions } = req.body;
+    const playerId = String(req.user?.id || req.user?._id || '').trim();
 
-    if (!playerId || !matchId || !Array.isArray(predictions)) {
+    if (!playerId) {
+      return res.status(401).json({ message: 'Authentication is required to submit predictions.' });
+    }
+
+    if (!matchId || !Array.isArray(predictions)) {
       return res.status(400).json({
-        message: 'playerId, matchId, and predictions array are required.',
+        message: 'matchId and predictions array are required.',
       });
     }
 
-    const syncPredictionStatusMarker = async () => {
+    // Existing entry → this is an edit before lock. Already paid for; no charge.
+    // Excludes refunded entries: a refunded player re-entering must pay again.
+    const existingScore = await Score.findOne({ playerId, matchId, refunded: { $ne: true } });
+
+    if (existingScore) {
+      existingScore.predictions = predictions;
+      await existingScore.save();
       try {
         await updateClassicFightPredictionStatus(matchId, playerId, 'submitted');
       } catch (markerError) {
         console.warn('Score saved but prediction status marker could not be synced:', markerError.message);
       }
-    };
-
-    // Check if there's an existing record with the same playerId and matchId
-    let existingScore = await Score.findOne({ playerId, matchId });
-
-    if (existingScore) {
-      // If a record exists, update its values
-      existingScore.predictions = predictions;
-      await existingScore.save();
-      await syncPredictionStatusMarker();
       clearPublicResponseCache();
-      return res.status(200).send(existingScore);
+      return res.status(200).json({ ...existingScore.toObject(), entryFeeCharged: 0, updated: true });
     }
 
-    // If no record exists, create a new one
-    const score = new Score({ playerId, matchId, predictions });
-    await score.save();
-    await syncPredictionStatusMarker();
-    clearPublicResponseCache();
-    return res.status(201).send(score);
+    // No entry yet → a NEW entry, which must be charged. One shared code path.
+    const result = await createFightEntry({
+      userId: playerId,
+      fightId: String(matchId),
+      predictions,
+      idempotencyKey: req.headers['idempotency-key'] || req.body?.idempotencyKey,
+    });
+
+    return res.status(result.idempotent ? 200 : 201).json({
+      ...(result.entry?.toObject ? result.entry.toObject() : result.entry),
+      entryFeeCharged: result.entryFeeCharged,
+      walletBalance: result.balanceAfter,
+      idempotent: Boolean(result.idempotent),
+    });
   } catch (error) {
-    return res.status(400).send(error);
+    if (error?.code === 11000) {
+      return res.status(200).json({ idempotent: true, message: 'This entry was already processed.' });
+    }
+    const status = error?.status || 400;
+    if (status >= 500) console.error('Legacy /api/scores entry failed:', error);
+    return res.status(status).json({
+      message: error?.message || 'Could not save predictions.',
+      code: error?.code || 'ENTRY_FAILED',
+      ...(error?.extra || {}),
+    });
   }
 });
 
@@ -9688,7 +9921,7 @@ app.post('/admin/register', async (req, res) => {
   }
 });
 
-app.post('/admin/login', async (req, res) => {
+app.post('/admin/login', loginLimiter, async (req, res) => {
   try {
     const { email, password } = req.body;
 
@@ -15340,6 +15573,1319 @@ registerFightDataQualityRoutes({
   verifyAdminToken,
   Match,
   Shadow,
+});
+
+// ==========================================================================
+// ATOMIC FIGHT ENTRY — charges the entry fee and saves the prediction together
+// --------------------------------------------------------------------------
+// Replaces the unsafe pair (POST /api/scores + POST /api/matches/:id/
+// updatePredictionStatus), which saved a prediction WITHOUT ever debiting the
+// wallet — players could enter paid contests for free.
+//
+// Guarantees:
+//   * fee is read from the fight record, never from the request body
+//   * wallet debit + prediction save + pot increment succeed or fail together
+//   * idempotent: a repeat submit returns the original result, never re-charges
+//   * every debit writes an audit row
+// Modelled on joinWrestlingMatch, which already did this correctly.
+// ==========================================================================
+
+const fightEntryLedgerSchema = new mongoose.Schema({
+  userId: { type: mongoose.Schema.Types.ObjectId, ref: 'User', index: true },
+  matchId: { type: String, index: true },
+  sourceType: { type: String, enum: ['match', 'shadow'], default: 'match' },
+  type: { type: String, enum: ['FIGHT_ENTRY', 'FIGHT_ENTRY_REFUND'], default: 'FIGHT_ENTRY' },
+  amount: { type: Number, required: true },
+  balanceBefore: { type: Number, required: true },
+  balanceAfter: { type: Number, required: true },
+  idempotencyKey: { type: String, required: true, unique: true },
+  metadata: mongoose.Schema.Types.Mixed,
+}, { timestamps: true });
+const FightEntryLedger = mongoose.models.FightEntryLedger
+  || mongoose.model('FightEntryLedger', fightEntryLedgerSchema);
+
+const fightTokenBalance = (value) => {
+  const parsed = Number.parseInt(String(value ?? '0'), 10);
+  return Number.isFinite(parsed) ? Math.max(0, parsed) : 0;
+};
+
+const runFightEntryTransaction = async (work) => {
+  const session = await mongoose.startSession();
+  try {
+    let result;
+    try {
+      await session.withTransaction(async () => { result = await work(session); });
+      return result;
+    } catch (error) {
+      // Standalone mongo (no replica set) cannot run transactions. Allow an
+      // explicit opt-out for local dev only — never enable this in production,
+      // because a mid-sequence failure could charge without saving an entry.
+      const unsupported = /Transaction numbers are only allowed|replica set|transactions are not supported/i
+        .test(String(error.message || ''));
+      if (unsupported && String(process.env.FIGHT_ENTRY_ALLOW_NON_TRANSACTIONAL || '').toLowerCase() === 'true') {
+        console.warn('WARNING: running fight entry without a MongoDB transaction (FIGHT_ENTRY_ALLOW_NON_TRANSACTIONAL=true).');
+        return work(null);
+      }
+      throw error;
+    }
+  } finally {
+    await session.endSession();
+  }
+};
+
+const withFightSession = (query, session) => (session ? query.session(session) : query);
+
+const fightEntryError = (status, message, code, extra = {}) => {
+  const error = new Error(message);
+  error.status = status;
+  error.code = code;
+  error.extra = extra;
+  return error;
+};
+
+// Entry is closed once the fight is finished/closed, a shadow is closed, or the
+// scheduled start time has passed.
+const isFightOpenForEntry = (fight) => {
+  const status = String(fight?.matchStatus || '').toLowerCase();
+  if (['finished', 'closed', 'draft'].includes(status)) return false;
+  if (String(fight?.matchShadowOpenStatus || 'open').toLowerCase() === 'closed') return false;
+  if (String(fight?.matchShadowStatus || 'active').toLowerCase() === 'inactive') return false;
+  const lockAt = fight?.lockAt || fight?.matchDate;
+  if (lockAt && new Date(lockAt).getTime() < Date.now()) return false;
+  return true;
+};
+
+// Shared by BOTH the new endpoint and the legacy POST /api/scores, so there is
+// exactly one code path that can create a paid entry. Declared as a hoisted
+// `function` so the older route above can call it.
+async function createFightEntry({ userId, fightId, predictions, idempotencyKey }) {
+  if (!userId) throw fightEntryError(401, 'Authentication is required to enter a fight.', 'UNAUTHENTICATED');
+  if (!fightId) throw fightEntryError(400, 'A fight id is required.', 'INVALID_FIGHT_ID');
+  if (!Array.isArray(predictions) || !predictions.length) {
+    throw fightEntryError(422, 'A predictions array is required.', 'INVALID_PREDICTION');
+  }
+
+  const key = String(idempotencyKey || `fight:entry:${fightId}:${userId}`).slice(0, 180);
+
+  // Fast path: already entered. Never re-charge, never duplicate.
+  // Refunded entries are voided, so they must NOT count as "already entered" —
+  // otherwise a refunded player re-entering would be treated as a free edit.
+  const alreadyEntered = await Score.findOne({ playerId: userId, matchId: fightId, refunded: { $ne: true } }).lean();
+  if (alreadyEntered) {
+    const existingUser = await User.findById(userId).select('tokens').lean();
+    return {
+      entry: alreadyEntered,
+      idempotent: true,
+      entryFeeCharged: 0,
+      balanceAfter: fightTokenBalance(existingUser?.tokens),
+      fight: null,
+    };
+  }
+
+  const result = await runFightEntryTransaction(async (session) => {
+    let sourceType = 'match';
+    let fight = await withFightSession(Match.findById(fightId), session);
+    if (!fight) {
+      sourceType = 'shadow';
+      fight = await withFightSession(Shadow.findById(fightId), session);
+    }
+    if (!fight) throw fightEntryError(404, 'Fight not found.', 'FIGHT_NOT_FOUND');
+    if (!isFightOpenForEntry(fight)) {
+      throw fightEntryError(409, 'This fight is no longer open for entry.', 'FIGHT_LOCKED');
+    }
+
+    // Re-check inside the transaction to close the double-submit race.
+    const duplicate = await withFightSession(Score.findOne({ playerId: userId, matchId: fightId, refunded: { $ne: true } }), session).lean();
+    if (duplicate) {
+      return { entry: duplicate, idempotent: true, entryFeeCharged: 0, sourceType, fight };
+    }
+
+    // AUTHORITATIVE FEE. Deliberately ignores anything the client sent.
+    const entryFee = Math.max(0, Math.round(Number(fight.matchTokens) || 0));
+
+    // SELF-ENTRY BAN. An affiliate may not enter a contest they promote.
+    // Enforced server-side because the client-side check is trivially bypassed,
+    // and a promoter entering their own pot is fraud against their own members.
+    const promoterIds = [
+      fight.affiliateId,
+      ...(Array.isArray(fight.AffiliateIds) ? fight.AffiliateIds.map((a) => a?.AffiliateId) : []),
+    ].filter(Boolean).map((x) => String(x));
+    if (promoterIds.includes(String(userId))) {
+      throw fightEntryError(403, 'You promote this contest, so you cannot enter it.', 'AFFILIATE_SELF_ENTRY');
+    }
+
+    // Eligibility gate — PAID contests only. Free entries stay open so a new
+    // player can try the game before supplying a date of birth.
+    if (entryFee > 0) {
+      const gateUser = await withFightSession(
+        User.findById(userId).select('dateOfBirth residenceState selfExcludedUntil'), session
+      ).lean();
+      const blocked = checkPlayEligibility(gateUser);
+      if (blocked) throw fightEntryError(403, blocked.message, blocked.code);
+    }
+
+    let balanceBefore = 0;
+    let balanceAfter = 0;
+
+    if (entryFee > 0) {
+      const user = await withFightSession(User.findById(userId), session);
+      if (!user) throw fightEntryError(404, 'User not found.', 'USER_NOT_FOUND');
+
+      balanceBefore = fightTokenBalance(user.tokens);
+      balanceAfter = balanceBefore - entryFee;
+      if (balanceAfter < 0) {
+        throw fightEntryError(402, 'Not enough FM coins to enter this fight.', 'INSUFFICIENT_FUNDS', {
+          balance: balanceBefore,
+          entryFee,
+          shortfall: entryFee - balanceBefore,
+        });
+      }
+
+      user.tokens = String(balanceAfter);
+      await user.save(session ? { session } : undefined);
+
+      await FightEntryLedger.create([{
+        userId,
+        matchId: fightId,
+        sourceType,
+        type: 'FIGHT_ENTRY',
+        amount: -entryFee,
+        balanceBefore,
+        balanceAfter,
+        idempotencyKey: `fight:ledger:${key}`,
+        metadata: { category: fight.matchCategory || null },
+      }], session ? { session } : undefined);
+    } else {
+      const user = await withFightSession(User.findById(userId).select('tokens'), session).lean();
+      balanceBefore = fightTokenBalance(user?.tokens);
+      balanceAfter = balanceBefore;
+    }
+
+    const scoreDocs = await Score.create([{
+      playerId: userId,
+      matchId: fightId,
+      predictions,
+    }], session ? { session } : undefined);
+    const entry = scoreDocs[0];
+
+    if (!Array.isArray(fight.userPredictions)) fight.userPredictions = [];
+    const existingMarker = fight.userPredictions.find((item) => String(item?.userId) === String(userId));
+    if (existingMarker) existingMarker.predictionStatus = 'submitted';
+    else fight.userPredictions.push({ userId, predictionStatus: 'submitted' });
+
+    fight.pot = Math.max(0, Number(fight.pot) || 0) + entryFee;
+    await fight.save(session ? { session } : undefined);
+
+    return { entry, entryFeeCharged: entryFee, balanceBefore, balanceAfter, sourceType, fight };
+  });
+
+  clearPublicResponseCache();
+
+  if (!result.idempotent && result.fight) {
+    User.findById(userId).select('email').lean()
+      .then((entrant) => {
+        if (!entrant?.email) return;
+        const fee = Number(result.entryFeeCharged || 0);
+        sendMoneyNotice({
+          to: entrant.email,
+          subject: 'Your predictions are locked in',
+          heading: 'YOU ARE IN',
+          lines: [
+            `Your card for <strong>${(result.fight.matchFighterA || 'Fighter A')} vs ${(result.fight.matchFighterB || 'Fighter B')}</strong> has been submitted.`,
+            fee > 0
+              ? `Entry fee: <strong>${fee.toLocaleString()} FM</strong>. New balance: <strong>${Number(result.balanceAfter || 0).toLocaleString()} FM</strong>.`
+              : 'This was a free entry — no coins were charged.',
+            'You can edit your picks right up until the fight locks.',
+          ],
+        });
+      })
+      .catch(() => {});
+  }
+
+  return result;
+}
+
+app.post('/api/fights/:fightId/entries', verifyToken, async (req, res) => {
+  try {
+    const result = await createFightEntry({
+      userId: String(req.user?.id || req.user?._id || '').trim(),
+      fightId: String(req.params.fightId || '').trim(),
+      predictions: req.body?.predictions,
+      idempotencyKey: req.headers['idempotency-key'] || req.body?.idempotencyKey,
+    });
+
+    if (result.idempotent) {
+      return res.status(200).json({
+        entryId: result.entry._id,
+        idempotent: true,
+        alreadyEntered: true,
+        entryFeeCharged: 0,
+        walletBalance: result.balanceAfter,
+        message: 'You have already entered this fight.',
+      });
+    }
+
+    return res.status(201).json({
+      entryId: result.entry._id,
+      entryFeeCharged: result.entryFeeCharged,
+      walletBalance: result.balanceAfter,
+      potTotal: Math.max(0, Number(result.fight?.pot) || 0),
+      playerCount: Array.isArray(result.fight?.userPredictions)
+        ? result.fight.userPredictions.filter((item) => String(item?.predictionStatus) === 'submitted').length
+        : 0,
+      predictionStatus: 'submitted',
+    });
+  } catch (error) {
+    if (error?.code === 11000) {
+      return res.status(200).json({ idempotent: true, message: 'This entry was already processed.' });
+    }
+    const status = error?.status || 500;
+    if (status >= 500) console.error('Fight entry failed:', error);
+    return res.status(status).json({
+      message: error?.message || 'Could not complete your fight entry.',
+      code: error?.code || 'ENTRY_FAILED',
+      ...(error?.extra || {}),
+    });
+  }
+});
+
+// --------------------------------------------------------------------------
+// REFUNDS — used when a fight is cancelled, or to settle a single dispute.
+//
+// The refund amount comes from the LEDGER, not from fight.matchTokens. The fee
+// can be edited after players enter, so the ledger is the only record of what
+// each player was actually charged. Refunding the current fee would give some
+// players too much and others too little.
+// --------------------------------------------------------------------------
+async function refundFightEntries({ fightId, userId = null, reason = 'Fight cancelled', adminId = null }) {
+  if (!fightId) throw fightEntryError(400, 'A fight id is required.', 'INVALID_FIGHT_ID');
+
+  return runFightEntryTransaction(async (session) => {
+    let sourceType = 'match';
+    let fight = await withFightSession(Match.findById(fightId), session);
+    if (!fight) {
+      sourceType = 'shadow';
+      fight = await withFightSession(Shadow.findById(fightId), session);
+    }
+    if (!fight) throw fightEntryError(404, 'Fight not found.', 'FIGHT_NOT_FOUND');
+
+    const scoreFilter = { matchId: String(fightId), refunded: { $ne: true } };
+    if (userId) scoreFilter.playerId = String(userId);
+
+    const entries = await withFightSession(Score.find(scoreFilter), session);
+    if (!entries.length) {
+      return { refundedCount: 0, totalRefunded: 0, alreadySettled: true, sourceType, fight };
+    }
+
+    let totalRefunded = 0;
+    const refunds = [];
+
+    for (const entry of entries) {
+      const idempotencyKey = `fight:refund:${fightId}:${entry.playerId}`;
+
+      // Already refunded in a previous run — skip, never pay twice.
+      const existingRefund = await withFightSession(
+        FightEntryLedger.findOne({ idempotencyKey }), session
+      ).lean();
+
+      if (!existingRefund) {
+        // What were they actually charged? Read the original debit.
+        const originalDebit = await withFightSession(
+          FightEntryLedger.findOne({
+            matchId: String(fightId),
+            userId: entry.playerId,
+            type: 'FIGHT_ENTRY',
+          }), session
+        ).lean();
+
+        // No debit row means the entry predates the charging fix (it was free),
+        // so there is nothing to give back.
+        const refundAmount = Math.max(0, Math.round(Math.abs(Number(originalDebit?.amount) || 0)));
+
+        if (refundAmount > 0) {
+          const user = await withFightSession(User.findById(entry.playerId), session);
+          if (user) {
+            const balanceBefore = fightTokenBalance(user.tokens);
+            const balanceAfter = balanceBefore + refundAmount;
+            user.tokens = String(balanceAfter);
+            await user.save(session ? { session } : undefined);
+
+            await FightEntryLedger.create([{
+              userId: entry.playerId,
+              matchId: String(fightId),
+              sourceType,
+              type: 'FIGHT_ENTRY_REFUND',
+              amount: refundAmount,
+              balanceBefore,
+              balanceAfter,
+              idempotencyKey,
+              metadata: { reason, adminId, originalLedgerId: originalDebit?._id || null },
+            }], session ? { session } : undefined);
+
+            totalRefunded += refundAmount;
+            refunds.push({ userId: entry.playerId, amount: refundAmount, balanceAfter, email: user.email });
+          } else {
+            console.warn(`Refund skipped: user ${entry.playerId} not found for fight ${fightId}.`);
+          }
+        } else {
+          refunds.push({ userId: entry.playerId, amount: 0, note: 'no charge on record' });
+        }
+      }
+
+      entry.refunded = true;
+      entry.refundedAt = new Date();
+      entry.refundReason = reason;
+      await entry.save(session ? { session } : undefined);
+
+      // Void the entry marker so the player no longer counts as entered.
+      if (Array.isArray(fight.userPredictions)) {
+        const marker = fight.userPredictions.find((item) => String(item?.userId) === String(entry.playerId));
+        if (marker) marker.predictionStatus = 'notSubmitted';
+      }
+    }
+
+    // Take the refunded money back out of the pot.
+    fight.pot = Math.max(0, (Math.max(0, Number(fight.pot) || 0)) - totalRefunded);
+    await fight.save(session ? { session } : undefined);
+
+    // Queued for after commit — a mail failure must never roll back a refund.
+    process.nextTick(() => {
+      refunds.filter((r) => r.amount > 0 && r.email).forEach((r) => {
+        sendMoneyNotice({
+          to: r.email,
+          subject: 'Your entry fee has been refunded',
+          heading: 'REFUND ISSUED',
+          lines: [
+            `Your entry for <strong>${(fight.matchFighterA || 'Fighter A')} vs ${(fight.matchFighterB || 'Fighter B')}</strong> has been refunded.`,
+            `<strong>${r.amount.toLocaleString()} FM</strong> is back in your wallet.`,
+            `Reason: ${reason}`,
+          ],
+        });
+      });
+    });
+
+    return { refundedCount: refunds.length, totalRefunded, refunds, sourceType, fight };
+  });
+}
+
+// Refund every unrefunded entry on a fight (cancellation).
+app.post('/api/admin/fights/:fightId/refund', verifyAdminToken, async (req, res) => {
+  try {
+    const result = await refundFightEntries({
+      fightId: String(req.params.fightId || '').trim(),
+      reason: String(req.body?.reason || 'Fight cancelled').slice(0, 300),
+      adminId: req.admin?.id || null,
+    });
+    clearPublicResponseCache();
+    return res.status(200).json({
+      message: result.alreadySettled
+        ? 'No outstanding entries to refund.'
+        : `Refunded ${result.refundedCount} entr${result.refundedCount === 1 ? 'y' : 'ies'}.`,
+      ...result,
+      fight: undefined,
+      potTotal: Math.max(0, Number(result.fight?.pot) || 0),
+    });
+  } catch (error) {
+    const status = error?.status || 500;
+    if (status >= 500) console.error('Fight refund failed:', error);
+    return res.status(status).json({
+      message: error?.message || 'Could not refund this fight.',
+      code: error?.code || 'REFUND_FAILED',
+    });
+  }
+});
+
+// Refund one player's entry (dispute, or removing a single player).
+app.post('/api/admin/fights/:fightId/refund/:userId', verifyAdminToken, async (req, res) => {
+  try {
+    const result = await refundFightEntries({
+      fightId: String(req.params.fightId || '').trim(),
+      userId: String(req.params.userId || '').trim(),
+      reason: String(req.body?.reason || 'Entry refunded by admin').slice(0, 300),
+      adminId: req.admin?.id || null,
+    });
+    clearPublicResponseCache();
+    return res.status(200).json({
+      message: result.alreadySettled
+        ? 'That entry was already refunded or does not exist.'
+        : 'Entry refunded.',
+      ...result,
+      fight: undefined,
+      potTotal: Math.max(0, Number(result.fight?.pot) || 0),
+    });
+  } catch (error) {
+    const status = error?.status || 500;
+    if (status >= 500) console.error('Single fight refund failed:', error);
+    return res.status(status).json({
+      message: error?.message || 'Could not refund this entry.',
+      code: error?.code || 'REFUND_FAILED',
+    });
+  }
+});
+
+// --------------------------------------------------------------------------
+// AFFILIATE PAYOUT ADMINISTRATION
+//
+// A payout request DEBITS the affiliate's balance immediately (so the same
+// earnings cannot be claimed twice while a request is outstanding). That makes
+// a reject/cancel path mandatory: without it, a declined payout silently
+// destroys the affiliate's balance.
+// --------------------------------------------------------------------------
+
+// Every pending request across all affiliates — the admin work queue.
+app.get('/api/admin/affiliate-payouts', verifyAdminToken, async (req, res) => {
+  try {
+    const status = String(req.query.status || 'pending').toLowerCase();
+    const affiliates = await Affiliate.find({ 'payouts.0': { $exists: true } })
+      .select('_id firstName lastName playerName email tokens payouts preferredPaymentMethod')
+      .lean();
+
+    const rows = [];
+    affiliates.forEach((affiliate) => {
+      (affiliate.payouts || []).forEach((payout, index) => {
+        const payoutStatus = String(payout?.status || 'pending').toLowerCase();
+        if (status !== 'all' && payoutStatus !== status) return;
+        rows.push({
+          affiliateId: affiliate._id,
+          payoutIndex: index,
+          payoutId: payout?._id || null,
+          name: affiliate.playerName || [affiliate.firstName, affiliate.lastName].filter(Boolean).join(' '),
+          email: affiliate.email,
+          preferredPaymentMethod: affiliate.preferredPaymentMethod || null,
+          currentBalance: Number.parseInt(String(affiliate.tokens || '0'), 10) || 0,
+          amount: Number(payout?.amount) || 0,
+          status: payoutStatus,
+          createdAt: payout?.createdAt || null,
+        });
+      });
+    });
+
+    rows.sort((a, b) => new Date(b.createdAt || 0) - new Date(a.createdAt || 0));
+    return res.status(200).json({ count: rows.length, payouts: rows });
+  } catch (error) {
+    console.error('Listing affiliate payouts failed:', error);
+    return res.status(500).json({ message: 'Could not load payout requests.' });
+  }
+});
+
+const resolveAffiliatePayout = async ({ affiliateId, payoutIndex, nextStatus, reason, adminId, creditBack }) => {
+  const affiliate = await Affiliate.findById(affiliateId);
+  if (!affiliate) throw fightEntryError(404, 'Affiliate not found.', 'AFFILIATE_NOT_FOUND');
+
+  const payout = Array.isArray(affiliate.payouts) ? affiliate.payouts[payoutIndex] : null;
+  if (!payout) throw fightEntryError(404, 'Payout request not found.', 'PAYOUT_NOT_FOUND');
+
+  const currentStatus = String(payout.status || 'pending').toLowerCase();
+  if (currentStatus !== 'pending') {
+    // Idempotent: re-running a completed action must not move money again.
+    return { affiliate, payout, alreadyResolved: true, status: currentStatus };
+  }
+
+  const amount = Math.max(0, Math.floor(Number(payout.amount) || 0));
+
+  if (creditBack && amount > 0) {
+    const balance = Number.parseInt(String(affiliate.tokens || '0'), 10) || 0;
+    affiliate.tokens = String(balance + amount);
+  }
+
+  payout.status = nextStatus;
+  payout.resolvedAt = new Date();
+  if (reason) payout.reason = reason;
+  if (adminId) payout.resolvedBy = String(adminId);
+
+  await affiliate.save();
+
+  const paid = nextStatus === 'paid';
+  await sendMoneyNotice({
+    to: affiliate.email,
+    subject: paid ? 'Your payout has been sent' : 'Your payout request was declined',
+    heading: paid ? 'PAYOUT SENT' : 'PAYOUT DECLINED',
+    lines: paid
+      ? [
+          `Your payout of <strong>${amount.toLocaleString()} FM</strong> has been processed.`,
+          reason ? `Reference: ${reason}` : 'It should arrive via your preferred payment method shortly.',
+        ]
+      : [
+          `Your payout request for <strong>${amount.toLocaleString()} FM</strong> was not approved.`,
+          `<strong>${amount.toLocaleString()} FM</strong> has been returned to your balance, so nothing was lost.`,
+          `Reason: ${reason}`,
+        ],
+  });
+
+  return { affiliate, payout, alreadyResolved: false, creditedBack: Boolean(creditBack) && amount > 0, amount };
+};
+
+// Approve — the money was actually sent. Balance stays debited.
+app.post('/api/admin/affiliate-payouts/:affiliateId/:payoutIndex/approve', verifyAdminToken, async (req, res) => {
+  try {
+    const result = await resolveAffiliatePayout({
+      affiliateId: String(req.params.affiliateId || '').trim(),
+      payoutIndex: Number.parseInt(req.params.payoutIndex, 10),
+      nextStatus: 'paid',
+      reason: String(req.body?.reference || req.body?.reason || '').slice(0, 300),
+      adminId: req.admin?.id || null,
+      creditBack: false,
+    });
+    return res.status(200).json({
+      message: result.alreadyResolved ? 'That payout was already resolved.' : 'Payout marked as paid.',
+      alreadyResolved: result.alreadyResolved,
+      status: result.payout.status,
+      balance: Number.parseInt(String(result.affiliate.tokens || '0'), 10) || 0,
+    });
+  } catch (error) {
+    const status = error?.status || 500;
+    if (status >= 500) console.error('Approving payout failed:', error);
+    return res.status(status).json({ message: error?.message || 'Could not approve payout.', code: error?.code || 'APPROVE_FAILED' });
+  }
+});
+
+// Reject / cancel — CREDITS THE AMOUNT BACK. Without this the affiliate simply
+// loses the balance that was debited when they requested it.
+app.post('/api/admin/affiliate-payouts/:affiliateId/:payoutIndex/reject', verifyAdminToken, async (req, res) => {
+  try {
+    const result = await resolveAffiliatePayout({
+      affiliateId: String(req.params.affiliateId || '').trim(),
+      payoutIndex: Number.parseInt(req.params.payoutIndex, 10),
+      nextStatus: 'rejected',
+      reason: String(req.body?.reason || 'Payout request declined.').slice(0, 300),
+      adminId: req.admin?.id || null,
+      creditBack: true,
+    });
+    return res.status(200).json({
+      message: result.alreadyResolved
+        ? 'That payout was already resolved — nothing was credited.'
+        : `Payout rejected and ${result.amount} FM returned to the affiliate.`,
+      alreadyResolved: result.alreadyResolved,
+      creditedBack: result.creditedBack || false,
+      status: result.payout.status,
+      balance: Number.parseInt(String(result.affiliate.tokens || '0'), 10) || 0,
+    });
+  } catch (error) {
+    const status = error?.status || 500;
+    if (status >= 500) console.error('Rejecting payout failed:', error);
+    return res.status(status).json({ message: error?.message || 'Could not reject payout.', code: error?.code || 'REJECT_FAILED' });
+  }
+});
+
+// Silent session renewal. The app calls this on launch; a still-valid token is
+// exchanged for a fresh one so an active player is never logged out mid-session.
+app.post('/api/auth/refresh', verifyToken, async (req, res) => {
+  try {
+    const userId = String(req.user?.id || req.user?._id || '').trim();
+    if (!userId) return res.status(401).json({ message: 'Session could not be renewed.' });
+    const token = jwt.sign({ id: userId }, process.env.JWT_SECRET, { expiresIn: SESSION_TOKEN_TTL });
+    res.cookie('token', token, { httpOnly: true, maxAge: SESSION_COOKIE_MAX_AGE });
+    return res.status(200).json({ token });
+  } catch (error) {
+    return res.status(500).json({ message: 'Session could not be renewed.' });
+  }
+});
+
+
+// --------------------------------------------------------------------------
+// MONEY NOTIFICATIONS
+// Every balance change should leave the player or affiliate a written record.
+// Failures are logged, never thrown — an email problem must not roll back or
+// block a completed money operation.
+// --------------------------------------------------------------------------
+const FMM_MAIL_FROM = process.env.SMTP_USER || 'Fantasymmadness2@gmail.com';
+
+const sendMoneyNotice = async ({ to, subject, heading, lines = [], footer }) => {
+  if (!to) return;
+  try {
+    await transporter.sendMail({
+      from: FMM_MAIL_FROM,
+      to,
+      subject,
+      html: `
+        <div style="font-family:Arial,Helvetica,sans-serif;max-width:600px;margin:auto;background:#0b0c10;color:#fff;padding:24px;border-radius:12px;">
+          <h2 style="color:#f2b544;margin:0 0 12px;">${heading}</h2>
+          ${lines.map((line) => `<p style="margin:0 0 10px;line-height:1.6;color:rgba(255,255,255,.85);">${line}</p>`).join('')}
+          <p style="margin:18px 0 0;font-size:12px;color:rgba(255,255,255,.45);">${footer || 'Fantasy MMAdness'}</p>
+        </div>`,
+    });
+  } catch (error) {
+    console.warn('Money notification failed to send:', subject, error.message);
+  }
+};
+
+// --------------------------------------------------------------------------
+// FM+ SUBSCRIPTION CANCEL / REFUND
+// Coin entries and affiliate payouts were reversible; FM+ was not. A chargeback
+// or a support cancellation had no path, leaving the subscription active.
+// --------------------------------------------------------------------------
+app.post('/api/admin/fm-plus/:userId/cancel', verifyAdminToken, async (req, res) => {
+  try {
+    const userId = String(req.params.userId || '').trim();
+    const refundCoins = Math.max(0, Math.floor(Number(req.body?.refundCoins) || 0));
+    const reason = String(req.body?.reason || 'Subscription cancelled by administrator.').slice(0, 300);
+
+    const user = await User.findById(userId);
+    if (!user) return res.status(404).json({ message: 'User not found.', code: 'USER_NOT_FOUND' });
+
+    const wasSubscribed = Boolean(user.isSubscribed);
+    if (!wasSubscribed && !refundCoins) {
+      return res.status(200).json({ message: 'That account has no active FM+ subscription.', alreadyCancelled: true });
+    }
+
+    user.isSubscribed = false;
+    user.currentPlan = '';
+    user.subscriptionEndsAt = new Date();
+
+    let balanceAfter = Number.parseInt(String(user.tokens || '0'), 10) || 0;
+    if (refundCoins > 0) {
+      const balanceBefore = balanceAfter;
+      balanceAfter = balanceBefore + refundCoins;
+      user.tokens = String(balanceAfter);
+      await FightEntryLedger.create([{
+        userId,
+        matchId: 'fm-plus',
+        sourceType: 'match',
+        type: 'FIGHT_ENTRY_REFUND',
+        amount: refundCoins,
+        balanceBefore,
+        balanceAfter,
+        idempotencyKey: `fmplus:refund:${userId}:${Date.now()}`,
+        metadata: { reason, product: 'fm-plus' },
+      }]);
+    }
+
+    await user.save();
+
+    await sendMoneyNotice({
+      to: user.email,
+      subject: 'Your FM+ subscription has been cancelled',
+      heading: 'FM+ CANCELLED',
+      lines: [
+        'Your FM+ subscription has been cancelled and will not renew.',
+        refundCoins > 0 ? `<strong>${refundCoins.toLocaleString()} FM</strong> has been returned to your wallet.` : 'No coins were refunded with this cancellation.',
+        `Reason: ${reason}`,
+      ],
+    });
+
+    return res.status(200).json({
+      message: refundCoins > 0
+        ? `FM+ cancelled and ${refundCoins} FM refunded.`
+        : 'FM+ cancelled.',
+      wasSubscribed,
+      refundedCoins: refundCoins,
+      walletBalance: balanceAfter,
+    });
+  } catch (error) {
+    console.error('FM+ cancellation failed:', error);
+    return res.status(500).json({ message: 'Could not cancel that subscription.', code: 'FM_PLUS_CANCEL_FAILED' });
+  }
+});
+
+// --------------------------------------------------------------------------
+// GUEST PURCHASE CLAIM
+// Guests may buy coins before creating an account (deliberate, for conversion).
+// This attaches any completed guest order made with the same email to the new
+// account, so a purchase is never stranded.
+// --------------------------------------------------------------------------
+app.post('/api/checkout/claim-guest-orders', verifyToken, async (req, res) => {
+  try {
+    const userId = String(req.user?.id || req.user?._id || '').trim();
+    const user = await User.findById(userId);
+    if (!user) return res.status(404).json({ message: 'User not found.' });
+
+    const email = String(user.email || '').trim().toLowerCase();
+    if (!email) return res.status(400).json({ message: 'This account has no email on file.' });
+
+    const CheckoutOrder = mongoose.models.CheckoutOrder;
+    if (!CheckoutOrder) {
+      return res.status(200).json({ claimed: 0, message: 'No guest orders to claim.' });
+    }
+
+    const orders = await CheckoutOrder.find({
+      email: new RegExp(`^${email.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`, 'i'),
+      $or: [{ userId: { $exists: false } }, { userId: null }],
+      status: 'CREDITED',
+    });
+
+    if (!orders.length) return res.status(200).json({ claimed: 0, message: 'No guest orders to claim.' });
+
+    let totalCoins = 0;
+    for (const order of orders) {
+      const alreadyClaimed = await FightEntryLedger.findOne({ idempotencyKey: `guestclaim:${order._id}` }).lean();
+      if (alreadyClaimed) continue;
+
+      const coins = Math.max(0, Math.floor(Number(order.creditedCoins || order.coins || 0)));
+      const balanceBefore = Number.parseInt(String(user.tokens || '0'), 10) || 0;
+      const balanceAfter = balanceBefore + coins;
+
+      if (coins > 0) {
+        user.tokens = String(balanceAfter);
+        await FightEntryLedger.create([{
+          userId,
+          matchId: 'guest-claim',
+          sourceType: 'match',
+          type: 'FIGHT_ENTRY_REFUND',
+          amount: coins,
+          balanceBefore,
+          balanceAfter,
+          idempotencyKey: `guestclaim:${order._id}`,
+          metadata: { orderNumber: order.orderNumber || null, product: 'guest-coin-claim' },
+        }]);
+        totalCoins += coins;
+      }
+
+      order.userId = userId;
+      await order.save();
+    }
+
+    if (totalCoins > 0) {
+      await user.save();
+      await sendMoneyNotice({
+        to: user.email,
+        subject: 'Your earlier purchase has been added',
+        heading: 'COINS ADDED',
+        lines: [
+          `We found a purchase made with this email before you created your account.`,
+          `<strong>${totalCoins.toLocaleString()} FM</strong> has been added to your wallet.`,
+        ],
+      });
+    }
+
+    return res.status(200).json({
+      claimed: orders.length,
+      coinsAdded: totalCoins,
+      walletBalance: Number.parseInt(String(user.tokens || '0'), 10) || 0,
+    });
+  } catch (error) {
+    console.error('Guest order claim failed:', error);
+    return res.status(500).json({ message: 'Could not check for earlier purchases.' });
+  }
+});
+
+
+// --------------------------------------------------------------------------
+// ELIGIBILITY, RESPONSIBLE PLAY, TAX & SUPPORT
+// --------------------------------------------------------------------------
+
+// Minimum age for paid entry. Configurable because some jurisdictions differ.
+const MINIMUM_PLAY_AGE = Number(process.env.MINIMUM_PLAY_AGE || 18);
+
+// States where paid fantasy is restricted. Populate after legal review —
+// left empty deliberately so nothing is blocked on a guess. Add 2-letter codes.
+const RESTRICTED_STATES = String(process.env.RESTRICTED_STATES || '')
+  .split(',').map((x) => x.trim().toUpperCase()).filter(Boolean);
+
+const ageFromDob = (dob) => {
+  if (!dob) return null;
+  const birth = new Date(dob);
+  if (Number.isNaN(birth.getTime())) return null;
+  const now = new Date();
+  let age = now.getFullYear() - birth.getFullYear();
+  const m = now.getMonth() - birth.getMonth();
+  if (m < 0 || (m === 0 && now.getDate() < birth.getDate())) age -= 1;
+  return age;
+};
+
+// Single gate used before any PAID action. Returns null when the user may play.
+const checkPlayEligibility = (user) => {
+  if (!user) return { code: 'USER_NOT_FOUND', message: 'Account not found.' };
+
+  if (user.selfExcludedUntil && new Date(user.selfExcludedUntil) > new Date()) {
+    return {
+      code: 'SELF_EXCLUDED',
+      message: `You have self-excluded until ${new Date(user.selfExcludedUntil).toLocaleDateString()}.`,
+    };
+  }
+
+  const age = ageFromDob(user.dateOfBirth);
+  if (age === null) {
+    return { code: 'AGE_UNVERIFIED', message: 'Add your date of birth before entering a paid contest.' };
+  }
+  if (age < MINIMUM_PLAY_AGE) {
+    return { code: 'UNDERAGE', message: `You must be ${MINIMUM_PLAY_AGE} or older to enter a paid contest.` };
+  }
+
+  const state = String(user.residenceState || '').toUpperCase();
+  if (RESTRICTED_STATES.length && state && RESTRICTED_STATES.includes(state)) {
+    return { code: 'STATE_RESTRICTED', message: `Paid contests are not available in ${state}.` };
+  }
+
+  return null;
+};
+
+// Player supplies date of birth and state of residence.
+app.post('/api/users/me/eligibility', verifyToken, async (req, res) => {
+  try {
+    const user = await User.findById(String(req.user?.id || req.user?._id || ''));
+    if (!user) return res.status(404).json({ message: 'User not found.' });
+
+    const dob = req.body?.dateOfBirth;
+    const state = String(req.body?.residenceState || '').trim().toUpperCase();
+
+    if (dob) {
+      const age = ageFromDob(dob);
+      if (age === null) return res.status(400).json({ message: 'That date of birth is not valid.', code: 'INVALID_DOB' });
+      if (age < MINIMUM_PLAY_AGE) {
+        return res.status(403).json({ message: `You must be ${MINIMUM_PLAY_AGE} or older to play.`, code: 'UNDERAGE' });
+      }
+      user.dateOfBirth = new Date(dob);
+      user.ageVerifiedAt = new Date();
+    }
+    if (state) {
+      if (!/^[A-Z]{2}$/.test(state)) return res.status(400).json({ message: 'Use a two-letter state code.', code: 'INVALID_STATE' });
+      user.residenceState = state;
+    }
+    user.eligibilityCheckedAt = new Date();
+    await user.save();
+
+    const blocked = checkPlayEligibility(user);
+    return res.status(200).json({
+      eligible: !blocked,
+      reason: blocked?.code || null,
+      message: blocked?.message || 'You are eligible to enter paid contests.',
+    });
+  } catch (error) {
+    console.error('Eligibility update failed:', error);
+    return res.status(500).json({ message: 'Could not save your details.' });
+  }
+});
+
+app.get('/api/users/me/eligibility', verifyToken, async (req, res) => {
+  try {
+    const user = await User.findById(String(req.user?.id || req.user?._id || '')).lean();
+    const blocked = checkPlayEligibility(user);
+    return res.status(200).json({
+      eligible: !blocked,
+      reason: blocked?.code || null,
+      message: blocked?.message || 'Eligible.',
+      minimumAge: MINIMUM_PLAY_AGE,
+      hasDateOfBirth: Boolean(user?.dateOfBirth),
+      residenceState: user?.residenceState || null,
+      selfExcludedUntil: user?.selfExcludedUntil || null,
+    });
+  } catch (error) {
+    return res.status(500).json({ message: 'Could not check eligibility.' });
+  }
+});
+
+// Self-exclusion. Deliberately one-way: a player can start or extend it, but
+// cannot shorten it themselves — that is the entire point of the tool.
+app.post('/api/users/me/self-exclude', verifyToken, async (req, res) => {
+  try {
+    const days = Math.min(3650, Math.max(1, Math.floor(Number(req.body?.days) || 30)));
+    const user = await User.findById(String(req.user?.id || req.user?._id || ''));
+    if (!user) return res.status(404).json({ message: 'User not found.' });
+
+    const until = new Date(Date.now() + days * 24 * 60 * 60 * 1000);
+    const existing = user.selfExcludedUntil ? new Date(user.selfExcludedUntil) : null;
+    if (existing && existing > until) {
+      return res.status(409).json({
+        message: 'You already have a longer self-exclusion in place. Contact support to discuss it.',
+        code: 'ALREADY_EXCLUDED_LONGER',
+        selfExcludedUntil: existing,
+      });
+    }
+
+    user.selfExcludedUntil = until;
+    user.selfExclusionReason = String(req.body?.reason || '').slice(0, 300);
+    await user.save();
+
+    await sendMoneyNotice({
+      to: user.email,
+      subject: 'Your self-exclusion is active',
+      heading: 'SELF-EXCLUSION ACTIVE',
+      lines: [
+        `You will not be able to enter paid contests until <strong>${until.toLocaleDateString()}</strong>.`,
+        'Any coins already in your wallet stay there. This cannot be reversed early from your account — contact support if your circumstances change.',
+      ],
+    });
+
+    return res.status(200).json({ selfExcludedUntil: until });
+  } catch (error) {
+    console.error('Self-exclusion failed:', error);
+    return res.status(500).json({ message: 'Could not set self-exclusion.' });
+  }
+});
+
+// Deposit limits, in cents. Lowering takes effect immediately; raising is
+// delayed 24h so a limit cannot be removed in the moment it starts to bite.
+app.post('/api/users/me/deposit-limits', verifyToken, async (req, res) => {
+  try {
+    const user = await User.findById(String(req.user?.id || req.user?._id || ''));
+    if (!user) return res.status(404).json({ message: 'User not found.' });
+
+    const daily = Math.max(0, Math.floor(Number(req.body?.dailyCents) || 0));
+    const monthly = Math.max(0, Math.floor(Number(req.body?.monthlyCents) || 0));
+    const raising = (daily > (user.dailyDepositLimitCents || 0) && (user.dailyDepositLimitCents || 0) > 0)
+      || (monthly > (user.monthlyDepositLimitCents || 0) && (user.monthlyDepositLimitCents || 0) > 0);
+
+    if (raising) {
+      return res.status(202).json({
+        message: 'Increases take effect after 24 hours. Your current limit stays in place until then.',
+        code: 'INCREASE_PENDING',
+        effectiveAt: new Date(Date.now() + 24 * 60 * 60 * 1000),
+      });
+    }
+
+    user.dailyDepositLimitCents = daily;
+    user.monthlyDepositLimitCents = monthly;
+    await user.save();
+    return res.status(200).json({ dailyCents: daily, monthlyCents: monthly });
+  } catch (error) {
+    return res.status(500).json({ message: 'Could not update your limits.' });
+  }
+});
+
+// --- Affiliate tax details (W-9) ------------------------------------------
+// The tax id is encrypted at rest and never returned. Only the last 4 digits
+// are readable, which is all an admin screen needs.
+const encryptTaxId = (value) => {
+  try {
+    const key = crypto.createHash('sha256').update(String(process.env.JWT_SECRET || 'fmm')).digest();
+    const ivLocal = crypto.randomBytes(16);
+    const cipher = crypto.createCipheriv('aes-256-cbc', key, ivLocal);
+    return ivLocal.toString('hex') + ':' + Buffer.concat([cipher.update(String(value), 'utf8'), cipher.final()]).toString('hex');
+  } catch (error) {
+    return null;
+  }
+};
+
+app.post('/api/affiliates/me/tax-details', verifyToken, async (req, res) => {
+  try {
+    const affiliate = await Affiliate.findById(String(req.user?.id || req.user?._id || ''));
+    if (!affiliate) return res.status(404).json({ message: 'Affiliate account not found.' });
+
+    const rawId = String(req.body?.taxId || '').replace(/[^0-9]/g, '');
+    const taxIdType = String(req.body?.taxIdType || '').toUpperCase();
+
+    if (rawId && rawId.length !== 9) {
+      return res.status(400).json({ message: 'A US tax ID is 9 digits.', code: 'INVALID_TAX_ID' });
+    }
+    if (rawId && !['SSN', 'EIN'].includes(taxIdType)) {
+      return res.status(400).json({ message: 'Specify whether this is an SSN or an EIN.', code: 'INVALID_TAX_ID_TYPE' });
+    }
+
+    if (rawId) {
+      const encrypted = encryptTaxId(rawId);
+      if (!encrypted) return res.status(500).json({ message: 'Could not store that securely. Try again.' });
+      affiliate.taxIdEncrypted = encrypted;
+      affiliate.taxIdLast4 = rawId.slice(-4);
+      affiliate.taxIdType = taxIdType;
+      affiliate.taxFormW9SignedAt = new Date();
+    }
+
+    if (req.body?.legalName) affiliate.taxLegalName = String(req.body.legalName).slice(0, 200);
+    if (req.body?.businessName) affiliate.taxBusinessName = String(req.body.businessName).slice(0, 200);
+    if (req.body?.address) affiliate.taxAddress = String(req.body.address).slice(0, 400);
+
+    await affiliate.save();
+    return res.status(200).json({
+      message: 'Tax details saved.',
+      taxIdLast4: affiliate.taxIdLast4 || null,
+      w9SignedAt: affiliate.taxFormW9SignedAt || null,
+    });
+  } catch (error) {
+    console.error('Tax details save failed:', error);
+    return res.status(500).json({ message: 'Could not save tax details.' });
+  }
+});
+
+// Admin: who has crossed the $600 1099 threshold, and who is missing a W-9.
+app.get('/api/admin/affiliate-tax-report', verifyAdminToken, async (req, res) => {
+  try {
+    const year = Number(req.query.year) || new Date().getFullYear();
+    const thresholdCents = Number(process.env.TAX_1099_THRESHOLD_CENTS || 60000); // $600
+    const affiliates = await Affiliate.find({})
+      .select('_id firstName lastName playerName email taxIdLast4 taxFormW9SignedAt taxLegalName earningsYtdCents taxYear payouts')
+      .lean();
+
+    const rows = affiliates.map((a) => {
+      const paidCents = (a.payouts || [])
+        .filter((p) => String(p?.status || '').toLowerCase() === 'paid'
+          && new Date(p?.createdAt || 0).getFullYear() === year)
+        .reduce((sum, p) => sum + (Number(p.amount) || 0) * 100, 0);
+      return {
+        affiliateId: a._id,
+        name: a.taxLegalName || a.playerName || [a.firstName, a.lastName].filter(Boolean).join(' '),
+        email: a.email,
+        paidCents,
+        paid: `$${(paidCents / 100).toFixed(2)}`,
+        requires1099: paidCents >= thresholdCents,
+        hasW9: Boolean(a.taxFormW9SignedAt && a.taxIdLast4),
+        taxIdLast4: a.taxIdLast4 || null,
+      };
+    }).filter((r) => r.paidCents > 0);
+
+    rows.sort((a, b) => b.paidCents - a.paidCents);
+    const blocked = rows.filter((r) => r.requires1099 && !r.hasW9);
+
+    return res.status(200).json({
+      year,
+      thresholdUsd: thresholdCents / 100,
+      affiliates: rows,
+      requiring1099: rows.filter((r) => r.requires1099).length,
+      missingW9: blocked.length,
+      warning: blocked.length ? `${blocked.length} affiliate(s) need a 1099 but have no W-9 on file.` : null,
+    });
+  } catch (error) {
+    console.error('Tax report failed:', error);
+    return res.status(500).json({ message: 'Could not build the tax report.' });
+  }
+});
+
+// --- Support tickets -------------------------------------------------------
+const supportTicketSchema = new mongoose.Schema({
+  ticketNumber: { type: String, unique: true, index: true },
+  userId: { type: mongoose.Schema.Types.ObjectId, ref: 'User', index: true },
+  email: { type: String, required: true, lowercase: true, trim: true, index: true },
+  name: String,
+  category: { type: String, enum: ['payment', 'scoring', 'account', 'affiliate', 'other'], default: 'other' },
+  subject: { type: String, required: true },
+  message: { type: String, required: true },
+  status: { type: String, enum: ['open', 'in_progress', 'resolved', 'closed'], default: 'open', index: true },
+  priority: { type: String, enum: ['low', 'normal', 'high'], default: 'normal' },
+  relatedOrderNumber: String,
+  relatedFightId: String,
+  responses: [{ body: String, fromAdmin: Boolean, createdAt: { type: Date, default: Date.now } }],
+  resolvedAt: Date,
+}, { timestamps: true });
+const SupportTicket = mongoose.models.SupportTicket || mongoose.model('SupportTicket', supportTicketSchema);
+
+app.post('/api/support/tickets', submitLimiter, optionalVerifyToken, async (req, res) => {
+  try {
+    const email = String(req.body?.email || '').trim().toLowerCase();
+    const subject = String(req.body?.subject || '').trim().slice(0, 200);
+    const message = String(req.body?.message || '').trim().slice(0, 5000);
+    if (!email || !subject || !message) {
+      return res.status(400).json({ message: 'Email, subject and message are required.' });
+    }
+
+    const ticketNumber = 'FMM-' + Date.now().toString(36).toUpperCase() + '-' + Math.random().toString(36).slice(2, 6).toUpperCase();
+    const category = ['payment', 'scoring', 'account', 'affiliate', 'other'].includes(String(req.body?.category))
+      ? req.body.category : 'other';
+
+    const ticket = await SupportTicket.create({
+      ticketNumber,
+      userId: req.user?.id || null,
+      email,
+      name: String(req.body?.name || '').slice(0, 120),
+      category,
+      subject,
+      message,
+      // Money problems go to the top of the queue.
+      priority: category === 'payment' ? 'high' : 'normal',
+      relatedOrderNumber: String(req.body?.orderNumber || '').slice(0, 60),
+      relatedFightId: String(req.body?.fightId || '').slice(0, 60),
+    });
+
+    await sendMoneyNotice({
+      to: email,
+      subject: `We received your message — ${ticketNumber}`,
+      heading: 'SUPPORT REQUEST RECEIVED',
+      lines: [
+        `Your reference is <strong>${ticketNumber}</strong>. Quote it in any reply.`,
+        `Subject: ${subject}`,
+        category === 'payment'
+          ? 'Payment issues are prioritised — we will come back to you as soon as we can.'
+          : 'We will come back to you as soon as we can.',
+      ],
+    });
+
+    await sendMoneyNotice({
+      to: FMM_MAIL_FROM,
+      subject: `[${category.toUpperCase()}] ${ticketNumber} — ${subject}`,
+      heading: 'NEW SUPPORT TICKET',
+      lines: [`From: ${email}`, `Category: ${category}`, message],
+    });
+
+    return res.status(201).json({ ticketNumber, status: ticket.status });
+  } catch (error) {
+    console.error('Support ticket failed:', error);
+    return res.status(500).json({ message: 'Could not submit your request.' });
+  }
+});
+
+app.get('/api/admin/support/tickets', verifyAdminToken, async (req, res) => {
+  try {
+    const status = String(req.query.status || 'open');
+    const query = status === 'all' ? {} : { status };
+    const tickets = await SupportTicket.find(query).sort({ priority: -1, createdAt: -1 }).limit(200).lean();
+    return res.status(200).json({ count: tickets.length, tickets });
+  } catch (error) {
+    return res.status(500).json({ message: 'Could not load tickets.' });
+  }
+});
+
+app.patch('/api/admin/support/tickets/:id', verifyAdminToken, async (req, res) => {
+  try {
+    const ticket = await SupportTicket.findById(req.params.id);
+    if (!ticket) return res.status(404).json({ message: 'Ticket not found.' });
+
+    const reply = String(req.body?.reply || '').trim();
+    const nextStatus = String(req.body?.status || '').toLowerCase();
+
+    if (reply) {
+      ticket.responses.push({ body: reply, fromAdmin: true });
+      await sendMoneyNotice({
+        to: ticket.email,
+        subject: `Re: ${ticket.subject} — ${ticket.ticketNumber}`,
+        heading: 'REPLY FROM SUPPORT',
+        lines: [reply],
+      });
+    }
+    if (['open', 'in_progress', 'resolved', 'closed'].includes(nextStatus)) {
+      ticket.status = nextStatus;
+      if (nextStatus === 'resolved') ticket.resolvedAt = new Date();
+    }
+    await ticket.save();
+    return res.status(200).json({ ticketNumber: ticket.ticketNumber, status: ticket.status });
+  } catch (error) {
+    return res.status(500).json({ message: 'Could not update that ticket.' });
+  }
+});
+
+
+// --------------------------------------------------------------------------
+// PAYMENT FAILURE ALERTING
+// Without this, a processor outage is silent — you find out from angry
+// customers. Alerts are throttled so one bad hour cannot flood the inbox.
+// --------------------------------------------------------------------------
+const paymentFailureState = { count: 0, windowStart: Date.now(), lastAlertAt: 0 };
+const PAYMENT_FAILURE_THRESHOLD = Number(process.env.PAYMENT_FAILURE_THRESHOLD || 3);
+const PAYMENT_FAILURE_WINDOW_MS = Number(process.env.PAYMENT_FAILURE_WINDOW_MS || 15 * 60 * 1000);
+const PAYMENT_ALERT_COOLDOWN_MS = Number(process.env.PAYMENT_ALERT_COOLDOWN_MS || 60 * 60 * 1000);
+
+const recordPaymentFailure = (context = {}) => {
+  const now = Date.now();
+  if (now - paymentFailureState.windowStart > PAYMENT_FAILURE_WINDOW_MS) {
+    paymentFailureState.count = 0;
+    paymentFailureState.windowStart = now;
+  }
+  paymentFailureState.count += 1;
+
+  const overThreshold = paymentFailureState.count >= PAYMENT_FAILURE_THRESHOLD;
+  const cooledDown = now - paymentFailureState.lastAlertAt > PAYMENT_ALERT_COOLDOWN_MS;
+  if (!overThreshold || !cooledDown) return;
+
+  paymentFailureState.lastAlertAt = now;
+  const minutes = Math.round(PAYMENT_FAILURE_WINDOW_MS / 60000);
+  sendMoneyNotice({
+    to: FMM_MAIL_FROM,
+    subject: `[ALERT] ${paymentFailureState.count} payment failures in ${minutes} minutes`,
+    heading: 'PAYMENT FAILURES DETECTED',
+    lines: [
+      `<strong>${paymentFailureState.count}</strong> payments failed in the last ${minutes} minutes.`,
+      'This usually means a processor outage or a credential problem. Customers are being turned away right now.',
+      context.orderNumber ? `Most recent order: ${context.orderNumber}` : '',
+      context.reason ? `Reason given: ${context.reason}` : '',
+      'Check your payment processor dashboard.',
+    ].filter(Boolean),
+  });
+};
+
+// --------------------------------------------------------------------------
+// DUPLICATE ACCOUNT PREVENTION
+// Blocks the obvious cases: reusing a device for a second signup bonus, and
+// email aliasing (gmail dots / +tags) to register "new" accounts.
+// --------------------------------------------------------------------------
+const signupDeviceSchema = new mongoose.Schema({
+  deviceId: { type: String, required: true, index: true },
+  normalizedEmail: { type: String, required: true, index: true },
+  userId: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
+  ip: String,
+  accountCount: { type: Number, default: 1 },
+}, { timestamps: true });
+const SignupDevice = mongoose.models.SignupDevice || mongoose.model('SignupDevice', signupDeviceSchema);
+
+// gmail treats dots and +tags as the same inbox, so "a.b+x@gmail.com" and
+// "ab@gmail.com" are one person. Normalise before comparing.
+const normalizeEmailForDupes = (email) => {
+  const raw = String(email || '').trim().toLowerCase();
+  const [local, domain] = raw.split('@');
+  if (!local || !domain) return raw;
+  const base = local.split('+')[0];
+  const isGoogle = ['gmail.com', 'googlemail.com'].includes(domain);
+  return `${isGoogle ? base.replace(/\./g, '') : base}@${domain}`;
+};
+
+const MAX_ACCOUNTS_PER_DEVICE = Number(process.env.MAX_ACCOUNTS_PER_DEVICE || 2);
+
+// Returns a blocking reason, or null when the signup looks legitimate.
+const checkDuplicateSignup = async ({ email, deviceId, ip }) => {
+  const normalizedEmail = normalizeEmailForDupes(email);
+
+  const aliasMatch = await User.findOne({
+    email: { $ne: String(email).toLowerCase() },
+  }).select('email').lean().then(async () => {
+    const candidates = await User.find({}).select('email').limit(5000).lean();
+    return candidates.find((u) => normalizeEmailForDupes(u.email) === normalizedEmail);
+  }).catch(() => null);
+
+  if (aliasMatch) {
+    return {
+      code: 'DUPLICATE_EMAIL_ALIAS',
+      message: 'An account already exists for this email address.',
+    };
+  }
+
+  if (deviceId) {
+    const seen = await SignupDevice.find({ deviceId }).lean().catch(() => []);
+    if (seen.length >= MAX_ACCOUNTS_PER_DEVICE) {
+      return {
+        code: 'DEVICE_LIMIT_REACHED',
+        message: 'This device has already been used to create an account. Contact support if you believe this is wrong.',
+      };
+    }
+  }
+  return null;
+};
+
+// Called after a successful signup so the device is remembered.
+const recordSignupDevice = async ({ email, deviceId, ip, userId }) => {
+  if (!deviceId) return;
+  try {
+    await SignupDevice.create({
+      deviceId,
+      normalizedEmail: normalizeEmailForDupes(email),
+      userId: userId || null,
+      ip: String(ip || '').slice(0, 64),
+    });
+  } catch (error) {
+    console.warn('Signup device record failed:', error.message);
+  }
+};
+
+// Endpoint the app calls BEFORE creating an account, so a blocked signup fails
+// fast instead of half-creating a user.
+app.post('/api/auth/check-duplicate', submitLimiter, async (req, res) => {
+  try {
+    const email = String(req.body?.email || '').trim();
+    if (!email) return res.status(400).json({ message: 'Email is required.' });
+    const blocked = await checkDuplicateSignup({
+      email,
+      deviceId: String(req.body?.deviceId || '').slice(0, 128),
+      ip: req.headers['x-forwarded-for'] || req.socket?.remoteAddress,
+    });
+    return res.status(200).json({
+      allowed: !blocked,
+      code: blocked?.code || null,
+      message: blocked?.message || 'Looks good.',
+    });
+  } catch (error) {
+    // Fail open — never block a real signup because this check errored.
+    return res.status(200).json({ allowed: true });
+  }
+});
+
+// Admin view of devices tied to more than one account.
+app.get('/api/admin/duplicate-signups', verifyAdminToken, async (req, res) => {
+  try {
+    const rows = await SignupDevice.aggregate([
+      { $group: { _id: '$deviceId', accounts: { $sum: 1 }, emails: { $addToSet: '$normalizedEmail' }, lastSeen: { $max: '$createdAt' } } },
+      { $match: { accounts: { $gt: 1 } } },
+      { $sort: { accounts: -1, lastSeen: -1 } },
+      { $limit: 200 },
+    ]);
+    return res.status(200).json({ count: rows.length, devices: rows });
+  } catch (error) {
+    return res.status(500).json({ message: 'Could not build the duplicate report.' });
+  }
 });
 
 // Centralized request/upload error handling. This keeps existing upload routes intact
