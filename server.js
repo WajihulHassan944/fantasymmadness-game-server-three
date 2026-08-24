@@ -163,7 +163,84 @@ const verifyToken = (req, res, next) => {
   });
 };
 
+// Admin auth. Defined here (not further down the file) because ~20 admin routes
+// registered above the old definition referenced it — and `const` is not
+// hoisted, so the server crashed at boot with a ReferenceError.
+const verifyAdminToken = (req, res, next) => {
+  const authHeader = req.headers.authorization;
+  const token = authHeader && authHeader.startsWith('Bearer ') ? authHeader.slice(7) : null;
+  if (!token) {
+    return res.status(401).json({
+      message: 'Admin authentication is required.',
+      code: 'ADMIN_AUTH_REQUIRED',
+      shouldLogin: true,
+    });
+  }
 
+  try {
+    req.admin = jwt.verify(token, process.env.JWT_SECRET_ADMIN);
+    return next();
+  } catch (error) {
+    return res.status(401).json({
+      message: 'Invalid or expired admin token.',
+      code: 'ADMIN_TOKEN_INVALID_OR_EXPIRED',
+      shouldLogin: true,
+    });
+  }
+};
+
+
+// --------------------------------------------------------------------------
+// RATE LIMITING
+// No dependency added on purpose — this is a small in-memory limiter. If you
+// run more than one instance, move it to Redis so the counters are shared.
+// --------------------------------------------------------------------------
+const rateBuckets = new Map();
+
+setInterval(() => {
+  const now = Date.now();
+  for (const [key, bucket] of rateBuckets) {
+    if (bucket.resetAt < now) rateBuckets.delete(key);
+  }
+}, 5 * 60 * 1000).unref?.();
+
+const rateLimit = ({ windowMs = 60000, max = 30, keyPrefix = 'rl', message } = {}) => (req, res, next) => {
+  const ip = String(
+    req.headers['x-forwarded-for'] || req.socket?.remoteAddress || 'unknown'
+  ).split(',')[0].trim();
+  const key = `${keyPrefix}:${ip}`;
+  const now = Date.now();
+
+  let bucket = rateBuckets.get(key);
+  if (!bucket || bucket.resetAt < now) {
+    bucket = { count: 0, resetAt: now + windowMs };
+    rateBuckets.set(key, bucket);
+  }
+
+  bucket.count += 1;
+  if (bucket.count > max) {
+    const retryAfter = Math.ceil((bucket.resetAt - now) / 1000);
+    res.setHeader('Retry-After', String(retryAfter));
+    return res.status(429).json({
+      message: message || 'Too many attempts. Please wait and try again.',
+      code: 'RATE_LIMITED',
+      retryAfterSeconds: retryAfter,
+    });
+  }
+  return next();
+};
+
+// Credential endpoints: strict. Brute-forcing a login is how accounts with real
+// coin balances get taken.
+const loginLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 10,
+  keyPrefix: 'login',
+  message: 'Too many sign-in attempts. Please wait 15 minutes and try again.',
+});
+
+// Support/contact: stops inbox flooding without blocking genuine users.
+const submitLimiter = rateLimit({ windowMs: 10 * 60 * 1000, max: 8, keyPrefix: 'submit' });
 
 
 // Client feedback helper utilities for fight freshness, manual scoring, and edit forms.
@@ -6414,58 +6491,6 @@ app.post('/login', loginLimiter, async (req, res) => {
 
 
 
-
-// --------------------------------------------------------------------------
-// RATE LIMITING
-// No dependency added on purpose — this is a small in-memory limiter. If you
-// run more than one instance, move it to Redis so the counters are shared.
-// --------------------------------------------------------------------------
-const rateBuckets = new Map();
-
-setInterval(() => {
-  const now = Date.now();
-  for (const [key, bucket] of rateBuckets) {
-    if (bucket.resetAt < now) rateBuckets.delete(key);
-  }
-}, 5 * 60 * 1000).unref?.();
-
-const rateLimit = ({ windowMs = 60000, max = 30, keyPrefix = 'rl', message } = {}) => (req, res, next) => {
-  const ip = String(
-    req.headers['x-forwarded-for'] || req.socket?.remoteAddress || 'unknown'
-  ).split(',')[0].trim();
-  const key = `${keyPrefix}:${ip}`;
-  const now = Date.now();
-
-  let bucket = rateBuckets.get(key);
-  if (!bucket || bucket.resetAt < now) {
-    bucket = { count: 0, resetAt: now + windowMs };
-    rateBuckets.set(key, bucket);
-  }
-
-  bucket.count += 1;
-  if (bucket.count > max) {
-    const retryAfter = Math.ceil((bucket.resetAt - now) / 1000);
-    res.setHeader('Retry-After', String(retryAfter));
-    return res.status(429).json({
-      message: message || 'Too many attempts. Please wait and try again.',
-      code: 'RATE_LIMITED',
-      retryAfterSeconds: retryAfter,
-    });
-  }
-  return next();
-};
-
-// Credential endpoints: strict. Brute-forcing a login is how accounts with real
-// coin balances get taken.
-const loginLimiter = rateLimit({
-  windowMs: 15 * 60 * 1000,
-  max: 10,
-  keyPrefix: 'login',
-  message: 'Too many sign-in attempts. Please wait 15 minutes and try again.',
-});
-
-// Support/contact: stops inbox flooding without blocking genuine users.
-const submitLimiter = rateLimit({ windowMs: 10 * 60 * 1000, max: 8, keyPrefix: 'submit' });
 
 const optionalVerifyToken = (req, res, next) => {
   const authHeader = req.headers.authorization;
@@ -12864,29 +12889,6 @@ const requireProWrestlingEnabled = (req, res, next) => {
     });
   }
   return next();
-};
-
-const verifyAdminToken = (req, res, next) => {
-  const authHeader = req.headers.authorization;
-  const token = authHeader && authHeader.startsWith('Bearer ') ? authHeader.slice(7) : null;
-  if (!token) {
-    return res.status(401).json({
-      message: 'Admin authentication is required.',
-      code: 'ADMIN_AUTH_REQUIRED',
-      shouldLogin: true,
-    });
-  }
-
-  try {
-    req.admin = jwt.verify(token, process.env.JWT_SECRET_ADMIN);
-    return next();
-  } catch (error) {
-    return res.status(401).json({
-      message: 'Invalid or expired admin token.',
-      code: 'ADMIN_TOKEN_INVALID_OR_EXPIRED',
-      shouldLogin: true,
-    });
-  }
 };
 
 const verifyWrestlingCronOrAdmin = (req, res, next) => {
