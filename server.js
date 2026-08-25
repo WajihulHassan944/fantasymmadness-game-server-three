@@ -126,6 +126,49 @@ app.use(cors({
   credentials: true, // Allow credentials (cookies, headers, etc.)
 }));
 
+// --------------------------------------------------------------------------
+// BOOT CONFIGURATION GUARD
+// Every auth check in this file rests on these secrets. Missing or placeholder
+// values used to fail silently at request time — jwt.verify(token, undefined)
+// just throws, so every protected route returned 403 and the cause was invisible
+// in the logs. Fail loudly at boot instead, before traffic arrives.
+// --------------------------------------------------------------------------
+(() => {
+  const REQUIRED = ['MONGODB_URI', 'JWT_SECRET', 'JWT_SECRET_ADMIN'];
+  const WEAK = new Set(['secret', 'changeme', 'change-me', 'jwtsecret', 'test', 'dev', 'password', 'fantasymmadness']);
+  const missing = REQUIRED.filter((name) => !String(process.env[name] || '').trim());
+  const weak = ['JWT_SECRET', 'JWT_SECRET_ADMIN'].filter((name) => {
+    const value = String(process.env[name] || '').trim();
+    return value && (value.length < 32 || WEAK.has(value.toLowerCase()));
+  });
+
+  if (missing.length) {
+    console.error(`FATAL: missing required environment variables: ${missing.join(', ')}`);
+    if (process.env.NODE_ENV === 'production') process.exit(1);
+  }
+  if (weak.length) {
+    const message = `${weak.join(', ')} ${weak.length > 1 ? 'are' : 'is'} too weak — use 32+ random characters.`;
+    if (process.env.NODE_ENV === 'production') {
+      console.error(`FATAL: ${message}`);
+      process.exit(1);
+    }
+    console.warn(`WARNING: ${message}`);
+  }
+  if (process.env.JWT_SECRET && process.env.JWT_SECRET === process.env.JWT_SECRET_ADMIN) {
+    console.error('FATAL: JWT_SECRET and JWT_SECRET_ADMIN must differ — a player token would otherwise pass admin checks.');
+    if (process.env.NODE_ENV === 'production') process.exit(1);
+  }
+
+  // Non-fatal, but each one silently disables a feature in production.
+  [
+    ['CRON_SECRET', 'scheduled jobs will return 503'],
+    ['AUTHORIZE_NET_SIGNATURE_KEY', 'payment webhooks will be rejected'],
+    ['SMTP_PASS', 'no email will be delivered'],
+  ].forEach(([name, effect]) => {
+    if (!String(process.env[name] || '').trim()) console.warn(`WARNING: ${name} is not set — ${effect}.`);
+  });
+})();
+
 // MongoDB connection
 const MONGODB_URI = process.env.MONGODB_URI;
 const PORT = process.env.PORT || 3000;
@@ -134,6 +177,64 @@ mongoose.connect(MONGODB_URI, {
   useNewUrlParser: true,
   useUnifiedTopology: true,
 });
+
+// --------------------------------------------------------------------------
+// REPLICA SET DETECTION
+//
+// Entry charging, refunds, prize settlement, coin purchases and challenge
+// escrow all run inside MongoDB transactions, and transactions do not exist on
+// a standalone mongod. Standalone does not warn — it throws mid-sequence, which
+// is exactly the wrong moment because money may already have moved.
+//
+// So we ask the server what it is, once, at boot: a replica set reports a
+// setName in its hello response; a standalone does not.
+// --------------------------------------------------------------------------
+const databaseCapability = {
+  checked: false,
+  isReplicaSet: false,
+  transactionsSupported: false,
+  topology: 'unknown',
+  detail: '',
+};
+
+const detectDatabaseCapability = async () => {
+  try {
+    const hello = await mongoose.connection.db.admin().command({ hello: 1 });
+    const setName = hello?.setName || '';
+    const isMongos = hello?.msg === 'isdbgrid';
+    databaseCapability.checked = true;
+    databaseCapability.isReplicaSet = Boolean(setName);
+    // Sharded clusters support transactions from MongoDB 4.2 onward.
+    databaseCapability.transactionsSupported = Boolean(setName) || isMongos;
+    databaseCapability.topology = setName ? 'replicaSet' : isMongos ? 'sharded' : 'standalone';
+    databaseCapability.detail = setName ? `replica set "${setName}"` : databaseCapability.topology;
+  } catch (error) {
+    databaseCapability.checked = true;
+    databaseCapability.detail = `could not determine topology: ${error.message}`;
+    console.error('WARNING: could not determine MongoDB topology.', error.message);
+    return;
+  }
+
+  if (databaseCapability.transactionsSupported) {
+    console.log(`MongoDB topology OK — ${databaseCapability.detail}. Transactions available.`);
+    return;
+  }
+
+  const message = [
+    'MongoDB is running as a STANDALONE server, which does not support transactions.',
+    'Paid fight entries, refunds, prize settlement, coin purchases and challenge',
+    'escrow will all FAIL until this is a replica set (Atlas M10+ is one by default;',
+    'a self-hosted single node is not — start it with --replSet and run rs.initiate()).',
+  ].join(' ');
+
+  if (process.env.NODE_ENV === 'production') {
+    console.error(`FATAL: ${message}`);
+    process.exit(1);
+  }
+  console.warn(`WARNING: ${message}`);
+};
+
+mongoose.connection.once('open', () => { detectDatabaseCapability(); });
 
 // Middleware
 app.use(bodyParser.urlencoded({ extended: false, limit: URLENCODED_BODY_LIMIT }));
@@ -149,7 +250,9 @@ const SESSION_COOKIE_MAX_AGE = Number(process.env.SESSION_COOKIE_MAX_AGE || 30 *
 // now use it; `const` is not hoisted, so a later definition would throw
 // "Cannot access 'verifyToken' before initialization" at boot.
 const verifyToken = (req, res, next) => {
-  console.log('Request headers:', req.headers); // Debugging line
+  // NEVER log req.headers here. It printed a live bearer token on every
+  // authenticated request, so anyone with log access could resume a player's
+  // session straight out of the log stream.
   const authHeader = req.headers['authorization'];
   const token = authHeader && authHeader.split(' ')[1]; // Extract token from Bearer scheme
 
@@ -157,6 +260,17 @@ const verifyToken = (req, res, next) => {
 
   jwt.verify(token, process.env.JWT_SECRET, (err, user) => {
     if (err) return res.sendStatus(403); // Token invalid, forbidden
+
+    // Owner "view as" sessions are strictly read-only. Checked here, at the one
+    // place every authenticated route passes through, so no individual route can
+    // forget it — a preview token must never be able to spend, enter or change
+    // anything belonging to the person being viewed.
+    if (user?.scope === 'owner-preview' && req.method !== 'GET') {
+      return res.status(403).json({
+        message: 'This is a read-only preview session. Sign in as the account to make changes.',
+        code: 'PREVIEW_READ_ONLY',
+      });
+    }
 
     req.user = user; // Attach user info to request object
     next();
@@ -189,6 +303,116 @@ const verifyAdminToken = (req, res, next) => {
   }
 };
 
+
+// --------------------------------------------------------------------------
+// NoSQL INJECTION GUARD
+// Without this, POST /login with {"email":{"$ne":null}} matches the first user
+// in the collection and hands back a valid session for an account the caller
+// does not own. Strips Mongo operator keys from every request payload.
+// --------------------------------------------------------------------------
+function stripMongoOperators(value, depth = 0) {
+  if (depth > 6 || value === null || typeof value !== 'object') return;
+  if (Array.isArray(value)) {
+    value.forEach((item) => stripMongoOperators(item, depth + 1));
+    return;
+  }
+  Object.keys(value).forEach((key) => {
+    if (key.startsWith('$') || key.includes('.')) {
+      delete value[key];
+      return;
+    }
+    stripMongoOperators(value[key], depth + 1);
+  });
+}
+
+app.use((req, _res, next) => {
+  stripMongoOperators(req.body);
+  stripMongoOperators(req.query);
+  stripMongoOperators(req.params);
+  next();
+});
+
+// --------------------------------------------------------------------------
+// CRON AUTH
+// Scheduled jobs were plain public GETs: anyone could roll fights over,
+// re-run settlement sweeps, or blast affiliate mail on demand.
+// --------------------------------------------------------------------------
+const verifyCronSecret = (req, res, next) => {
+  const configured = String(process.env.CRON_SECRET || '').trim();
+  if (!configured) {
+    return res.status(503).json({ ok: false, message: 'Scheduled jobs are disabled until CRON_SECRET is configured.' });
+  }
+  const supplied = String(
+    req.headers['x-cron-secret'] || String(req.headers.authorization || '').replace(/^Bearer\s+/i, ''),
+  ).trim();
+  const a = Buffer.from(configured);
+  const b = Buffer.from(supplied);
+  if (a.length !== b.length || !crypto.timingSafeEqual(a, b)) {
+    // Fall back to a valid admin token so an operator can trigger a job by hand.
+    const adminToken = String(req.headers.authorization || '').replace(/^Bearer\s+/i, '').trim();
+    try {
+      if (adminToken && process.env.JWT_SECRET_ADMIN) {
+        req.admin = jwt.verify(adminToken, process.env.JWT_SECRET_ADMIN);
+        return next();
+      }
+    } catch (_error) { /* fall through to 401 */ }
+    return res.status(401).json({ ok: false, message: 'Unauthorized.' });
+  }
+  return next();
+};
+
+// --------------------------------------------------------------------------
+// TOKEN SCOPES
+// Player, affiliate and sponsor sessions are all signed with JWT_SECRET and used
+// to carry only { id }. Nothing was exploitable because ids never collide across
+// collections — but that was a coincidence, not a rule. Every token now declares
+// its audience, and money routes assert it.
+//
+// Tokens issued before this change have no scope claim. They stay valid until
+// they expire (30 days) rather than logging everyone out mid fight night, so
+// requireScope() treats a missing scope as legacy-and-allowed and only rejects a
+// scope that is present and wrong.
+// --------------------------------------------------------------------------
+const TOKEN_SCOPES = Object.freeze({ PLAYER: 'player', AFFILIATE: 'affiliate', SPONSOR: 'sponsor' });
+
+const requireScope = (...allowed) => (req, res, next) => {
+  const scope = String(req.user?.scope || '').trim();
+  if (!scope) return next(); // legacy token, pre-scope
+  // A read-only owner preview may read any role's screens; verifyToken has
+  // already guaranteed the request is a GET.
+  if (scope === 'owner-preview') return next();
+  if (allowed.includes(scope)) return next();
+  return res.status(403).json({
+    message: 'This account type cannot use that action.',
+    code: 'WRONG_TOKEN_SCOPE',
+    expected: allowed,
+  });
+};
+
+// Ownership guard: the caller must be acting on their own record. Admin tokens
+// pass so back-office screens keep working.
+const requireSelf = (getTargetId) => (req, res, next) => {
+  const tokenId = String(req.user?.id || req.user?._id || '');
+  const targetId = String(getTargetId(req) || '');
+  if (tokenId && targetId && tokenId === targetId) return next();
+  return res.status(403).json({ message: 'You can only change your own account.' });
+};
+
+// Email approval links cannot carry an Authorization header, so they carry a
+// signature instead. Use buildSignedActionUrl() wherever such a link is built.
+function signActionToken(scope, id) {
+  const secret = String(process.env.ACTION_LINK_SECRET || process.env.JWT_SECRET_ADMIN || '').trim();
+  if (!secret) return '';
+  return crypto.createHmac('sha256', secret).update(`${scope}:${id}`).digest('hex').slice(0, 32);
+}
+
+function verifySignedAction(scope, id, supplied) {
+  const expected = signActionToken(scope, id);
+  if (!expected) return false;
+  const a = Buffer.from(expected);
+  const b = Buffer.from(String(supplied || ''));
+  return a.length === b.length && crypto.timingSafeEqual(a, b);
+}
 
 // --------------------------------------------------------------------------
 // RATE LIMITING
@@ -1396,27 +1620,97 @@ const builder = new xml2js.Builder({
 const MAX_UPLOAD_FILE_SIZE_BYTES = Number(process.env.MAX_UPLOAD_FILE_SIZE_BYTES || 15 * 1024 * 1024);
 const MAX_UPLOAD_FILES_PER_REQUEST = Number(process.env.MAX_UPLOAD_FILES_PER_REQUEST || 10);
 const storage = multer.memoryStorage();
-const upload = multer({
+
+// The declared Content-Type is a client-supplied string, so it decides nothing.
+// The old filter accepted anything labelled image/*, anything labelled
+// application/octet-stream, and anything with no type at all — which is every
+// file. These uploads land in Cloudinary on our account and are served from a
+// URL we hand to browsers, so an SVG carrying a <script> is stored XSS and a
+// disguised binary is our storage bill. Signatures are checked instead.
+const IMAGE_SIGNATURES = [
+  { ext: 'jpg', bytes: [0xff, 0xd8, 0xff] },
+  { ext: 'png', bytes: [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a] },
+  { ext: 'gif', bytes: [0x47, 0x49, 0x46, 0x38] },
+  { ext: 'bmp', bytes: [0x42, 0x4d] },
+];
+
+const sniffImageType = (buffer) => {
+  if (!buffer || buffer.length < 12) return null;
+  for (const signature of IMAGE_SIGNATURES) {
+    if (signature.bytes.every((byte, index) => buffer[index] === byte)) return signature.ext;
+  }
+  // RIFF....WEBP
+  if (buffer.slice(0, 4).toString('ascii') === 'RIFF' && buffer.slice(8, 12).toString('ascii') === 'WEBP') return 'webp';
+  // HEIC/HEIF: ....ftyp<brand>
+  if (buffer.slice(4, 8).toString('ascii') === 'ftyp') {
+    const brand = buffer.slice(8, 12).toString('ascii').toLowerCase();
+    if (['heic', 'heix', 'hevc', 'mif1', 'msf1', 'avif'].includes(brand)) return 'heic';
+  }
+  return null;
+};
+
+const rawUpload = multer({
   storage,
   limits: {
     fileSize: MAX_UPLOAD_FILE_SIZE_BYTES,
     files: MAX_UPLOAD_FILES_PER_REQUEST,
   },
   fileFilter: (req, file, callback) => {
+    // Cheap pre-filter only. The real check is on the bytes, below.
     const mimeType = String(file.mimetype || '').toLowerCase();
-
-    // Existing uploads are image-focused. Keep application/octet-stream as a
-    // compatibility escape hatch for browsers/devices that omit a precise type.
-    if (!mimeType || mimeType.startsWith('image/') || mimeType === 'application/octet-stream') {
-      return callback(null, true);
+    if (mimeType === 'image/svg+xml' || mimeType === 'text/html') {
+      const error = new Error('SVG and HTML uploads are not accepted.');
+      error.statusCode = 415;
+      error.code = 'UNSUPPORTED_UPLOAD_TYPE';
+      return callback(error);
     }
-
-    const error = new Error(`Unsupported upload type: ${mimeType}`);
-    error.statusCode = 415;
-    error.code = 'UNSUPPORTED_UPLOAD_TYPE';
-    return callback(error);
+    return callback(null, true);
   },
 });
+
+const collectUploadedFiles = (req) => {
+  const files = [];
+  if (req.file) files.push(req.file);
+  if (Array.isArray(req.files)) files.push(...req.files);
+  else if (req.files && typeof req.files === 'object') {
+    Object.values(req.files).forEach((group) => {
+      if (Array.isArray(group)) files.push(...group);
+    });
+  }
+  return files.filter(Boolean);
+};
+
+const validateUploadedImages = (req, res, next) => {
+  const files = collectUploadedFiles(req);
+  for (const file of files) {
+    const kind = sniffImageType(file.buffer);
+    if (!kind) {
+      return res.status(415).json({
+        message: 'Only real image files are accepted (JPEG, PNG, GIF, BMP, WebP or HEIC).',
+        code: 'UNSUPPORTED_UPLOAD_TYPE',
+        field: file.fieldname,
+      });
+    }
+    // Record what it actually is, so downstream code never trusts the label.
+    file.detectedType = kind;
+  }
+  return next();
+};
+
+// Wrapped so every existing call site — upload.single, upload.fields, upload.array
+// — validates bytes without touching ~15 route definitions.
+const chainUpload = (middleware) => (req, res, next) => middleware(req, res, (error) => {
+  if (error) return next(error);
+  return validateUploadedImages(req, res, next);
+});
+
+const upload = {
+  single: (...args) => chainUpload(rawUpload.single(...args)),
+  fields: (...args) => chainUpload(rawUpload.fields(...args)),
+  array: (...args) => chainUpload(rawUpload.array(...args)),
+  any: (...args) => chainUpload(rawUpload.any(...args)),
+  none: (...args) => rawUpload.none(...args),
+};
 const shadowSchema = new mongoose.Schema({
   matchCategory: String, // 'boxing' or 'mma'
   matchCategoryTwo: String,
@@ -1464,6 +1758,15 @@ const shadowSchema = new mongoose.Schema({
   matchType: String,      // LIVE or SHADOW
   matchTokens: { type: Number, min: 0, default: 0 },
   pot: { type: Number, min: 0, default: 0 },
+  // The prize is declared up front and never grows with entries, so the platform
+  // must not promise more than the entries can cover. Below this many paid
+  // entrants the contest voids and everyone is refunded, which is what keeps the
+  // house off the hook for the shortfall.
+  minimumEntrants: { type: Number, min: 0, default: 0 },
+  autoRefundIfShort: { type: Boolean, default: true },
+  voidedAt: Date,
+  voidReason: String,
+  collectedFees: { type: Number, min: 0, default: 0 },
   maxRounds: Number,
   fighterAImageDeleteUrl: String, // ImgBB delete URL for Fighter A's image
   fighterBImageDeleteUrl: String, 
@@ -1531,6 +1834,15 @@ const shadowSchema = new mongoose.Schema({
    }],
   },
 
+  // Prize settlement bookkeeping
+  prizesSettledAt: Date,
+  prizePoolPaid: Number,
+  houseCutTaken: Number,
+  // Shadow Fight pot target — the promoter stakes a pot and only earns once
+  // entries have covered it (owner's rule: he waits for the pot to fill first).
+  potTarget: { type: Number, default: 0 },
+  promoterStake: { type: Number, default: 0 },
+  profitZoneReachedAt: Date,
   userPredictions: [{
     userId: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
     predictionStatus: { type: String, enum: ['submitted', 'notSubmitted'], default: 'notSubmitted' }
@@ -1589,7 +1901,7 @@ app.post('/compare-matches', verifyAdminToken, async (req, res) => {
 
       res.json({ message: 'Comparison complete', updatedMatches: updatedCount });
   } catch (error) {
-      res.status(500).json({ error: 'Internal server error', details: error.message });
+      res.status(500).json({ error: 'Internal server error' });
   }
 });
 
@@ -1991,6 +2303,12 @@ matchReward: { type: String, enum: ['Rewarded', 'NotRewarded'], default: 'NotRew
   homepagePromotionUpdatedBy: String,
   matchTokens: Number,
   pot: Number,
+  // See shadowSchema: declared prize + minimum entrants is what removes house risk.
+  minimumEntrants: { type: Number, min: 0, default: 0 },
+  autoRefundIfShort: { type: Boolean, default: true },
+  voidedAt: Date,
+  voidReason: String,
+  collectedFees: { type: Number, min: 0, default: 0 },
   profit: Number,
   amountOverPotBudget: Number,
   fighterAImage: String,  // URL of Fighter A's image
@@ -2057,6 +2375,15 @@ matchReward: { type: String, enum: ['Rewarded', 'NotRewarded'], default: 'NotRew
    }],
   },
 
+  // Prize settlement bookkeeping
+  prizesSettledAt: Date,
+  prizePoolPaid: Number,
+  houseCutTaken: Number,
+  // Shadow Fight pot target — the promoter stakes a pot and only earns once
+  // entries have covered it (owner's rule: he waits for the pot to fill first).
+  potTarget: { type: Number, default: 0 },
+  promoterStake: { type: Number, default: 0 },
+  profitZoneReachedAt: Date,
   userPredictions: [{
     userId: { type: mongoose.Schema.Types.ObjectId, ref: 'User' }, // Reference to the user
     predictionStatus: { type: String, enum: ['submitted', 'notSubmitted'], default: 'notSubmitted' }
@@ -2147,7 +2474,7 @@ async function triggerUpcomingEventAutomationForMatch(match, context = {}) {
   }
 }
 
-app.get('/api/update-shadow-open-status', async (req, res) => {
+app.get('/api/update-shadow-open-status', verifyCronSecret, async (req, res) => {
   console.log('Cron job to update matchShadowOpenStatus started.');
 
   try {
@@ -2174,7 +2501,7 @@ app.get('/api/update-shadow-open-status', async (req, res) => {
   }
 });
 
-app.post("/update-match-shadow-open-status/:matchId", async (req, res) => {
+app.post("/update-match-shadow-open-status/:matchId", verifyAdminToken, async (req, res) => {
   const { matchId } = req.params;
   const { status } = req.body; // Expecting "open" or "closed" from frontend
 
@@ -2202,7 +2529,7 @@ app.post("/update-match-shadow-open-status/:matchId", async (req, res) => {
 
 
 
-app.post("/update-match-status-shadow/:matchId", async (req, res) => {
+app.post("/update-match-status-shadow/:matchId", verifyAdminToken, async (req, res) => {
   const { matchId } = req.params;
   const { status } = req.body; // Expecting "active" or "inactive" from frontend
 
@@ -2230,7 +2557,7 @@ app.post("/update-match-status-shadow/:matchId", async (req, res) => {
 
 
 
-app.post("/activate-match/:matchId", async (req, res) => {
+app.post("/activate-match/:matchId", verifyAdminToken, async (req, res) => {
   const { matchId } = req.params;
 
   try {
@@ -2246,7 +2573,7 @@ app.post("/activate-match/:matchId", async (req, res) => {
     console.log(`Match ${matchId} status set to active.`);
 
     // Fetch users
-    const users = await User.find();
+    const users = await User.find().select('email firstName isSubscribed isNotificationsEnabled').limit(20000).lean();
     const nonRegisteredUsers = await Usernonregistered.find();
 
     // Match details for email
@@ -2429,7 +2756,8 @@ app.post('/api/update-match-reward', verifyAdminToken, async (req, res) => {
 
     res.status(200).json({ success: true, message: 'Match reward status updated successfully', match });
   } catch (error) {
-    res.status(500).json({ success: false, message: 'Server error', error });
+    console.error('Request failed:', error);
+    res.status(500).json({ success: false, message: 'Server error' });
   }
 });
 
@@ -2522,7 +2850,8 @@ app.get('/api/matches/:id', async (req, res) => {
 
     res.status(200).json(attachCombatFighterReadFallbacks(match, 'match'));
   } catch (error) {
-    res.status(500).json({ message: 'Server error', error });
+    console.error('Request failed:', error);
+    res.status(500).json({ message: 'Server error' });
   }
 });
 
@@ -2535,7 +2864,8 @@ app.get('/api/shadow/:id', async (req, res) => {
     if (!shadowFight) return res.status(404).json({ message: 'Shadow fight not found' });
     res.status(200).json(attachCombatFighterReadFallbacks(shadowFight, 'shadow'));
   } catch (error) {
-    res.status(500).json({ message: 'Server error', error: error.message });
+    console.error('Request failed:', error);
+    res.status(500).json({ message: 'Server error' });
   }
 });
 
@@ -2776,7 +3106,7 @@ async function handleBulkFightDelete(req, res) {
     });
   } catch (error) {
     console.error('Bulk fight delete failed:', error);
-    return res.status(500).json({ ok: false, message: 'Server error', error: error.message });
+    return res.status(500).json({ ok: false, message: 'Server error' });
   }
 }
 
@@ -2808,7 +3138,7 @@ app.delete('/api/matches/:id', verifyAdminToken, async (req, res) => {
     });
   } catch (error) {
     console.error('Fight delete failed:', error);
-    res.status(500).json({ message: 'Server error', error: error.message });
+    res.status(500).json({ message: 'Server error' });
   }
 });
 
@@ -3155,7 +3485,7 @@ const nonRegisteredUserMailPromises = nonRegisteredUsers.map(user => {
   res.status(200).json({ message: 'Match Added Successfully and Notifications Sent', matchId: savedMatch._id, automation: swarmAutomation || null });
 } catch (error) {
   console.error('Error adding match:', error);
-  res.status(500).json({ message: 'Server error', error: error.message });
+  res.status(500).json({ message: 'Server error' });
 }
 }
 );
@@ -3696,9 +4026,9 @@ app.post('/admin/add-device', verifyAdminToken, async (req, res) => {
     res.status(500).json({ error: 'Internal server error' });
   }
 });
-app.get('/admin/device-info', async (req, res) => {
+app.get('/admin/device-info', verifyAdminToken, async (req, res) => {
   try {
-    const devices = await DeviceInfo.find().lean();
+    const devices = await DeviceInfo.find().sort({ _id: -1 }).limit(5000).lean();
     res.status(200).json(devices);
   } catch (error) {
     console.error(error);
@@ -3776,15 +4106,39 @@ app.post('/admin/add-device-spin-wheel', verifyAdminToken, async (req, res) => {
     res.status(500).json({ error: 'Internal server error' });
   }
 });
-app.get('/admin/device-info-spin-wheel', async (req, res) => {
+app.get('/admin/device-info-spin-wheel', verifyAdminToken, async (req, res) => {
   try {
-    const devices = await DeviceInfoSpinWheel.find().lean();
+    const devices = await DeviceInfoSpinWheel.find().sort({ _id: -1 }).limit(5000).lean();
     res.status(200).json(devices);
   } catch (error) {
     console.error(error);
     res.status(500).json({ message: 'Failed to fetch device info.' });
   }
 });
+// The spin wheel used to download every device row (with player emails) just to
+// decide whether THIS device had already spun. Scoped answer instead.
+app.get('/api/spin-wheel/eligibility', async (req, res) => {
+  try {
+    const deviceId = String(req.query.deviceId || '').trim().slice(0, 128);
+    if (!deviceId) return res.status(400).json({ ok: false, message: 'deviceId is required.' });
+    const existing = await DeviceInfoSpinWheel.findOne({ deviceId }).select('_id createdAt').lean();
+    res.json({ ok: true, deviceId, alreadySpun: Boolean(existing), lastSpinAt: existing?.createdAt || null });
+  } catch (error) {
+    res.status(500).json({ ok: false, message: 'Spin eligibility is temporarily unavailable.' });
+  }
+});
+
+app.get('/api/guest-coins/eligibility', async (req, res) => {
+  try {
+    const deviceId = String(req.query.deviceId || '').trim().slice(0, 128);
+    if (!deviceId) return res.status(400).json({ ok: false, message: 'deviceId is required.' });
+    const existing = await DeviceInfo.findOne({ deviceId }).select('_id createdAt').lean();
+    res.json({ ok: true, deviceId, alreadyClaimed: Boolean(existing), claimedAt: existing?.createdAt || null });
+  } catch (error) {
+    res.status(500).json({ ok: false, message: 'Claim eligibility is temporarily unavailable.' });
+  }
+});
+
 app.delete('/admin/device-info-spin-wheel', verifyAdminToken, async (req, res) => {
   const { email, deviceId } = req.body;
 
@@ -3915,12 +4269,13 @@ app.put('/update-profile-url', verifyToken, async (req, res) => {
 
       res.json({ message: 'Profile URLs updated successfully', modifiedCount: result.modifiedCount ,  modifiedCount2: result2.modifiedCount });
   } catch (error) {
-      res.status(500).json({ message: 'Internal Server Error', error: error.message });
+      console.error('Request failed:', error);
+      res.status(500).json({ message: 'Internal Server Error' });
   }
 });
 // SECURITY: authenticated, and bound to the signed-in account. The email used
 // to come from the request body, so a spoofed device id could credit anyone.
-app.post('/admin/add-tokens-won', verifyToken, async (req, res) => {
+app.post('/admin/add-tokens-won', verifyToken, requireScope(TOKEN_SCOPES.PLAYER), async (req, res) => {
   const { deviceId } = req.body;
   const email = String(req.user?.email || req.body?.email || '').trim();
 
@@ -4122,7 +4477,7 @@ app.post('/admin/add-tokens-won', verifyToken, async (req, res) => {
 // claim the top value on every spin.
 const SPIN_WHEEL_PRIZES = Object.freeze([0, 1, 2, 3, 4, 5, 7, 10, 200]);
 
-app.post('/admin/add-tokens-won-spin-wheel', verifyToken, async (req, res) => {
+app.post('/admin/add-tokens-won-spin-wheel', verifyToken, requireScope(TOKEN_SCOPES.PLAYER), async (req, res) => {
   const { deviceId } = req.body;
   const email = String(req.user?.email || req.body?.email || '').trim();
   const prize = Math.floor(Number(req.body?.results));
@@ -4684,7 +5039,7 @@ app.post('/api/authorize-net/first-payment', submitLimiter, async (req, res) => 
     });
   } catch (error) {
     console.error('Error processing first payment:', error);
-    return res.status(500).json({ message: 'Error processing payment', error: error.message });
+    return res.status(500).json({ message: 'Error processing payment' });
   }
 });
 app.post('/api/authorize-net/transaction', submitLimiter, async (req, res) => {
@@ -4788,7 +5143,7 @@ app.post('/api/authorize-net/transaction', submitLimiter, async (req, res) => {
     });
   } catch (error) {
     console.error('Error processing transaction:', error.response?.data || error.message);
-    return res.status(500).json({ message: 'Error processing transaction', error: error.message });
+    return res.status(500).json({ message: 'Error processing transaction' });
   }
 });
 
@@ -4945,7 +5300,7 @@ const notification = new Notification({
     }
 
     // Generate JWT token
-    const jwtToken = jwt.sign({ id: user._id }, process.env.JWT_SECRET, { expiresIn: SESSION_TOKEN_TTL });
+    const jwtToken = jwt.sign({ id: user._id, scope: TOKEN_SCOPES.PLAYER }, process.env.JWT_SECRET, { expiresIn: SESSION_TOKEN_TTL });
 
     // Return JWT token and user info
     res.status(200).json({
@@ -5006,12 +5361,14 @@ app.post('/user/updatePayment/:id', verifyToken, async (req, res) => {
     res.status(200).json({ message: 'Affiliate updated successfully', data: updatedUser });
   } catch (error) {
     console.error(error);
-    res.status(500).json({ message: 'Server error', error });
+    res.status(500).json({ message: 'Server error' });
   }
 });
 
 // Update Profile API
-app.put('/update-profile/:userId', upload.single('image'), async (req, res) => {
+// SECURITY: was fully public — any caller could rewrite any player's profile
+// (including their citizenship/eligibility flags) by guessing an id.
+app.put('/update-profile/:userId', verifyToken, requireSelf((req) => req.params.userId), upload.single('image'), async (req, res) => {
   const { userId } = req.params;
   const {
     firstName,
@@ -5130,7 +5487,8 @@ app.post('/api/reward-tokens/:userId', verifyAdminToken, async (req, res) => {
 
     res.status(200).json({ success: true, message: 'Tokens rewarded and match updated successfully', user, match });
   } catch (error) {
-    res.status(500).json({ success: false, message: 'Server error', error });
+    console.error('Request failed:', error);
+    res.status(500).json({ success: false, message: 'Server error' });
   }
 });
 
@@ -5166,14 +5524,15 @@ app.post('/api/reward-tokens-only-forcibly/:userId', verifyAdminToken, async (re
 
     res.status(200).json({ success: true, message: 'Tokens rewarded successfully', user});
   } catch (error) {
-    res.status(500).json({ success: false, message: 'Server error', error });
+    console.error('Request failed:', error);
+    res.status(500).json({ success: false, message: 'Server error' });
   }
 });
 
 
 // SECURITY: authenticated. userId now comes from the verified token, not the
 // body — otherwise any caller could drain another player's wallet.
-app.post('/api/deduct-tokens', verifyToken, async (req, res) => {
+app.post('/api/deduct-tokens', verifyToken, requireScope(TOKEN_SCOPES.PLAYER), async (req, res) => {
   try {
     const { matchTokens } = req.body;
     const userId = String(req.user?.id || req.user?._id || '').trim();
@@ -5207,7 +5566,20 @@ app.post('/api/deduct-tokens', verifyToken, async (req, res) => {
 // Get registered users. Kept at the legacy /users path for compatibility,
 // but response payloads are sanitized so credentials, reset tokens, and card data
 // cannot be exposed to public clients.
-app.get('/users', async (req, res) => {
+// Display names only — what leaderboards need, nothing more.
+app.get('/api/public/user-directory', async (req, res) => {
+  try {
+    const users = await User.find({})
+      .select('_id firstName lastName playerName profileUrl')
+      .limit(parsePositiveInteger(req.query.limit, 500, 5000))
+      .lean();
+    res.status(200).json(users);
+  } catch (error) {
+    res.status(500).json({ message: 'Could not load the directory.' });
+  }
+});
+
+app.get('/users', verifyAdminToken, async (req, res) => {
   try {
     const users = await User.find().select(USER_SAFE_SELECT).lean();
     res.send(sanitizeAccountList(users));
@@ -5779,7 +6151,11 @@ app.post('/api/public/apparel-orders', submitLimiter, async (req, res) => {
 });
 
 app.post('/contact-us-fantasymmadness', submitLimiter, (req, res) => {
-  const { fullName, email, subject, message } = req.body;
+  // Escaped before it reaches any email body — see escapeHtml.
+  const fullName = escapeHtml(String(req.body?.fullName || '').slice(0, 120));
+  const email = escapeHtml(String(req.body?.email || '').slice(0, 160));
+  const subject = escapeHtml(String(req.body?.subject || '').slice(0, 200));
+  const message = escapeHtml(String(req.body?.message || '').slice(0, 4000));
 
   // Validate input (basic validation)
   if (!fullName || !email || !message) {
@@ -5907,7 +6283,9 @@ app.post('/contact-us-fantasymmadness', submitLimiter, (req, res) => {
       res.status(500).json({ error: 'Failed to send emails.' });
     });
 });
-app.get('/notify', async (req, res) => {
+// SECURITY: admin-only. This sends mail to every user and affiliate; as an open
+// GET, anyone (or a crawler prefetching links) could trigger a mass blast.
+app.get('/notify', verifyAdminToken, async (req, res) => {
   try {
     // Fetch all matches
     const matches = await Match.find({});
@@ -5916,7 +6294,7 @@ app.get('/notify', async (req, res) => {
     }
 
     // Fetch all users
-    const users = await User.find({});
+    const users = await User.find({}).select('email firstName isSubscribed isNotificationsEnabled').limit(20000).lean();
     if (!users || users.length === 0) {
       return res.status(404).json({ message: 'No users found' });
     }
@@ -6025,7 +6403,7 @@ app.get('/notify', async (req, res) => {
     res.status(200).json({ message: 'Notifications processed successfully' });
   } catch (error) {
     console.error(error);
-    res.status(500).json({ message: 'Error processing notifications', error });
+    res.status(500).json({ message: 'Error processing notifications' });
   }
 });
 
@@ -6058,7 +6436,7 @@ app.post('/send-emails-to-all-users', verifyAdminToken, async (req, res) => {
 
 app.post('/register', submitLimiter, async (req, res) => {
   try {
-    console.log("Incoming /register request body:", req.body);
+    // Deliberately not logging req.body: it carries the plaintext password.
 
     const {
       firstName,
@@ -6090,7 +6468,12 @@ app.post('/register', submitLimiter, async (req, res) => {
 
     // Basic input validation to prevent malformed requests
     if (!email || !password || !firstName || !lastName) {
-      console.warn("Missing required fields:", { email, password, firstName, lastName });
+      console.warn('Registration rejected: missing required fields', {
+      hasEmail: Boolean(email),
+      hasPassword: Boolean(password),
+      hasFirstName: Boolean(firstName),
+      hasLastName: Boolean(lastName),
+    });
       return res.status(400).json({ error: "Missing required fields" });
     }
 
@@ -6282,7 +6665,7 @@ app.delete('/usertodelete/:id', verifyAdminToken, async (req, res) => {
 
 
 // Get user details by email (for checking verification status and returning additional user info)
-app.get('/user/:email', async (req, res) => {
+app.get('/user/:email', verifyToken, async (req, res) => {
   const { email } = req.params;
   try {
     const user = await User.findOne({ email });
@@ -6310,9 +6693,13 @@ app.get('/user/:email', async (req, res) => {
 });
 
 
-app.post('/upload-avatar', upload.single('image'), async (req, res) => {
+// SECURITY: the email came from the request body, so anyone could overwrite
+// another player's avatar (and delete their Cloudinary asset).
+app.post('/upload-avatar', verifyToken, upload.single('image'), async (req, res) => {
   try {
-    const { email } = req.body;
+    const tokenUser = await User.findById(req.user?.id || req.user?._id).select('email').lean();
+    const email = tokenUser?.email;
+    if (!email) return res.status(403).json({ message: 'You can only change your own avatar.' });
 
     if (!req.file) {
       return res.status(400).json({ message: 'No image file provided' });
@@ -6514,14 +6901,14 @@ async function convertPastLiveFightsToShadowTemplates({ notifyAffiliates = false
   return { processedAt: now.toISOString(), converted, skipped, checked: liveMatches.length };
 }
 
-app.get('/api/cron-job', async (req, res) => {
+app.get('/api/cron-job', verifyCronSecret, async (req, res) => {
   try {
     const notifyAffiliates = ['true', '1', 'yes'].includes(String(req.query.notifyAffiliates || '').toLowerCase());
     const result = await convertPastLiveFightsToShadowTemplates({ notifyAffiliates });
     res.status(200).json({ ok: true, message: 'Live fight rollover completed.', ...result });
   } catch (error) {
     console.error('Error in cron job:', error);
-    res.status(500).json({ ok: false, error: 'Cron job failed.', details: error.message });
+    res.status(500).json({ ok: false, error: 'Cron job failed.' });
   }
 });
 
@@ -6548,7 +6935,7 @@ app.post('/login', loginLimiter, async (req, res) => {
       return res.status(400).json({ message: 'Invalid email or password' });
     }
 
-    const token = jwt.sign({ id: user._id }, process.env.JWT_SECRET, { expiresIn: SESSION_TOKEN_TTL });
+    const token = jwt.sign({ id: user._id, scope: TOKEN_SCOPES.PLAYER }, process.env.JWT_SECRET, { expiresIn: SESSION_TOKEN_TTL });
 
     res.cookie('token', token, { httpOnly: true, maxAge: SESSION_COOKIE_MAX_AGE });
 
@@ -7102,6 +7489,61 @@ async function settlePaidFmPlusOrder(orderNumber, providerEventId = '') {
   return settled;
 }
 
+// A signed-in player is checked against their stored state. A guest checkout has
+// no account yet, so the state they type at checkout is used; it is re-checked
+// once the account exists.
+async function blockPurchaseOutsidePaidStates(req) {
+  const userId = String(req.user?.id || req.user?._id || '').trim();
+  let state = String(req.body?.state || '').trim().toUpperCase();
+  if (userId) {
+    const account = await User.findById(userId).select('residenceState').lean();
+    if (account?.residenceState) state = String(account.residenceState).toUpperCase();
+  }
+  if (!state) return null; // nothing to judge on yet; the entry gate still applies
+
+  const mode = resolveStateMode(state);
+  if (mode === 'paid') return null;
+  return {
+    ok: false,
+    code: mode === 'blocked' ? 'STATE_BLOCKED' : 'FREE_PLAY_ONLY',
+    state,
+    message: mode === 'blocked'
+      ? `Fantasy MMAdness is not available in ${state}.`
+      : `Coin purchases are not available in ${state}. You can still play every fight for free — coins are won and used for status there, not cash.`,
+  };
+}
+
+// Lets the app render free-play or paid mode from one build.
+app.get('/api/public/jurisdiction', optionalVerifyToken, async (req, res) => {
+  try {
+    let state = String(req.query.state || '').trim().toUpperCase();
+    const userId = String(req.user?.id || req.user?._id || '').trim();
+    if (userId) {
+      const account = await User.findById(userId).select('residenceState dateOfBirth').lean();
+      if (account?.residenceState) state = String(account.residenceState).toUpperCase();
+    }
+    const mode = resolveStateMode(state);
+    return res.json({
+      ok: true,
+      state: state || null,
+      mode,
+      minimumAge: minimumAgeForState(state),
+      canPayEntryFees: mode === 'paid',
+      canBuyCoins: mode === 'paid',
+      canWinCashValue: mode === 'paid',
+      canPlayFree: mode !== 'blocked',
+      message: mode === 'paid'
+        ? 'Paid contests available.'
+        : mode === 'blocked'
+          ? 'Not available in this state.'
+          : 'Free play only — coins are for status here, not cash value.',
+    });
+  } catch (error) {
+    console.error('Jurisdiction lookup failed:', error);
+    return res.status(500).json({ ok: false, message: 'Could not determine availability.' });
+  }
+});
+
 app.get('/api/public/coin-products', (_req, res) => {
   const products = Object.values(FM_COIN_PRODUCTS).map((product) => ({
     ...product,
@@ -7121,6 +7563,12 @@ app.get('/api/public/fm-plus-plans', (_req, res) => {
 
 app.post('/api/checkout/coin-orders', optionalVerifyToken, async (req, res) => {
   try {
+    // Free-play states must not be able to buy coins. If they could, the coins
+    // would have cash value there and the free mode would be the paid product
+    // with extra steps.
+    const purchaseBlock = await blockPurchaseOutsidePaidStates(req);
+    if (purchaseBlock) return res.status(403).json(purchaseBlock);
+
     if (!hasAuthorizeNetCredentials()) {
       return res.status(503).json({
         ok: false,
@@ -7221,6 +7669,9 @@ app.post('/api/checkout/coin-orders', optionalVerifyToken, async (req, res) => {
 
 app.post('/api/checkout/fm-plus-orders', optionalVerifyToken, async (req, res) => {
   try {
+    const purchaseBlock = await blockPurchaseOutsidePaidStates(req);
+    if (purchaseBlock) return res.status(403).json(purchaseBlock);
+
     if (!hasAuthorizeNetCredentials()) {
       return res.status(503).json({ ok: false, code: 'AUTHORIZE_NET_NOT_CONFIGURED', message: 'Secure FM+ checkout is awaiting merchant gateway configuration.' });
     }
@@ -7383,7 +7834,7 @@ app.post('/api/webhooks/authorize-net', async (req, res) => {
     });
   } catch (error) {
     console.error('[authorize-net-checkout] Webhook settlement failed:', error);
-    return res.status(error.status || 500).json({ ok: false, message: error.message || 'Payment settlement failed.' });
+    return res.status(error.status || 500).json({ ok: false, message: 'Payment settlement failed.' });
   }
 });
 
@@ -7562,7 +8013,7 @@ app.post('/api/users/me/streak/skip-wait', verifyToken, async (req, res) => {
 
 
 // Profile API
-app.get('/profileAffiliate', verifyToken, async (req, res) => {
+app.get('/profileAffiliate', verifyToken, requireScope(TOKEN_SCOPES.AFFILIATE), async (req, res) => {
   try {
     const user = await Affiliate.findById(req.user.id).select(AFFILIATE_SAFE_SELECT);
 
@@ -7617,7 +8068,8 @@ app.post('/api/reward-tokens-to-admin', verifyAdminToken, async (req, res) => {
 
     res.status(200).json({ success: true, message: 'Tokens added to Admin wallet successfully', adminToken });
   } catch (error) {
-    res.status(500).json({ success: false, message: 'Server error', error });
+    console.error('Request failed:', error);
+    res.status(500).json({ success: false, message: 'Server error' });
   }
 });
 
@@ -7626,10 +8078,10 @@ app.post('/api/reward-tokens-to-admin', verifyAdminToken, async (req, res) => {
 
 
 // GET API to fetch all admin token details
-app.get('/api/admin-tokens', async (req, res) => {
+app.get('/api/admin-tokens', verifyAdminToken, async (req, res) => {
   try {
     // Fetch all admin tokens from the database
-    const adminTokens = await Admintokens.find().lean();
+    const adminTokens = await Admintokens.find().sort({ _id: -1 }).limit(1000).lean();
 
     if (adminTokens.length === 0) {
       return res.status(404).json({ success: false, message: 'No admin tokens found' });
@@ -7642,7 +8094,8 @@ app.get('/api/admin-tokens', async (req, res) => {
       adminTokens 
     });
   } catch (error) {
-    res.status(500).json({ success: false, message: 'Server error', error });
+    console.error('Request failed:', error);
+    res.status(500).json({ success: false, message: 'Server error' });
   }
 });
 
@@ -7725,7 +8178,7 @@ attachSafeAccountJsonTransform(affiliateSchema);
 const Affiliate = mongoose.models.Affiliate || mongoose.model('Affiliate', affiliateSchema);
 
 
-app.post('/upload-affiliate-reward', upload.single('image'), async (req, res) => {
+app.post('/upload-affiliate-reward', verifyAdminToken, upload.single('image'), async (req, res) => {
   try {
     const { affiliateId, rewardTitle } = req.body;
 
@@ -8007,7 +8460,7 @@ const notification = new Notification({
 
 
       // Send email notification to admin for approval
-      const approvalLink = `https://fantasymmadness-game-server-three.vercel.app/approveAffiliate/${affiliate._id}`;
+      const approvalLink = `https://fantasymmadness-game-server-three.vercel.app/approveAffiliate/${affiliate._id}?t=${signActionToken('affiliate-approval', affiliate._id)}`;
 
       await transporter.sendMail({
         from: '"Fantasy Madness" <Fantasymmadness2@gmail.com>',
@@ -8060,7 +8513,7 @@ const notification = new Notification({
     }
 
     // Generate JWT token
-    const jwtToken = jwt.sign({ id: affiliate._id }, process.env.JWT_SECRET, { expiresIn: SESSION_TOKEN_TTL });
+    const jwtToken = jwt.sign({ id: affiliate._id, scope: TOKEN_SCOPES.AFFILIATE }, process.env.JWT_SECRET, { expiresIn: SESSION_TOKEN_TTL });
 
     // Return JWT token and affiliate info
     res.status(200).json({
@@ -8254,7 +8707,7 @@ app.delete('/affiliates/:id/payouts-to-delete', verifyAdminToken, async (req, re
 // token rather than the :id in the URL. The amount is validated against the real
 // balance and debited immediately, so the same balance cannot be requested twice.
 // (:id is kept in the path for backward compatibility but is no longer trusted.)
-app.post('/affiliate/:id/payout', verifyToken, async (req, res) => {
+app.post('/affiliate/:id/payout', verifyToken, requireScope(TOKEN_SCOPES.AFFILIATE), async (req, res) => {
   try {
     const affiliateId = String(req.user?.id || req.user?._id || '').trim();
     if (!affiliateId) {
@@ -8294,6 +8747,19 @@ app.post('/affiliate/:id/payout', verifyToken, async (req, res) => {
 
     // Debit now so the same balance cannot be requested again before the admin
     // processes it. A rejected payout must credit this back.
+    // Atomic: only applies while tokens still equals what we read, so a second
+    // simultaneous request cannot claim the same balance.
+    const debited = await Affiliate.findOneAndUpdate(
+      { _id: affiliateId, tokens: String(balance) },
+      { tokens: String(balance - requested) },
+      { new: true }
+    );
+    if (!debited) {
+      return res.status(409).json({
+        message: 'Your balance just changed. Please review and request again.',
+        code: 'BALANCE_CHANGED',
+      });
+    }
     affiliate.tokens = String(balance - requested);
     await recordWalletMove({
       userId: affiliate._id,
@@ -8341,7 +8807,8 @@ app.post('/affiliate/:id/payout', verifyToken, async (req, res) => {
     // Respond to the client
     res.status(200).json({ message: 'Payout request created and email sent successfully', payout });
   } catch (error) {
-    res.status(500).json({ message: 'Server error', error });
+    console.error('Request failed:', error);
+    res.status(500).json({ message: 'Server error' });
   }
 });
 
@@ -8389,12 +8856,12 @@ app.post('/confirm-payment-affiliate', verifyAdminToken, async (req, res) => {
         res.status(200).json({ message: 'Payment processed successfully', affiliate });
     } catch (error) {
         console.error('Error processing payment:', error);
-        res.status(500).json({ message: 'Server error', error });
+        res.status(500).json({ message: 'Server error' });
     }
 });
 
 
-app.post('/affiliate/:affiliateId/remove-user', verifyToken, async (req, res) => {
+app.post('/affiliate/:affiliateId/remove-user', verifyToken, requireScope(TOKEN_SCOPES.AFFILIATE), async (req, res) => {
   const { affiliateId } = req.params;
   const { userId } = req.body;
 
@@ -8479,7 +8946,7 @@ app.post('/affiliate/:affiliateId/remove-user', verifyToken, async (req, res) =>
 
   } catch (error) {
     console.error('Error in remove-user route:', error);
-    return res.status(500).json({ message: 'Error removing user from the league', error });
+    return res.status(500).json({ message: 'Error removing user from the league' });
   }
 });
 
@@ -8511,7 +8978,8 @@ app.post('/clean-affiliate-users', verifyAdminToken, async (req, res) => {
 
     return res.status(200).json({ message: 'Affiliate user lists cleaned successfully' });
   } catch (error) {
-    return res.status(500).json({ message: 'Error cleaning affiliate users', error });
+    console.error('Request failed:', error);
+    return res.status(500).json({ message: 'Error cleaning affiliate users' });
   }
 });
 
@@ -8547,7 +9015,8 @@ app.post('/api/reward-tokens-to-affiliate/:affiliateId', verifyAdminToken, async
 
     res.status(200).json({ success: true, message: 'Tokens rewarded to affiliate successfully', user });
   } catch (error) {
-    res.status(500).json({ success: false, message: 'Server error', error });
+    console.error('Request failed:', error);
+    res.status(500).json({ success: false, message: 'Server error' });
   }
 });
 
@@ -8564,11 +9033,13 @@ app.get('/affiliateByName', async (req, res) => {
 
   try {
       // Assuming you have a model called Affiliate
+      // Safe projection only. This used to return the entire document —
+      // payouts, tax fields, email, payment details — to anyone who guessed a name.
       const affiliate = await Affiliate.findOne({
           $expr: { 
               $eq: [{ $concat: ["$firstName", " ", "$lastName"] }, fullName] 
           }
-      });
+      }).select('_id firstName lastName playerName profileUrl totalViews').lean();
 
       if (!affiliate) {
           return res.status(404).json({ message: 'Affiliate not found' });
@@ -8583,7 +9054,7 @@ app.get('/affiliateByName', async (req, res) => {
 
 
 
-app.post('/affiliate/updatePayment/:id', verifyToken, async (req, res) => {
+app.post('/affiliate/updatePayment/:id', verifyToken, requireScope(TOKEN_SCOPES.AFFILIATE), async (req, res) => {
   if (String(req.user?.id || req.user?._id || '') !== String(req.params.id)) {
     return res.status(403).json({ message: 'You can only update your own payment details.', code: 'NOT_OWNER' });
   }
@@ -8608,7 +9079,7 @@ app.post('/affiliate/updatePayment/:id', verifyToken, async (req, res) => {
     res.status(200).json({ message: 'Affiliate updated successfully', data: updatedAffiliate });
   } catch (error) {
     console.error(error);
-    res.status(500).json({ message: 'Server error', error });
+    res.status(500).json({ message: 'Server error' });
   }
 });
 
@@ -8725,7 +9196,7 @@ const sendAffiliateEmail = async (affiliate, user) => {
   await transporter.sendMail(mailOptions);
 };
 
-app.post('/affiliate/:affiliateId/join', verifyToken, async (req, res) => {
+app.post('/affiliate/:affiliateId/join', verifyToken, requireScope(TOKEN_SCOPES.PLAYER), async (req, res) => {
   const { affiliateId } = req.params;
   // SECURITY: derived from the verified token. Body ids are ignored — otherwise
   // any caller could join another player into a league.
@@ -8763,10 +9234,11 @@ app.post('/affiliate/:affiliateId/join', verifyToken, async (req, res) => {
 
     return res.status(200).json({ message: 'User successfully joined the league', affiliate });
   } catch (error) {
-    return res.status(500).json({ message: 'Error joining the league', error });
+    console.error('Request failed:', error);
+    return res.status(500).json({ message: 'Error joining the league' });
   }
 });
-app.put('/update-profile-affiliate/:userId', upload.single('image'), async (req, res) => {
+app.put('/update-profile-affiliate/:userId', verifyToken, requireSelf((req) => req.params.userId), upload.single('image'), async (req, res) => {
   const { userId } = req.params;
   const { firstName, lastName, playerName, phone, zipCode, shortBio } = req.body;
 
@@ -8864,7 +9336,38 @@ const notification = new Notification({
 
 // Get affiliates. Kept at the legacy /affiliates path for compatibility,
 // with sensitive credential/reset/payment values removed from each payload.
-app.get('/affiliates', async (req, res) => {
+// Public-safe projection: league browsers must not receive affiliate email,
+// phone or payout details, which AFFILIATE_SAFE_SELECT still carries.
+const AFFILIATE_PUBLIC_FIELDS = Object.freeze([
+  '_id', 'firstName', 'lastName', 'playerName', 'profileUrl', 'totalViews',
+  'verified', 'rewardTitle', 'rewardImageUrl', 'affiliateName', 'leagueName',
+  'description', 'usersJoined', 'promotionBackgroundUrl',
+]);
+
+function toPublicAffiliate(affiliate) {
+  const row = {};
+  AFFILIATE_PUBLIC_FIELDS.forEach((field) => {
+    if (affiliate?.[field] !== undefined) row[field] = affiliate[field];
+  });
+  if (Array.isArray(row.usersJoined)) row.usersJoined = row.usersJoined.length;
+  return row;
+}
+
+app.get('/api/public/affiliates', async (req, res) => {
+  try {
+    const limit = parsePositiveInteger(req.query.limit, 60, 200);
+    const affiliates = await Affiliate.find({ verified: true })
+      .select(AFFILIATE_SAFE_SELECT)
+      .limit(limit)
+      .lean();
+    res.json(sanitizeAccountList(affiliates).map(toPublicAffiliate));
+  } catch (error) {
+    console.error('Error fetching public affiliates:', error);
+    res.status(500).json({ message: 'Error fetching affiliates' });
+  }
+});
+
+app.get('/affiliates', verifyAdminToken, async (req, res) => {
   try {
     const affiliates = await Affiliate.find().select(AFFILIATE_SAFE_SELECT).lean();
     res.send(sanitizeAccountList(affiliates));
@@ -8879,8 +9382,11 @@ app.get('/api/public/leagues', async (req, res) => {
     const limit = parsePositiveInteger(req.query.limit, 12, 100);
     const affiliates = await Affiliate.find().select(AFFILIATE_SAFE_SELECT).lean();
     const sanitizedAffiliates = sanitizeAccountList(affiliates);
-    const leagues = sanitizedAffiliates.slice(0, limit);
-    const joinedUserIds = [...new Set(leagues
+    // Keep the raw rows for the joined-user lookup below, but only publish the
+    // public projection: this route used to hand out affiliate email + phone.
+    const leagueSource = sanitizedAffiliates.slice(0, limit);
+    const leagues = leagueSource.map(toPublicAffiliate);
+    const joinedUserIds = [...new Set(leagueSource
       .flatMap((league) => Array.isArray(league.usersJoined) ? league.usersJoined : [])
       .map((entry) => String(entry?.userId || '').trim())
       .filter((id) => mongoose.isValidObjectId(id)))];
@@ -8888,7 +9394,13 @@ app.get('/api/public/leagues', async (req, res) => {
     const userRows = userObjectIds.length
       ? await User.find({ _id: { $in: userObjectIds } }).select(USER_SAFE_SELECT).lean()
       : [];
-    const users = sanitizeAccountList(userRows);
+    const users = sanitizeAccountList(userRows).map((row) => ({
+      _id: row._id,
+      firstName: row.firstName,
+      lastName: row.lastName,
+      playerName: row.playerName,
+      profileUrl: row.profileUrl,
+    }));
 
     res.json({
       ok: true,
@@ -8949,7 +9461,7 @@ app.post('/affiliates/:id/verify', verifyAdminToken, async (req, res) => {
   }
 });
 
-app.post('/registerAffiliate', upload.single('image'), async (req, res) => {
+app.post('/registerAffiliate', submitLimiter, upload.single('image'), async (req, res) => {
   try {
     const {
       firstName,
@@ -9016,7 +9528,7 @@ const notification = new Notification({
       title: `Affiliate Signed Up: ${newUser.firstName}`,
     });
     await notification.save();
-    const approvalLink = `https://fantasymmadness-game-server-three.vercel.app/approveAffiliate/${newUser._id}`;
+    const approvalLink = `https://fantasymmadness-game-server-three.vercel.app/approveAffiliate/${newUser._id}?t=${signActionToken('affiliate-approval', newUser._id)}`;
 
     // Send email notification to the admin
     await transporter.sendMail({
@@ -9078,9 +9590,23 @@ const notification = new Notification({
   }
 });
 
+// SECURITY: this was an open GET that flipped an affiliate to verified — anyone
+// (or a link-prefetching mail client) could approve accounts. Links now carry an
+// HMAC built with signActionToken('affiliate-approval', id).
 app.get('/approveAffiliate/:id', async (req, res) => {
   try {
     const { id } = req.params;
+    const isAdminCaller = (() => {
+      const token = String(req.headers.authorization || '').replace(/^Bearer\s+/i, '').trim();
+      try {
+        return Boolean(token && process.env.JWT_SECRET_ADMIN && jwt.verify(token, process.env.JWT_SECRET_ADMIN));
+      } catch (_error) {
+        return false;
+      }
+    })();
+    if (!isAdminCaller && !verifySignedAction('affiliate-approval', id, req.query.t)) {
+      return res.status(403).send('<html><body style="font-family:Georgia,serif;padding:48px"><h1>This approval link is not valid.</h1><p>Open the affiliate in the admin console to approve it.</p></body></html>');
+    }
     const affiliate = await Affiliate.findById(id);
 
     if (!affiliate) {
@@ -9243,7 +9769,7 @@ app.post('/loginAffiliate', loginLimiter, async (req, res) => {
       return res.status(400).json({ message: 'Invalid email or password' });
     }
 
-    const token = jwt.sign({ id: user._id }, process.env.JWT_SECRET, { expiresIn: SESSION_TOKEN_TTL });
+    const token = jwt.sign({ id: user._id, scope: TOKEN_SCOPES.AFFILIATE }, process.env.JWT_SECRET, { expiresIn: SESSION_TOKEN_TTL });
 
     res.cookie('token', token, { httpOnly: true, maxAge: SESSION_COOKIE_MAX_AGE });
 
@@ -9313,7 +9839,7 @@ const Score = mongoose.models.Score || mongoose.model('Score', scoreSchema);
 // Signed-in entry feed used by the v7 MY ENTRIES and Watch Party screens.
 // The user id comes only from the verified token; callers cannot inspect another
 // player's scorecard by changing a query string.
-app.get('/api/users/me/fight-entries', verifyToken, async (req, res) => {
+app.get('/api/users/me/fight-entries', verifyToken, requireScope(TOKEN_SCOPES.PLAYER), async (req, res) => {
   try {
     const playerId = normalizePredictionUserId(req.user?.id || req.user?._id);
     if (!playerId) return res.status(401).json({ ok: false, message: 'Sign in to view your entries.' });
@@ -9355,7 +9881,7 @@ app.get('/api/users/me/fight-entries', verifyToken, async (req, res) => {
 //   * delegates NEW entries to createFightEntry(), which charges atomically
 //   * still allows a player to EDIT their own existing entry for free
 // Prefer POST /api/fights/:fightId/entries. Retire this once the website moves.
-app.post('/api/scores', verifyToken, async (req, res) => {
+app.post('/api/scores', verifyToken, requireScope(TOKEN_SCOPES.PLAYER), async (req, res) => {
   try {
     const { matchId, predictions } = req.body;
     const playerId = String(req.user?.id || req.user?._id || '').trim();
@@ -9375,6 +9901,28 @@ app.post('/api/scores', verifyToken, async (req, res) => {
     const existingScore = await Score.findOne({ playerId, matchId, refunded: { $ne: true } });
 
     if (existingScore) {
+      // SECURITY: the edit path used to accept new predictions at any time.
+      // New entries were gated by isFightOpenForEntry, but an existing entrant
+      // could rewrite their card AFTER the fight — or after the official round
+      // stats were entered — and score a perfect sheet. Edits now obey the same
+      // lock as entries, and are refused outright once prizes are settled.
+      const liveFight = await Match.findById(matchId) || await Shadow.findById(matchId);
+      if (!liveFight) {
+        return res.status(404).json({ message: 'Fight not found.', code: 'FIGHT_NOT_FOUND' });
+      }
+      if (liveFight.prizesSettledAt) {
+        return res.status(409).json({
+          message: 'This fight has been settled — predictions can no longer be changed.',
+          code: 'FIGHT_SETTLED',
+        });
+      }
+      if (!isFightOpenForEntry(liveFight)) {
+        return res.status(409).json({
+          message: 'Predictions are locked for this fight.',
+          code: 'FIGHT_LOCKED',
+        });
+      }
+
       existingScore.predictions = predictions;
       await existingScore.save();
       try {
@@ -9415,7 +9963,7 @@ app.post('/api/scores', verifyToken, async (req, res) => {
 });
 
 // API endpoint to retrieve scores
-app.get('/api/scores', async (req, res) => {
+app.get('/api/scores', optionalVerifyToken, async (req, res) => {
   try {
     const query = {};
     if (req.query.matchId) query.matchId = String(req.query.matchId);
@@ -9425,7 +9973,29 @@ app.get('/api/scores', async (req, res) => {
     if (req.query.limit) scoreQuery.limit(parsePositiveInteger(req.query.limit, 100, 1000));
 
     const scores = await scoreQuery;
-    res.send(scores);
+
+    // CONFIDENTIALITY: raw picks are only ever returned to their owner. Anyone
+    // else (leaderboards, public boards) gets points without the predictions,
+    // so the field cannot be read and played against before a fight locks.
+    const callerId = String(req.user?.id || req.user?._id || '');
+    let isAdmin = false;
+    try {
+      const adminHeader = req.headers.authorization;
+      const adminToken = adminHeader && adminHeader.startsWith('Bearer ') ? adminHeader.slice(7) : null;
+      if (adminToken && process.env.JWT_SECRET_ADMIN) {
+        jwt.verify(adminToken, process.env.JWT_SECRET_ADMIN);
+        isAdmin = true;
+      }
+    } catch (ignored) { isAdmin = false; }
+
+    const safeScores = scores.map((row) => {
+      const isOwner = callerId && String(row.playerId) === callerId;
+      if (isOwner || isAdmin) return row;
+      const { predictions, ...rest } = row;
+      return rest;
+    });
+
+    res.send(safeScores);
   } catch (error) {
     res.status(500).send(error);
   }
@@ -10182,12 +10752,12 @@ app.post('/youtubeVideos', verifyAdminToken, async (req, res) => {
 
 // Get Matches API
 app.get('/youtubeVideos', async (req, res) => {
-  const match = await YoutubeVideos.find().lean();
+  const match = await YoutubeVideos.find().sort({ _id: -1 }).limit(500).lean();
   res.send(match);
 });
 
 
-app.post('/addShadow', upload.fields([
+app.post('/addShadow', verifyAdminToken, upload.fields([
   { name: 'fighterAImage' },
   { name: 'fighterBImage' },
   { name: 'promotionBackground' },
@@ -10377,7 +10947,7 @@ app.post('/addShadow', upload.fields([
 });
 
 
-app.get('/dashboard-counts', async (req, res) => {
+app.get('/dashboard-counts', verifyAdminToken, async (req, res) => {
   try {
     // Fetch entity counts
     const affiliatesCount = await Affiliate.countDocuments({});
@@ -10471,7 +11041,8 @@ app.post('/remove-match-from-my-dashboard', verifyToken, async (req, res) => {
 
       res.status(201).json({ message: 'Match removed successfully', data: userMatches });
   } catch (error) {
-      res.status(500).json({ message: 'Server error', error });
+      console.error('Request failed:', error);
+      res.status(500).json({ message: 'Server error' });
   }
 });
 
@@ -10502,12 +11073,13 @@ app.delete('/remove-match-from-my-dashboard', verifyToken, async (req, res) => {
 
       res.status(200).json({ message: 'Match removed from dashboard successfully', data: userMatches });
   } catch (error) {
-      res.status(500).json({ message: 'Server error', error });
+      console.error('Request failed:', error);
+      res.status(500).json({ message: 'Server error' });
   }
 });
 
 
-app.get('/user/:userId/removed-matches', async (req, res) => {
+app.get('/user/:userId/removed-matches', verifyToken, requireSelf((req) => req.params.userId), async (req, res) => {
   const { userId } = req.params;
 
   try {
@@ -10520,15 +11092,18 @@ app.get('/user/:userId/removed-matches', async (req, res) => {
 
       res.status(200).json(userMatches);
   } catch (error) {
-      res.status(500).json({ message: 'Server error', error });
+      console.error('Request failed:', error);
+      res.status(500).json({ message: 'Server error' });
   }
 });
 
 
-app.get('/users/removed-matches', async (req, res) => {
+// SECURITY: was public and returned every player's trashed-fight list. Players
+// now get only their own rows; admins still get the full set.
+app.get('/users/removed-matches', verifyToken, async (req, res) => {
   try {
-      // Find all documents in the UserRemovedMatches collection
-      const allUserMatches = await UserRemovedMatches.find().lean();
+      const callerId = String(req.user?.id || req.user?._id || '');
+      const allUserMatches = await UserRemovedMatches.find({ userId: callerId }).lean();
 
       if (!allUserMatches || allUserMatches.length === 0) {
           return res.status(404).json({ message: 'No removed matches found for any user' });
@@ -10536,7 +11111,8 @@ app.get('/users/removed-matches', async (req, res) => {
 
       res.status(200).json(allUserMatches);
   } catch (error) {
-      res.status(500).json({ message: 'Server error', error });
+      console.error('Request failed:', error);
+      res.status(500).json({ message: 'Server error' });
   }
 });
 
@@ -10584,18 +11160,20 @@ app.post('/api/users/nonregistered', submitLimiter, async (req, res) => {
     
     res.status(201).json({ message: 'User created successfully', newUser });
   } catch (error) {
-    res.status(400).json({ message: 'Error creating user', error });
+    console.error('Request failed:', error);
+    res.status(400).json({ message: 'Error creating user' });
   }
 });
 
 
 // GET API to fetch all non-registered users
-app.get('/api/users/nonregistered', async (req, res) => {
+app.get('/api/users/nonregistered', verifyAdminToken, async (req, res) => {
   try {
-      const users = await Usernonregistered.find().lean();
+      const users = await Usernonregistered.find().sort({ _id: -1 }).limit(5000).lean();
       res.status(200).json(users);
   } catch (error) {
-      res.status(500).json({ message: 'Error fetching users', error });
+      console.error('Request failed:', error);
+      res.status(500).json({ message: 'Error fetching users' });
   }
 });
 
@@ -10611,7 +11189,8 @@ app.delete('/api/users/nonregistered/:id', verifyAdminToken, async (req, res) =>
           res.status(404).json({ message: 'User not found' });
       }
   } catch (error) {
-      res.status(500).json({ message: 'Error deleting user', error });
+      console.error('Request failed:', error);
+      res.status(500).json({ message: 'Error deleting user' });
   }
 });
 
@@ -10686,7 +11265,7 @@ app.post('/threads', verifyToken, async (req, res) => {
 
     res.status(201).json(newThread);
   } catch (err) {
-    res.status(500).json({ message: err.message });
+    res.status(500).json({ message: 'Something went wrong on our side. Please try again.' });
   }
 });
 
@@ -10713,7 +11292,7 @@ app.post('/threads/:threadId/replies', verifyToken, async (req, res) => {
 
     res.status(201).json(newReply);
   } catch (err) {
-    res.status(500).json({ message: err.message });
+    res.status(500).json({ message: 'Something went wrong on our side. Please try again.' });
   }
 });
 
@@ -10729,7 +11308,7 @@ app.post('/threads/:threadId/replies/:replyId/like', verifyToken, async (req, re
 
     res.status(200).json({ message: 'Reply liked!' });
   } catch (err) {
-    res.status(500).json({ message: err.message });
+    res.status(500).json({ message: 'Something went wrong on our side. Please try again.' });
   }
 });
 
@@ -10753,7 +11332,7 @@ app.post('/notifications', verifyAdminToken, async (req, res) => {
 
     res.status(201).json(newNotification);
   } catch (err) {
-    res.status(500).json({ message: err.message });
+    res.status(500).json({ message: 'Something went wrong on our side. Please try again.' });
   }
 });
 
@@ -10771,7 +11350,7 @@ app.post('/notifications/:notificationId/read', verifyToken, async (req, res) =>
 
     res.status(200).json({ message: 'Notification marked as read' });
   } catch (err) {
-    res.status(500).json({ message: err.message });
+    res.status(500).json({ message: 'Something went wrong on our side. Please try again.' });
   }
 });
 
@@ -10787,7 +11366,7 @@ app.get('/threads', async (req, res) => {
 
     res.status(200).json(forum.threads);
   } catch (err) {
-    res.status(500).json({ message: err.message });
+    res.status(500).json({ message: 'Something went wrong on our side. Please try again.' });
   }
 });
 
@@ -10803,7 +11382,7 @@ app.get('/threads/:threadId', async (req, res) => {
 
     res.status(200).json(thread);
   } catch (err) {
-    res.status(500).json({ message: err.message });
+    res.status(500).json({ message: 'Something went wrong on our side. Please try again.' });
   }
 });
 
@@ -10818,12 +11397,12 @@ app.get('/threads/:threadId/replies', async (req, res) => {
 
     res.status(200).json(thread.replies);
   } catch (err) {
-    res.status(500).json({ message: err.message });
+    res.status(500).json({ message: 'Something went wrong on our side. Please try again.' });
   }
 });
 
 // Get all notifications for a user
-app.get('/notifications/:userId', async (req, res) => {
+app.get('/notifications/:userId', verifyToken, requireSelf((req) => req.params.userId), async (req, res) => {
   try {
     const forum = await Forum.findOne();
     const notifications = forum.notifications.filter(
@@ -10832,7 +11411,7 @@ app.get('/notifications/:userId', async (req, res) => {
 
     res.status(200).json(notifications);
   } catch (err) {
-    res.status(500).json({ message: err.message });
+    res.status(500).json({ message: 'Something went wrong on our side. Please try again.' });
   }
 });
 
@@ -10847,7 +11426,7 @@ app.get('/notifications/:notificationId', async (req, res) => {
 
     res.status(200).json(notification);
   } catch (err) {
-    res.status(500).json({ message: err.message });
+    res.status(500).json({ message: 'Something went wrong on our side. Please try again.' });
   }
 });
 
@@ -10864,7 +11443,7 @@ app.delete('/threads/:threadId', verifyToken, async (req, res) => {
 
     res.status(200).json({ message: 'Thread deleted successfully' });
   } catch (err) {
-    res.status(500).json({ message: err.message });
+    res.status(500).json({ message: 'Something went wrong on our side. Please try again.' });
   }
 });
 // Delete a reply from a thread
@@ -10883,7 +11462,7 @@ app.delete('/threads/:threadId/replies/:replyId', verifyToken, async (req, res) 
 
     res.status(200).json({ message: 'Reply deleted successfully' });
   } catch (err) {
-    res.status(500).json({ message: err.message });
+    res.status(500).json({ message: 'Something went wrong on our side. Please try again.' });
   }
 });
 
@@ -10902,7 +11481,7 @@ app.delete('/notifications/:notificationId', verifyAdminToken, async (req, res) 
 
     res.status(200).json({ message: 'Notification deleted successfully' });
   } catch (err) {
-    res.status(500).json({ message: err.message });
+    res.status(500).json({ message: 'Something went wrong on our side. Please try again.' });
   }
 });
 
@@ -10919,7 +11498,7 @@ app.delete('/threads/:threadId/replies', verifyToken, async (req, res) => {
 
     res.status(200).json({ message: 'All replies deleted successfully' });
   } catch (err) {
-    res.status(500).json({ message: err.message });
+    res.status(500).json({ message: 'Something went wrong on our side. Please try again.' });
   }
 });
 
@@ -10932,7 +11511,7 @@ app.delete('/threads', verifyToken, async (req, res) => {
 
     res.status(200).json({ message: 'All threads deleted successfully' });
   } catch (err) {
-    res.status(500).json({ message: err.message });
+    res.status(500).json({ message: 'Something went wrong on our side. Please try again.' });
   }
 });
 
@@ -10960,7 +11539,7 @@ app.put('/threads/:threadId', verifyToken, async (req, res) => {
     await forum.save();
     res.status(200).json({ message: 'Thread updated successfully', thread });
   } catch (err) {
-    res.status(500).json({ message: err.message });
+    res.status(500).json({ message: 'Something went wrong on our side. Please try again.' });
   }
 });
 
@@ -10988,7 +11567,7 @@ app.put('/threads/:threadId/replies/:replyId', verifyToken, async (req, res) => 
     await forum.save();
     res.status(200).json({ message: 'Reply updated successfully', reply });
   } catch (err) {
-    res.status(500).json({ message: err.message });
+    res.status(500).json({ message: 'Something went wrong on our side. Please try again.' });
   }
 });
 
@@ -11012,7 +11591,7 @@ app.put('/notifications/:notificationId', verifyToken, async (req, res) => {
     await forum.save();
     res.status(200).json({ message: 'Notification updated successfully', notification });
   } catch (err) {
-    res.status(500).json({ message: err.message });
+    res.status(500).json({ message: 'Something went wrong on our side. Please try again.' });
   }
 });
 
@@ -11030,7 +11609,7 @@ app.put('/threads/:threadId/views', submitLimiter, async (req, res) => {
     await forum.save();
     res.status(200).json({ message: 'Thread view count updated', views: thread.views });
   } catch (err) {
-    res.status(500).json({ message: err.message });
+    res.status(500).json({ message: 'Something went wrong on our side. Please try again.' });
   }
 });
 
@@ -11059,7 +11638,7 @@ const redListSchema = new mongoose.Schema({
 
 const Redusers = mongoose.models.Redusers || mongoose.model('Redusers', redListSchema);
 
-app.post('/redusers', submitLimiter, async (req, res) => {
+app.post('/redusers', verifyAdminToken, async (req, res) => {
   try {
     const { email, profileUrl } = req.body;
 
@@ -11116,17 +11695,19 @@ app.post('/redusers', submitLimiter, async (req, res) => {
 
     res.status(201).json({ message: 'User added to the red list and notification sent', data: newRedUser });
   } catch (error) {
-    res.status(500).json({ message: 'Error adding user to the red list or sending email', error: error.message });
+    console.error('Request failed:', error);
+    res.status(500).json({ message: 'Error adding user to the red list or sending email' });
   }
 });
 
 // GET API - Get all users from the red list
-app.get('/redusers', async (req, res) => {
+app.get('/redusers', verifyAdminToken, async (req, res) => {
   try {
-    const redUsers = await Redusers.find().lean();
+    const redUsers = await Redusers.find().sort({ _id: -1 }).limit(2000).lean();
     res.status(200).json({ message: 'Red list users retrieved', data: redUsers });
   } catch (error) {
-    res.status(500).json({ message: 'Error retrieving red list users', error: error.message });
+    console.error('Request failed:', error);
+    res.status(500).json({ message: 'Error retrieving red list users' });
   }
 });
 
@@ -11140,7 +11721,8 @@ app.delete('/redusers/:email', verifyAdminToken, async (req, res) => {
     }
     res.status(200).json({ message: 'User removed from the red list', data: deletedUser });
   } catch (error) {
-    res.status(500).json({ message: 'Error removing user from the red list', error: error.message });
+    console.error('Request failed:', error);
+    res.status(500).json({ message: 'Error removing user from the red list' });
   }
 });
 
@@ -11372,10 +11954,10 @@ app.post('/faqs', verifyAdminToken, async (req, res) => {
 
 app.get('/faqs', async (req, res) => {
   try {
-    const faqs = await Faqs.find().lean();
+    const faqs = await Faqs.find().limit(300).lean();
     res.status(200).json({ success: true, data: faqs });
   } catch (error) {
-    res.status(500).json({ success: false, message: error.message });
+    res.status(500).json({ success: false, message: 'Something went wrong on our side. Please try again.' });
   }
 });
 
@@ -11510,10 +12092,10 @@ app.post('/testimonials', verifyAdminToken, async (req, res) => {
 
 app.get('/testimonials', async (req, res) => {
   try {
-    const testimonials = await Testimonials.find().lean();
+    const testimonials = await Testimonials.find().limit(300).lean();
     res.status(200).json({ success: true, data: testimonials });
   } catch (error) {
-    res.status(500).json({ success: false, message: error.message });
+    res.status(500).json({ success: false, message: 'Something went wrong on our side. Please try again.' });
   }
 });
 
@@ -11602,7 +12184,7 @@ app.post('/news', verifyAdminToken, async (req, res) => {
     // Check if notifications are enabled in the request
     if (req.body.notify === 'true' || req.body.notify === true) {
       // Fetch all users with isSubscribed set to true
-      const subscribedUsers = await User.find({ isSubscribed: true });
+      const subscribedUsers = await User.find({ isSubscribed: true }).select('email firstName').limit(20000).lean();
 
       if (subscribedUsers.length > 0) {
         const emailPromises = subscribedUsers.map(user => {
@@ -11905,7 +12487,111 @@ sponsorSchema.index({ dateCreated: -1 });
 const Sponsors = mongoose.models.Sponsors || mongoose.model('Sponsors', sponsorSchema);
 
 // Get all sponsors by email
-app.get('/sponsors/email/:email', async (req, res) => {
+// --------------------------------------------------------------------------
+// SPONSOR LOGIN
+// The old flow was: GET /sponsors/email/<address> -> if a sponsor exists, the
+// browser set isSponsorAuthenticated=true in localStorage. Knowing (or guessing)
+// a sponsor's email address was the entire credential, and the "session" was a
+// client-side string. Replaced with an emailed one-time code and a real JWT.
+// --------------------------------------------------------------------------
+const sponsorLoginCodeSchema = new mongoose.Schema({
+  normalizedEmail: { type: String, required: true, index: true },
+  codeHash: { type: String, required: true },
+  attempts: { type: Number, default: 0 },
+  expiresAt: { type: Date, required: true },
+}, { timestamps: true });
+
+const SponsorLoginCode = mongoose.models.SponsorLoginCode
+  || mongoose.model('SponsorLoginCode', sponsorLoginCodeSchema);
+
+const SPONSOR_CODE_TTL_MS = 10 * 60 * 1000;
+const SPONSOR_CODE_MAX_ATTEMPTS = 5;
+const hashSponsorCode = (code) => crypto.createHash('sha256').update(String(code)).digest('hex');
+
+app.post('/api/sponsor/login/request', submitLimiter, async (req, res) => {
+  const normalizedEmail = String(req.body?.email || '').trim().toLowerCase();
+  // Always answer the same way: this endpoint must not confirm who is a sponsor.
+  const genericResponse = { ok: true, message: 'If that address belongs to a sponsor, a sign-in code is on its way.' };
+  try {
+    if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(normalizedEmail)) {
+      return res.status(400).json({ ok: false, message: 'Enter a valid email address.' });
+    }
+    const sponsor = await Sponsors.findOne({ email: new RegExp(`^${normalizedEmail.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`, 'i') })
+      .select('_id email name')
+      .lean();
+    if (!sponsor) return res.json(genericResponse);
+
+    const code = String(crypto.randomInt(100000, 1000000));
+    await SponsorLoginCode.deleteMany({ normalizedEmail });
+    await SponsorLoginCode.create({
+      normalizedEmail,
+      codeHash: hashSponsorCode(code),
+      expiresAt: new Date(Date.now() + SPONSOR_CODE_TTL_MS),
+    });
+
+    await transporter.sendMail({
+      from: process.env.SMTP_USER || 'Fantasymmadness2@gmail.com',
+      to: sponsor.email,
+      subject: 'Your Fantasy MMAdness sponsor sign-in code',
+      html: `<div style="font-family:Georgia,'Times New Roman',serif;color:#201f1d">
+        <p>Hello ${sponsor.name || 'there'},</p>
+        <p>Your sponsor sign-in code is:</p>
+        <p style="font-size:30px;letter-spacing:6px;font-variant-numeric:tabular-nums"><strong>${code}</strong></p>
+        <p>It expires in 10 minutes. If you did not request it, you can ignore this email.</p>
+      </div>`,
+    });
+    return res.json(genericResponse);
+  } catch (error) {
+    console.error('Sponsor login code error:', error);
+    return res.json(genericResponse);
+  }
+});
+
+app.post('/api/sponsor/login/verify', loginLimiter, async (req, res) => {
+  try {
+    const normalizedEmail = String(req.body?.email || '').trim().toLowerCase();
+    const code = String(req.body?.code || '').trim();
+    if (!normalizedEmail || !/^\d{6}$/.test(code)) {
+      return res.status(400).json({ ok: false, message: 'Enter the 6-digit code from your email.' });
+    }
+    const record = await SponsorLoginCode.findOne({ normalizedEmail }).sort({ createdAt: -1 });
+    if (!record || record.expiresAt.getTime() < Date.now()) {
+      return res.status(400).json({ ok: false, message: 'That code has expired. Request a new one.' });
+    }
+    if (record.attempts >= SPONSOR_CODE_MAX_ATTEMPTS) {
+      return res.status(429).json({ ok: false, message: 'Too many attempts. Request a new code.' });
+    }
+    const supplied = Buffer.from(hashSponsorCode(code));
+    const expected = Buffer.from(record.codeHash);
+    if (supplied.length !== expected.length || !crypto.timingSafeEqual(supplied, expected)) {
+      record.attempts += 1;
+      await record.save();
+      return res.status(400).json({ ok: false, message: 'That code is not correct.' });
+    }
+    const sponsor = await Sponsors.findOne({ email: new RegExp(`^${normalizedEmail.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`, 'i') }).lean();
+    if (!sponsor) return res.status(404).json({ ok: false, message: 'Sponsor account not found.' });
+    await SponsorLoginCode.deleteMany({ normalizedEmail });
+
+    const token = jwt.sign({ id: sponsor._id, scope: TOKEN_SCOPES.SPONSOR }, process.env.JWT_SECRET, { expiresIn: SESSION_TOKEN_TTL });
+    return res.json({ ok: true, token, sponsor });
+  } catch (error) {
+    console.error('Sponsor login verify error:', error);
+    return res.status(500).json({ ok: false, message: 'Sign-in is temporarily unavailable.' });
+  }
+});
+
+app.get('/api/sponsor/me', verifyToken, async (req, res) => {
+  try {
+    if (req.user?.scope !== TOKEN_SCOPES.SPONSOR) return res.status(403).json({ ok: false, message: 'Not a sponsor session.' });
+    const sponsor = await Sponsors.findById(req.user.id).lean();
+    if (!sponsor) return res.status(404).json({ ok: false, message: 'Sponsor account not found.' });
+    return res.json({ ok: true, sponsor });
+  } catch (error) {
+    return res.status(500).json({ ok: false, message: 'Unable to load sponsor profile.' });
+  }
+});
+
+app.get('/sponsors/email/:email', verifyAdminToken, async (req, res) => {
   try {
     const { email } = req.params; // Extract email from the request parameters
 
@@ -11940,7 +12626,7 @@ app.delete('/all/delete/sponsors', verifyAdminToken, async (req, res) => {
 
 
 // POST route to upload sponsor
-app.post('/upload-sponsor', upload.single('image'), async (req, res) => {
+app.post('/upload-sponsor', verifyAdminToken, upload.single('image'), async (req, res) => {
   try {
     const { name, description, websiteLink, instaLink, email } = req.body; // Extract sponsor data
 
@@ -12057,11 +12743,11 @@ app.get('/sponsors', async (req, res) => {
     const sponsorArticles = await Sponsors.find().lean();
     res.status(200).json({ success: true, data: sponsorArticles });
   } catch (error) {
-    res.status(500).json({ success: false, message: error.message });
+    res.status(500).json({ success: false, message: 'Something went wrong on our side. Please try again.' });
   }
 });
 // PUT route to update a sponsor by ID
-app.put('/sponsor/:id', upload.single('image'), async (req, res) => {
+app.put('/sponsor/:id', verifyAdminToken, upload.single('image'), async (req, res) => {
   try {
     const { name, description, websiteLink, instaLink, email } = req.body; // Extract sponsor data
 
@@ -12189,7 +12875,7 @@ blogSchema.index({ metaTitle: 1 });
 
 const Blog = mongoose.models.Blog || mongoose.model('Blog', blogSchema);
 
-app.post('/api/create-blog', upload.fields([
+app.post('/api/create-blog', verifyAdminToken, upload.fields([
   { name: 'blogHeaderImage', maxCount: 1 },
   { name: 'sectionImages' } // multiple section images
 ]), async (req, res) => {
@@ -12451,18 +13137,9 @@ app.get('/api/referrals', async (req, res) => {
             firstName: "$referrerDetails.firstName",
             lastName: "$referrerDetails.lastName"
           },
-          referralsCount: 1,
-          referredUsers: {
-            $map: {
-              input: "$referredUsers",
-              as: "user",
-              in: {
-                _id: "$$user._id",
-                firstName: "$$user.firstName",
-                lastName: "$$user.lastName"
-              }
-            }
-          }
+          referralsCount: 1
+          // referredUsers deliberately omitted: a public leaderboard should not
+          // disclose which accounts each referrer brought in.
         }
       }
     ]);
@@ -12509,7 +13186,7 @@ notificationSchema.index({ read: 1, createdAt: -1 });
 const Notification = mongoose.models.Notification || mongoose.model('Notification', notificationSchema);
 
 // GET all notifications
-app.get('/api/notifications', async (req, res) => {
+app.get('/api/notifications', verifyAdminToken, async (req, res) => {
   try {
     const notifications = await Notification.find().sort({ createdAt: -1 }).lean();
     res.status(200).json(notifications);
@@ -12610,11 +13287,11 @@ app.post('/api/messages/send', verifyToken, async (req, res) => {
       pusherTriggered: triggerResponse === null, // Pusher returns null on success
     });
   } catch (err) {
-    res.status(500).json({ error: 'Message send failed', details: err.message });
+    res.status(500).json({ error: 'Message send failed' });
   }
 });
 
-app.get('/api/messages/get', async (req, res) => {
+app.get('/api/messages/get', verifyAdminToken, async (req, res) => {
   try {
     const messages = await Message.find({}).sort({ createdAt: 1 }).lean();
 
@@ -12628,7 +13305,7 @@ app.get('/api/messages/get', async (req, res) => {
 
     res.status(200).json(messagesByDate); // <- Return grouped structure
   } catch (err) {
-    res.status(500).json({ error: 'Fetch failed', details: err.message });
+    res.status(500).json({ error: 'Fetch failed' });
   }
 });
 
@@ -12666,7 +13343,7 @@ app.put('/api/messages/:id', verifyToken, async (req, res) => {
 
     res.status(200).json({ message: 'Message updated successfully', updatedMessage });
   } catch (err) {
-    res.status(500).json({ error: 'Failed to update message', details: err.message });
+    res.status(500).json({ error: 'Failed to update message' });
   }
 });
 
@@ -12685,7 +13362,7 @@ app.delete('/api/message-to-del/:id', verifyAdminToken, async (req, res) => {
 
     res.status(200).json({ message: 'Message deleted successfully', deletedMessage });
   } catch (err) {
-    res.status(500).json({ error: 'Failed to delete message', details: err.message });
+    res.status(500).json({ error: 'Failed to delete message' });
   }
 });
 
@@ -12699,7 +13376,7 @@ app.delete('/api/messages/delete-all', verifyAdminToken, async (req, res) => {
 
     res.status(200).json({ message: 'All messages deleted successfully.' });
   } catch (err) {
-    res.status(500).json({ error: 'Failed to delete messages', details: err.message });
+    res.status(500).json({ error: 'Failed to delete messages' });
   }
 });
 
@@ -14929,7 +15606,7 @@ app.get('/api/admin/wrestling/wallet-ledger', requireProWrestlingEnabled, verify
   }
 });
 
-app.get('/api/admin/wrestling/matches/:id/entries', requireProWrestlingEnabled, verifyAdminToken, async (req, res) => {
+app.get('/api/admin/wrestling/matches/:id/entries', verifyAdminToken, requireProWrestlingEnabled, verifyAdminToken, async (req, res) => {
   try {
     const page = Math.max(1, Number.parseInt(req.query.page || '1', 10));
     const limit = Math.min(200, Math.max(1, Number.parseInt(req.query.limit || '50', 10)));
@@ -14951,7 +15628,7 @@ app.get('/api/admin/wrestling/matches/:id/entries', requireProWrestlingEnabled, 
   }
 });
 
-app.get('/api/admin/wrestling/matches/:id/predictions', requireProWrestlingEnabled, verifyAdminToken, async (req, res) => {
+app.get('/api/admin/wrestling/matches/:id/predictions', verifyAdminToken, requireProWrestlingEnabled, verifyAdminToken, async (req, res) => {
   try {
     const page = Math.max(1, Number.parseInt(req.query.page || '1', 10));
     const limit = Math.min(200, Math.max(1, Number.parseInt(req.query.limit || '50', 10)));
@@ -15779,8 +16456,20 @@ const runFightEntryTransaction = async (work) => {
       // because a mid-sequence failure could charge without saving an entry.
       const unsupported = /Transaction numbers are only allowed|replica set|transactions are not supported/i
         .test(String(error.message || ''));
+
+      // The opt-out is for local development only. Honouring it in production
+      // would let a mid-sequence failure charge a player without recording the
+      // entry — the exact bug transactions exist to prevent.
+      if (unsupported && process.env.NODE_ENV === 'production') {
+        console.error('FATAL DATA RISK: a money operation was attempted against a non-transactional MongoDB. Make the database a replica set.');
+        throw fightEntryError(
+          503,
+          'Entries are temporarily unavailable. Our team has been alerted.',
+          'DATABASE_NOT_TRANSACTIONAL',
+        );
+      }
       if (unsupported && String(process.env.FIGHT_ENTRY_ALLOW_NON_TRANSACTIONAL || '').toLowerCase() === 'true') {
-        console.warn('WARNING: running fight entry without a MongoDB transaction (FIGHT_ENTRY_ALLOW_NON_TRANSACTIONAL=true).');
+        console.warn('WARNING: running fight entry without a MongoDB transaction (FIGHT_ENTRY_ALLOW_NON_TRANSACTIONAL=true). Development only.');
         return work(null);
       }
       throw error;
@@ -15901,6 +16590,11 @@ async function createFightEntry({ userId, fightId, predictions, idempotencyKey }
       user.tokens = String(balanceAfter);
       await user.save(session ? { session } : undefined);
 
+      // Recorded per fight so settlement can show declared prize vs fees taken —
+      // the number that grows with entrants.
+      fight.collectedFees = Math.max(0, Number(fight.collectedFees) || 0) + entryFee;
+      await fight.save(session ? { session } : undefined);
+
       await FightEntryLedger.create([{
         userId,
         matchId: fightId,
@@ -15931,6 +16625,15 @@ async function createFightEntry({ userId, fightId, predictions, idempotencyKey }
     else fight.userPredictions.push({ userId, predictionStatus: 'submitted' });
 
     fight.pot = Math.max(0, Number(fight.pot) || 0) + entryFee;
+
+    // Shadow Fight profit zone: the promoter stakes a pot up front and only
+    // starts earning once entries have covered it. Flip the flag the first time
+    // the pot clears the target so the affiliate dashboard can show it live.
+    const potTarget = Math.max(0, Number(fight.potTarget) || 0);
+    if (potTarget > 0 && !fight.profitZoneReachedAt && Number(fight.pot) >= potTarget) {
+      fight.profitZoneReachedAt = new Date();
+    }
+
     await fight.save(session ? { session } : undefined);
 
     return { entry, entryFeeCharged: entryFee, balanceBefore, balanceAfter, sourceType, fight };
@@ -15962,7 +16665,7 @@ async function createFightEntry({ userId, fightId, predictions, idempotencyKey }
   return result;
 }
 
-app.post('/api/fights/:fightId/entries', verifyToken, async (req, res) => {
+app.post('/api/fights/:fightId/entries', verifyToken, requireScope(TOKEN_SCOPES.PLAYER), async (req, res) => {
   try {
     const result = await createFightEntry({
       userId: String(req.user?.id || req.user?._id || '').trim(),
@@ -16332,13 +17035,165 @@ app.post('/api/admin/affiliate-payouts/:affiliateId/:payoutIndex/reject', verify
   }
 });
 
+// --------------------------------------------------------------------------
+// FEATURE WAITLIST
+// Head-to-Head is not built. Rather than ship a button that does nothing, the
+// app collects interest: who wants it, and what stake they say they would use.
+// Nothing here moves money — it is a signal store, deliberately dumb.
+// --------------------------------------------------------------------------
+const WAITLIST_FEATURES = Object.freeze({
+  'head-to-head': { label: 'Head-to-Head Challenges' },
+});
+
+const featureWaitlistSchema = new mongoose.Schema({
+  feature: { type: String, required: true, index: true },
+  userId: { type: String, default: null, index: true },
+  email: { type: String, default: '' },
+  normalizedEmail: { type: String, default: '', index: true },
+  displayName: { type: String, default: '' },
+  // Self-reported, for sizing only. Never used as a limit.
+  wagerBand: { type: String, default: '' },
+  note: { type: String, default: '' },
+  source: { type: String, default: 'mobile-app' },
+}, { timestamps: true });
+
+featureWaitlistSchema.index({ feature: 1, normalizedEmail: 1 }, { unique: true, partialFilterExpression: { normalizedEmail: { $type: 'string', $ne: '' } } });
+
+const FeatureWaitlist = mongoose.models.FeatureWaitlist
+  || mongoose.model('FeatureWaitlist', featureWaitlistSchema);
+
+app.post('/api/waitlist/:feature', submitLimiter, optionalVerifyToken, async (req, res) => {
+  try {
+    const feature = String(req.params.feature || '').trim().toLowerCase();
+    if (!WAITLIST_FEATURES[feature]) {
+      return res.status(404).json({ ok: false, message: 'Unknown feature.' });
+    }
+
+    const userId = String(req.user?.id || req.user?._id || '').trim() || null;
+    let email = String(req.body?.email || '').trim();
+    let displayName = String(req.body?.name || '').trim();
+
+    // Prefer the signed-in account over anything the client sent.
+    if (userId) {
+      const account = await User.findById(userId).select('email firstName playerName').lean();
+      if (account) {
+        email = account.email || email;
+        displayName = account.playerName || account.firstName || displayName;
+      }
+    }
+    if (!email || !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) {
+      return res.status(400).json({ ok: false, message: 'An email address is required to join the waitlist.' });
+    }
+
+    const normalizedEmail = email.toLowerCase();
+    const wagerBand = String(req.body?.wagerBand || '').trim().slice(0, 24);
+    const note = String(req.body?.note || '').trim().slice(0, 400);
+
+    await FeatureWaitlist.findOneAndUpdate(
+      { feature, normalizedEmail },
+      {
+        $set: {
+          feature,
+          normalizedEmail,
+          email,
+          userId,
+          displayName: displayName.slice(0, 80),
+          ...(wagerBand ? { wagerBand } : {}),
+          ...(note ? { note } : {}),
+          source: String(req.body?.source || 'mobile-app').slice(0, 40),
+        },
+      },
+      { upsert: true, new: true, setDefaultsOnInsert: true },
+    );
+
+    const total = await FeatureWaitlist.countDocuments({ feature });
+    return res.status(200).json({
+      ok: true,
+      feature,
+      joined: true,
+      total,
+      message: `You're on the list for ${WAITLIST_FEATURES[feature].label}. We'll email you when it opens.`,
+    });
+  } catch (error) {
+    console.error('Waitlist signup failed:', error);
+    return res.status(500).json({ ok: false, message: 'Could not add you to the waitlist just now.' });
+  }
+});
+
+app.get('/api/waitlist/:feature/me', optionalVerifyToken, async (req, res) => {
+  try {
+    const feature = String(req.params.feature || '').trim().toLowerCase();
+    if (!WAITLIST_FEATURES[feature]) return res.status(404).json({ ok: false, message: 'Unknown feature.' });
+
+    const userId = String(req.user?.id || req.user?._id || '').trim();
+    const queryEmail = String(req.query.email || '').trim().toLowerCase();
+    let normalizedEmail = queryEmail;
+    if (userId) {
+      const account = await User.findById(userId).select('email').lean();
+      if (account?.email) normalizedEmail = String(account.email).toLowerCase();
+    }
+
+    const [joined, total] = await Promise.all([
+      normalizedEmail
+        ? FeatureWaitlist.exists({ feature, normalizedEmail })
+        : Promise.resolve(null),
+      FeatureWaitlist.countDocuments({ feature }),
+    ]);
+    return res.json({ ok: true, feature, joined: Boolean(joined), total });
+  } catch (error) {
+    return res.status(500).json({ ok: false, message: 'Waitlist status is unavailable.' });
+  }
+});
+
+app.get('/api/admin/waitlist', verifyAdminToken, async (req, res) => {
+  try {
+    const feature = String(req.query.feature || '').trim().toLowerCase();
+    const filter = feature ? { feature } : {};
+    const [totals, recent] = await Promise.all([
+      FeatureWaitlist.aggregate([
+        { $match: filter },
+        {
+          $group: {
+            _id: '$feature',
+            total: { $sum: 1 },
+            signedIn: { $sum: { $cond: [{ $ifNull: ['$userId', false] }, 1, 0] } },
+          },
+        },
+        { $sort: { total: -1 } },
+      ]),
+      FeatureWaitlist.find(filter).sort({ createdAt: -1 }).limit(200)
+        .select('feature email displayName wagerBand note source createdAt').lean(),
+    ]);
+
+    // What stake bands people say they would use — the number worth reading
+    // before deciding to build the escrow.
+    const bands = recent.reduce((acc, row) => {
+      if (!row.wagerBand) return acc;
+      acc[row.wagerBand] = (acc[row.wagerBand] || 0) + 1;
+      return acc;
+    }, {});
+
+    return res.json({ ok: true, totals, bands, recent, features: Object.keys(WAITLIST_FEATURES) });
+  } catch (error) {
+    console.error('Waitlist report failed:', error);
+    return res.status(500).json({ ok: false, message: 'Could not load the waitlist.' });
+  }
+});
+
 // Silent session renewal. The app calls this on launch; a still-valid token is
 // exchanged for a fresh one so an active player is never logged out mid-session.
 app.post('/api/auth/refresh', verifyToken, async (req, res) => {
   try {
     const userId = String(req.user?.id || req.user?._id || '').trim();
     if (!userId) return res.status(401).json({ message: 'Session could not be renewed.' });
-    const token = jwt.sign({ id: userId }, process.env.JWT_SECRET, { expiresIn: SESSION_TOKEN_TTL });
+    // Carry the original scope through the refresh. Renewing must never widen a
+    // session's audience.
+    const scope = String(req.user?.scope || '').trim();
+    const token = jwt.sign(
+      scope ? { id: userId, scope } : { id: userId },
+      process.env.JWT_SECRET,
+      { expiresIn: SESSION_TOKEN_TTL },
+    );
     res.cookie('token', token, { httpOnly: true, maxAge: SESSION_COOKIE_MAX_AGE });
     return res.status(200).json({ token });
   } catch (error) {
@@ -16547,6 +17402,92 @@ const ageFromDob = (dob) => {
   return age;
 };
 
+// ==========================================================================
+// JURISDICTION MODES
+//
+// One codebase, three modes per state. Everyone can play the same fights on the
+// same scorecards; what changes is whether money is involved.
+//
+//   paid       entry fees, coin purchases and cash-value prizes
+//   free       free entry, no coin purchases, no cash-value prizes — coins are
+//              status only. No consideration, so it is not a wager.
+//   blocked    no access at all, for states where even free play is unwelcome
+//
+// The free mode only holds if coins genuinely have no cash value for those
+// players. If they could buy or redeem coins it would be the same paid product
+// with extra steps, which is exactly the arrangement several states pursue. So
+// purchases and cash-value prizes are refused server-side, not hidden in the UI.
+//
+// Default is FREE, not paid: a state must be named in PAID_STATES to take money.
+// Failing closed is the only safe default for this.
+// ==========================================================================
+const parseStateList = (value) => String(value || '')
+  .split(',').map((x) => x.trim().toUpperCase()).filter(Boolean);
+
+// HARD INTERLOCK. These five states prohibit paid daily-fantasy contests, so they
+// are free-play no matter what any environment variable says. Listing a state in
+// PAID_STATES cannot override this — a misconfigured deploy must not be able to
+// start taking entry fees in a state that forbids them.
+const FREE_ONLY_STATES = Object.freeze(['HI', 'ID', 'MT', 'NV', 'WA']);
+
+// Everywhere else DFS operates. Paid by default; an attorney can narrow it.
+const DEFAULT_PAID_STATES = Object.freeze([
+  'AL', 'AK', 'AZ', 'AR', 'CA', 'CO', 'CT', 'DE', 'DC', 'FL', 'GA', 'IL', 'IN',
+  'IA', 'KS', 'KY', 'LA', 'ME', 'MD', 'MA', 'MI', 'MN', 'MS', 'MO', 'NE', 'NH',
+  'NJ', 'NM', 'NY', 'NC', 'ND', 'OH', 'OK', 'OR', 'PA', 'RI', 'SC', 'SD', 'TN',
+  'TX', 'UT', 'VT', 'VA', 'WV', 'WI', 'WY',
+]);
+
+const configuredPaidStates = parseStateList(process.env.PAID_STATES);
+// The interlock is applied here as well as in resolveStateMode, so the resolved
+// list itself is never wrong — not just the decision made from it.
+const PAID_STATES = (configuredPaidStates.length ? configuredPaidStates : [...DEFAULT_PAID_STATES])
+  .filter((code) => !FREE_ONLY_STATES.includes(code));
+
+const BLOCKED_STATES = parseStateList(process.env.BLOCKED_STATES);
+// Legacy variable kept working: anything listed there is treated as free-play.
+const LEGACY_RESTRICTED = parseStateList(process.env.RESTRICTED_STATES);
+
+if (configuredPaidStates.some((code) => FREE_ONLY_STATES.includes(code))) {
+  console.warn(`WARNING: PAID_STATES named ${configuredPaidStates.filter((c) => FREE_ONLY_STATES.includes(c)).join(', ')} — ignored. Those states are free-play only.`);
+}
+
+// Most jurisdictions are 18+; these require 21+.
+const AGE_21_STATES = Object.freeze(parseStateList(
+  process.env.AGE_21_STATES || 'MA,AZ,IA,LA,AL,NE',
+));
+
+const minimumAgeForState = (state) => (AGE_21_STATES.includes(String(state || '').toUpperCase()) ? 21 : 18);
+
+const resolveStateMode = (state) => {
+  const code = String(state || '').trim().toUpperCase();
+  if (!code) return 'unknown';
+  if (BLOCKED_STATES.includes(code)) return 'blocked';
+  // Interlock first: nothing downstream can promote these to paid.
+  if (FREE_ONLY_STATES.includes(code)) return 'free';
+  if (LEGACY_RESTRICTED.includes(code)) return 'free';
+  if (PAID_STATES.includes(code)) return 'paid';
+  // Anything unrecognised (or a territory) stays free rather than being assumed
+  // paid. Unknown must never mean chargeable.
+  return 'free';
+};
+
+// What this player may actually do, in one object.
+const playerJurisdiction = (user) => {
+  const state = String(user?.residenceState || '').trim().toUpperCase();
+  const mode = resolveStateMode(state);
+  const minimumAge = minimumAgeForState(state);
+  return {
+    state,
+    mode,
+    minimumAge,
+    canPayEntryFees: mode === 'paid',
+    canBuyCoins: mode === 'paid',
+    canWinCashValue: mode === 'paid',
+    canPlayFree: mode !== 'blocked',
+  };
+};
+
 // Single gate used before any PAID action. Returns null when the user may play.
 const checkPlayEligibility = (user) => {
   if (!user) return { code: 'USER_NOT_FOUND', message: 'Account not found.' };
@@ -16558,17 +17499,33 @@ const checkPlayEligibility = (user) => {
     };
   }
 
+  const jurisdiction = playerJurisdiction(user);
+
+  if (!jurisdiction.state) {
+    return { code: 'STATE_UNVERIFIED', message: 'Add your state of residence before entering a paid contest.' };
+  }
+  if (jurisdiction.mode === 'blocked') {
+    return { code: 'STATE_BLOCKED', message: `Fantasy MMAdness is not available in ${jurisdiction.state}.` };
+  }
+
   const age = ageFromDob(user.dateOfBirth);
   if (age === null) {
     return { code: 'AGE_UNVERIFIED', message: 'Add your date of birth before entering a paid contest.' };
   }
-  if (age < MINIMUM_PLAY_AGE) {
-    return { code: 'UNDERAGE', message: `You must be ${MINIMUM_PLAY_AGE} or older to enter a paid contest.` };
+  // Per-state threshold: 21+ where the state requires it, 18+ elsewhere.
+  const requiredAge = Math.max(jurisdiction.minimumAge, MINIMUM_PLAY_AGE || 18);
+  if (age < requiredAge) {
+    return {
+      code: 'UNDERAGE',
+      message: `You must be ${requiredAge} or older to enter a paid contest in ${jurisdiction.state}.`,
+    };
   }
 
-  const state = String(user.residenceState || '').toUpperCase();
-  if (RESTRICTED_STATES.length && state && RESTRICTED_STATES.includes(state)) {
-    return { code: 'STATE_RESTRICTED', message: `Paid contests are not available in ${state}.` };
+  if (!jurisdiction.canPayEntryFees) {
+    return {
+      code: 'FREE_PLAY_ONLY',
+      message: `Paid contests are not available in ${jurisdiction.state}. Free contests are open to you and coins can still be won — they just have no cash value there.`,
+    };
   }
 
   return null;
@@ -16711,7 +17668,7 @@ const encryptTaxId = (value) => {
   }
 };
 
-app.post('/api/affiliates/me/tax-details', verifyToken, async (req, res) => {
+app.post('/api/affiliates/me/tax-details', verifyToken, requireScope(TOKEN_SCOPES.AFFILIATE), async (req, res) => {
   try {
     const affiliate = await Affiliate.findById(String(req.user?.id || req.user?._id || ''));
     if (!affiliate) return res.status(404).json({ message: 'Affiliate account not found.' });
@@ -17064,7 +18021,7 @@ const WALLET_SPEND_PRICES = Object.freeze({
   skip_wait:   { base: 75, fmPlus: 75, label: 'Skip the wait' },
 });
 
-app.post('/api/wallet/spend', verifyToken, async (req, res) => {
+app.post('/api/wallet/spend', verifyToken, requireScope(TOKEN_SCOPES.PLAYER), async (req, res) => {
   try {
     const userId = String(req.user?.id || req.user?._id || '').trim();
     const purpose = String(req.body?.purpose || '').trim();
@@ -17092,8 +18049,19 @@ app.post('/api/wallet/spend', verifyToken, async (req, res) => {
     }
 
     const balanceAfter = balanceBefore - cost;
-    user.tokens = String(balanceAfter);
-    await user.save();
+    // Atomic: only applies if tokens still equals what we read. A concurrent
+    // request that already spent changes the value, so this matches nothing.
+    const applied = await User.findOneAndUpdate(
+      { _id: userId, tokens: String(balanceBefore) },
+      { tokens: String(balanceAfter) },
+      { new: true }
+    );
+    if (!applied) {
+      return res.status(409).json({
+        message: 'Your balance just changed. Please try again.',
+        code: 'BALANCE_CHANGED',
+      });
+    }
 
     await FightEntryLedger.create([{
       userId,
@@ -17124,7 +18092,7 @@ app.post('/api/wallet/spend', verifyToken, async (req, res) => {
 // trivially bypassed by clearing local storage.
 const DAILY_REWARD_COINS = Number(process.env.DAILY_REWARD_COINS || 25);
 
-app.post('/api/rewards/claim-daily', verifyToken, async (req, res) => {
+app.post('/api/rewards/claim-daily', verifyToken, requireScope(TOKEN_SCOPES.PLAYER), async (req, res) => {
   try {
     const userId = String(req.user?.id || req.user?._id || '').trim();
     const user = await User.findById(userId);
@@ -17157,9 +18125,19 @@ app.post('/api/rewards/claim-daily', verifyToken, async (req, res) => {
 
     const balanceBefore = Number.parseInt(String(user.tokens || '0'), 10) || 0;
     const balanceAfter = balanceBefore + coins;
-    user.tokens = String(balanceAfter);
-    user.lastDailyRewardAt = now;
-    await user.save();
+    // Atomic claim: matches only while lastDailyRewardAt is still the value we
+    // read, so a second simultaneous tap finds nothing and cannot double-credit.
+    const claimed = await User.findOneAndUpdate(
+      { _id: userId, lastDailyRewardAt: last || { $in: [null, undefined] } },
+      { tokens: String(balanceAfter), lastDailyRewardAt: now, dailyRewardStreak: user.dailyRewardStreak },
+      { new: true }
+    );
+    if (!claimed) {
+      return res.status(409).json({
+        message: 'You have already claimed today.',
+        code: 'ALREADY_CLAIMED',
+      });
+    }
 
     await FightEntryLedger.create([{
       userId,
@@ -17247,6 +18225,3594 @@ const recordWalletMove = async ({ userId, amount, balanceBefore, balanceAfter, r
     if (error?.code !== 11000) console.warn('Wallet audit write failed:', reason, error.message);
   }
 };
+
+
+// Winner of a finished fight, computed with the server's own scoring engine.
+// Replaces client-side scoring in winnerUtils.js, which needed every player's
+// raw predictions in the browser to work.
+app.get('/api/matches/:matchId/winner', async (req, res) => {
+  try {
+    const matchId = String(req.params.matchId || '').trim();
+    if (!matchId) return res.status(400).json({ message: 'A match id is required.' });
+
+    let fight = await Match.findById(matchId).lean();
+    if (!fight) fight = await Shadow.findById(matchId).lean();
+    if (!fight) return res.status(404).json({ message: 'Fight not found.' });
+
+    const rows = await Score.find({ matchId }).lean();
+    if (!rows.length) return res.status(200).json({ winner: null, entrants: 0 });
+
+    const category = String(fight.matchCategory || '').toLowerCase();
+    const oneStats = category === 'boxing'
+      ? fight?.BoxingMatch?.fighterOneStats
+      : fight?.MMAMatch?.fighterOneStats;
+    const twoStats = category === 'boxing'
+      ? fight?.BoxingMatch?.fighterTwoStats
+      : fight?.MMAMatch?.fighterTwoStats;
+
+    if (!Array.isArray(oneStats) || !Array.isArray(twoStats)) {
+      return res.status(200).json({ winner: null, entrants: rows.length, message: 'Official stats are not in yet.' });
+    }
+
+    let best = null;
+    for (const row of rows) {
+      if (String(row.entryStatus || '').toLowerCase() === 'refunded') continue;
+      const points = calculateClassicPredictionPoints(row.predictions, oneStats, twoStats, category);
+      if (!best || points > best.points) best = { playerId: row.playerId, points };
+    }
+    if (!best) return res.status(200).json({ winner: null, entrants: rows.length });
+
+    const user = await User.findById(best.playerId)
+      .select('_id firstName lastName playerName profileUrl').lean();
+
+    return res.status(200).json({
+      winner: user ? {
+        userId: user._id,
+        firstName: user.firstName,
+        lastName: user.lastName,
+        playerName: user.playerName,
+        profileUrl: user.profileUrl,
+        totalPoints: best.points,
+        matchId,
+      } : null,
+      entrants: rows.length,
+    });
+  } catch (error) {
+    console.error('Winner lookup failed:', error);
+    return res.status(500).json({ message: 'Could not work out the winner.' });
+  }
+});
+
+
+// Scored, ranked leaderboard for a fight. Four frontend components previously
+// scored every entrant in the browser, which is why the API had to expose all
+// raw predictions. This computes with the real engine and returns points only.
+app.get('/api/matches/:matchId/leaderboard', async (req, res) => {
+  try {
+    const matchId = String(req.params.matchId || '').trim();
+    if (!matchId) return res.status(400).json({ message: 'A match id is required.' });
+
+    let fight = await Match.findById(matchId).lean();
+    if (!fight) fight = await Shadow.findById(matchId).lean();
+    if (!fight) return res.status(404).json({ message: 'Fight not found.' });
+
+    const rows = await Score.find({ matchId }).lean();
+    const category = String(fight.matchCategory || '').toLowerCase();
+    const oneStats = category === 'boxing' ? fight?.BoxingMatch?.fighterOneStats : fight?.MMAMatch?.fighterOneStats;
+    const twoStats = category === 'boxing' ? fight?.BoxingMatch?.fighterTwoStats : fight?.MMAMatch?.fighterTwoStats;
+    const scoreable = Array.isArray(oneStats) && Array.isArray(twoStats);
+
+    const active = rows.filter((r) => String(r.entryStatus || '').toLowerCase() !== 'refunded');
+    const ids = active.map((r) => r.playerId).filter(Boolean);
+    const users = await User.find({ _id: { $in: ids } })
+      .select('_id firstName lastName playerName profileUrl').lean();
+    const byId = new Map(users.map((u) => [String(u._id), u]));
+
+    const entries = active.map((row) => {
+      const user = byId.get(String(row.playerId));
+      return {
+        userId: row.playerId,
+        firstName: user?.firstName || '',
+        lastName: user?.lastName || '',
+        playerName: user?.playerName || '',
+        profileUrl: user?.profileUrl || '',
+        totalPoints: scoreable
+          ? calculateClassicPredictionPoints(row.predictions, oneStats, twoStats, category)
+          : 0,
+      };
+    }).sort((a, b) => b.totalPoints - a.totalPoints)
+      .map((row, index) => ({ ...row, rank: index + 1 }));
+
+    return res.status(200).json({
+      matchId,
+      scored: scoreable,
+      entrants: entries.length,
+      leaderboard: entries,
+    });
+  } catch (error) {
+    console.error('Leaderboard build failed:', error);
+    return res.status(500).json({ message: 'Could not build the leaderboard.' });
+  }
+});
+
+
+// --------------------------------------------------------------------------
+// PRIZE SETTLEMENT
+// The pot previously only ever went UP (entries) or DOWN (refunds). Nothing
+// paid a winner, so a finished contest left the money stranded.
+//
+// House cut:
+//   * Affiliate-promoted fights: 50/50 with the promoter (owner's standing rule)
+//   * Admin fights: PLATFORM_RAKE_PCT of the pot
+// Prize split scales with field size — a 3-player contest paying three places is
+// pointless, and a 200-player contest paying one is discouraging.
+// Ties share their places' combined prize equally.
+// --------------------------------------------------------------------------
+const PLATFORM_RAKE_PCT = Number(process.env.PLATFORM_RAKE_PCT || 15);
+const AFFILIATE_SPLIT_PCT = Number(process.env.AFFILIATE_SPLIT_PCT || 50);
+
+const prizeSplitFor = (entrants) => {
+  if (entrants <= 1) return [100];
+  if (entrants < 5) return [100];            // too small to spread
+  if (entrants < 20) return [60, 25, 15];
+  return [50, 30, 20];
+};
+
+// Groups entrants by points so ties can share a place's money.
+const buildPrizeAwards = (rows, prizePool) => {
+  const split = prizeSplitFor(rows.length);
+  const ranked = [...rows].sort((a, b) => b.points - a.points);
+
+  const tiers = [];
+  for (const row of ranked) {
+    const last = tiers[tiers.length - 1];
+    if (last && last.points === row.points) last.players.push(row);
+    else tiers.push({ points: row.points, players: [row] });
+  }
+
+  const awards = [];
+  let place = 0;
+  for (const tier of tiers) {
+    if (place >= split.length) break;
+    // A tie spanning several places pools those places' shares.
+    const placesCovered = Math.min(tier.players.length, split.length - place);
+    const pooledPct = split.slice(place, place + placesCovered).reduce((a, b) => a + b, 0);
+    const pooled = Math.floor((prizePool * pooledPct) / 100);
+    const each = Math.floor(pooled / tier.players.length);
+    if (each > 0) {
+      tier.players.forEach((pl) => awards.push({
+        userId: pl.userId,
+        amount: each,
+        place: place + 1,
+        tied: tier.players.length > 1,
+      }));
+    }
+    place += tier.players.length;
+  }
+  return { awards, split };
+};
+
+app.post('/api/admin/fights/:fightId/settle', verifyAdminToken, async (req, res) => {
+  try {
+    const fightId = String(req.params.fightId || '').trim();
+    if (!fightId) return res.status(400).json({ message: 'A fight id is required.' });
+
+    let fight = await Match.findById(fightId);
+    let isShadow = false;
+    if (!fight) { fight = await Shadow.findById(fightId); isShadow = true; }
+    if (!fight) return res.status(404).json({ message: 'Fight not found.', code: 'FIGHT_NOT_FOUND' });
+
+    if (fight.prizesSettledAt) {
+      return res.status(200).json({
+        message: 'This fight was already settled.',
+        alreadySettled: true,
+        settledAt: fight.prizesSettledAt,
+      });
+    }
+
+    const category = String(fight.matchCategory || '').toLowerCase();
+    const oneStats = category === 'boxing' ? fight?.BoxingMatch?.fighterOneStats : fight?.MMAMatch?.fighterOneStats;
+    const twoStats = category === 'boxing' ? fight?.BoxingMatch?.fighterTwoStats : fight?.MMAMatch?.fighterTwoStats;
+    if (!Array.isArray(oneStats) || !Array.isArray(twoStats)) {
+      return res.status(409).json({
+        message: 'Enter the official round stats before settling prizes.',
+        code: 'STATS_MISSING',
+      });
+    }
+
+    // A free contest has no pot and nothing to pay out, but it still needs
+    // settling so badges, titles and sponsor prizes are handed out.
+    const isFreeContest = Math.max(0, Number(fight.matchTokens) || 0) === 0;
+    const rows = (await Score.find({ matchId: fightId }).lean())
+      .filter((r) => String(r.entryStatus || '').toLowerCase() !== 'refunded');
+    if (!rows.length) {
+      return res.status(409).json({ message: 'No entries to settle.', code: 'NO_ENTRIES' });
+    }
+
+    // HOUSE RISK GUARD.
+    // The prize is declared before entry and never grows with registrations, so
+    // a thin contest would otherwise be paid out of platform funds — which is
+    // the "house risk" a fantasy exemption cannot include. Below the declared
+    // minimum the contest voids and every entry is refunded from the ledger.
+    // Break-even is the honest floor: enough paid entries to cover the prize the
+    // players were shown. Affiliates already size campaigns this way (the
+    // campaign screen computes pot ÷ buy-in), so when nobody sets an explicit
+    // minimum we use that figure rather than leaving old fights unprotected.
+    const declaredPot = Math.max(0, Math.round(Number(fight.pot) || 0));
+    const entryFee = Math.max(0, Math.round(Number(fight.matchTokens) || 0));
+    const breakEvenEntrants = entryFee > 0 ? Math.ceil(declaredPot / entryFee) : 0;
+    const minimumEntrants = Math.max(0, Math.round(Number(fight.minimumEntrants) || 0)) || breakEvenEntrants;
+    // Nothing was charged, so there is no shortfall to protect against.
+    const autoRefundIfShort = !isFreeContest && fight.autoRefundIfShort !== false;
+    if (minimumEntrants > 0 && rows.length < minimumEntrants && autoRefundIfShort) {
+      const refund = await refundFightEntries({
+        fightId,
+        reason: `Contest voided: ${rows.length} of ${minimumEntrants} required entries.`,
+        adminId: req.admin?.id || null,
+      });
+      await (isShadow ? Shadow : Match).updateOne({ _id: fightId }, {
+        $set: {
+          voidedAt: new Date(),
+          voidReason: `Minimum of ${minimumEntrants} entrants not met (${rows.length}).`,
+        },
+      });
+      return res.status(200).json({
+        voided: true,
+        reason: 'MINIMUM_ENTRANTS_NOT_MET',
+        entrants: rows.length,
+        minimumEntrants,
+        refundedCount: refund.refundedCount,
+        totalRefunded: refund.totalRefunded,
+        message: `Contest voided and ${refund.refundedCount} entr${refund.refundedCount === 1 ? 'y' : 'ies'} refunded. The declared prize was not covered by entries.`,
+      });
+    }
+
+    const scored = rows.map((r) => ({
+      userId: String(r.playerId),
+      points: calculateClassicPredictionPoints(r.predictions, oneStats, twoStats, category),
+    }));
+
+    const pot = Math.max(0, Math.round(Number(fight.pot) || 0));
+    const promoterId = fight.affiliateId
+      || (Array.isArray(fight.AffiliateIds) && fight.AffiliateIds[0]?.AffiliateId)
+      || null;
+
+    // House cut before anything is paid.
+    const housePct = promoterId ? AFFILIATE_SPLIT_PCT : PLATFORM_RAKE_PCT;
+    const houseCut = Math.floor((pot * housePct) / 100);
+    const prizePool = Math.max(0, pot - houseCut);
+
+    // Fees taken above the declared prize are revenue, not prize money. Keeping
+    // these separate is the whole compliance point: the PRIZE cannot depend on
+    // how many entered, but REVENUE can and should.
+    const collectedFees = Math.max(0, Math.round(Number(fight.collectedFees) || 0));
+    const surplus = Math.max(0, collectedFees - pot);
+    const promoterSurplusShare = promoterId ? Math.floor((surplus * AFFILIATE_SPLIT_PCT) / 100) : 0;
+
+    const { awards, split } = buildPrizeAwards(scored, prizePool);
+
+    // Claim the settlement atomically BEFORE any money moves. The earlier
+    // prizesSettledAt check is read-then-write: two concurrent calls (a
+    // double-click, a retried request) both passed it and both paid the full
+    // pot. Only the request that wins this update is allowed to pay.
+    const FightModel = isShadow ? Shadow : Match;
+    const settlementStartedAt = new Date();
+    const claimed = await FightModel.findOneAndUpdate(
+      { _id: fightId, $or: [{ prizesSettledAt: null }, { prizesSettledAt: { $exists: false } }] },
+      { $set: { prizesSettledAt: settlementStartedAt } },
+      { new: true },
+    );
+    if (!claimed) {
+      const current = await FightModel.findById(fightId).select('prizesSettledAt').lean();
+      return res.status(200).json({
+        message: 'This fight was already settled.',
+        alreadySettled: true,
+        settledAt: current?.prizesSettledAt || null,
+      });
+    }
+
+    // Promoter's half of the house cut on an affiliate fight.
+    let promoterPaid = 0;
+    if (promoterId && houseCut > 0) {
+      const promoter = await Affiliate.findById(promoterId);
+      if (promoter) {
+        const pBefore = Number.parseInt(String(promoter.tokens || '0'), 10) || 0;
+        // Fixed cut of the declared pot, plus their share of everything the
+        // contest took above it. This is how promoter earnings grow with entrants
+        // while the prize stays exactly as advertised.
+        promoterPaid = houseCut + promoterSurplusShare;
+        promoter.tokens = String(pBefore + promoterPaid);
+        await promoter.save();
+        await recordWalletMove({
+          userId: promoter._id,
+          amount: promoterPaid,
+          balanceBefore: pBefore,
+          balanceAfter: pBefore + promoterPaid,
+          reason: 'affiliate_pot_share',
+          reference: fightId,
+          meta: {
+            potTotal: pot, sharePct: housePct,
+            fixedCut: houseCut, surplusShare: promoterSurplusShare,
+            collectedFees, entrants: scored.length,
+          },
+        });
+      }
+    }
+
+    // Credit each winner.
+    let totalPaid = 0;
+    for (const award of awards) {
+      const winner = await User.findById(award.userId);
+      if (!winner) continue;
+      const wBefore = Number.parseInt(String(winner.tokens || '0'), 10) || 0;
+      winner.tokens = String(wBefore + award.amount);
+      await winner.save();
+      totalPaid += award.amount;
+      await recordWalletMove({
+        userId: winner._id,
+        amount: award.amount,
+        balanceBefore: wBefore,
+        balanceAfter: wBefore + award.amount,
+        reason: 'prize_award',
+        reference: fightId + ':' + award.place,
+        meta: { place: award.place, tied: award.tied, potTotal: pot },
+      });
+      sendMoneyNotice({
+        to: winner.email,
+        subject: award.place === 1 ? 'You won!' : `You finished #${award.place}`,
+        heading: award.place === 1 ? 'YOU WON' : `#${award.place} FINISH`,
+        lines: [
+          `${fight.matchFighterA || 'Fighter A'} vs ${fight.matchFighterB || 'Fighter B'} has been settled.`,
+          `<strong>${award.amount.toLocaleString()} FM</strong> has been added to your wallet${award.tied ? ' (shared with a tied player)' : ''}.`,
+        ],
+      });
+    }
+
+    // prizesSettledAt was already stamped by the atomic claim above.
+    await FightModel.updateOne(
+      { _id: fightId },
+      { $set: { prizePoolPaid: totalPaid, houseCutTaken: houseCut } },
+    );
+
+    // Team Cards: credit both fighters to every team holding them on this card.
+    let teamSummary = null;
+    if (TEAM_CARDS_ENABLED) {
+      try {
+        teamSummary = await creditTeamEntries(fight, oneStats, twoStats);
+      } catch (teamCreditError) {
+        console.error('Fight settled but team crediting failed:', teamCreditError);
+        teamSummary = { error: 'TEAM_CREDIT_FAILED' };
+      }
+    }
+
+    // Season Cards: whatever these two fighters actually did is credited to every
+    // roster that drafted them. Runs off the same official round stats, so a
+    // season can never disagree with the fight it was scored from.
+    let seasonSummary = null;
+    if (SEASON_CARDS_ENABLED) {
+      try {
+        seasonSummary = await creditSeasonRosters(fight, oneStats, twoStats);
+      } catch (seasonError2) {
+        console.error('Fight settled but season crediting failed:', seasonError2);
+        seasonSummary = { error: 'SEASON_CREDIT_FAILED' };
+      }
+    }
+
+    // Badges, titles, sponsor merch and PPV codes. Runs for every contest, paid
+    // or free — but it is what makes a FREE contest worth entering, since there
+    // is no pot to pay from. Idempotent, so a re-run cannot double-award.
+    let prizeSummary = null;
+    try {
+      prizeSummary = await awardNonCashPrizes(fightId, scored, fight);
+    } catch (prizeError) {
+      console.error('Cash prizes settled but non-cash awards failed:', prizeError);
+      prizeSummary = { error: 'AWARDS_FAILED' };
+    }
+
+    // Head-to-head challenges on this fight settle in the same action, so an
+    // admin never has to remember a second button. Own claim per challenge, so a
+    // failure here cannot unwind the pot payout above.
+    let challengeSummary = null;
+    if (HEAD_TO_HEAD_ENABLED) {
+      try {
+        challengeSummary = await settleFightChallenges(fightId);
+      } catch (challengeError) {
+        console.error('Pot settled but challenge settlement failed:', challengeError);
+        challengeSummary = { error: 'CHALLENGE_SETTLE_FAILED' };
+      }
+    }
+
+    return res.status(200).json({
+      fightId,
+      challenges: challengeSummary,
+      awardsGiven: prizeSummary,
+      seasonCards: seasonSummary,
+      teamCards: teamSummary,
+      potTotal: pot,
+      housePct,
+      houseCut,
+      promoterPaid,
+      collectedFees,
+      declaredPrizePool: prizePool,
+      surplus,
+      promoterSurplusShare,
+      platformKept: (houseCut - (promoterId ? houseCut : 0)) + (surplus - promoterSurplusShare),
+      entrants: scored.length,
+      minimumEntrants,
+      breakEvenEntrants,
+      prizePool,
+      totalPaid,
+      split,
+      awards: awards.map((a) => ({ userId: a.userId, place: a.place, amount: a.amount, tied: a.tied })),
+    });
+  } catch (error) {
+    console.error('Prize settlement failed:', error);
+    // Release the claim so an operator can retry. Money already credited is
+    // recorded in the wallet ledger, so a retry is auditable rather than silent.
+    try {
+      const fightId = String(req.params.fightId || '').trim();
+      await Promise.all([
+        Match.updateOne({ _id: fightId, prizePoolPaid: { $exists: false } }, { $unset: { prizesSettledAt: '' } }),
+        Shadow.updateOne({ _id: fightId, prizePoolPaid: { $exists: false } }, { $unset: { prizesSettledAt: '' } }),
+      ]);
+    } catch (releaseError) {
+      console.error('Could not release settlement claim:', releaseError);
+    }
+    return res.status(500).json({ message: 'Could not settle prizes.', code: 'SETTLE_FAILED' });
+  }
+});
+
+
+// Shadow Fight promoter controls. The promoter stakes a pot up front, entries
+// fill it, and only once it is covered are they in profit — which is why they,
+// not us, decide when the contest starts.
+app.post('/api/affiliates/me/shadow-fights/:fightId/stake', verifyToken, requireScope(TOKEN_SCOPES.AFFILIATE), async (req, res) => {
+  try {
+    const affiliateId = String(req.user?.id || req.user?._id || '').trim();
+    const fightId = String(req.params.fightId || '').trim();
+    const stake = Math.max(0, Math.floor(Number(req.body?.potTarget) || 0));
+    if (!stake) return res.status(400).json({ message: 'Set the pot you are putting up.', code: 'INVALID_STAKE' });
+
+    const fight = await Shadow.findById(fightId) || await Match.findById(fightId);
+    if (!fight) return res.status(404).json({ message: 'Fight not found.' });
+
+    const promoterIds = [fight.affiliateId, ...(Array.isArray(fight.AffiliateIds) ? fight.AffiliateIds.map((a) => a?.AffiliateId) : [])]
+      .filter(Boolean).map(String);
+    if (!promoterIds.includes(affiliateId)) {
+      return res.status(403).json({ message: 'You do not promote this fight.', code: 'NOT_PROMOTER' });
+    }
+    if (Number(fight.pot) > 0) {
+      return res.status(409).json({ message: 'Entries have already started — the pot cannot be changed now.', code: 'ENTRIES_STARTED' });
+    }
+
+    fight.potTarget = stake;
+    fight.promoterStake = stake;
+    fight.profitZoneReachedAt = null;
+    await fight.save();
+    return res.status(200).json({ fightId, potTarget: stake });
+  } catch (error) {
+    console.error('Stake update failed:', error);
+    return res.status(500).json({ message: 'Could not set that pot.' });
+  }
+});
+
+// Live fill status for the promoter's dashboard.
+app.get('/api/affiliates/me/shadow-fights/:fightId/status', verifyToken, requireScope(TOKEN_SCOPES.AFFILIATE), async (req, res) => {
+  try {
+    const affiliateId = String(req.user?.id || req.user?._id || '').trim();
+    const fight = await Shadow.findById(req.params.fightId).lean()
+      || await Match.findById(req.params.fightId).lean();
+    if (!fight) return res.status(404).json({ message: 'Fight not found.' });
+
+    const promoterIds = [fight.affiliateId, ...(Array.isArray(fight.AffiliateIds) ? fight.AffiliateIds.map((a) => a?.AffiliateId) : [])]
+      .filter(Boolean).map(String);
+    if (!promoterIds.includes(affiliateId)) {
+      return res.status(403).json({ message: 'You do not promote this fight.', code: 'NOT_PROMOTER' });
+    }
+
+    const pot = Math.max(0, Number(fight.pot) || 0);
+    const target = Math.max(0, Number(fight.potTarget) || 0);
+    const entrants = Array.isArray(fight.userPredictions)
+      ? fight.userPredictions.filter((u) => String(u?.predictionStatus) === 'submitted').length
+      : 0;
+    const inProfit = target > 0 && pot >= target;
+    // Everything past the staked pot is profit, split with the platform.
+    const profitAboveStake = Math.max(0, pot - target);
+    const yourShare = Math.floor((profitAboveStake * AFFILIATE_SPLIT_PCT) / 100);
+
+    return res.status(200).json({
+      fightId: String(fight._id),
+      potTarget: target,
+      potFilled: pot,
+      fillPct: target ? Math.min(100, Math.round((pot / target) * 100)) : null,
+      entrants,
+      inProfitZone: inProfit,
+      profitZoneReachedAt: fight.profitZoneReachedAt || null,
+      profitAboveStake,
+      yourProjectedShare: yourShare,
+      canStart: inProfit,
+    });
+  } catch (error) {
+    return res.status(500).json({ message: 'Could not load that status.' });
+  }
+});
+
+// ==========================================================================
+// HEAD-TO-HEAD CHALLENGES
+//
+// A head-to-head is not a new money system — it is a contest with two entrants.
+// The platform is already the referee: it escrows both stakes in its own ledger,
+// scores both cards server-side from the official round stats, and pays out.
+// So this file reuses the hardened pipeline rather than inventing a parallel one:
+//
+//   - stakes are debited through a transaction with a ledger row, like entries
+//   - both players score with calculateClassicPredictionPoints, like contests
+//   - settlement is claimed atomically before money moves, like fight settlement
+//   - refunds go back through the wallet with an audit row, like cancellations
+//
+// What is genuinely new is only the invite lifecycle: challenge, accept, decline,
+// expire — plus a tie rule, which matters here because a tie between two players
+// is common where a tie across a 40-player pot is not.
+//
+// SHIPPED OFF. HEAD_TO_HEAD_ENABLED must be 'true' to expose any of it. Peer-to-
+// peer staking is classified differently from pooled fantasy contests in some
+// states, so this stays dark until the RESTRICTED_STATES legal review lands.
+// ==========================================================================
+const HEAD_TO_HEAD_ENABLED = ['true', '1', 'yes', 'on']
+  .includes(String(process.env.HEAD_TO_HEAD_ENABLED || 'false').trim().toLowerCase());
+
+// Stricter than the platform list when set, because this is the product most
+// likely to be restricted where pooled contests are not.
+const HEAD_TO_HEAD_RESTRICTED_STATES = String(process.env.HEAD_TO_HEAD_RESTRICTED_STATES || '')
+  .split(',').map((x) => x.trim().toUpperCase()).filter(Boolean);
+
+// Platform cut on a head-to-head pot. This is how DFS operators price H2H — the
+// house takes a percentage of the two stakes rather than a share of a pool. Taken
+// ONLY on a decided result: a tie returns both stakes whole, because a drawn
+// contest is not a service we should be charging for.
+const H2H_RAKE_PERCENT = Math.min(25, Math.max(0, Number(process.env.HEAD_TO_HEAD_RAKE_PERCENT ?? 10)));
+
+const H2H_MIN_STAKE = Math.max(1, Number(process.env.HEAD_TO_HEAD_MIN_STAKE || 10));
+const H2H_MAX_STAKE = Math.max(H2H_MIN_STAKE, Number(process.env.HEAD_TO_HEAD_MAX_STAKE || 5000));
+
+const challengeSchema = new mongoose.Schema({
+  fightId: { type: String, required: true, index: true },
+  sourceType: { type: String, enum: ['match', 'shadow'], default: 'match' },
+  challengerId: { type: String, required: true, index: true },
+  opponentId: { type: String, required: true, index: true },
+  stake: { type: Number, required: true, min: 1 },
+  status: {
+    type: String,
+    enum: ['PENDING', 'ACCEPTED', 'DECLINED', 'EXPIRED', 'SETTLED', 'VOID'],
+    default: 'PENDING',
+    index: true,
+  },
+  expiresAt: { type: Date, required: true },
+  // Filled at settlement. winnerId stays null on a tie.
+  winnerId: { type: String, default: null },
+  tie: { type: Boolean, default: false },
+  payout: { type: Number, default: 0 },
+  // Platform cut actually taken, in coins. Zero on a tie or a void.
+  rake: { type: Number, default: 0 },
+  challengerPoints: { type: Number, default: null },
+  opponentPoints: { type: Number, default: null },
+  settledAt: { type: Date, default: null },
+  voidReason: { type: String, default: '' },
+}, { timestamps: true });
+
+// One live challenge per pair per fight. Settled/declined rows are excluded so a
+// rematch on a later fight — or after a decline — is still possible.
+challengeSchema.index(
+  { fightId: 1, challengerId: 1, opponentId: 1, status: 1 },
+  { partialFilterExpression: { status: { $in: ['PENDING', 'ACCEPTED'] } } },
+);
+
+const Challenge = mongoose.models.Challenge || mongoose.model('Challenge', challengeSchema);
+
+const h2hError = (status, message, code, extra = {}) => {
+  const error = new Error(message);
+  error.status = status;
+  error.code = code;
+  error.extra = extra;
+  return error;
+};
+
+const requireHeadToHead = (req, res, next) => {
+  if (!HEAD_TO_HEAD_ENABLED) {
+    return res.status(404).json({
+      ok: false,
+      message: 'Head-to-Head is not open yet. Join the waitlist and we will email you.',
+      code: 'FEATURE_DISABLED',
+    });
+  }
+  return next();
+};
+
+// Head-to-head is a paid, peer-to-peer action, so it clears the normal play gate
+// AND its own state list.
+const checkHeadToHeadEligibility = (user) => {
+  const blocked = checkPlayEligibility(user);
+  if (blocked) return blocked;
+  const state = String(user?.residenceState || '').trim().toUpperCase();
+  if (state && HEAD_TO_HEAD_RESTRICTED_STATES.includes(state)) {
+    return {
+      code: 'H2H_STATE_RESTRICTED',
+      message: 'Head-to-Head challenges are not available in your state.',
+    };
+  }
+  return null;
+};
+
+const loadFightForChallenge = async (fightId, session = null) => {
+  let sourceType = 'match';
+  let fight = await withFightSession(Match.findById(fightId), session);
+  if (!fight) {
+    sourceType = 'shadow';
+    fight = await withFightSession(Shadow.findById(fightId), session);
+  }
+  return { fight, sourceType };
+};
+
+// Both players wager on the scorecard they already submitted for this fight.
+// No second prediction surface, no way to score a challenge off a card the
+// player never entered.
+const requireEntryForChallenge = async (userId, fightId, session = null) => {
+  const entry = await withFightSession(
+    Score.findOne({ playerId: String(userId), matchId: String(fightId), refunded: { $ne: true } }),
+    session,
+  ).lean();
+  if (!entry) {
+    throw h2hError(409, 'You need a scorecard in this fight before you can wager on it.', 'NO_ENTRY_YET');
+  }
+  return entry;
+};
+
+// Moves stake out of a wallet and into escrow, or back again. Same ledger the
+// rest of the money paths write to, so a challenge is auditable alongside entries.
+const moveChallengeStake = async ({ userId, delta, reason, reference, session, meta = {} }) => {
+  const user = await withFightSession(User.findById(userId), session);
+  if (!user) throw h2hError(404, 'Account not found.', 'USER_NOT_FOUND');
+  const before = fightTokenBalance(user.tokens);
+  const after = before + delta;
+  if (after < 0) {
+    throw h2hError(402, 'Not enough FM coins for that stake.', 'INSUFFICIENT_FUNDS', {
+      balance: before,
+      stake: Math.abs(delta),
+      shortfall: Math.abs(delta) - before,
+    });
+  }
+  user.tokens = String(after);
+  await user.save(session ? { session } : undefined);
+  await recordWalletMove({
+    userId,
+    amount: delta,
+    balanceBefore: before,
+    balanceAfter: after,
+    reason,
+    reference,
+    meta,
+    session,
+  });
+  return { before, after };
+};
+
+// --------------------------------------------------------------------------
+// CREATE — challenger's stake is escrowed immediately, so the coins they are
+// offering cannot be spent elsewhere while the invite is outstanding.
+// --------------------------------------------------------------------------
+app.post('/api/challenges', requireHeadToHead, submitLimiter, verifyToken, requireScope(TOKEN_SCOPES.PLAYER), async (req, res) => {
+  try {
+    const challengerId = String(req.user?.id || req.user?._id || '').trim();
+    const fightId = String(req.body?.fightId || '').trim();
+    const stake = Math.floor(Number(req.body?.stake) || 0);
+    const opponentHandle = String(req.body?.opponent || '').trim();
+
+    if (!fightId) throw h2hError(400, 'A fight is required.', 'INVALID_FIGHT_ID');
+    if (!opponentHandle) throw h2hError(400, 'Choose who you are challenging.', 'INVALID_OPPONENT');
+    if (stake < H2H_MIN_STAKE || stake > H2H_MAX_STAKE) {
+      throw h2hError(422, `Stake must be between ${H2H_MIN_STAKE} and ${H2H_MAX_STAKE} FM.`, 'INVALID_STAKE', {
+        min: H2H_MIN_STAKE,
+        max: H2H_MAX_STAKE,
+      });
+    }
+
+    // Resolve the opponent by player name or email, never by an id the client
+    // supplies — so a challenge cannot be aimed at an arbitrary account row.
+    const opponent = await User.findOne({
+      $or: [
+        { playerName: new RegExp(`^${opponentHandle.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`, 'i') },
+        { email: opponentHandle.toLowerCase() },
+      ],
+    }).select('_id email playerName firstName dateOfBirth residenceState selfExcludedUntil').lean();
+
+    if (!opponent) throw h2hError(404, 'We could not find that player.', 'OPPONENT_NOT_FOUND');
+    if (String(opponent._id) === challengerId) {
+      throw h2hError(422, 'You cannot challenge yourself.', 'SELF_CHALLENGE');
+    }
+
+    const result = await runFightEntryTransaction(async (session) => {
+      const { fight, sourceType } = await loadFightForChallenge(fightId, session);
+      if (!fight) throw h2hError(404, 'Fight not found.', 'FIGHT_NOT_FOUND');
+      if (!isFightOpenForEntry(fight)) {
+        throw h2hError(409, 'Predictions are locked for this fight.', 'FIGHT_LOCKED');
+      }
+
+      const challenger = await withFightSession(
+        User.findById(challengerId).select('email playerName firstName dateOfBirth residenceState selfExcludedUntil'),
+        session,
+      ).lean();
+
+      const challengerBlocked = checkHeadToHeadEligibility(challenger);
+      if (challengerBlocked) throw h2hError(403, challengerBlocked.message, challengerBlocked.code);
+      const opponentBlocked = checkHeadToHeadEligibility(opponent);
+      if (opponentBlocked) {
+        throw h2hError(409, 'That player cannot accept challenges right now.', 'OPPONENT_INELIGIBLE');
+      }
+
+      await requireEntryForChallenge(challengerId, fightId, session);
+
+      const existing = await withFightSession(Challenge.findOne({
+        fightId,
+        status: { $in: ['PENDING', 'ACCEPTED'] },
+        $or: [
+          { challengerId, opponentId: String(opponent._id) },
+          { challengerId: String(opponent._id), opponentId: challengerId },
+        ],
+      }), session).lean();
+      if (existing) {
+        throw h2hError(409, 'You already have a challenge running with that player on this fight.', 'CHALLENGE_EXISTS');
+      }
+
+      // The invite dies at the prediction lock at the latest — an unaccepted
+      // challenge must never outlive the thing it is betting on.
+      const lockAt = fight.matchDate ? new Date(fight.matchDate) : null;
+      const in24h = new Date(Date.now() + 24 * 60 * 60 * 1000);
+      const expiresAt = lockAt && lockAt.getTime() > Date.now() && lockAt < in24h ? lockAt : in24h;
+
+      await moveChallengeStake({
+        userId: challengerId,
+        delta: -stake,
+        reason: 'h2h_stake_escrow',
+        reference: `h2h:${fightId}:${challengerId}`,
+        session,
+        meta: { opponentId: String(opponent._id), stake },
+      });
+
+      const [challenge] = await Challenge.create([{
+        fightId,
+        sourceType,
+        challengerId,
+        opponentId: String(opponent._id),
+        stake,
+        status: 'PENDING',
+        expiresAt,
+      }], session ? { session } : undefined);
+
+      return { challenge, fight, challenger, opponent };
+    });
+
+    sendMoneyNotice({
+      to: result.opponent.email,
+      subject: 'You have been challenged',
+      heading: 'HEAD-TO-HEAD CHALLENGE',
+      lines: [
+        `${result.challenger?.playerName || 'A player'} has challenged you on ${result.fight.matchFighterA || 'Fighter A'} vs ${result.fight.matchFighterB || 'Fighter B'}.`,
+        `Stake: <strong>${result.challenge.stake.toLocaleString()} FM</strong> each. Winner takes ${Math.floor((result.challenge.stake * 2) * (100 - H2H_RAKE_PERCENT) / 100).toLocaleString()} FM after a ${H2H_RAKE_PERCENT}% platform fee. A draw returns both stakes in full.`,
+        'Submit your scorecard for this fight, then accept the challenge before predictions lock.',
+      ],
+    });
+
+    return res.status(201).json({
+      ok: true,
+      challengeId: result.challenge._id,
+      status: result.challenge.status,
+      stake: result.challenge.stake,
+      pot: result.challenge.stake * 2,
+      rakePercent: H2H_RAKE_PERCENT,
+      winnerReceives: Math.floor((result.challenge.stake * 2) * (100 - H2H_RAKE_PERCENT) / 100),
+      expiresAt: result.challenge.expiresAt,
+      opponent: { id: result.opponent._id, name: result.opponent.playerName || result.opponent.firstName || 'Player' },
+    });
+  } catch (error) {
+    const status = error?.status || 500;
+    if (status >= 500) console.error('Challenge create failed:', error);
+    return res.status(status).json({
+      ok: false,
+      message: error?.message || 'Could not send that challenge.',
+      code: error?.code || 'CHALLENGE_FAILED',
+      ...(error?.extra || {}),
+    });
+  }
+});
+
+// --------------------------------------------------------------------------
+// ACCEPT — escrows the opponent's stake. Claimed atomically so a double-tap
+// cannot debit twice.
+// --------------------------------------------------------------------------
+app.post('/api/challenges/:id/accept', requireHeadToHead, verifyToken, requireScope(TOKEN_SCOPES.PLAYER), async (req, res) => {
+  try {
+    const userId = String(req.user?.id || req.user?._id || '').trim();
+    const challengeId = String(req.params.id || '').trim();
+
+    const result = await runFightEntryTransaction(async (session) => {
+      const challenge = await withFightSession(Challenge.findById(challengeId), session);
+      if (!challenge) throw h2hError(404, 'Challenge not found.', 'CHALLENGE_NOT_FOUND');
+      if (String(challenge.opponentId) !== userId) {
+        throw h2hError(403, 'This challenge was not sent to you.', 'NOT_YOUR_CHALLENGE');
+      }
+      if (challenge.status !== 'PENDING') {
+        throw h2hError(409, `This challenge is already ${challenge.status.toLowerCase()}.`, 'CHALLENGE_NOT_PENDING');
+      }
+      if (challenge.expiresAt.getTime() <= Date.now()) {
+        throw h2hError(409, 'This challenge has expired.', 'CHALLENGE_EXPIRED');
+      }
+
+      const { fight } = await loadFightForChallenge(challenge.fightId, session);
+      if (!fight) throw h2hError(404, 'Fight not found.', 'FIGHT_NOT_FOUND');
+      if (!isFightOpenForEntry(fight)) {
+        throw h2hError(409, 'Predictions are locked for this fight.', 'FIGHT_LOCKED');
+      }
+
+      const me = await withFightSession(
+        User.findById(userId).select('email playerName dateOfBirth residenceState selfExcludedUntil'),
+        session,
+      ).lean();
+      const blocked = checkHeadToHeadEligibility(me);
+      if (blocked) throw h2hError(403, blocked.message, blocked.code);
+
+      await requireEntryForChallenge(userId, challenge.fightId, session);
+
+      // Claim the acceptance before the debit.
+      const claimed = await withFightSession(
+        Challenge.findOneAndUpdate(
+          { _id: challengeId, status: 'PENDING' },
+          { $set: { status: 'ACCEPTED' } },
+          { new: true },
+        ),
+        session,
+      );
+      if (!claimed) throw h2hError(409, 'This challenge was already answered.', 'CHALLENGE_NOT_PENDING');
+
+      const balance = await moveChallengeStake({
+        userId,
+        delta: -challenge.stake,
+        reason: 'h2h_stake_escrow',
+        reference: `h2h:${challenge.fightId}:${userId}`,
+        session,
+        meta: { challengeId: String(challenge._id), stake: challenge.stake },
+      });
+
+      return { challenge: claimed, fight, balance, me };
+    });
+
+    const challenger = await User.findById(result.challenge.challengerId).select('email playerName').lean();
+    sendMoneyNotice({
+      to: challenger?.email,
+      subject: 'Your challenge was accepted',
+      heading: 'CHALLENGE ACCEPTED',
+      lines: [
+        `${result.me?.playerName || 'Your opponent'} accepted your ${result.challenge.stake.toLocaleString()} FM challenge.`,
+        `Winner takes <strong>${(result.challenge.stake * 2).toLocaleString()} FM</strong> once the fight is scored.`,
+      ],
+    });
+
+    return res.status(200).json({
+      ok: true,
+      challengeId: result.challenge._id,
+      status: result.challenge.status,
+      pot: result.challenge.stake * 2,
+      rakePercent: H2H_RAKE_PERCENT,
+      winnerReceives: Math.floor((result.challenge.stake * 2) * (100 - H2H_RAKE_PERCENT) / 100),
+      walletBalance: result.balance.after,
+    });
+  } catch (error) {
+    const status = error?.status || 500;
+    if (status >= 500) console.error('Challenge accept failed:', error);
+    return res.status(status).json({
+      ok: false,
+      message: error?.message || 'Could not accept that challenge.',
+      code: error?.code || 'ACCEPT_FAILED',
+      ...(error?.extra || {}),
+    });
+  }
+});
+
+// --------------------------------------------------------------------------
+// DECLINE / WITHDRAW — returns the escrowed stake. Either side may back out
+// while the invite is still pending.
+// --------------------------------------------------------------------------
+const releaseChallenge = async ({ challengeId, actorId, nextStatus, reason }) => runFightEntryTransaction(async (session) => {
+  const challenge = await withFightSession(Challenge.findById(challengeId), session);
+  if (!challenge) throw h2hError(404, 'Challenge not found.', 'CHALLENGE_NOT_FOUND');
+  if (actorId && ![String(challenge.challengerId), String(challenge.opponentId)].includes(String(actorId))) {
+    throw h2hError(403, 'This challenge is not yours.', 'NOT_YOUR_CHALLENGE');
+  }
+
+  // Atomic claim: only one caller gets to release the escrow.
+  const claimed = await withFightSession(
+    Challenge.findOneAndUpdate(
+      { _id: challengeId, status: 'PENDING' },
+      { $set: { status: nextStatus, voidReason: reason || '' } },
+      { new: true },
+    ),
+    session,
+  );
+  if (!claimed) {
+    const current = await withFightSession(Challenge.findById(challengeId), session).lean();
+    return { alreadyResolved: true, challenge: current };
+  }
+
+  await moveChallengeStake({
+    userId: challenge.challengerId,
+    delta: challenge.stake,
+    reason: 'h2h_stake_returned',
+    reference: `h2h:release:${challengeId}`,
+    session,
+    meta: { challengeId: String(challengeId), status: nextStatus },
+  });
+
+  return { alreadyResolved: false, challenge: claimed };
+});
+
+app.post('/api/challenges/:id/decline', requireHeadToHead, verifyToken, requireScope(TOKEN_SCOPES.PLAYER), async (req, res) => {
+  try {
+    const result = await releaseChallenge({
+      challengeId: String(req.params.id || '').trim(),
+      actorId: String(req.user?.id || req.user?._id || '').trim(),
+      nextStatus: 'DECLINED',
+      reason: 'Declined by the opponent.',
+    });
+    return res.status(200).json({
+      ok: true,
+      alreadyResolved: result.alreadyResolved,
+      message: result.alreadyResolved
+        ? 'That challenge was already resolved.'
+        : 'Challenge declined and the stake returned.',
+    });
+  } catch (error) {
+    const status = error?.status || 500;
+    if (status >= 500) console.error('Challenge decline failed:', error);
+    return res.status(status).json({ ok: false, message: error?.message || 'Could not decline.', code: error?.code || 'DECLINE_FAILED' });
+  }
+});
+
+// --------------------------------------------------------------------------
+// MY CHALLENGES
+// --------------------------------------------------------------------------
+app.get('/api/challenges/me', requireHeadToHead, verifyToken, requireScope(TOKEN_SCOPES.PLAYER), async (req, res) => {
+  try {
+    const userId = String(req.user?.id || req.user?._id || '').trim();
+    const rows = await Challenge.find({ $or: [{ challengerId: userId }, { opponentId: userId }] })
+      .sort({ createdAt: -1 }).limit(100).lean();
+
+    const otherIds = [...new Set(rows.map((row) => (String(row.challengerId) === userId ? row.opponentId : row.challengerId)))];
+    const others = otherIds.length
+      ? await User.find({ _id: { $in: otherIds.filter((id) => mongoose.isValidObjectId(id)) } })
+        .select('playerName firstName profileUrl').lean()
+      : [];
+    const byId = new Map(others.map((row) => [String(row._id), row]));
+
+    const fightIds = [...new Set(rows.map((row) => String(row.fightId)))].filter((id) => mongoose.isValidObjectId(id));
+    const fights = fightIds.length
+      ? await Match.find({ _id: { $in: fightIds } }).select('matchFighterA matchFighterB matchDate matchCategory').lean()
+      : [];
+    const fightById = new Map(fights.map((row) => [String(row._id), row]));
+
+    return res.json({
+      ok: true,
+      challenges: rows.map((row) => {
+        const iAmChallenger = String(row.challengerId) === userId;
+        const other = byId.get(String(iAmChallenger ? row.opponentId : row.challengerId));
+        const fight = fightById.get(String(row.fightId));
+        return {
+          id: row._id,
+          fightId: row.fightId,
+          fight: fight ? { fighterA: fight.matchFighterA, fighterB: fight.matchFighterB, date: fight.matchDate } : null,
+          direction: iAmChallenger ? 'sent' : 'received',
+          opponentName: other?.playerName || other?.firstName || 'Player',
+          opponentAvatar: other?.profileUrl || '',
+          stake: row.stake,
+          pot: row.stake * 2,
+          status: row.status,
+          expiresAt: row.expiresAt,
+          // Only meaningful once settled.
+          outcome: row.status !== 'SETTLED'
+            ? null
+            : row.tie ? 'tie' : (String(row.winnerId) === userId ? 'won' : 'lost'),
+          myPoints: iAmChallenger ? row.challengerPoints : row.opponentPoints,
+          theirPoints: iAmChallenger ? row.opponentPoints : row.challengerPoints,
+          payout: row.payout,
+          rake: row.rake || 0,
+          winnerReceives: Math.floor((row.stake * 2) * (100 - H2H_RAKE_PERCENT) / 100),
+        };
+      }),
+    });
+  } catch (error) {
+    console.error('Challenge list failed:', error);
+    return res.status(500).json({ ok: false, message: 'Could not load your challenges.' });
+  }
+});
+
+// --------------------------------------------------------------------------
+// SETTLEMENT — scored from the same official round stats as the pot contest.
+// Winner takes both stakes; a tie returns both. Runs per challenge with an
+// atomic claim, so a retried settle cannot pay twice.
+// --------------------------------------------------------------------------
+const settleFightChallenges = async (fightId) => {
+  const { fight } = await loadFightForChallenge(fightId);
+  if (!fight) return { settled: 0, skipped: 0, reason: 'FIGHT_NOT_FOUND' };
+
+  const category = String(fight.matchCategory || '').toLowerCase();
+  const oneStats = category === 'boxing' ? fight?.BoxingMatch?.fighterOneStats : fight?.MMAMatch?.fighterOneStats;
+  const twoStats = category === 'boxing' ? fight?.BoxingMatch?.fighterTwoStats : fight?.MMAMatch?.fighterTwoStats;
+  if (!Array.isArray(oneStats) || !Array.isArray(twoStats)) {
+    return { settled: 0, skipped: 0, reason: 'STATS_MISSING' };
+  }
+
+  const open = await Challenge.find({ fightId: String(fightId), status: { $in: ['PENDING', 'ACCEPTED'] } }).lean();
+  let settled = 0;
+  let voided = 0;
+
+  for (const row of open) {
+    // Never accepted — the stake goes back to whoever put it up.
+    if (row.status === 'PENDING') {
+      try {
+        await releaseChallenge({
+          challengeId: row._id,
+          actorId: null,
+          nextStatus: 'EXPIRED',
+          reason: 'Never accepted before the fight was scored.',
+        });
+        voided += 1;
+      } catch (error) {
+        console.error('Could not expire challenge', String(row._id), error.message);
+      }
+      continue;
+    }
+
+    try {
+      await runFightEntryTransaction(async (session) => {
+        // Claim before paying.
+        const claimed = await withFightSession(
+          Challenge.findOneAndUpdate(
+            { _id: row._id, status: 'ACCEPTED' },
+            { $set: { status: 'SETTLED', settledAt: new Date() } },
+            { new: true },
+          ),
+          session,
+        );
+        if (!claimed) return;
+
+        const [challengerCard, opponentCard] = await Promise.all([
+          withFightSession(Score.findOne({ playerId: String(row.challengerId), matchId: String(fightId), refunded: { $ne: true } }), session).lean(),
+          withFightSession(Score.findOne({ playerId: String(row.opponentId), matchId: String(fightId), refunded: { $ne: true } }), session).lean(),
+        ]);
+
+        const challengerPoints = challengerCard
+          ? calculateClassicPredictionPoints(challengerCard.predictions, oneStats, twoStats, category)
+          : null;
+        const opponentPoints = opponentCard
+          ? calculateClassicPredictionPoints(opponentCard.predictions, oneStats, twoStats, category)
+          : null;
+
+        // A refunded or missing card cannot win. If neither has one, both stakes
+        // go home — the platform does not keep money from a contest that never
+        // really happened.
+        const pot = row.stake * 2;
+        let winnerId = null;
+        let tie = false;
+
+        if (challengerPoints === null && opponentPoints === null) {
+          tie = true;
+        } else if (challengerPoints === null) {
+          winnerId = String(row.opponentId);
+        } else if (opponentPoints === null) {
+          winnerId = String(row.challengerId);
+        } else if (challengerPoints > opponentPoints) {
+          winnerId = String(row.challengerId);
+        } else if (opponentPoints > challengerPoints) {
+          winnerId = String(row.opponentId);
+        } else {
+          tie = true;
+        }
+
+        // Rake is charged on a decided result only, and floored so rounding can
+        // never pay out more than the pot holds.
+        const rake = tie ? 0 : Math.floor((pot * H2H_RAKE_PERCENT) / 100);
+        const netPayout = pot - rake;
+
+        if (tie) {
+          // Return each side's own stake rather than splitting a pot — same
+          // amount, but it reads correctly in the ledger.
+          for (const playerId of [row.challengerId, row.opponentId]) {
+            await moveChallengeStake({
+              userId: playerId,
+              delta: row.stake,
+              reason: 'h2h_tie_returned',
+              reference: `h2h:tie:${row._id}:${playerId}`,
+              session,
+              meta: { challengeId: String(row._id) },
+            });
+          }
+        } else {
+          await moveChallengeStake({
+            userId: winnerId,
+            delta: netPayout,
+            reason: 'h2h_prize',
+            reference: `h2h:win:${row._id}`,
+            session,
+            meta: { challengeId: String(row._id), stake: row.stake, pot, rake, rakePercent: H2H_RAKE_PERCENT },
+          });
+        }
+
+        await withFightSession(
+          Challenge.findByIdAndUpdate(row._id, {
+            $set: {
+              winnerId,
+              tie,
+              payout: tie ? row.stake : netPayout,
+              rake,
+              challengerPoints,
+              opponentPoints,
+            },
+          }),
+          session,
+        );
+
+        settled += 1;
+
+        const [challengerUser, opponentUser] = await Promise.all([
+          User.findById(row.challengerId).select('email playerName').lean(),
+          User.findById(row.opponentId).select('email playerName').lean(),
+        ]);
+        const label = `${fight.matchFighterA || 'Fighter A'} vs ${fight.matchFighterB || 'Fighter B'}`;
+        [[challengerUser, challengerPoints, opponentPoints], [opponentUser, opponentPoints, challengerPoints]]
+          .forEach(([person, mine, theirs]) => {
+            if (!person?.email) return;
+            const won = !tie && String(person._id) === winnerId;
+            sendMoneyNotice({
+              to: person.email,
+              subject: tie ? 'Your challenge was a draw' : won ? 'You won your challenge' : 'Your challenge result',
+              heading: tie ? 'DRAW' : won ? 'CHALLENGE WON' : 'CHALLENGE LOST',
+              lines: [
+                `${label} has been scored.`,
+                `Your card: <strong>${mine ?? 0}</strong> · Theirs: <strong>${theirs ?? 0}</strong>`,
+                tie
+                  ? `Scores were level, so your ${row.stake.toLocaleString()} FM stake has been returned.`
+                  : won
+                    ? `<strong>${netPayout.toLocaleString()} FM</strong> has been added to your wallet — a ${pot.toLocaleString()} FM pot less the ${H2H_RAKE_PERCENT}% platform fee.`
+                    : `Your ${row.stake.toLocaleString()} FM stake goes to your opponent.`,
+              ],
+            });
+          });
+      });
+    } catch (error) {
+      console.error('Challenge settlement failed for', String(row._id), error.message);
+    }
+  }
+
+  clearPublicResponseCache();
+  return { settled, voided, total: open.length };
+};
+
+// Lets an admin set or waive the house-risk guard for one fight. Waiving it means
+// the platform covers any shortfall itself, so it is recorded explicitly rather
+// than being an accident of a blank field.
+app.post('/api/admin/fights/:fightId/prize-guard', verifyAdminToken, async (req, res) => {
+  try {
+    const fightId = String(req.params.fightId || '').trim();
+    const update = {};
+    if (req.body?.minimumEntrants !== undefined) {
+      const value = Math.max(0, Math.round(Number(req.body.minimumEntrants) || 0));
+      update.minimumEntrants = value;
+    }
+    if (req.body?.autoRefundIfShort !== undefined) {
+      update.autoRefundIfShort = ['true', '1', 'yes', true].includes(req.body.autoRefundIfShort);
+    }
+    if (!Object.keys(update).length) {
+      return res.status(400).json({ ok: false, message: 'Nothing to change.' });
+    }
+
+    const [matchResult, shadowResult] = await Promise.all([
+      Match.findOneAndUpdate({ _id: fightId }, { $set: update }, { new: true })
+        .select('pot matchTokens minimumEntrants autoRefundIfShort').lean(),
+      Shadow.findOneAndUpdate({ _id: fightId }, { $set: update }, { new: true })
+        .select('pot matchTokens minimumEntrants autoRefundIfShort').lean(),
+    ]);
+    const fight = matchResult || shadowResult;
+    if (!fight) return res.status(404).json({ ok: false, message: 'Fight not found.' });
+
+    const entryFee = Math.max(0, Math.round(Number(fight.matchTokens) || 0));
+    const breakEven = entryFee > 0 ? Math.ceil((Number(fight.pot) || 0) / entryFee) : 0;
+    return res.json({
+      ok: true,
+      fightId,
+      minimumEntrants: fight.minimumEntrants || breakEven,
+      breakEvenEntrants: breakEven,
+      autoRefundIfShort: fight.autoRefundIfShort !== false,
+      warning: fight.autoRefundIfShort === false
+        ? 'Auto-refund is OFF for this fight. Any shortfall between entries and the declared prize is paid by the platform.'
+        : undefined,
+    });
+  } catch (error) {
+    console.error('Prize guard update failed:', error);
+    return res.status(500).json({ ok: false, message: 'Could not update the prize guard.' });
+  }
+});
+
+app.post('/api/admin/fights/:fightId/settle-challenges', verifyAdminToken, async (req, res) => {
+  try {
+    const summary = await settleFightChallenges(String(req.params.fightId || '').trim());
+    return res.status(200).json({ ok: true, ...summary });
+  } catch (error) {
+    console.error('Challenge settle sweep failed:', error);
+    return res.status(500).json({ ok: false, message: 'Could not settle challenges for that fight.' });
+  }
+});
+
+// Expiry sweep. Runs from the scheduler so an unanswered challenge does not sit
+// on a player's coins indefinitely.
+app.get('/api/cron/challenges/expire', verifyCronSecret, async (req, res) => {
+  try {
+    const due = await Challenge.find({ status: 'PENDING', expiresAt: { $lte: new Date() } }).limit(200).lean();
+    let released = 0;
+    for (const row of due) {
+      try {
+        const result = await releaseChallenge({
+          challengeId: row._id,
+          actorId: null,
+          nextStatus: 'EXPIRED',
+          reason: 'Not accepted before it expired.',
+        });
+        if (!result.alreadyResolved) released += 1;
+      } catch (error) {
+        console.error('Could not expire challenge', String(row._id), error.message);
+      }
+    }
+    return res.json({ ok: true, examined: due.length, released });
+  } catch (error) {
+    console.error('Challenge expiry sweep failed:', error);
+    return res.status(500).json({ ok: false, message: 'Expiry sweep failed.' });
+  }
+});
+
+// Readiness probe. Answers the one question that decides whether money paths
+// work at all, without needing shell access to the database.
+app.get('/api/health/db', async (_req, res) => {
+  if (!databaseCapability.checked) await detectDatabaseCapability();
+  const ready = databaseCapability.transactionsSupported;
+  return res.status(ready ? 200 : 503).json({
+    ok: ready,
+    connected: mongoose.connection.readyState === 1,
+    topology: databaseCapability.topology,
+    transactionsSupported: databaseCapability.transactionsSupported,
+    message: ready
+      ? 'Database supports transactions. Money paths are safe to use.'
+      : 'Database does NOT support transactions. Paid entries, refunds and settlement will fail. Make MongoDB a replica set.',
+  });
+});
+
+// Lets the app decide between the live feature and the waitlist card without
+// shipping a second build.
+app.get('/api/public/features', (_req, res) => {
+  res.json({
+    ok: true,
+    features: {
+      headToHead: {
+        enabled: HEAD_TO_HEAD_ENABLED,
+        minStake: H2H_MIN_STAKE,
+        maxStake: H2H_MAX_STAKE,
+        rakePercent: H2H_RAKE_PERCENT,
+      },
+      teamCards: {
+        enabled: TEAM_CARDS_ENABLED,
+        picksRequired: TEAM_PICKS_REQUIRED,
+        callBonusCap: TEAM_CALL_BONUS_CAP,
+      },
+      seasonCards: {
+        enabled: SEASON_CARDS_ENABLED,
+        slots: SEASON_SLOTS,
+        slotMax: SEASON_SLOT_MAX,
+        callBonusCap: SEASON_CALL_BONUS_CAP,
+      },
+    },
+  });
+});
+
+// ==========================================================================
+// SEASON CARDS — the multi-sport long game
+//
+// A player drafts ONE fighter per sport. Over the season those five fighters
+// compete on their own schedules, and whatever each one actually does in the
+// cage or ring is credited to whoever drafted them. It is a fantasy roster, not
+// a prediction contest — but it keeps the platform's DNA in two ways:
+//
+//   1. Output is scored with the SAME categories the scorecards use. A boxer
+//      earns from head punches, body punches, total punches, round wins and
+//      knockdowns; an MMA fighter from strikes, kicks, knees, elbows. Nothing
+//      new is invented, so a Season Card score means the same thing a fight
+//      score means.
+//
+//   2. Each pick carries a CALLED NUMBER. The player names a category and a
+//      figure their fighter will reach across the season. It scores by exactly
+//      the platform's existing rule — if you called at or under what the fighter
+//      actually did, you score what you called. Call low and it is safe but
+//      small; call high and you risk the whole bonus. Same trade-off as a
+//      scorecard, stretched over three months.
+//
+// CROSS-SPORT FAIRNESS. A twelve-round boxing match generates several times the
+// countable output of a three-round MMA fight, so raw totals would make the
+// boxing slot decide every season. Each slot is therefore scored out of 100
+// WITHIN ITS OWN SPORT — measured against the best performance any entrant got
+// from that slot — and the five slots sum to a score out of 500. The raw number
+// is kept and shown alongside it; the normalisation is the conversion, not a
+// replacement for the platform's scoring.
+//
+// SHIPPED OFF. SEASON_CARDS_ENABLED must be 'true' to expose any of it.
+// ==========================================================================
+// LIVE BY DEFAULT. Set SEASON_CARDS_ENABLED=false to pull it.
+const SEASON_CARDS_ENABLED = ['true', '1', 'yes', 'on']
+  .includes(String(process.env.SEASON_CARDS_ENABLED || 'true').trim().toLowerCase());
+
+// Five slots, but only three scoring families: the platform scores boxing and
+// bare knuckle identically, and MMA and kickboxing identically.
+const SEASON_SLOTS = Object.freeze([
+  { key: 'boxing', label: 'Boxing', family: 'boxing' },
+  { key: 'bareknuckle', label: 'Bare Knuckle', family: 'boxing' },
+  { key: 'mma', label: 'MMA', family: 'mma' },
+  { key: 'kickboxing', label: 'Kickboxing', family: 'mma' },
+  { key: 'wrestling', label: 'Pro Wrestling', family: 'wrestling' },
+]);
+const SEASON_SLOT_KEYS = Object.freeze(SEASON_SLOTS.map((slot) => slot.key));
+const SLOT_BY_KEY = new Map(SEASON_SLOTS.map((slot) => [slot.key, slot]));
+
+// Categories a called number may be placed on, per family. These are the same
+// fields the scorecards read, so a called number is checkable against the very
+// stats an admin already enters.
+const SEASON_CALL_CATEGORIES = Object.freeze({
+  boxing: Object.freeze({ HP: 'Head punches', BP: 'Body punches', TP: 'Total punches', RW: 'Rounds won', KO: 'Knockdowns' }),
+  mma: Object.freeze({ ST: 'Strikes', KI: 'Kicks', KN: 'Knees', EL: 'Elbows', RW: 'Rounds won', KO: 'Knockdowns' }),
+  wrestling: Object.freeze({ SIG: 'Signature moves', NF: 'Near falls', RV: 'Reversals', PIN: 'Pinfalls' }),
+});
+
+// A called number cannot out-weigh the fighter's actual output.
+const SEASON_CALL_BONUS_CAP = Math.max(0, Number(process.env.SEASON_CALL_BONUS_CAP ?? 100));
+const SEASON_SLOT_MAX = 100;
+
+const seasonSchema = new mongoose.Schema({
+  name: { type: String, required: true },
+  description: { type: String, default: '' },
+  startsAt: { type: Date, required: true },
+  endsAt: { type: Date, required: true },
+  // Zero means a free season — runs in every state, awards non-cash prizes only.
+  entryFee: { type: Number, default: 0, min: 0 },
+  requiredSlots: { type: [String], default: () => [...SEASON_SLOT_KEYS] },
+  status: { type: String, enum: ['DRAFT_OPEN', 'RUNNING', 'SETTLED', 'VOID'], default: 'DRAFT_OPEN', index: true },
+  // Drafting closes here; after it, rosters are locked for the season.
+  draftClosesAt: { type: Date, required: true },
+  prizePool: { type: Number, default: 0 },
+  settledAt: { type: Date, default: null },
+  voidReason: { type: String, default: '' },
+}, { timestamps: true });
+
+const seasonRosterSchema = new mongoose.Schema({
+  seasonId: { type: String, required: true, index: true },
+  userId: { type: String, required: true, index: true },
+  picks: {
+    type: [new mongoose.Schema({
+      slot: { type: String, required: true },
+      fighterName: { type: String, required: true },
+      // Lower-cased for matching, because fights carry fighter NAMES not ids.
+      matchKey: { type: String, required: true, index: true },
+      calledCategory: { type: String, default: '' },
+      calledValue: { type: Number, default: 0 },
+      // Accumulated as the season runs.
+      rawPoints: { type: Number, default: 0 },
+      categoryTotals: { type: Object, default: () => ({}) },
+      eventsCounted: { type: Number, default: 0 },
+      // Filled at settlement.
+      normalized: { type: Number, default: 0 },
+      callBonus: { type: Number, default: 0 },
+      callHit: { type: Boolean, default: false },
+    }, { _id: false })],
+    default: [],
+  },
+  entryFeePaid: { type: Number, default: 0 },
+  totalScore: { type: Number, default: 0 },
+  settled: { type: Boolean, default: false },
+  // Guards a re-run of settlement and a double entry charge.
+  idempotencyKey: { type: String, required: true, unique: true },
+}, { timestamps: true });
+
+// One roster per player per season.
+seasonRosterSchema.index({ seasonId: 1, userId: 1 }, { unique: true });
+// Credit lookups walk this: "which rosters hold this fighter in this slot?"
+seasonRosterSchema.index({ seasonId: 1, 'picks.matchKey': 1 });
+
+const Season = mongoose.models.Season || mongoose.model('Season', seasonSchema);
+const SeasonRoster = mongoose.models.SeasonRoster || mongoose.model('SeasonRoster', seasonRosterSchema);
+
+const seasonError = (status, message, code, extra = {}) => {
+  const error = new Error(message);
+  error.status = status;
+  error.code = code;
+  error.extra = extra;
+  return error;
+};
+
+const requireSeasonCards = (req, res, next) => {
+  if (!SEASON_CARDS_ENABLED) {
+    return res.status(404).json({
+      ok: false,
+      message: 'Season Cards are not open yet.',
+      code: 'FEATURE_DISABLED',
+    });
+  }
+  return next();
+};
+
+// Fighter names are the only identifier a fight carries, so matching is done on
+// a normalised key rather than the raw string.
+const fighterMatchKey = (name) => String(name || '')
+  .toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
+
+const seasonFamilyForCategory = (matchCategory) => {
+  const category = String(matchCategory || '').toLowerCase();
+  if (category.includes('box') || category.includes('knuckle')) return 'boxing';
+  if (category.includes('wrestl')) return 'wrestling';
+  return 'mma';
+};
+
+// Converts what a fighter ACTUALLY did into points and per-category totals,
+// using the same fields the scorecards score against.
+const fighterOutputFromRounds = (rounds, family) => {
+  const totals = {};
+  let points = 0;
+  if (!Array.isArray(rounds)) return { points, totals };
+
+  const fields = family === 'boxing'
+    ? ['HP', 'BP', 'TP', 'RW', 'KO']
+    : family === 'wrestling'
+      ? ['SIG', 'NF', 'RV', 'PIN']
+      : ['ST', 'KI', 'KN', 'EL', 'RW', 'KO'];
+  // Decisive events are rare, so they carry weight rather than a raw count.
+  const weights = { RW: 10, KO: 25, PIN: 25, NF: 5 };
+
+  rounds.forEach((round) => {
+    if (!round) return;
+    fields.forEach((field) => {
+      const value = Number(round[field]);
+      if (!Number.isFinite(value) || value <= 0) return;
+      totals[field] = (totals[field] || 0) + value;
+      points += value * (weights[field] || 1);
+    });
+  });
+  return { points, totals };
+};
+
+// Called at fight settlement. Credits every roster that drafted either fighter.
+const creditSeasonRosters = async (fight, oneStats, twoStats) => {
+  if (!SEASON_CARDS_ENABLED) return { credited: 0 };
+  const when = fight?.matchDate ? new Date(fight.matchDate) : new Date();
+  const seasons = await Season.find({
+    status: 'RUNNING',
+    startsAt: { $lte: when },
+    endsAt: { $gte: when },
+  }).select('_id').lean();
+  if (!seasons.length) return { credited: 0 };
+
+  const family = seasonFamilyForCategory(fight?.matchCategory);
+  const sides = [
+    { name: fight?.matchFighterA, rounds: oneStats },
+    { name: fight?.matchFighterB, rounds: twoStats },
+  ];
+  let credited = 0;
+
+  for (const season of seasons) {
+    for (const side of sides) {
+      const key = fighterMatchKey(side.name);
+      if (!key) continue;
+      const { points, totals } = fighterOutputFromRounds(side.rounds, family);
+      if (points <= 0) continue;
+
+      const rosters = await SeasonRoster.find({
+        seasonId: String(season._id),
+        settled: false,
+        'picks.matchKey': key,
+      });
+
+      for (const roster of rosters) {
+        let touched = false;
+        roster.picks.forEach((pick) => {
+          if (pick.matchKey !== key) return;
+          // Only credit the slot whose sport this fight actually belongs to, so
+          // a name collision across sports cannot cross-credit.
+          if (SLOT_BY_KEY.get(pick.slot)?.family !== family) return;
+          pick.rawPoints += points;
+          pick.eventsCounted += 1;
+          const merged = { ...(pick.categoryTotals || {}) };
+          Object.entries(totals).forEach(([field, value]) => {
+            merged[field] = (merged[field] || 0) + value;
+          });
+          pick.categoryTotals = merged;
+          touched = true;
+        });
+        if (touched) {
+          roster.markModified('picks');
+          await roster.save();
+          credited += 1;
+        }
+      }
+    }
+  }
+  return { credited };
+};
+
+// --------------------------------------------------------------------------
+// DRAFT — charges the entry fee through the same transaction and ledger the
+// fight entries use, so a Season Card entry is auditable the same way.
+// --------------------------------------------------------------------------
+app.post('/api/seasons/:seasonId/draft', requireSeasonCards, submitLimiter, verifyToken, requireScope(TOKEN_SCOPES.PLAYER), async (req, res) => {
+  try {
+    const userId = String(req.user?.id || req.user?._id || '').trim();
+    const seasonId = String(req.params.seasonId || '').trim();
+    const submitted = Array.isArray(req.body?.picks) ? req.body.picks : [];
+
+    const result = await runFightEntryTransaction(async (session) => {
+      const season = await withFightSession(Season.findById(seasonId), session);
+      if (!season) throw seasonError(404, 'Season not found.', 'SEASON_NOT_FOUND');
+      if (season.status !== 'DRAFT_OPEN') {
+        throw seasonError(409, 'Drafting has closed for this season.', 'DRAFT_CLOSED');
+      }
+      if (season.draftClosesAt.getTime() <= Date.now()) {
+        throw seasonError(409, 'Drafting has closed for this season.', 'DRAFT_CLOSED');
+      }
+
+      const user = await withFightSession(
+        User.findById(userId).select('email playerName dateOfBirth residenceState selfExcludedUntil tokens'),
+        session,
+      );
+      if (!user) throw seasonError(404, 'Account not found.', 'USER_NOT_FOUND');
+
+      const blocked = checkPlayEligibility(user);
+      if (blocked) throw seasonError(403, blocked.message, blocked.code);
+
+      // A paid season is a paid contest: it obeys the state mode exactly as a
+      // paid fight does.
+      const fee = Math.max(0, Math.round(Number(season.entryFee) || 0));
+      if (fee > 0) {
+        const mode = resolveStateMode(user.residenceState);
+        if (mode !== 'paid') {
+          throw seasonError(403, 'Paid seasons are not available in your state. Free seasons are.', 'STATE_FREE_PLAY_ONLY');
+        }
+      }
+
+      const required = Array.isArray(season.requiredSlots) && season.requiredSlots.length
+        ? season.requiredSlots
+        : [...SEASON_SLOT_KEYS];
+
+      const picks = [];
+      for (const slot of required) {
+        const raw = submitted.find((entry) => String(entry?.slot || '').trim() === slot);
+        const fighterName = String(raw?.fighterName || '').trim();
+        if (!fighterName) {
+          throw seasonError(422, `Pick a fighter for every slot — ${SLOT_BY_KEY.get(slot)?.label || slot} is empty.`, 'INCOMPLETE_ROSTER', { slot });
+        }
+        const family = SLOT_BY_KEY.get(slot)?.family || 'mma';
+        const allowed = SEASON_CALL_CATEGORIES[family] || {};
+        const calledCategory = String(raw?.calledCategory || '').trim().toUpperCase();
+        const calledValue = Math.max(0, Math.round(Number(raw?.calledValue) || 0));
+        if (calledCategory && !allowed[calledCategory]) {
+          throw seasonError(422, `${calledCategory} is not a category for ${SLOT_BY_KEY.get(slot)?.label || slot}.`, 'BAD_CALL_CATEGORY', { slot });
+        }
+        picks.push({
+          slot,
+          fighterName: fighterName.slice(0, 120),
+          matchKey: fighterMatchKey(fighterName),
+          calledCategory: calledCategory && calledValue > 0 ? calledCategory : '',
+          calledValue: calledCategory && calledValue > 0 ? calledValue : 0,
+        });
+      }
+
+      // No drafting the same fighter into two slots.
+      const keys = picks.map((pick) => pick.matchKey);
+      if (new Set(keys).size !== keys.length) {
+        throw seasonError(422, 'Each slot needs a different fighter.', 'DUPLICATE_PICK');
+      }
+
+      const existing = await withFightSession(SeasonRoster.findOne({ seasonId, userId }), session).lean();
+      if (existing) throw seasonError(409, 'You already have a card in this season.', 'ALREADY_DRAFTED');
+
+      if (fee > 0) {
+        const before = fightTokenBalance(user.tokens);
+        if (before < fee) {
+          throw seasonError(402, 'Not enough FM coins for this season.', 'INSUFFICIENT_FUNDS', {
+            balance: before, entryFee: fee, shortfall: fee - before,
+          });
+        }
+        user.tokens = String(before - fee);
+        await user.save({ session });
+        await recordWalletMove({
+          userId, amount: -fee, balanceBefore: before, balanceAfter: before - fee,
+          reason: 'season_entry', reference: `season:${seasonId}:${userId}`,
+          meta: { seasonId, seasonName: season.name }, session,
+        });
+        await Season.updateOne({ _id: seasonId }, { $inc: { prizePool: fee } }, session ? { session } : undefined);
+      }
+
+      const [roster] = await SeasonRoster.create([{
+        seasonId, userId, picks, entryFeePaid: fee,
+        idempotencyKey: `season:${seasonId}:${userId}`,
+      }], session ? { session } : undefined);
+
+      return { roster, season, user, fee };
+    });
+
+    sendMoneyNotice({
+      to: result.user.email,
+      subject: `Your Season Card is locked in — ${result.season.name}`,
+      heading: 'SEASON CARD LOCKED',
+      lines: [
+        `Your five fighters are set for <strong>${escapeHtml(result.season.name)}</strong>.`,
+        result.roster.picks.map((pick) => `${SLOT_BY_KEY.get(pick.slot)?.label || pick.slot}: <strong>${escapeHtml(pick.fighterName)}</strong>${pick.calledCategory ? ` — called ${pick.calledValue} ${(SEASON_CALL_CATEGORIES[SLOT_BY_KEY.get(pick.slot)?.family || 'mma'] || {})[pick.calledCategory] || pick.calledCategory}` : ''}`).join('<br>'),
+        result.fee > 0 ? `Entry: ${result.fee.toLocaleString()} FM.` : 'Free entry.',
+        'Every time one of your five competes, what they do is credited to your card.',
+      ],
+    });
+
+    return res.status(201).json({
+      ok: true,
+      rosterId: result.roster._id,
+      seasonName: result.season.name,
+      picks: result.roster.picks.map((pick) => ({
+        slot: pick.slot, fighterName: pick.fighterName,
+        calledCategory: pick.calledCategory, calledValue: pick.calledValue,
+      })),
+      entryFeePaid: result.fee,
+    });
+  } catch (error) {
+    const status = error?.status || 500;
+    if (status >= 500) console.error('Season draft failed:', error);
+    return res.status(status).json({
+      ok: false,
+      message: error?.message || 'Could not lock in that card.',
+      code: error?.code || 'DRAFT_FAILED',
+      ...(error?.extra || {}),
+    });
+  }
+});
+
+// --------------------------------------------------------------------------
+// SETTLEMENT — normalise each slot within its own sport, apply the called
+// number, then hand the season to the existing prize machinery.
+// --------------------------------------------------------------------------
+const settleSeason = async (seasonId) => {
+  // Claim before scoring, exactly as fight settlement does.
+  const claimed = await Season.findOneAndUpdate(
+    { _id: seasonId, status: 'RUNNING' },
+    { $set: { status: 'SETTLED', settledAt: new Date() } },
+    { new: true },
+  );
+  if (!claimed) {
+    const current = await Season.findById(seasonId).select('status settledAt').lean();
+    return { alreadySettled: true, status: current?.status || null };
+  }
+
+  const rosters = await SeasonRoster.find({ seasonId: String(seasonId) });
+  if (!rosters.length) return { settled: 0, entrants: 0 };
+
+  // Normalisation needs a field to measure against. With a single paid entrant
+  // there is no contest — refund rather than hand them their own money back
+  // minus nothing, or worse, pay them a prize they did not compete for.
+  const paidEntrants = rosters.filter((roster) => Number(roster.entryFeePaid) > 0);
+  // Set when the pot has been handed back, so the prize step below must not run.
+  let refundedNoField = false;
+  if (paidEntrants.length === 1) {
+    refundedNoField = true;
+    const solo = paidEntrants[0];
+    try {
+      const user = await User.findById(solo.userId).select('tokens email');
+      if (user) {
+        const before = fightTokenBalance(user.tokens);
+        user.tokens = String(before + solo.entryFeePaid);
+        await user.save();
+        await recordWalletMove({
+          userId: solo.userId, amount: solo.entryFeePaid, balanceBefore: before,
+          balanceAfter: before + solo.entryFeePaid, reason: 'season_refund_no_field',
+          reference: `season:solo-refund:${seasonId}:${solo.userId}`,
+          meta: { seasonId: String(seasonId) },
+        });
+        if (user.email) {
+          sendMoneyNotice({
+            to: user.email,
+            subject: `${claimed.name} — refunded, not enough entrants`,
+            heading: 'SEASON REFUNDED',
+            lines: [
+              `<strong>${escapeHtml(claimed.name)}</strong> finished with only one paid card, so there was no field to score against.`,
+              `Your ${solo.entryFeePaid.toLocaleString()} FM entry has been returned in full.`,
+            ],
+          });
+        }
+      }
+    } catch (error) {
+      console.error('Solo-entrant season refund failed:', error);
+    }
+  }
+
+  // Best raw output achieved in each slot across the whole field. This is the
+  // yardstick a slot is scored against, so the scale is set by what was actually
+  // achievable in that sport this season rather than a guessed constant.
+  const bestBySlot = new Map();
+  rosters.forEach((roster) => {
+    roster.picks.forEach((pick) => {
+      const best = bestBySlot.get(pick.slot) || 0;
+      if (pick.rawPoints > best) bestBySlot.set(pick.slot, pick.rawPoints);
+    });
+  });
+
+  for (const roster of rosters) {
+    let total = 0;
+    roster.picks.forEach((pick) => {
+      const best = bestBySlot.get(pick.slot) || 0;
+      // A slot nobody scored in is worth nothing to everybody — no free points
+      // for a fighter who never competed, and no division by zero.
+      pick.normalized = best > 0 ? Math.round((pick.rawPoints / best) * SEASON_SLOT_MAX) : 0;
+
+      // The platform's own rule: you score what you called, provided you called
+      // at or under what the fighter actually did.
+      const actual = Number((pick.categoryTotals || {})[pick.calledCategory]) || 0;
+      const hit = Boolean(pick.calledCategory) && pick.calledValue > 0 && pick.calledValue <= actual;
+      pick.callHit = hit;
+      pick.callBonus = hit ? Math.min(pick.calledValue, SEASON_CALL_BONUS_CAP) : 0;
+
+      total += pick.normalized + pick.callBonus;
+    });
+    roster.totalScore = total;
+    roster.settled = true;
+    roster.markModified('picks');
+    await roster.save();
+  }
+
+  // Hand off to the machinery that already pays fight contests, so season
+  // prizes use the same distribution, the same ledger and the same emails.
+  const scored = rosters
+    .map((roster) => ({ userId: String(roster.userId), points: roster.totalScore }))
+    .sort((a, b) => b.points - a.points);
+
+  let payout = null;
+  // A refunded pot is gone — paying prizes from it as well would pay the same
+  // coins out twice.
+  const prizePool = refundedNoField ? 0 : Math.max(0, Math.round(Number(claimed.prizePool) || 0));
+  if (refundedNoField) payout = { prizePool: 0, paid: 0, refunded: true };
+  if (prizePool > 0) {
+    const { awards } = buildPrizeAwards(scored, prizePool);
+    let paid = 0;
+    for (const award of awards) {
+      if (!award?.amount || award.amount <= 0) continue;
+      const winner = await User.findById(award.userId).select('email playerName tokens');
+      if (!winner) continue;
+      const before = fightTokenBalance(winner.tokens);
+      winner.tokens = String(before + award.amount);
+      await winner.save();
+      await recordWalletMove({
+        userId: award.userId, amount: award.amount, balanceBefore: before,
+        balanceAfter: before + award.amount, reason: 'season_prize',
+        reference: `season:prize:${seasonId}:${award.userId}`,
+        meta: { seasonId, place: award.place },
+      });
+      paid += award.amount;
+      if (winner.email) {
+        sendMoneyNotice({
+          to: winner.email,
+          subject: `${claimed.name} — you finished #${award.place}`,
+          heading: `SEASON RESULT · #${award.place}`,
+          lines: [
+            `<strong>${escapeHtml(claimed.name)}</strong> has been settled.`,
+            `<strong>${award.amount.toLocaleString()} FM</strong> has been added to your wallet.`,
+          ],
+        });
+      }
+    }
+    payout = { prizePool, paid };
+  }
+
+  // Badges, titles and sponsor prizes attach to a season the same way they
+  // attach to a fight — a free season is scored and awarded, just not paid.
+  let awardsGiven = null;
+  try {
+    awardsGiven = await awardNonCashPrizes(seasonId, scored, { matchFighterA: claimed.name, matchFighterB: 'Season' });
+  } catch (error) {
+    console.error('Season non-cash awards failed:', error);
+    awardsGiven = { error: 'AWARDS_FAILED' };
+  }
+
+  clearPublicResponseCache();
+  return { settled: rosters.length, entrants: rosters.length, payout, awardsGiven };
+};
+
+// Runs from the scheduler. Two jobs: start seasons whose draft window has closed,
+// and settle seasons that have ended. A season that needs an admin to remember it
+// is a season that strands entry fees.
+app.get('/api/cron/seasons/advance', verifyCronSecret, async (req, res) => {
+  try {
+    const now = new Date();
+    const started = await Season.updateMany(
+      { status: 'DRAFT_OPEN', draftClosesAt: { $lte: now } },
+      { $set: { status: 'RUNNING' } },
+    );
+
+    const due = await Season.find({ status: 'RUNNING', endsAt: { $lte: now } }).select('_id name').limit(20).lean();
+    const settled = [];
+    for (const season of due) {
+      try {
+        const summary = await settleSeason(String(season._id));
+        settled.push({ id: season._id, name: season.name, ...summary });
+      } catch (error) {
+        console.error('Season auto-settle failed for', String(season._id), error.message);
+      }
+    }
+    return res.json({ ok: true, started: started?.modifiedCount || 0, settled });
+  } catch (error) {
+    console.error('Season advance sweep failed:', error);
+    return res.status(500).json({ ok: false, message: 'Season sweep failed.' });
+  }
+});
+
+app.post('/api/admin/seasons/:seasonId/settle', verifyAdminToken, async (req, res) => {
+  try {
+    const summary = await settleSeason(String(req.params.seasonId || '').trim());
+    return res.status(200).json({ ok: true, ...summary });
+  } catch (error) {
+    console.error('Season settle failed:', error);
+    return res.status(500).json({ ok: false, message: 'Could not settle that season.' });
+  }
+});
+
+app.post('/api/admin/seasons', verifyAdminToken, async (req, res) => {
+  try {
+    const name = String(req.body?.name || '').trim();
+    if (!name) return res.status(422).json({ ok: false, message: 'A season name is required.' });
+    const startsAt = new Date(req.body?.startsAt);
+    const endsAt = new Date(req.body?.endsAt);
+    const draftClosesAt = new Date(req.body?.draftClosesAt || req.body?.startsAt);
+    if ([startsAt, endsAt, draftClosesAt].some((date) => Number.isNaN(date.getTime()))) {
+      return res.status(422).json({ ok: false, message: 'Provide valid start, end and draft-close dates.' });
+    }
+    if (endsAt <= startsAt) return res.status(422).json({ ok: false, message: 'The season must end after it starts.' });
+
+    const requested = Array.isArray(req.body?.requiredSlots) ? req.body.requiredSlots : SEASON_SLOT_KEYS;
+    const requiredSlots = requested.filter((slot) => SEASON_SLOT_KEYS.includes(String(slot)));
+    if (!requiredSlots.length) return res.status(422).json({ ok: false, message: 'A season needs at least one slot.' });
+
+    const season = await Season.create({
+      name: name.slice(0, 120),
+      description: String(req.body?.description || '').slice(0, 500),
+      startsAt, endsAt, draftClosesAt,
+      entryFee: Math.max(0, Math.round(Number(req.body?.entryFee) || 0)),
+      requiredSlots,
+    });
+    return res.status(201).json({ ok: true, seasonId: season._id });
+  } catch (error) {
+    console.error('Season create failed:', error);
+    return res.status(500).json({ ok: false, message: 'Could not create that season.' });
+  }
+});
+
+app.post('/api/admin/seasons/:seasonId/status', verifyAdminToken, async (req, res) => {
+  try {
+    const next = String(req.body?.status || '').trim().toUpperCase();
+    if (!['DRAFT_OPEN', 'RUNNING', 'VOID'].includes(next)) {
+      return res.status(422).json({ ok: false, message: 'status must be DRAFT_OPEN, RUNNING or VOID.' });
+    }
+    const season = await Season.findById(String(req.params.seasonId || '')).lean();
+    if (!season) return res.status(404).json({ ok: false, message: 'Season not found.' });
+    if (season.status === 'SETTLED') {
+      return res.status(409).json({ ok: false, message: 'That season is already settled.' });
+    }
+
+    // Voiding must return every entry fee — a season nobody can win is a season
+    // nobody should have paid for.
+    if (next === 'VOID') {
+      const rosters = await SeasonRoster.find({ seasonId: String(season._id), entryFeePaid: { $gt: 0 } }).lean();
+      for (const roster of rosters) {
+        try {
+          const user = await User.findById(roster.userId).select('tokens email');
+          if (!user) continue;
+          const before = fightTokenBalance(user.tokens);
+          user.tokens = String(before + roster.entryFeePaid);
+          await user.save();
+          await recordWalletMove({
+            userId: roster.userId, amount: roster.entryFeePaid, balanceBefore: before,
+            balanceAfter: before + roster.entryFeePaid, reason: 'season_refund',
+            reference: `season:refund:${season._id}:${roster.userId}`,
+            meta: { seasonId: String(season._id) },
+          });
+          if (user.email) {
+            sendMoneyNotice({
+              to: user.email,
+              subject: `${season.name} was cancelled — you have been refunded`,
+              heading: 'SEASON CANCELLED',
+              lines: [
+                `<strong>${escapeHtml(season.name)}</strong> has been cancelled.`,
+                `Your ${roster.entryFeePaid.toLocaleString()} FM entry has been returned in full.`,
+              ],
+            });
+          }
+        } catch (error) {
+          console.error('Season refund failed for', String(roster.userId), error.message);
+        }
+      }
+    }
+
+    await Season.updateOne({ _id: season._id }, {
+      $set: { status: next, voidReason: next === 'VOID' ? String(req.body?.reason || 'Cancelled by an administrator.') : '' },
+    });
+    return res.json({ ok: true, status: next });
+  } catch (error) {
+    console.error('Season status change failed:', error);
+    return res.status(500).json({ ok: false, message: 'Could not change that season.' });
+  }
+});
+
+// --------------------------------------------------------------------------
+// PLAYER READS
+// --------------------------------------------------------------------------
+app.get('/api/seasons/open', requireSeasonCards, async (req, res) => {
+  try {
+    const seasons = await Season.find({ status: { $in: ['DRAFT_OPEN', 'RUNNING'] } })
+      .sort({ startsAt: 1 }).limit(20).lean();
+    return res.json({
+      ok: true,
+      slots: SEASON_SLOTS,
+      callCategories: SEASON_CALL_CATEGORIES,
+      callBonusCap: SEASON_CALL_BONUS_CAP,
+      slotMax: SEASON_SLOT_MAX,
+      seasons: await Promise.all(seasons.map(async (season) => ({
+        id: season._id,
+        name: season.name,
+        description: season.description,
+        startsAt: season.startsAt,
+        endsAt: season.endsAt,
+        draftClosesAt: season.draftClosesAt,
+        draftOpen: season.status === 'DRAFT_OPEN' && season.draftClosesAt.getTime() > Date.now(),
+        entryFee: season.entryFee,
+        requiredSlots: season.requiredSlots,
+        prizePool: season.prizePool,
+        entrants: await SeasonRoster.countDocuments({ seasonId: String(season._id) }),
+      }))),
+    });
+  } catch (error) {
+    console.error('Season list failed:', error);
+    return res.status(500).json({ ok: false, message: 'Could not load seasons.' });
+  }
+});
+
+app.get('/api/seasons/me', requireSeasonCards, verifyToken, requireScope(TOKEN_SCOPES.PLAYER), async (req, res) => {
+  try {
+    const userId = String(req.user?.id || req.user?._id || '').trim();
+    const rosters = await SeasonRoster.find({ userId }).sort({ createdAt: -1 }).limit(30).lean();
+    const seasonIds = [...new Set(rosters.map((r) => r.seasonId))].filter((id) => mongoose.isValidObjectId(id));
+    const seasons = seasonIds.length ? await Season.find({ _id: { $in: seasonIds } }).lean() : [];
+    const byId = new Map(seasons.map((s2) => [String(s2._id), s2]));
+
+    return res.json({
+      ok: true,
+      cards: rosters.map((roster) => {
+        const season = byId.get(String(roster.seasonId));
+        return {
+          rosterId: roster._id,
+          seasonId: roster.seasonId,
+          seasonName: season?.name || 'Season',
+          status: season?.status || 'RUNNING',
+          endsAt: season?.endsAt || null,
+          entryFeePaid: roster.entryFeePaid,
+          totalScore: roster.totalScore,
+          settled: roster.settled,
+          maxPossible: (roster.picks?.length || 0) * SEASON_SLOT_MAX,
+          picks: (roster.picks || []).map((pick) => {
+            const family = SLOT_BY_KEY.get(pick.slot)?.family || 'mma';
+            return {
+              slot: pick.slot,
+              slotLabel: SLOT_BY_KEY.get(pick.slot)?.label || pick.slot,
+              fighterName: pick.fighterName,
+              rawPoints: pick.rawPoints,
+              eventsCounted: pick.eventsCounted,
+              normalized: pick.normalized,
+              calledCategory: pick.calledCategory,
+              calledCategoryLabel: (SEASON_CALL_CATEGORIES[family] || {})[pick.calledCategory] || '',
+              calledValue: pick.calledValue,
+              actualSoFar: Number((pick.categoryTotals || {})[pick.calledCategory]) || 0,
+              callHit: pick.callHit,
+              callBonus: pick.callBonus,
+            };
+          }),
+        };
+      }),
+    });
+  } catch (error) {
+    console.error('Season cards lookup failed:', error);
+    return res.status(500).json({ ok: false, message: 'Could not load your cards.' });
+  }
+});
+
+app.get('/api/seasons/:seasonId/leaderboard', requireSeasonCards, async (req, res) => {
+  try {
+    const seasonId = String(req.params.seasonId || '').trim();
+    const rosters = await SeasonRoster.find({ seasonId }).lean();
+    // Mid-season the normalised figure is not final, so rank on raw output and
+    // label it as provisional rather than publishing a number that will move.
+    const settled = rosters.some((roster) => roster.settled);
+    const ranked = rosters
+      .map((roster) => ({
+        userId: roster.userId,
+        score: settled ? roster.totalScore : (roster.picks || []).reduce((sum, pick) => sum + pick.rawPoints, 0),
+      }))
+      .sort((a, b) => b.score - a.score)
+      .slice(0, 100);
+
+    const users = ranked.length
+      ? await User.find({ _id: { $in: ranked.map((r) => r.userId).filter((id) => mongoose.isValidObjectId(id)) } })
+        .select('playerName firstName profileUrl').lean()
+      : [];
+    const byId = new Map(users.map((u) => [String(u._id), u]));
+
+    return res.json({
+      ok: true,
+      provisional: !settled,
+      scale: settled ? 'normalized' : 'raw',
+      leaderboard: ranked.map((row, index) => ({
+        place: index + 1,
+        name: byId.get(row.userId)?.playerName || byId.get(row.userId)?.firstName || 'Player',
+        avatar: byId.get(row.userId)?.profileUrl || '',
+        score: row.score,
+      })),
+    });
+  } catch (error) {
+    console.error('Season leaderboard failed:', error);
+    return res.status(500).json({ ok: false, message: 'Could not load the leaderboard.' });
+  }
+});
+
+// ==========================================================================
+// TEAM CARDS — pick five fighters from one event
+//
+// The player builds a team of five fighters from a single card, one from each of
+// five different bouts, and their combined output over that night is the score.
+//
+// This is the strongest shape the platform has:
+//
+//   - Every fighter is in the same sport under the same rules, so the score is a
+//     plain total. No normalisation, no conversion, nothing to explain — the
+//     platform's own scoring runs untouched.
+//   - It resolves the same night, which matches how the rest of the app behaves.
+//   - It is a five-athlete lineup across five bouts, which is the classic
+//     daily-fantasy shape rather than a single-event contest.
+//
+// ONE FIGHTER PER BOUT is enforced, not advised. Without it a player picks both
+// sides of a fight and banks points whichever way it goes — a hedge, not a call.
+// ==========================================================================
+const TEAM_CARDS_ENABLED = ['true', '1', 'yes', 'on']
+  .includes(String(process.env.TEAM_CARDS_ENABLED || 'true').trim().toLowerCase());
+
+const TEAM_PICKS_REQUIRED = Math.max(2, Math.min(10, Number(process.env.TEAM_PICKS_REQUIRED || 5)));
+const TEAM_CALL_BONUS_CAP = Math.max(0, Number(process.env.TEAM_CALL_BONUS_CAP ?? 50));
+
+const teamContestSchema = new mongoose.Schema({
+  name: { type: String, required: true },
+  eventName: { type: String, default: '' },
+  // The bouts this card is built from. A pick must name a fighter in one of them.
+  fightIds: { type: [String], default: [], required: true },
+  picksRequired: { type: Number, default: TEAM_PICKS_REQUIRED },
+  entryFee: { type: Number, default: 0, min: 0 },
+  prizePool: { type: Number, default: 0 },
+  // Set when a promoter runs the contest for their league.
+  affiliateId: { type: String, default: '' },
+  status: { type: String, enum: ['OPEN', 'LOCKED', 'SETTLED', 'VOID'], default: 'OPEN', index: true },
+  settledAt: { type: Date, default: null },
+  voidReason: { type: String, default: '' },
+}, { timestamps: true });
+
+const teamEntrySchema = new mongoose.Schema({
+  contestId: { type: String, required: true, index: true },
+  userId: { type: String, required: true, index: true },
+  picks: {
+    type: [new mongoose.Schema({
+      fightId: { type: String, required: true },
+      fighterName: { type: String, required: true },
+      matchKey: { type: String, required: true },
+      calledCategory: { type: String, default: '' },
+      calledValue: { type: Number, default: 0 },
+      points: { type: Number, default: 0 },
+      categoryTotals: { type: Object, default: () => ({}) },
+      scored: { type: Boolean, default: false },
+      callHit: { type: Boolean, default: false },
+      callBonus: { type: Number, default: 0 },
+    }, { _id: false })],
+    default: [],
+  },
+  entryFeePaid: { type: Number, default: 0 },
+  totalPoints: { type: Number, default: 0 },
+  settled: { type: Boolean, default: false },
+  idempotencyKey: { type: String, required: true, unique: true },
+}, { timestamps: true });
+
+teamEntrySchema.index({ contestId: 1, userId: 1 }, { unique: true });
+teamEntrySchema.index({ contestId: 1, 'picks.fightId': 1 });
+
+const TeamContest = mongoose.models.TeamContest || mongoose.model('TeamContest', teamContestSchema);
+const TeamEntry = mongoose.models.TeamEntry || mongoose.model('TeamEntry', teamEntrySchema);
+
+const requireTeamCards = (req, res, next) => {
+  if (!TEAM_CARDS_ENABLED) {
+    return res.status(404).json({ ok: false, message: 'Team Cards are not open yet.', code: 'FEATURE_DISABLED' });
+  }
+  return next();
+};
+
+const teamError = (status, message, code, extra = {}) => {
+  const error = new Error(message);
+  error.status = status;
+  error.code = code;
+  error.extra = extra;
+  return error;
+};
+
+// Credits every team entry holding either fighter from a settled bout. Called
+// from the same settlement that scores the fight, off the same official stats.
+const creditTeamEntries = async (fight, oneStats, twoStats) => {
+  if (!TEAM_CARDS_ENABLED) return { credited: 0 };
+  const fightId = String(fight?._id || '');
+  if (!fightId) return { credited: 0 };
+
+  const contests = await TeamContest.find({
+    fightIds: fightId,
+    status: { $in: ['OPEN', 'LOCKED'] },
+  }).select('_id').lean();
+  if (!contests.length) return { credited: 0 };
+
+  const family = seasonFamilyForCategory(fight?.matchCategory);
+  const sides = [
+    { name: fight?.matchFighterA, rounds: oneStats },
+    { name: fight?.matchFighterB, rounds: twoStats },
+  ];
+  let credited = 0;
+
+  for (const contest of contests) {
+    const entries = await TeamEntry.find({ contestId: String(contest._id), settled: false, 'picks.fightId': fightId });
+    for (const entry of entries) {
+      let touched = false;
+      entry.picks.forEach((pick) => {
+        if (String(pick.fightId) !== fightId || pick.scored) return;
+        const side = sides.find((candidate) => fighterMatchKey(candidate.name) === pick.matchKey);
+        if (!side) return;
+        const { points, totals } = fighterOutputFromRounds(side.rounds, family);
+        pick.points = points;
+        pick.categoryTotals = totals;
+        pick.scored = true;
+        touched = true;
+      });
+      if (touched) {
+        entry.markModified('picks');
+        await entry.save();
+        credited += 1;
+      }
+    }
+  }
+  return { credited };
+};
+
+// --------------------------------------------------------------------------
+// ENTER — one fighter per bout, charged through the same transaction as a fight
+// entry so the money path is the one already hardened.
+// --------------------------------------------------------------------------
+app.post('/api/team-contests/:contestId/enter', requireTeamCards, submitLimiter, verifyToken, requireScope(TOKEN_SCOPES.PLAYER), async (req, res) => {
+  try {
+    const userId = String(req.user?.id || req.user?._id || '').trim();
+    const contestId = String(req.params.contestId || '').trim();
+    const submitted = Array.isArray(req.body?.picks) ? req.body.picks : [];
+
+    const result = await runFightEntryTransaction(async (session) => {
+      const contest = await withFightSession(TeamContest.findById(contestId), session);
+      if (!contest) throw teamError(404, 'Contest not found.', 'CONTEST_NOT_FOUND');
+      if (contest.status !== 'OPEN') {
+        throw teamError(409, 'This contest is closed for entry.', 'CONTEST_CLOSED');
+      }
+
+      const user = await withFightSession(
+        User.findById(userId).select('email playerName dateOfBirth residenceState selfExcludedUntil tokens'),
+        session,
+      );
+      if (!user) throw teamError(404, 'Account not found.', 'USER_NOT_FOUND');
+      const blocked = checkPlayEligibility(user);
+      if (blocked) throw teamError(403, blocked.message, blocked.code);
+
+      const fee = Math.max(0, Math.round(Number(contest.entryFee) || 0));
+      if (fee > 0 && resolveStateMode(user.residenceState) !== 'paid') {
+        throw teamError(403, 'Paid contests are not available in your state. Free contests are.', 'STATE_FREE_PLAY_ONLY');
+      }
+
+      // A promoter cannot enter their own contest, matching the fight rule.
+      if (contest.affiliateId && String(contest.affiliateId) === userId) {
+        throw teamError(403, 'You cannot enter a contest you are promoting.', 'AFFILIATE_SELF_ENTRY');
+      }
+
+      const required = Math.max(2, Math.round(Number(contest.picksRequired) || TEAM_PICKS_REQUIRED));
+      if (submitted.length !== required) {
+        throw teamError(422, `Pick exactly ${required} fighters.`, 'WRONG_PICK_COUNT', { required });
+      }
+
+      // Load every bout on the card once, then validate each pick against it.
+      const fights = await Match.find({ _id: { $in: contest.fightIds.filter((id) => mongoose.isValidObjectId(id)) } })
+        .select('_id matchFighterA matchFighterB matchDate matchStatus matchCategory').lean();
+      const fightById = new Map(fights.map((row) => [String(row._id), row]));
+
+      const picks = [];
+      const usedBouts = new Set();
+      for (const raw of submitted) {
+        const fightId = String(raw?.fightId || '').trim();
+        const fighterName = String(raw?.fighterName || '').trim();
+        const bout = fightById.get(fightId);
+        if (!bout) throw teamError(422, 'One of your picks is not on this card.', 'PICK_NOT_ON_CARD', { fightId });
+        if (!isFightOpenForEntry(bout)) {
+          throw teamError(409, `${bout.matchFighterA} vs ${bout.matchFighterB} is already locked.`, 'BOUT_LOCKED', { fightId });
+        }
+        // THE RULE: one fighter per bout, so a player cannot back both sides.
+        if (usedBouts.has(fightId)) {
+          throw teamError(422, 'Pick one fighter per bout — you cannot take both sides of a fight.', 'DUPLICATE_BOUT', { fightId });
+        }
+        const key = fighterMatchKey(fighterName);
+        if (![bout.matchFighterA, bout.matchFighterB].map(fighterMatchKey).includes(key)) {
+          throw teamError(422, `${fighterName} is not in that bout.`, 'FIGHTER_NOT_IN_BOUT', { fightId });
+        }
+        usedBouts.add(fightId);
+
+        const family = seasonFamilyForCategory(bout.matchCategory);
+        const allowed = SEASON_CALL_CATEGORIES[family] || {};
+        const calledCategory = String(raw?.calledCategory || '').trim().toUpperCase();
+        const calledValue = Math.max(0, Math.round(Number(raw?.calledValue) || 0));
+        if (calledCategory && !allowed[calledCategory]) {
+          throw teamError(422, `${calledCategory} is not a category for that bout.`, 'BAD_CALL_CATEGORY');
+        }
+
+        picks.push({
+          fightId,
+          fighterName: fighterName.slice(0, 120),
+          matchKey: key,
+          calledCategory: calledCategory && calledValue > 0 ? calledCategory : '',
+          calledValue: calledCategory && calledValue > 0 ? calledValue : 0,
+        });
+      }
+
+      const existing = await withFightSession(TeamEntry.findOne({ contestId, userId }), session).lean();
+      if (existing) throw teamError(409, 'You already have a team in this contest.', 'ALREADY_ENTERED');
+
+      if (fee > 0) {
+        const before = fightTokenBalance(user.tokens);
+        if (before < fee) {
+          throw teamError(402, 'Not enough FM coins for this contest.', 'INSUFFICIENT_FUNDS', {
+            balance: before, entryFee: fee, shortfall: fee - before,
+          });
+        }
+        user.tokens = String(before - fee);
+        await user.save({ session });
+        await recordWalletMove({
+          userId, amount: -fee, balanceBefore: before, balanceAfter: before - fee,
+          reason: 'team_entry', reference: `team:${contestId}:${userId}`,
+          meta: { contestId, contestName: contest.name }, session,
+        });
+        await TeamContest.updateOne({ _id: contestId }, { $inc: { prizePool: fee } }, session ? { session } : undefined);
+      }
+
+      const [entry] = await TeamEntry.create([{
+        contestId, userId, picks, entryFeePaid: fee,
+        idempotencyKey: `team:${contestId}:${userId}`,
+      }], session ? { session } : undefined);
+
+      return { entry, contest, user, fee };
+    });
+
+    sendMoneyNotice({
+      to: result.user.email,
+      subject: `Your team is in — ${result.contest.name}`,
+      heading: 'TEAM LOCKED IN',
+      lines: [
+        `Your ${result.entry.picks.length} fighters are set for <strong>${escapeHtml(result.contest.name)}</strong>.`,
+        result.entry.picks.map((pick) => `<strong>${escapeHtml(pick.fighterName)}</strong>${pick.calledCategory ? ` — called ${pick.calledValue}` : ''}`).join('<br>'),
+        result.fee > 0 ? `Entry: ${result.fee.toLocaleString()} FM.` : 'Free entry.',
+        'Your score is what all of them do on the night, added together.',
+      ],
+    });
+
+    return res.status(201).json({
+      ok: true,
+      entryId: result.entry._id,
+      contestName: result.contest.name,
+      picks: result.entry.picks.map((pick) => ({
+        fightId: pick.fightId, fighterName: pick.fighterName,
+        calledCategory: pick.calledCategory, calledValue: pick.calledValue,
+      })),
+      entryFeePaid: result.fee,
+    });
+  } catch (error) {
+    const status = error?.status || 500;
+    if (status >= 500) console.error('Team entry failed:', error);
+    return res.status(status).json({
+      ok: false,
+      message: error?.message || 'Could not lock in that team.',
+      code: error?.code || 'TEAM_ENTRY_FAILED',
+      ...(error?.extra || {}),
+    });
+  }
+});
+
+// --------------------------------------------------------------------------
+// SETTLEMENT — a plain total, because every fighter was scored by the same
+// rules. Claimed atomically before any money moves.
+// --------------------------------------------------------------------------
+const settleTeamContest = async (contestId) => {
+  const claimed = await TeamContest.findOneAndUpdate(
+    { _id: contestId, status: { $in: ['OPEN', 'LOCKED'] } },
+    { $set: { status: 'SETTLED', settledAt: new Date() } },
+    { new: true },
+  );
+  if (!claimed) {
+    const current = await TeamContest.findById(contestId).select('status settledAt').lean();
+    return { alreadySettled: true, status: current?.status || null };
+  }
+
+  const entries = await TeamEntry.find({ contestId: String(contestId) });
+  if (!entries.length) return { settled: 0, entrants: 0 };
+
+  for (const entry of entries) {
+    let total = 0;
+    entry.picks.forEach((pick) => {
+      const actual = Number((pick.categoryTotals || {})[pick.calledCategory]) || 0;
+      const hit = Boolean(pick.calledCategory) && pick.calledValue > 0 && pick.calledValue <= actual;
+      pick.callHit = hit;
+      pick.callBonus = hit ? Math.min(pick.calledValue, TEAM_CALL_BONUS_CAP) : 0;
+      total += pick.points + pick.callBonus;
+    });
+    entry.totalPoints = total;
+    entry.settled = true;
+    entry.markModified('picks');
+    await entry.save();
+  }
+
+  const scored = entries
+    .map((entry) => ({ userId: String(entry.userId), points: entry.totalPoints }))
+    .sort((a, b) => b.points - a.points);
+
+  // A single paid entrant has no field to beat, so the entry goes back rather
+  // than a prize being paid out of their own money.
+  const paid = entries.filter((entry) => Number(entry.entryFeePaid) > 0);
+  let refundedNoField = false;
+  if (paid.length === 1) {
+    refundedNoField = true;
+    const solo = paid[0];
+    try {
+      const user = await User.findById(solo.userId).select('tokens email');
+      if (user) {
+        const before = fightTokenBalance(user.tokens);
+        user.tokens = String(before + solo.entryFeePaid);
+        await user.save();
+        await recordWalletMove({
+          userId: solo.userId, amount: solo.entryFeePaid, balanceBefore: before,
+          balanceAfter: before + solo.entryFeePaid, reason: 'team_refund_no_field',
+          reference: `team:solo-refund:${contestId}:${solo.userId}`,
+          meta: { contestId: String(contestId) },
+        });
+        if (user.email) {
+          sendMoneyNotice({
+            to: user.email,
+            subject: `${claimed.name} — refunded, not enough entrants`,
+            heading: 'CONTEST REFUNDED',
+            lines: [
+              `<strong>${escapeHtml(claimed.name)}</strong> finished with only one paid team, so there was no field to score against.`,
+              `Your ${solo.entryFeePaid.toLocaleString()} FM entry has been returned in full.`,
+            ],
+          });
+        }
+      }
+    } catch (error) {
+      console.error('Solo-entrant team refund failed:', error);
+    }
+  }
+
+  let payout = null;
+  const prizePool = refundedNoField ? 0 : Math.max(0, Math.round(Number(claimed.prizePool) || 0));
+  if (refundedNoField) payout = { prizePool: 0, paid: 0, refunded: true };
+  if (prizePool > 0) {
+    const { awards } = buildPrizeAwards(scored, prizePool);
+    let totalPaid = 0;
+    for (const award of awards) {
+      if (!award?.amount || award.amount <= 0) continue;
+      const winner = await User.findById(award.userId).select('email tokens');
+      if (!winner) continue;
+      const before = fightTokenBalance(winner.tokens);
+      winner.tokens = String(before + award.amount);
+      await winner.save();
+      await recordWalletMove({
+        userId: award.userId, amount: award.amount, balanceBefore: before,
+        balanceAfter: before + award.amount, reason: 'team_prize',
+        reference: `team:prize:${contestId}:${award.userId}`,
+        meta: { contestId, place: award.place },
+      });
+      totalPaid += award.amount;
+      if (winner.email) {
+        sendMoneyNotice({
+          to: winner.email,
+          subject: `${claimed.name} — you finished #${award.place}`,
+          heading: `TEAM RESULT · #${award.place}`,
+          lines: [
+            `<strong>${escapeHtml(claimed.name)}</strong> has been settled.`,
+            `<strong>${award.amount.toLocaleString()} FM</strong> has been added to your wallet.`,
+          ],
+        });
+      }
+    }
+    payout = { prizePool, paid: totalPaid };
+  }
+
+  let awardsGiven = null;
+  try {
+    awardsGiven = await awardNonCashPrizes(contestId, scored, { matchFighterA: claimed.name, matchFighterB: 'Team Card' });
+  } catch (error) {
+    console.error('Team non-cash awards failed:', error);
+    awardsGiven = { error: 'AWARDS_FAILED' };
+  }
+
+  clearPublicResponseCache();
+  return { settled: entries.length, entrants: entries.length, payout, awardsGiven };
+};
+
+app.post('/api/admin/team-contests/:contestId/settle', verifyAdminToken, async (req, res) => {
+  try {
+    const summary = await settleTeamContest(String(req.params.contestId || '').trim());
+    return res.status(200).json({ ok: true, ...summary });
+  } catch (error) {
+    console.error('Team settle failed:', error);
+    return res.status(500).json({ ok: false, message: 'Could not settle that contest.' });
+  }
+});
+
+// Auto-settles a card once every bout on it has been scored, so the result lands
+// the same night rather than waiting for an admin to remember.
+app.get('/api/cron/team-contests/settle', verifyCronSecret, async (req, res) => {
+  try {
+    const live = await TeamContest.find({ status: { $in: ['OPEN', 'LOCKED'] } }).select('_id name fightIds').limit(40).lean();
+    const settled = [];
+    for (const contest of live) {
+      const ids = (contest.fightIds || []).filter((id) => mongoose.isValidObjectId(id));
+      if (!ids.length) continue;
+      const fights = await Match.find({ _id: { $in: ids } }).select('prizesSettledAt').lean();
+      // Every bout must be settled — a partial card would score an incomplete team.
+      if (fights.length !== ids.length || !fights.every((fight) => fight.prizesSettledAt)) continue;
+      try {
+        const summary = await settleTeamContest(String(contest._id));
+        settled.push({ id: contest._id, name: contest.name, ...summary });
+      } catch (error) {
+        console.error('Team auto-settle failed for', String(contest._id), error.message);
+      }
+    }
+    return res.json({ ok: true, examined: live.length, settled });
+  } catch (error) {
+    console.error('Team settle sweep failed:', error);
+    return res.status(500).json({ ok: false, message: 'Team sweep failed.' });
+  }
+});
+
+// --------------------------------------------------------------------------
+// ADMIN + PROMOTER
+// --------------------------------------------------------------------------
+app.post('/api/admin/team-contests', verifyAdminToken, async (req, res) => {
+  try {
+    const name = String(req.body?.name || '').trim();
+    const fightIds = (Array.isArray(req.body?.fightIds) ? req.body.fightIds : [])
+      .map((id) => String(id).trim()).filter((id) => mongoose.isValidObjectId(id));
+    if (!name) return res.status(422).json({ ok: false, message: 'A contest name is required.' });
+
+    const picksRequired = Math.max(2, Math.min(10, Math.round(Number(req.body?.picksRequired) || TEAM_PICKS_REQUIRED)));
+    // The one-fighter-per-bout rule means the card needs at least as many bouts
+    // as picks, or the contest is impossible to enter.
+    if (fightIds.length < picksRequired) {
+      return res.status(422).json({
+        ok: false,
+        message: `A ${picksRequired}-pick contest needs at least ${picksRequired} bouts on the card.`,
+        code: 'NOT_ENOUGH_BOUTS',
+      });
+    }
+
+    const contest = await TeamContest.create({
+      name: name.slice(0, 120),
+      eventName: String(req.body?.eventName || '').slice(0, 120),
+      fightIds: [...new Set(fightIds)],
+      picksRequired,
+      entryFee: Math.max(0, Math.round(Number(req.body?.entryFee) || 0)),
+      affiliateId: String(req.body?.affiliateId || '').trim(),
+    });
+    return res.status(201).json({ ok: true, contestId: contest._id });
+  } catch (error) {
+    console.error('Team contest create failed:', error);
+    return res.status(500).json({ ok: false, message: 'Could not create that contest.' });
+  }
+});
+
+app.post('/api/admin/team-contests/:contestId/void', verifyAdminToken, async (req, res) => {
+  try {
+    const contest = await TeamContest.findById(String(req.params.contestId || '')).lean();
+    if (!contest) return res.status(404).json({ ok: false, message: 'Contest not found.' });
+    if (contest.status === 'SETTLED') {
+      return res.status(409).json({ ok: false, message: 'That contest is already settled.' });
+    }
+    const entries = await TeamEntry.find({ contestId: String(contest._id), entryFeePaid: { $gt: 0 } }).lean();
+    for (const entry of entries) {
+      try {
+        const user = await User.findById(entry.userId).select('tokens email');
+        if (!user) continue;
+        const before = fightTokenBalance(user.tokens);
+        user.tokens = String(before + entry.entryFeePaid);
+        await user.save();
+        await recordWalletMove({
+          userId: entry.userId, amount: entry.entryFeePaid, balanceBefore: before,
+          balanceAfter: before + entry.entryFeePaid, reason: 'team_refund',
+          reference: `team:refund:${contest._id}:${entry.userId}`,
+          meta: { contestId: String(contest._id) },
+        });
+        if (user.email) {
+          sendMoneyNotice({
+            to: user.email,
+            subject: `${contest.name} was cancelled — you have been refunded`,
+            heading: 'CONTEST CANCELLED',
+            lines: [
+              `<strong>${escapeHtml(contest.name)}</strong> has been cancelled.`,
+              `Your ${entry.entryFeePaid.toLocaleString()} FM entry has been returned in full.`,
+            ],
+          });
+        }
+      } catch (error) {
+        console.error('Team refund failed for', String(entry.userId), error.message);
+      }
+    }
+    await TeamContest.updateOne({ _id: contest._id }, {
+      $set: { status: 'VOID', voidReason: String(req.body?.reason || 'Cancelled by an administrator.').slice(0, 300) },
+    });
+    return res.json({ ok: true, refunded: entries.length });
+  } catch (error) {
+    console.error('Team void failed:', error);
+    return res.status(500).json({ ok: false, message: 'Could not cancel that contest.' });
+  }
+});
+
+// A promoter runs a Team Card for their own league.
+app.post('/api/affiliates/me/team-contests', requireTeamCards, verifyToken, requireScope(TOKEN_SCOPES.AFFILIATE), async (req, res) => {
+  try {
+    const affiliateId = String(req.user?.id || req.user?._id || '').trim();
+    const affiliate = await Affiliate.findById(affiliateId).select('_id verified').lean();
+    if (!affiliate) return res.status(404).json({ ok: false, message: 'Affiliate account not found.' });
+    if (!affiliate.verified) {
+      return res.status(403).json({ ok: false, message: 'Your league must be approved before you can run contests.', code: 'NOT_VERIFIED' });
+    }
+
+    const name = String(req.body?.name || '').trim();
+    const fightIds = (Array.isArray(req.body?.fightIds) ? req.body.fightIds : [])
+      .map((id) => String(id).trim()).filter((id) => mongoose.isValidObjectId(id));
+    const picksRequired = Math.max(2, Math.min(10, Math.round(Number(req.body?.picksRequired) || TEAM_PICKS_REQUIRED)));
+    if (!name) return res.status(422).json({ ok: false, message: 'Name your contest.' });
+    if (fightIds.length < picksRequired) {
+      return res.status(422).json({ ok: false, message: `Pick at least ${picksRequired} bouts for a ${picksRequired}-pick contest.`, code: 'NOT_ENOUGH_BOUTS' });
+    }
+
+    const contest = await TeamContest.create({
+      name: name.slice(0, 120),
+      eventName: String(req.body?.eventName || '').slice(0, 120),
+      fightIds: [...new Set(fightIds)],
+      picksRequired,
+      entryFee: Math.max(0, Math.round(Number(req.body?.entryFee) || 0)),
+      affiliateId,
+    });
+    return res.status(201).json({ ok: true, contestId: contest._id });
+  } catch (error) {
+    console.error('Promoter team contest create failed:', error);
+    return res.status(500).json({ ok: false, message: 'Could not create that contest.' });
+  }
+});
+
+// --------------------------------------------------------------------------
+// PLAYER READS
+// --------------------------------------------------------------------------
+app.get('/api/team-contests/open', requireTeamCards, async (req, res) => {
+  try {
+    const contests = await TeamContest.find({ status: 'OPEN' }).sort({ createdAt: -1 }).limit(20).lean();
+    const allFightIds = [...new Set(contests.flatMap((contest) => contest.fightIds || []))]
+      .filter((id) => mongoose.isValidObjectId(id));
+    const fights = allFightIds.length
+      ? await Match.find({ _id: { $in: allFightIds } })
+        .select('matchFighterA matchFighterB matchDate matchCategory maxRounds matchStatus').lean()
+      : [];
+    const fightById = new Map(fights.map((row) => [String(row._id), row]));
+
+    return res.json({
+      ok: true,
+      callCategories: SEASON_CALL_CATEGORIES,
+      callBonusCap: TEAM_CALL_BONUS_CAP,
+      contests: await Promise.all(contests.map(async (contest) => ({
+        id: contest._id,
+        name: contest.name,
+        eventName: contest.eventName,
+        entryFee: contest.entryFee,
+        prizePool: contest.prizePool,
+        picksRequired: contest.picksRequired,
+        promoted: Boolean(contest.affiliateId),
+        entrants: await TeamEntry.countDocuments({ contestId: String(contest._id) }),
+        bouts: (contest.fightIds || []).map((id) => {
+          const bout = fightById.get(String(id));
+          if (!bout) return null;
+          return {
+            fightId: String(id),
+            fighterA: bout.matchFighterA,
+            fighterB: bout.matchFighterB,
+            category: bout.matchCategory,
+            rounds: bout.maxRounds,
+            date: bout.matchDate,
+            open: isFightOpenForEntry(bout),
+          };
+        }).filter(Boolean),
+      }))),
+    });
+  } catch (error) {
+    console.error('Team contest list failed:', error);
+    return res.status(500).json({ ok: false, message: 'Could not load contests.' });
+  }
+});
+
+app.get('/api/team-contests/me', requireTeamCards, verifyToken, requireScope(TOKEN_SCOPES.PLAYER), async (req, res) => {
+  try {
+    const userId = String(req.user?.id || req.user?._id || '').trim();
+    const entries = await TeamEntry.find({ userId }).sort({ createdAt: -1 }).limit(30).lean();
+    const contestIds = [...new Set(entries.map((entry) => entry.contestId))].filter((id) => mongoose.isValidObjectId(id));
+    const contests = contestIds.length ? await TeamContest.find({ _id: { $in: contestIds } }).lean() : [];
+    const byId = new Map(contests.map((row) => [String(row._id), row]));
+
+    return res.json({
+      ok: true,
+      teams: entries.map((entry) => {
+        const contest = byId.get(String(entry.contestId));
+        return {
+          entryId: entry._id,
+          contestId: entry.contestId,
+          contestName: contest?.name || 'Team Card',
+          eventName: contest?.eventName || '',
+          status: contest?.status || 'OPEN',
+          entryFeePaid: entry.entryFeePaid,
+          totalPoints: entry.totalPoints,
+          settled: entry.settled,
+          scoredCount: (entry.picks || []).filter((pick) => pick.scored).length,
+          picks: (entry.picks || []).map((pick) => ({
+            fighterName: pick.fighterName,
+            points: pick.points,
+            scored: pick.scored,
+            calledCategory: pick.calledCategory,
+            calledValue: pick.calledValue,
+            actual: Number((pick.categoryTotals || {})[pick.calledCategory]) || 0,
+            callHit: pick.callHit,
+            callBonus: pick.callBonus,
+          })),
+        };
+      }),
+    });
+  } catch (error) {
+    console.error('Team lookup failed:', error);
+    return res.status(500).json({ ok: false, message: 'Could not load your teams.' });
+  }
+});
+
+app.get('/api/team-contests/:contestId/leaderboard', requireTeamCards, async (req, res) => {
+  try {
+    const contestId = String(req.params.contestId || '').trim();
+    const entries = await TeamEntry.find({ contestId }).lean();
+    const settled = entries.some((entry) => entry.settled);
+    const ranked = entries
+      .map((entry) => ({
+        userId: entry.userId,
+        // Live totals mid-card so the leaderboard moves as the night goes on.
+        score: settled ? entry.totalPoints : (entry.picks || []).reduce((sum, pick) => sum + pick.points, 0),
+        scoredCount: (entry.picks || []).filter((pick) => pick.scored).length,
+      }))
+      .sort((a, b) => b.score - a.score)
+      .slice(0, 100);
+
+    const users = ranked.length
+      ? await User.find({ _id: { $in: ranked.map((row) => row.userId).filter((id) => mongoose.isValidObjectId(id)) } })
+        .select('playerName firstName profileUrl').lean()
+      : [];
+    const byId = new Map(users.map((row) => [String(row._id), row]));
+
+    return res.json({
+      ok: true,
+      live: !settled,
+      leaderboard: ranked.map((row, index) => ({
+        place: index + 1,
+        name: byId.get(row.userId)?.playerName || byId.get(row.userId)?.firstName || 'Player',
+        avatar: byId.get(row.userId)?.profileUrl || '',
+        score: row.score,
+        fightsScored: row.scoredCount,
+      })),
+    });
+  } catch (error) {
+    console.error('Team leaderboard failed:', error);
+    return res.status(500).json({ ok: false, message: 'Could not load the leaderboard.' });
+  }
+});
+
+// ==========================================================================
+// NON-CASH PRIZES — what makes a free contest worth winning
+//
+// In free-play states the entry fee is zero, so there is no consideration and no
+// wager. That also means there is nothing to pay out of. Prizes here are things
+// with no cash value to the player: badges, leaderboard titles, sponsor merch
+// and PPV codes the sponsor funds.
+//
+// Deliberately kept separate from the wallet. Coins are a balance; these are
+// awards. Mixing them would give the "free" coins a cash value and collapse the
+// distinction the free mode depends on.
+// ==========================================================================
+const PRIZE_TYPES = Object.freeze(['badge', 'title', 'merch', 'ppv_code', 'sponsor_other']);
+// Digital-only types need no shipping and are complete the moment they are won.
+const INSTANT_PRIZE_TYPES = Object.freeze(['badge', 'title', 'ppv_code']);
+
+const contestPrizeSchema = new mongoose.Schema({
+  fightId: { type: String, required: true, index: true },
+  // 1, 2, 3 … or 0 meaning "everyone who entered" (participation badges).
+  place: { type: Number, required: true, min: 0 },
+  type: { type: String, enum: PRIZE_TYPES, required: true },
+  name: { type: String, required: true },
+  description: { type: String, default: '' },
+  imageUrl: { type: String, default: '' },
+  sponsorName: { type: String, default: '' },
+  // For ppv_code: a pool of single-use codes, claimed one per winner.
+  codePool: { type: [String], default: [] },
+  quantity: { type: Number, default: 1, min: 1 },
+  awardedCount: { type: Number, default: 0 },
+  active: { type: Boolean, default: true },
+}, { timestamps: true });
+
+const playerAwardSchema = new mongoose.Schema({
+  userId: { type: String, required: true, index: true },
+  fightId: { type: String, required: true, index: true },
+  prizeId: { type: String, required: true },
+  type: { type: String, enum: PRIZE_TYPES, required: true },
+  name: { type: String, required: true },
+  description: { type: String, default: '' },
+  imageUrl: { type: String, default: '' },
+  sponsorName: { type: String, default: '' },
+  place: { type: Number, default: 0 },
+  // Single-use code handed to this winner (ppv_code only).
+  code: { type: String, default: '' },
+  // Physical goods need fulfilment; digital awards are done on creation.
+  fulfilment: { type: String, enum: ['not_required', 'pending', 'shipped', 'cancelled'], default: 'not_required' },
+  shippingNote: { type: String, default: '' },
+  // Prevents a re-run of settlement awarding the same prize twice.
+  idempotencyKey: { type: String, required: true, unique: true },
+}, { timestamps: true });
+
+const ContestPrize = mongoose.models.ContestPrize || mongoose.model('ContestPrize', contestPrizeSchema);
+const PlayerAward = mongoose.models.PlayerAward || mongoose.model('PlayerAward', playerAwardSchema);
+
+// Ranks entrants by score and hands out whatever non-cash prizes the fight has
+// configured. Safe to re-run: each award has an idempotency key.
+const awardNonCashPrizes = async (fightId, scoredRows, fight) => {
+  const prizes = await ContestPrize.find({ fightId: String(fightId), active: true }).lean();
+  if (!prizes.length) return { awarded: 0, prizes: 0 };
+
+  // Same ordering the cash prizes use, so a winner is a winner in both.
+  const ranked = [...scoredRows].sort((a, b) => b.points - a.points);
+  let awarded = 0;
+
+  for (const prize of prizes) {
+    const recipients = prize.place === 0
+      ? ranked
+      : (ranked[prize.place - 1] ? [ranked[prize.place - 1]] : []);
+
+    for (const recipient of recipients) {
+      if (prize.awardedCount >= prize.quantity && prize.place !== 0) break;
+
+      const idempotencyKey = `award:${fightId}:${prize._id}:${recipient.userId}`;
+      const existing = await PlayerAward.findOne({ idempotencyKey }).lean();
+      if (existing) continue;
+
+      // Claim one code from the pool atomically, so two winners cannot receive
+      // the same PPV code.
+      let code = '';
+      if (prize.type === 'ppv_code') {
+        const claimed = await ContestPrize.findOneAndUpdate(
+          { _id: prize._id, 'codePool.0': { $exists: true } },
+          { $pop: { codePool: -1 }, $inc: { awardedCount: 1 } },
+          { new: false },
+        ).lean();
+        if (!claimed?.codePool?.length) {
+          console.warn(`[prizes] code pool empty for prize ${prize._id}; skipping ${recipient.userId}`);
+          continue;
+        }
+        code = claimed.codePool[0];
+      } else {
+        await ContestPrize.updateOne({ _id: prize._id }, { $inc: { awardedCount: 1 } });
+      }
+
+      try {
+        await PlayerAward.create({
+          userId: String(recipient.userId),
+          fightId: String(fightId),
+          prizeId: String(prize._id),
+          type: prize.type,
+          name: prize.name,
+          description: prize.description,
+          imageUrl: prize.imageUrl,
+          sponsorName: prize.sponsorName,
+          place: prize.place,
+          code,
+          fulfilment: INSTANT_PRIZE_TYPES.includes(prize.type) ? 'not_required' : 'pending',
+          idempotencyKey,
+        });
+        awarded += 1;
+      } catch (error) {
+        if (error?.code !== 11000) console.error('Award creation failed:', error.message);
+        continue;
+      }
+
+      const winner = await User.findById(recipient.userId).select('email playerName').lean();
+      if (winner?.email) {
+        sendMoneyNotice({
+          to: winner.email,
+          subject: `You won: ${prize.name}`,
+          heading: prize.place === 0 ? 'YOU EARNED AN AWARD' : `#${prize.place} FINISH`,
+          lines: [
+            `${fight?.matchFighterA || 'Fighter A'} vs ${fight?.matchFighterB || 'Fighter B'} has been scored.`,
+            `You won <strong>${escapeHtml(prize.name)}</strong>${prize.sponsorName ? `, courtesy of ${escapeHtml(prize.sponsorName)}` : ''}.`,
+            code ? `Your code: <strong>${escapeHtml(code)}</strong>` : '',
+            INSTANT_PRIZE_TYPES.includes(prize.type)
+              ? 'It is already on your profile.'
+              : 'We will be in touch about delivery.',
+          ].filter(Boolean),
+        });
+      }
+    }
+  }
+
+  return { awarded, prizes: prizes.length };
+};
+
+// --- admin: configure prizes on a fight -----------------------------------
+app.post('/api/admin/fights/:fightId/prizes', verifyAdminToken, async (req, res) => {
+  try {
+    const fightId = String(req.params.fightId || '').trim();
+    const type = String(req.body?.type || '').trim();
+    if (!PRIZE_TYPES.includes(type)) {
+      return res.status(422).json({ ok: false, message: `type must be one of: ${PRIZE_TYPES.join(', ')}` });
+    }
+    const name = String(req.body?.name || '').trim();
+    if (!name) return res.status(422).json({ ok: false, message: 'A prize name is required.' });
+
+    const codePool = Array.isArray(req.body?.codePool)
+      ? req.body.codePool.map((c) => String(c).trim()).filter(Boolean).slice(0, 500)
+      : [];
+    if (type === 'ppv_code' && !codePool.length) {
+      return res.status(422).json({ ok: false, message: 'Provide at least one code for a PPV code prize.' });
+    }
+
+    const prize = await ContestPrize.create({
+      fightId,
+      place: Math.max(0, Math.round(Number(req.body?.place) || 0)),
+      type,
+      name: name.slice(0, 120),
+      description: String(req.body?.description || '').slice(0, 500),
+      imageUrl: String(req.body?.imageUrl || '').slice(0, 500),
+      sponsorName: String(req.body?.sponsorName || '').slice(0, 120),
+      codePool,
+      quantity: type === 'ppv_code' ? codePool.length : Math.max(1, Math.round(Number(req.body?.quantity) || 1)),
+    });
+    return res.status(201).json({ ok: true, prizeId: prize._id });
+  } catch (error) {
+    console.error('Prize create failed:', error);
+    return res.status(500).json({ ok: false, message: 'Could not add that prize.' });
+  }
+});
+
+app.get('/api/admin/fights/:fightId/prizes', verifyAdminToken, async (req, res) => {
+  try {
+    const prizes = await ContestPrize.find({ fightId: String(req.params.fightId || '').trim() })
+      .select('-codePool').sort({ place: 1 }).lean();
+    // Never return the unclaimed codes themselves; the count is what admins need.
+    const withCounts = await Promise.all(prizes.map(async (prize) => {
+      const full = await ContestPrize.findById(prize._id).select('codePool').lean();
+      return { ...prize, codesRemaining: full?.codePool?.length || 0 };
+    }));
+    return res.json({ ok: true, prizes: withCounts });
+  } catch (error) {
+    return res.status(500).json({ ok: false, message: 'Could not load prizes.' });
+  }
+});
+
+app.delete('/api/admin/prizes/:prizeId', verifyAdminToken, async (req, res) => {
+  try {
+    await ContestPrize.updateOne({ _id: String(req.params.prizeId || '') }, { $set: { active: false } });
+    return res.json({ ok: true, message: 'Prize deactivated. Awards already given are unaffected.' });
+  } catch (error) {
+    return res.status(500).json({ ok: false, message: 'Could not remove that prize.' });
+  }
+});
+
+// --- admin: fulfilment queue for physical goods ---------------------------
+app.get('/api/admin/awards/fulfilment', verifyAdminToken, async (req, res) => {
+  try {
+    const status = String(req.query.status || 'pending').trim();
+    const rows = await PlayerAward.find({ fulfilment: status }).sort({ createdAt: 1 }).limit(300).lean();
+    const userIds = [...new Set(rows.map((r) => r.userId))].filter((id) => mongoose.isValidObjectId(id));
+    const users = userIds.length
+      ? await User.find({ _id: { $in: userIds } }).select('email playerName firstName lastName phone zipCode').lean()
+      : [];
+    const byId = new Map(users.map((u) => [String(u._id), u]));
+    return res.json({
+      ok: true,
+      awards: rows.map((row) => ({
+        id: row._id,
+        name: row.name,
+        type: row.type,
+        sponsorName: row.sponsorName,
+        place: row.place,
+        wonAt: row.createdAt,
+        fulfilment: row.fulfilment,
+        winner: byId.get(row.userId)
+          ? {
+            name: byId.get(row.userId).playerName
+              || [byId.get(row.userId).firstName, byId.get(row.userId).lastName].filter(Boolean).join(' '),
+            email: byId.get(row.userId).email,
+            phone: byId.get(row.userId).phone,
+            zipCode: byId.get(row.userId).zipCode,
+          }
+          : null,
+      })),
+    });
+  } catch (error) {
+    console.error('Fulfilment queue failed:', error);
+    return res.status(500).json({ ok: false, message: 'Could not load the queue.' });
+  }
+});
+
+app.post('/api/admin/awards/:awardId/fulfil', verifyAdminToken, async (req, res) => {
+  try {
+    const next = String(req.body?.status || 'shipped').trim();
+    if (!['shipped', 'cancelled', 'pending'].includes(next)) {
+      return res.status(422).json({ ok: false, message: 'status must be shipped, cancelled or pending.' });
+    }
+    const award = await PlayerAward.findOneAndUpdate(
+      { _id: String(req.params.awardId || '') },
+      { $set: { fulfilment: next, shippingNote: String(req.body?.note || '').slice(0, 300) } },
+      { new: true },
+    ).lean();
+    if (!award) return res.status(404).json({ ok: false, message: 'Award not found.' });
+
+    if (next === 'shipped') {
+      const winner = await User.findById(award.userId).select('email').lean();
+      if (winner?.email) {
+        sendMoneyNotice({
+          to: winner.email,
+          subject: `Your prize is on the way: ${award.name}`,
+          heading: 'PRIZE SHIPPED',
+          lines: [
+            `<strong>${escapeHtml(award.name)}</strong> has been sent out.`,
+            award.shippingNote ? escapeHtml(award.shippingNote) : '',
+          ].filter(Boolean),
+        });
+      }
+    }
+    return res.json({ ok: true, fulfilment: award.fulfilment });
+  } catch (error) {
+    console.error('Fulfilment update failed:', error);
+    return res.status(500).json({ ok: false, message: 'Could not update that award.' });
+  }
+});
+
+// --- player: my trophy case ------------------------------------------------
+app.get('/api/users/me/awards', verifyToken, async (req, res) => {
+  try {
+    const userId = String(req.user?.id || req.user?._id || '').trim();
+    const rows = await PlayerAward.find({ userId }).sort({ createdAt: -1 }).limit(200).lean();
+    return res.json({
+      ok: true,
+      awards: rows.map((row) => ({
+        id: row._id,
+        type: row.type,
+        name: row.name,
+        description: row.description,
+        imageUrl: row.imageUrl,
+        sponsorName: row.sponsorName,
+        place: row.place,
+        code: row.code || undefined,
+        fulfilment: row.fulfilment,
+        wonAt: row.createdAt,
+        fightId: row.fightId,
+      })),
+      badges: rows.filter((r) => r.type === 'badge').length,
+      titles: rows.filter((r) => r.type === 'title').map((r) => r.name),
+    });
+  } catch (error) {
+    console.error('Awards lookup failed:', error);
+    return res.status(500).json({ ok: false, message: 'Could not load your awards.' });
+  }
+});
+
+// Public trophy case, for the leaderboard and profile showcase. Names only.
+app.get('/api/public/awards/:userId', async (req, res) => {
+  try {
+    const rows = await PlayerAward.find({ userId: String(req.params.userId || '').trim() })
+      .select('type name imageUrl sponsorName place createdAt').sort({ createdAt: -1 }).limit(50).lean();
+    return res.json({ ok: true, awards: rows });
+  } catch (error) {
+    return res.status(500).json({ ok: false, message: 'Could not load awards.' });
+  }
+});
+
+// ==========================================================================
+// OWNER CHECK — read-only inspection of the whole platform
+//
+// A credential that can see everything is a credential worth stealing, so this
+// one cannot DO anything: there is no write endpoint here beyond signing in.
+// Every money action stays behind admin auth with its own audit trail. That way
+// a leaked owner code costs you information, not money.
+//
+// Separate secret from admin (JWT_SECRET_OWNER) so neither role's compromise
+// includes the other. Short session — you are checking, not living here.
+// ==========================================================================
+const OWNER_EMAIL = String(process.env.OWNER_EMAIL || 'fantasymmadness2@gmail.com').trim().toLowerCase();
+const OWNER_CODE_TTL_MS = 10 * 60 * 1000;
+const OWNER_SESSION_TTL = process.env.OWNER_SESSION_TTL || '1h';
+const OWNER_CODE_MAX_ATTEMPTS = 5;
+
+const ownerLoginCodeSchema = new mongoose.Schema({
+  codeHash: { type: String, required: true },
+  attempts: { type: Number, default: 0 },
+  expiresAt: { type: Date, required: true },
+}, { timestamps: true });
+
+const OwnerLoginCode = mongoose.models.OwnerLoginCode
+  || mongoose.model('OwnerLoginCode', ownerLoginCodeSchema);
+
+const ownerSecret = () => String(process.env.JWT_SECRET_OWNER || '').trim();
+
+app.post('/api/owner/login/request', loginLimiter, async (req, res) => {
+  // Identical response either way — this must never confirm the owner address.
+  const generic = { ok: true, message: 'If that address can access the owner view, a code is on its way.' };
+  try {
+    const email = String(req.body?.email || '').trim().toLowerCase();
+    if (email !== OWNER_EMAIL) return res.json(generic);
+    if (!ownerSecret()) {
+      console.error('Owner sign-in attempted but JWT_SECRET_OWNER is not configured.');
+      return res.json(generic);
+    }
+
+    const code = String(crypto.randomInt(100000, 1000000));
+    await OwnerLoginCode.deleteMany({});
+    await OwnerLoginCode.create({
+      codeHash: crypto.createHash('sha256').update(code).digest('hex'),
+      expiresAt: new Date(Date.now() + OWNER_CODE_TTL_MS),
+    });
+
+    await transporter.sendMail({
+      from: FMM_MAIL_FROM,
+      to: OWNER_EMAIL,
+      subject: 'Fantasy MMAdness owner sign-in code',
+      html: `<div style="font-family:Georgia,'Times New Roman',serif;color:#201f1d">
+        <p>Your owner sign-in code:</p>
+        <p style="font-size:32px;letter-spacing:8px;font-variant-numeric:tabular-nums"><strong>${code}</strong></p>
+        <p>Valid for 10 minutes. <strong>If you did not request this, someone knows your owner address — change your email password and tell your developer.</strong></p>
+      </div>`,
+    });
+    return res.json(generic);
+  } catch (error) {
+    console.error('Owner code request failed:', error);
+    return res.json(generic);
+  }
+});
+
+app.post('/api/owner/login/verify', loginLimiter, async (req, res) => {
+  try {
+    const email = String(req.body?.email || '').trim().toLowerCase();
+    const code = String(req.body?.code || '').trim();
+    if (email !== OWNER_EMAIL || !/^\d{6}$/.test(code)) {
+      return res.status(400).json({ ok: false, message: 'That code is not correct.' });
+    }
+    if (!ownerSecret()) return res.status(503).json({ ok: false, message: 'Owner access is not configured.' });
+
+    const record = await OwnerLoginCode.findOne({}).sort({ createdAt: -1 });
+    if (!record || record.expiresAt.getTime() < Date.now()) {
+      return res.status(400).json({ ok: false, message: 'That code has expired. Request a new one.' });
+    }
+    if (record.attempts >= OWNER_CODE_MAX_ATTEMPTS) {
+      return res.status(429).json({ ok: false, message: 'Too many attempts. Request a new code.' });
+    }
+    const supplied = Buffer.from(crypto.createHash('sha256').update(code).digest('hex'));
+    const expected = Buffer.from(record.codeHash);
+    if (supplied.length !== expected.length || !crypto.timingSafeEqual(supplied, expected)) {
+      record.attempts += 1;
+      await record.save();
+      return res.status(400).json({ ok: false, message: 'That code is not correct.' });
+    }
+    await OwnerLoginCode.deleteMany({});
+
+    const token = jwt.sign({ email: OWNER_EMAIL, scope: 'owner' }, ownerSecret(), { expiresIn: OWNER_SESSION_TTL });
+
+    // Every successful owner sign-in is announced, so an unexpected one is visible.
+    sendMoneyNotice({
+      to: OWNER_EMAIL,
+      subject: 'Owner view accessed',
+      heading: 'OWNER SIGN-IN',
+      lines: [
+        `Someone signed in to the owner view at ${new Date().toUTCString()}.`,
+        `IP: ${String(req.headers['x-forwarded-for'] || req.socket?.remoteAddress || 'unknown')}`,
+        'If this was not you, change your email password immediately.',
+      ],
+    });
+
+    return res.json({ ok: true, token, expiresIn: OWNER_SESSION_TTL });
+  } catch (error) {
+    console.error('Owner verify failed:', error);
+    return res.status(500).json({ ok: false, message: 'Sign-in is temporarily unavailable.' });
+  }
+});
+
+// --------------------------------------------------------------------------
+// TRUSTED DEVICE + PIN
+//
+// Emailing a code every time is right for a new device and wrong for the phone
+// in your pocket. So: prove it once by email, then keep a device secret on that
+// phone and unlock with a short PIN.
+//
+// This is only defensible because the owner view is READ-ONLY. A PIN would be a
+// bad guard on anything that can move money; here the worst case is that someone
+// holding your unlocked phone can read numbers they could also read over your
+// shoulder. The device secret is long and random — the PIN alone is useless
+// without it, and five wrong PINs destroy the device record entirely.
+// --------------------------------------------------------------------------
+const ownerDeviceSchema = new mongoose.Schema({
+  deviceKeyHash: { type: String, required: true, unique: true },
+  pinHash: { type: String, required: true },
+  label: { type: String, default: 'Phone' },
+  failedAttempts: { type: Number, default: 0 },
+  lastUsedAt: { type: Date, default: null },
+  expiresAt: { type: Date, required: true },
+}, { timestamps: true });
+
+const OwnerDevice = mongoose.models.OwnerDevice || mongoose.model('OwnerDevice', ownerDeviceSchema);
+
+const OWNER_DEVICE_TTL_MS = Number(process.env.OWNER_DEVICE_TTL_DAYS || 30) * 24 * 60 * 60 * 1000;
+const OWNER_PIN_MAX_ATTEMPTS = 5;
+const hashOwnerValue = (value) => crypto.createHash('sha256').update(String(value)).digest('hex');
+
+app.post('/api/owner/device/trust', (req, res, next) => verifyOwnerToken(req, res, next), async (req, res) => {
+  try {
+    const pin = String(req.body?.pin || '').trim();
+    if (!/^\d{4,8}$/.test(pin)) {
+      return res.status(422).json({ ok: false, message: 'Choose a PIN of 4 to 8 digits.' });
+    }
+    // Refuse the PINs someone would guess first.
+    if (/^(\d)\1+$/.test(pin) || ['1234', '12345', '123456', '0000'].includes(pin)) {
+      return res.status(422).json({ ok: false, message: 'Pick a less predictable PIN.' });
+    }
+
+    const deviceKey = crypto.randomBytes(32).toString('hex');
+    await OwnerDevice.create({
+      deviceKeyHash: hashOwnerValue(deviceKey),
+      pinHash: await bcrypt.hash(pin, 10),
+      label: String(req.body?.label || 'Phone').slice(0, 40),
+      expiresAt: new Date(Date.now() + OWNER_DEVICE_TTL_MS),
+    });
+
+    sendMoneyNotice({
+      to: OWNER_EMAIL,
+      subject: 'A device was trusted for owner access',
+      heading: 'DEVICE TRUSTED',
+      lines: [
+        `A device was set up for quick owner sign-in on ${new Date().toUTCString()}.`,
+        'If this was not you, open the owner view and choose "Forget all devices".',
+      ],
+    });
+
+    // Returned once and never again — the phone stores it, the server keeps only a hash.
+    return res.json({ ok: true, deviceKey, expiresInDays: Math.round(OWNER_DEVICE_TTL_MS / 86400000) });
+  } catch (error) {
+    console.error('Owner device trust failed:', error);
+    return res.status(500).json({ ok: false, message: 'Could not set up quick access.' });
+  }
+});
+
+app.post('/api/owner/login/device', loginLimiter, async (req, res) => {
+  try {
+    const deviceKey = String(req.body?.deviceKey || '').trim();
+    const pin = String(req.body?.pin || '').trim();
+    const generic = { ok: false, message: 'That PIN is not correct.' };
+    if (!deviceKey || !/^\d{4,8}$/.test(pin) || !ownerSecret()) return res.status(400).json(generic);
+
+    const device = await OwnerDevice.findOne({ deviceKeyHash: hashOwnerValue(deviceKey) });
+    if (!device) return res.status(401).json({ ok: false, message: 'This device is no longer trusted. Sign in with an email code.', reset: true });
+    if (device.expiresAt.getTime() < Date.now()) {
+      await device.deleteOne();
+      return res.status(401).json({ ok: false, message: 'Quick access expired. Sign in with an email code.', reset: true });
+    }
+    if (device.failedAttempts >= OWNER_PIN_MAX_ATTEMPTS) {
+      await device.deleteOne();
+      return res.status(429).json({ ok: false, message: 'Too many wrong PINs — this device was un-trusted. Sign in with an email code.', reset: true });
+    }
+
+    if (!(await bcrypt.compare(pin, device.pinHash))) {
+      device.failedAttempts += 1;
+      await device.save();
+      const left = OWNER_PIN_MAX_ATTEMPTS - device.failedAttempts;
+      return res.status(401).json({
+        ok: false,
+        message: left > 0 ? `That PIN is not correct. ${left} attempt${left === 1 ? '' : 's'} left.` : 'That PIN is not correct.',
+      });
+    }
+
+    device.failedAttempts = 0;
+    device.lastUsedAt = new Date();
+    // Sliding window: a phone you actually use stays trusted.
+    device.expiresAt = new Date(Date.now() + OWNER_DEVICE_TTL_MS);
+    await device.save();
+
+    const token = jwt.sign({ email: OWNER_EMAIL, scope: 'owner', via: 'device' }, ownerSecret(), { expiresIn: OWNER_SESSION_TTL });
+    return res.json({ ok: true, token, expiresIn: OWNER_SESSION_TTL });
+  } catch (error) {
+    console.error('Owner device sign-in failed:', error);
+    return res.status(500).json({ ok: false, message: 'Sign-in is temporarily unavailable.' });
+  }
+});
+
+app.post('/api/owner/device/forget-all', (req, res, next) => verifyOwnerToken(req, res, next), async (req, res) => {
+  try {
+    const { deletedCount } = await OwnerDevice.deleteMany({});
+    return res.json({ ok: true, removed: deletedCount || 0, message: 'All trusted devices removed. Every device now needs an email code.' });
+  } catch (error) {
+    console.error('Owner device wipe failed:', error);
+    return res.status(500).json({ ok: false, message: 'Could not remove trusted devices.' });
+  }
+});
+
+// --------------------------------------------------------------------------
+// VIEW AS — see the app as a specific player or affiliate, read-only
+//
+// Not impersonation: the token this mints cannot write. It is a way to answer
+// "what does this person actually see", which support questions constantly need
+// and screenshots never settle.
+// --------------------------------------------------------------------------
+const OWNER_PREVIEW_TTL = process.env.OWNER_PREVIEW_TTL || '20m';
+
+app.get('/api/owner/preview/search', (req, res, next) => verifyOwnerToken(req, res, next), async (req, res) => {
+  try {
+    const q = String(req.query.q || '').trim();
+    if (q.length < 2) return res.json({ ok: true, players: [], affiliates: [] });
+    const safe = q.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const match = new RegExp(safe, 'i');
+    const filter = { $or: [{ email: match }, { playerName: match }, { firstName: match }, { lastName: match }] };
+
+    const [players, affiliates] = await Promise.all([
+      User.find(filter).select('_id email playerName firstName lastName tokens').limit(10).lean(),
+      Affiliate.find(filter).select('_id email playerName firstName lastName tokens verified').limit(10).lean(),
+    ]);
+
+    const shape = (row) => ({
+      id: String(row._id),
+      name: row.playerName || [row.firstName, row.lastName].filter(Boolean).join(' ') || 'Unnamed',
+      email: row.email,
+      coins: Number.parseInt(String(row.tokens || '0'), 10) || 0,
+      verified: row.verified,
+    });
+    return res.json({ ok: true, players: players.map(shape), affiliates: affiliates.map(shape) });
+  } catch (error) {
+    console.error('Owner preview search failed:', error);
+    return res.status(500).json({ ok: false, message: 'Search failed.' });
+  }
+});
+
+app.post('/api/owner/preview/token', (req, res, next) => verifyOwnerToken(req, res, next), async (req, res) => {
+  try {
+    const targetType = String(req.body?.targetType || '').trim().toLowerCase();
+    const targetId = String(req.body?.targetId || '').trim();
+    if (!['player', 'affiliate'].includes(targetType) || !mongoose.isValidObjectId(targetId)) {
+      return res.status(422).json({ ok: false, message: 'Choose a player or affiliate to view.' });
+    }
+    const account = targetType === 'affiliate'
+      ? await Affiliate.findById(targetId).select('_id email playerName firstName lastName').lean()
+      : await User.findById(targetId).select('_id email playerName firstName lastName').lean();
+    if (!account) return res.status(404).json({ ok: false, message: 'That account no longer exists.' });
+
+    // Signed with JWT_SECRET so ordinary read routes accept it — but carrying a
+    // scope that verifyToken refuses to let write.
+    const token = jwt.sign(
+      { id: String(account._id), scope: 'owner-preview', previewOf: targetType, actor: OWNER_EMAIL },
+      process.env.JWT_SECRET,
+      { expiresIn: OWNER_PREVIEW_TTL },
+    );
+
+    console.log(`[owner-preview] ${OWNER_EMAIL} started a read-only preview of ${targetType} ${account._id}`);
+    return res.json({
+      ok: true,
+      token,
+      expiresIn: OWNER_PREVIEW_TTL,
+      target: {
+        id: String(account._id),
+        type: targetType,
+        name: account.playerName || [account.firstName, account.lastName].filter(Boolean).join(' ') || account.email,
+      },
+    });
+  } catch (error) {
+    console.error('Owner preview token failed:', error);
+    return res.status(500).json({ ok: false, message: 'Could not start the preview.' });
+  }
+});
+
+const verifyOwnerToken = (req, res, next) => {
+  const header = String(req.headers.authorization || '');
+  const token = header.startsWith('Bearer ') ? header.slice(7) : null;
+  if (!token || !ownerSecret()) {
+    return res.status(401).json({ ok: false, message: 'Owner sign-in required.', shouldLogin: true });
+  }
+  try {
+    const claims = jwt.verify(token, ownerSecret());
+    if (claims?.scope !== 'owner') throw new Error('wrong scope');
+    req.owner = claims;
+    return next();
+  } catch (error) {
+    return res.status(401).json({ ok: false, message: 'Your owner session has expired.', shouldLogin: true });
+  }
+};
+
+// --------------------------------------------------------------------------
+// OVERVIEW — configuration, live counts, feature flags
+// --------------------------------------------------------------------------
+app.get('/api/owner/overview', verifyOwnerToken, async (req, res) => {
+  try {
+    if (!databaseCapability.checked) await detectDatabaseCapability();
+    const anet = getAuthorizeNetEnvironment();
+    const set = (name) => Boolean(String(process.env[name] || '').trim());
+
+    const [players, affiliates, openFights, entriesToday, pendingPayouts] = await Promise.all([
+      User.countDocuments({}),
+      Affiliate.countDocuments({}),
+      Match.countDocuments({ matchStatus: { $nin: ['finished', 'closed', 'draft'] } }),
+      Score.countDocuments({ createdAt: { $gte: new Date(Date.now() - 24 * 60 * 60 * 1000) } }),
+      Affiliate.countDocuments({ 'payouts.status': 'pending' }),
+    ]);
+
+    return res.json({
+      ok: true,
+      generatedAt: new Date().toISOString(),
+      config: [
+        { label: 'Database transactions', ok: databaseCapability.transactionsSupported, value: databaseCapability.topology,
+          note: databaseCapability.transactionsSupported ? 'Money paths safe' : 'PAID ENTRIES WILL FAIL' },
+        { label: 'Payment provider mode', ok: anet.isLive, value: anet.isLive ? 'production' : 'sandbox',
+          note: anet.isLive ? 'Taking real payments' : 'Sandbox — no real money moves' },
+        { label: 'Payment webhook signing', ok: set('AUTHORIZE_NET_SIGNATURE_KEY'), value: set('AUTHORIZE_NET_SIGNATURE_KEY') ? 'configured' : 'missing',
+          note: 'Without it, payment confirmations are rejected' },
+        { label: 'Email delivery', ok: set('SMTP_PASS') || set('GMAIL_APP_PASSWORD'), value: (set('SMTP_PASS') || set('GMAIL_APP_PASSWORD')) ? 'configured' : 'missing',
+          note: 'Receipts, payouts and alerts all depend on this' },
+        { label: 'Scheduled jobs', ok: set('CRON_SECRET'), value: set('CRON_SECRET') ? 'protected' : 'disabled',
+          note: set('CRON_SECRET') ? 'Cron endpoints require the secret' : 'Jobs return 503 until CRON_SECRET is set' },
+        { label: 'Admin/player secrets differ', ok: process.env.JWT_SECRET !== process.env.JWT_SECRET_ADMIN, value: process.env.JWT_SECRET !== process.env.JWT_SECRET_ADMIN ? 'yes' : 'IDENTICAL',
+          note: 'If identical, any player token passes admin checks' },
+        { label: 'Paid states', ok: PAID_STATES.length > 0, value: `${PAID_STATES.length} states`,
+          note: 'Real-money contests are open in these' },
+        { label: 'Free-play only (locked)', ok: true, value: FREE_ONLY_STATES.join(', '),
+          note: 'Paid contests can never be enabled here, by design' },
+        { label: 'Blocked states', ok: true, value: BLOCKED_STATES.length ? BLOCKED_STATES.join(', ') : 'none',
+          note: 'No access at all' },
+      ],
+      counts: { players, affiliates, openFights, entriesLast24h: entriesToday, pendingPayouts },
+      trustedDevices: await OwnerDevice.countDocuments({}),
+      features: {
+        headToHead: HEAD_TO_HEAD_ENABLED,
+        proWrestling: ['true', '1', 'yes', 'on'].includes(String(process.env.PRO_WRESTLING_ENABLED || 'false').toLowerCase()),
+      },
+    });
+  } catch (error) {
+    console.error('Owner overview failed:', error);
+    return res.status(500).json({ ok: false, message: 'Could not build the overview.' });
+  }
+});
+
+// --------------------------------------------------------------------------
+// INTEGRITY — the questions that tell you whether the books are straight.
+// Read-only; every check reports counts and a small sample, never a bulk dump.
+// --------------------------------------------------------------------------
+const runOwnerIntegrityChecks = async () => {
+  const checks = [];
+  const add = (name, count, detail, sample = []) => checks.push({
+    name, count, ok: count === 0, detail, sample: sample.slice(0, 10),
+  });
+
+  // 1. Entries charged with no ledger row — an entry fee taken without an audit trail.
+  const paidFights = await Match.find({ matchTokens: { $gt: 0 } }).select('_id').limit(500).lean();
+  const paidIds = paidFights.map((f) => String(f._id));
+  const entries = paidIds.length
+    ? await Score.find({ matchId: { $in: paidIds }, refunded: { $ne: true } }).select('playerId matchId').limit(5000).lean()
+    : [];
+  const ledgerRows = entries.length
+    ? await FightEntryLedger.find({ matchId: { $in: paidIds }, type: 'FIGHT_ENTRY' }).select('userId matchId').limit(20000).lean()
+    : [];
+  const ledgerKeys = new Set(ledgerRows.map((r) => `${r.userId}:${r.matchId}`));
+  const unaudited = entries.filter((e) => !ledgerKeys.has(`${e.playerId}:${e.matchId}`));
+  add('Paid entries with no ledger row', unaudited.length,
+    'A player was entered into a paid fight without a recorded charge. Entries created before charging existed will show here.',
+    unaudited.map((e) => ({ playerId: e.playerId, matchId: e.matchId })));
+
+  // 2. Broken wallet chains — each ledger row records the balance before and
+  //    after, so a gap between consecutive rows means a balance changed without
+  //    being recorded anywhere.
+  const recentLedger = await FightEntryLedger.find({})
+    .select('userId amount balanceBefore balanceAfter createdAt')
+    .sort({ createdAt: -1 }).limit(4000).lean();
+  const byUser = new Map();
+  recentLedger.forEach((row) => {
+    const key = String(row.userId);
+    if (!byUser.has(key)) byUser.set(key, []);
+    byUser.get(key).push(row);
+  });
+  const brokenChains = [];
+  byUser.forEach((rows, userId) => {
+    const ordered = rows.slice().reverse();
+    for (let i = 1; i < ordered.length; i += 1) {
+      if (Number(ordered[i].balanceBefore) !== Number(ordered[i - 1].balanceAfter)) {
+        brokenChains.push({
+          userId,
+          expected: Number(ordered[i - 1].balanceAfter),
+          found: Number(ordered[i].balanceBefore),
+          at: ordered[i].createdAt,
+        });
+        break;
+      }
+    }
+  });
+  add('Wallets with an unrecorded balance change', brokenChains.length,
+    'A balance moved between two recorded moves. Usually an admin adjustment made outside the ledger.',
+    brokenChains);
+
+  // 3. Fights that have entries and official stats but were never settled.
+  const finishedWithStats = await Match.find({
+    prizesSettledAt: { $in: [null, undefined] },
+    matchDate: { $lt: new Date(Date.now() - 12 * 60 * 60 * 1000) },
+  }).select('_id matchFighterA matchFighterB matchDate pot').limit(200).lean();
+  const unsettled = [];
+  for (const fight of finishedWithStats) {
+    const entryCount = await Score.countDocuments({ matchId: String(fight._id), refunded: { $ne: true } });
+    if (entryCount > 0) {
+      unsettled.push({
+        fightId: String(fight._id),
+        fight: `${fight.matchFighterA || '?'} vs ${fight.matchFighterB || '?'}`,
+        entries: entryCount,
+        pot: Number(fight.pot) || 0,
+        date: fight.matchDate,
+      });
+    }
+  }
+  add('Fights with entries awaiting settlement', unsettled.length,
+    'Players paid in and have not been paid out. Settle these from the admin fight screen.',
+    unsettled);
+
+  // 3b. Contests where the declared prize is not covered by the entries taken —
+  //     the platform would be paying the difference.
+  const openPaid = await Match.find({
+    prizesSettledAt: { $in: [null, undefined] },
+    voidedAt: { $in: [null, undefined] },
+    matchTokens: { $gt: 0 },
+    pot: { $gt: 0 },
+  }).select('_id matchFighterA matchFighterB pot matchTokens collectedFees minimumEntrants').limit(200).lean();
+  const uncovered = openPaid
+    .map((fight) => {
+      const collected = Math.max(0, Number(fight.collectedFees) || 0);
+      const declared = Math.max(0, Number(fight.pot) || 0);
+      return {
+        fightId: String(fight._id),
+        fight: `${fight.matchFighterA || '?'} vs ${fight.matchFighterB || '?'}`,
+        declaredPrize: declared,
+        feesCollected: collected,
+        shortfall: Math.max(0, declared - collected),
+      };
+    })
+    .filter((row) => row.shortfall > 0);
+  add('Open contests not yet covering their prize', uncovered.length,
+    'Entries so far do not cover the prize promised. They will void and refund at settlement unless more players enter.',
+    uncovered);
+
+  // 3c. Physical prizes won but not yet sent.
+  const pendingAwards = await PlayerAward.find({ fulfilment: 'pending' })
+    .select('name sponsorName createdAt').sort({ createdAt: 1 }).limit(100).lean();
+  const stalePrizes = pendingAwards.filter((row) => (Date.now() - new Date(row.createdAt).getTime()) > 7 * 24 * 3600 * 1000);
+  add('Prizes won but not sent after a week', stalePrizes.length,
+    'Winners are waiting on merch or sponsor goods. Clear these from the fulfilment queue.',
+    stalePrizes.map((r) => ({ prize: r.name, sponsor: r.sponsorName, wonAt: r.createdAt })));
+
+  // 4. Payments that took money but never credited.
+  const stuckOrders = await CoinPurchaseOrder.find({
+    status: { $in: ['PROCESSING', 'FAILED'] },
+    createdAt: { $lt: new Date(Date.now() - 60 * 60 * 1000) },
+  }).select('orderNumber email status subtotalCents createdAt').sort({ createdAt: -1 }).limit(100).lean();
+  add('Coin orders stuck or failed', stuckOrders.length,
+    'A payment may have been taken without coins being credited. Check each against the payment provider.',
+    stuckOrders.map((o) => ({ orderNumber: o.orderNumber, email: o.email, status: o.status, amount: (o.subtotalCents || 0) / 100 })));
+
+  // 5. Payouts an affiliate is waiting on.
+  const withPending = await Affiliate.find({ 'payouts.status': 'pending' })
+    .select('firstName lastName email payouts').limit(200).lean();
+  const stalePayouts = [];
+  withPending.forEach((affiliate) => {
+    (affiliate.payouts || []).forEach((payout, index) => {
+      const created = payout?.requestedAt || payout?.createdAt;
+      const ageHours = created ? (Date.now() - new Date(created).getTime()) / 3600000 : 0;
+      if (String(payout?.status || '').toLowerCase() === 'pending' && ageHours > 48) {
+        stalePayouts.push({
+          affiliate: `${affiliate.firstName || ''} ${affiliate.lastName || ''}`.trim(),
+          amount: Number(payout.amount) || 0,
+          waitingHours: Math.round(ageHours),
+          payoutIndex: index,
+        });
+      }
+    });
+  });
+  add('Payouts pending over 48 hours', stalePayouts.length,
+    'Affiliates are waiting on money. Approve or reject from the payouts screen.',
+    stalePayouts);
+
+  // 6. Head-to-head escrow left holding coins on a settled fight.
+  if (HEAD_TO_HEAD_ENABLED) {
+    const settledFightIds = (await Match.find({ prizesSettledAt: { $ne: null } }).select('_id').limit(500).lean())
+      .map((f) => String(f._id));
+    const stuck = settledFightIds.length
+      ? await Challenge.find({ fightId: { $in: settledFightIds }, status: { $in: ['PENDING', 'ACCEPTED'] } })
+        .select('fightId stake status').limit(200).lean()
+      : [];
+    add('Challenges holding coins on a settled fight', stuck.length,
+      'Escrow was not released. Re-run settle-challenges for those fights.',
+      stuck.map((c) => ({ challengeId: String(c._id), fightId: c.fightId, stake: c.stake, status: c.status })));
+  }
+
+  const problems = checks.filter((c) => !c.ok);
+  return {
+    generatedAt: new Date().toISOString(),
+    allClear: problems.length === 0,
+    problemCount: problems.length,
+    checks,
+  };
+};
+
+app.get('/api/owner/integrity', verifyOwnerToken, async (req, res) => {
+  try {
+    return res.json({ ok: true, ...(await runOwnerIntegrityChecks()) });
+  } catch (error) {
+    console.error('Owner integrity check failed:', error);
+    return res.status(500).json({ ok: false, message: 'Could not complete the checks.' });
+  }
+});
+
+// Nightly run. Emails ONLY when something is wrong, so silence means the books
+// balance and the mail stays worth reading.
+app.get('/api/cron/owner-integrity', verifyCronSecret, async (req, res) => {
+  try {
+    const report = await runOwnerIntegrityChecks();
+    if (report.allClear) return res.json({ ok: true, allClear: true, emailed: false });
+
+    const problems = report.checks.filter((c) => !c.ok);
+    await sendMoneyNotice({
+      to: OWNER_EMAIL,
+      subject: `[FMM] ${problems.length} thing${problems.length === 1 ? '' : 's'} need${problems.length === 1 ? 's' : ''} your attention`,
+      heading: 'NIGHTLY CHECK',
+      lines: problems.map((p) => `<strong>${p.name}: ${p.count}</strong><br/>${escapeHtml(p.detail)}`),
+      footer: 'Open the owner view for the full list. You only get this email when something is off.',
+    });
+    return res.json({ ok: true, allClear: false, problemCount: problems.length, emailed: true });
+  } catch (error) {
+    console.error('Nightly integrity check failed:', error);
+    return res.status(500).json({ ok: false, message: 'Nightly check failed.' });
+  }
+});
 
 // Centralized request/upload error handling. This keeps existing upload routes intact
 // while returning deterministic 4xx responses for malformed or oversized requests.
