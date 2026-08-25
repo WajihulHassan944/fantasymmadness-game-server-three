@@ -1564,7 +1564,7 @@ shadowSchema.pre('save', function cacheInitialShadowScoutingReport(next) {
 
 
 const Shadow = mongoose.models.Shadow || mongoose.model('Shadow', shadowSchema);
-app.post('/compare-matches', async (req, res) => {
+app.post('/compare-matches', verifyAdminToken, async (req, res) => {
   try {
       const matches = await Match.find({ shadowTemplatesAdditionStatus: false });
       const shadows = await Shadow.find();
@@ -1765,7 +1765,7 @@ app.post(
 );
 
 
-app.post('/finishShadow/:matchId', async (req, res) => {
+app.post('/finishShadow/:matchId', verifyAdminToken, async (req, res) => {
   try {
     const { matchId } = req.params;
 
@@ -1809,7 +1809,7 @@ app.post('/finishShadow/:matchId', async (req, res) => {
 });
 
 
-app.post('/shadow/addShadowRoundResults/:id', async (req, res) => {
+app.post('/shadow/addShadowRoundResults/:id', verifyAdminToken, async (req, res) => {
   const { id } = req.params;
   const { fighterOneStats, fighterTwoStats } = req.body;
 
@@ -1842,7 +1842,7 @@ app.post('/shadow/addShadowRoundResults/:id', async (req, res) => {
 
 
 
-app.post('/updateShadowVideo', async (req, res) => {
+app.post('/updateShadowVideo', verifyAdminToken, async (req, res) => {
   const { matchId, matchVideoUrl } = req.body;
 
   // Basic validation
@@ -1868,7 +1868,7 @@ app.post('/updateShadowVideo', async (req, res) => {
   }
 });
 
-app.delete('/shadowfighttodelete/:id', async (req, res) => {
+app.delete('/shadowfighttodelete/:id', verifyAdminToken, async (req, res) => {
   const { id } = req.params;
   console.log('Received DELETE request for Shadow ID:', id);
 
@@ -2380,7 +2380,7 @@ app.post("/activate-match/:matchId", async (req, res) => {
 });
 
 
-app.post('/api/matches/:matchId/promotional-video', async (req, res) => {
+app.post('/api/matches/:matchId/promotional-video', verifyAdminToken, async (req, res) => {
   const { matchId } = req.params;
   const { promotionalVideoUrl } = req.body;
 
@@ -2407,7 +2407,7 @@ app.post('/api/matches/:matchId/promotional-video', async (req, res) => {
 });
 
 // POST API to update match reward status by matchId
-app.post('/api/update-match-reward', async (req, res) => {
+app.post('/api/update-match-reward', verifyAdminToken, async (req, res) => {
   try {
     const { matchId, matchReward } = req.body;
 
@@ -2459,7 +2459,7 @@ app.get('/matchByName', async (req, res) => {
 
 
 // POST API to receive matchId and matchVideoUrl
-app.post('/updateMatchVideo', async (req, res) => {
+app.post('/updateMatchVideo', verifyAdminToken, async (req, res) => {
   const { matchId, matchVideoUrl } = req.body;
 
   // Basic validation
@@ -2487,7 +2487,7 @@ app.post('/updateMatchVideo', async (req, res) => {
 
 
 
-app.post('/finishMatch/:matchId', async (req, res) => {
+app.post('/finishMatch/:matchId', verifyAdminToken, async (req, res) => {
   try {
     const { matchId } = req.params;
 
@@ -2638,8 +2638,17 @@ async function refundMatchScoresIfRequested(match, matchId, updateWallet) {
   await Promise.all(scores.map(async (score) => {
     const user = await User.findById(score.playerId);
     if (user) {
+      const balanceBefore = Number.parseInt(String(user.tokens || '0'), 10) || 0;
       user.tokens = addWalletTokens(user.tokens, matchTokens);
       await user.save();
+      await recordWalletMove({
+        userId: user._id,
+        amount: matchTokens,
+        balanceBefore,
+        balanceAfter: Number.parseInt(String(user.tokens || '0'), 10) || 0,
+        reason: 'fight_removed_refund',
+        reference: String(score.matchId || ''),
+      });
       refundedUsers += 1;
     }
   }));
@@ -2777,7 +2786,7 @@ app.delete('/api/admin/fights/bulk-delete', verifyAdminToken, handleBulkFightDel
 app.post('/api/matches/bulk-delete', verifyAdminToken, handleBulkFightDelete);
 app.delete('/api/matches/bulk-delete', verifyAdminToken, handleBulkFightDelete);
 
-app.delete('/api/matches/:id', async (req, res) => {
+app.delete('/api/matches/:id', verifyAdminToken, async (req, res) => {
   try {
     const result = await deleteFightAcrossCollections(req.params.id, {
       sourceType: req.query.sourceType || req.query.source,
@@ -3554,7 +3563,7 @@ app.post('/api/matches/:matchId/updatePredictionStatus', verifyToken, async (req
 
 
 
-app.post('/match/addRoundResults/:id', async (req, res) => {
+app.post('/match/addRoundResults/:id', verifyAdminToken, async (req, res) => {
   const { id } = req.params;
   const { fighterOneStats, fighterTwoStats } = req.body;
 
@@ -3696,7 +3705,7 @@ app.get('/admin/device-info', async (req, res) => {
     res.status(500).json({ message: 'Failed to fetch device info.' });
   }
 });
-app.delete('/admin/device-info', async (req, res) => {
+app.delete('/admin/device-info', verifyAdminToken, async (req, res) => {
   const { email, deviceId } = req.body;
 
   if (!deviceId) {
@@ -3776,7 +3785,7 @@ app.get('/admin/device-info-spin-wheel', async (req, res) => {
     res.status(500).json({ message: 'Failed to fetch device info.' });
   }
 });
-app.delete('/admin/device-info-spin-wheel', async (req, res) => {
+app.delete('/admin/device-info-spin-wheel', verifyAdminToken, async (req, res) => {
   const { email, deviceId } = req.body;
 
   if (!deviceId) {
@@ -3838,6 +3847,11 @@ const userSchema = new mongoose.Schema({
   isSubscribed: Boolean,
   isUSCitizen: Boolean,
   isAgreed: Boolean,
+  // --- Notifications -------------------------------------------------------
+  notificationsReadAt: Date,
+  // --- Daily reward --------------------------------------------------------
+  lastDailyRewardAt: Date,
+  dailyRewardStreak: { type: Number, default: 0 },
   // --- Eligibility & responsible play -------------------------------------
   dateOfBirth: Date,                       // required for real age verification
   ageVerifiedAt: Date,
@@ -3888,7 +3902,7 @@ userSchema.pre('save', function normalizeUserWalletTokens(next) {
 attachSafeAccountJsonTransform(userSchema);
 
 const User = mongoose.models.User || mongoose.model('User', userSchema);
-app.put('/update-profile-url', async (req, res) => {
+app.put('/update-profile-url', verifyToken, async (req, res) => {
   try {
       const { profileUrl } = req.body;
       if (!profileUrl) {
@@ -4468,7 +4482,7 @@ app.post('/admin/add-user', verifyAdminToken, async (req, res) => {
 
 
 
-app.post('/forgotPassword-user', async (req, res) => {
+app.post('/forgotPassword-user', submitLimiter, async (req, res) => {
   const { email } = req.body;
 
   try {
@@ -4511,7 +4525,7 @@ app.post('/forgotPassword-user', async (req, res) => {
 });
 
 
-app.post('/resetPassword-user/:token', async (req, res) => {
+app.post('/resetPassword-user/:token', submitLimiter, async (req, res) => {
   try {
     // Hash the token from the URL to match the stored hash
     const resetTokenHash = crypto.createHash('sha256').update(req.params.token).digest('hex');
@@ -4554,7 +4568,7 @@ app.use('/api/authorize-net', (req, res, next) => {
   });
 });
 
-app.post('/api/authorize-net/first-payment', async (req, res) => {
+app.post('/api/authorize-net/first-payment', submitLimiter, async (req, res) => {
   const { email, amount, cardNumber, expirationDate, cardCode, address, city, state, zip, country } = req.body;
 
   try {
@@ -4639,7 +4653,13 @@ app.post('/api/authorize-net/first-payment', async (req, res) => {
           };
   
           // Add tokens to the user's account
+          const anetFirstBefore = Number.parseInt(String(user.tokens || '0'), 10) || 0;
           user.tokens = addWalletTokens(user.tokens, amount);
+          await recordWalletMove({
+            userId: user._id, amount, balanceBefore: anetFirstBefore,
+            balanceAfter: Number.parseInt(String(user.tokens || '0'), 10) || 0,
+            reason: 'card_payment_credit', reference: String(Date.now()),
+          });
           user.currentPlan = 'Standard';
           await user.save();
   
@@ -4667,7 +4687,7 @@ app.post('/api/authorize-net/first-payment', async (req, res) => {
     return res.status(500).json({ message: 'Error processing payment', error: error.message });
   }
 });
-app.post('/api/authorize-net/transaction', async (req, res) => {
+app.post('/api/authorize-net/transaction', submitLimiter, async (req, res) => {
   const { email, amount } = req.body;
 
   try {
@@ -4742,8 +4762,14 @@ app.post('/api/authorize-net/transaction', async (req, res) => {
 
       if (responseCode === '1') {
         // Transaction was successful
+        const anetTxnBefore = Number.parseInt(String(user.tokens || '0'), 10) || 0;
         user.tokens = addWalletTokens(user.tokens, amount);
         await user.save();
+        await recordWalletMove({
+          userId: user._id, amount, balanceBefore: anetTxnBefore,
+          balanceAfter: Number.parseInt(String(user.tokens || '0'), 10) || 0,
+          reason: 'card_payment_credit', reference: String(Date.now()),
+        });
 
         return res.status(200).json({
           message: 'Transaction successful and tokens added',
@@ -4767,7 +4793,7 @@ app.post('/api/authorize-net/transaction', async (req, res) => {
 });
 
 // Google Login API
-app.post('/google-login', async (req, res) => {
+app.post('/google-login', loginLimiter, async (req, res) => {
   const { token } = req.body;
 
   try {
@@ -4954,7 +4980,11 @@ const notification = new Notification({
 
 
 
-app.post('/user/updatePayment/:id', async (req, res) => {
+app.post('/user/updatePayment/:id', verifyToken, async (req, res) => {
+  // Payment details may only be changed by their owner.
+  if (String(req.user?.id || req.user?._id || '') !== String(req.params.id)) {
+    return res.status(403).json({ message: 'You can only update your own payment details.', code: 'NOT_OWNER' });
+  }
   const { id } = req.params; // Get the affiliate ID from URL params
   const { preferredPaymentMethod, preferredPaymentMethodValue } = req.body; // Get data from request body
 
@@ -5071,7 +5101,17 @@ app.post('/api/reward-tokens/:userId', verifyAdminToken, async (req, res) => {
     }
 
     // Add tokens to the user's account
+    const grantBalanceBefore = Number.parseInt(String(user.tokens || '0'), 10) || 0;
     user.tokens = addWalletTokens(user.tokens, tokens);
+    await recordWalletMove({
+      userId: user._id,
+      amount: tokens,
+      balanceBefore: grantBalanceBefore,
+      balanceAfter: Number.parseInt(String(user.tokens || '0'), 10) || 0,
+      reason: 'admin_grant',
+      reference: String(req.params.userId || req.body?.matchId || Date.now()),
+      meta: { grantedBy: req.admin?.id || null },
+    });
 
     // Save the updated user
     await user.save();
@@ -5109,7 +5149,17 @@ app.post('/api/reward-tokens-only-forcibly/:userId', verifyAdminToken, async (re
     }
 
     // Add tokens to the user's account
+    const grantBalanceBefore = Number.parseInt(String(user.tokens || '0'), 10) || 0;
     user.tokens = addWalletTokens(user.tokens, tokens);
+    await recordWalletMove({
+      userId: user._id,
+      amount: tokens,
+      balanceBefore: grantBalanceBefore,
+      balanceAfter: Number.parseInt(String(user.tokens || '0'), 10) || 0,
+      reason: 'admin_grant',
+      reference: String(req.params.userId || req.body?.matchId || Date.now()),
+      meta: { grantedBy: req.admin?.id || null },
+    });
 
     // Save the updated user
     await user.save();
@@ -5629,7 +5679,7 @@ app.get('/api/public/apparel-products', async (req, res) => {
   }
 });
 
-app.post('/api/public/apparel-orders', async (req, res) => {
+app.post('/api/public/apparel-orders', submitLimiter, async (req, res) => {
   try {
     const {
       customerName,
@@ -5728,7 +5778,7 @@ app.post('/api/public/apparel-orders', async (req, res) => {
   }
 });
 
-app.post('/contact-us-fantasymmadness', (req, res) => {
+app.post('/contact-us-fantasymmadness', submitLimiter, (req, res) => {
   const { fullName, email, subject, message } = req.body;
 
   // Validate input (basic validation)
@@ -5980,7 +6030,7 @@ app.get('/notify', async (req, res) => {
 });
 
 
-app.post('/send-emails-to-all-users', async (req, res) => {
+app.post('/send-emails-to-all-users', verifyAdminToken, async (req, res) => {
   const { emails, subject, message } = req.body;
 
   if (!emails || emails.length === 0) {
@@ -6006,7 +6056,7 @@ app.post('/send-emails-to-all-users', async (req, res) => {
 });
 
 
-app.post('/register', async (req, res) => {
+app.post('/register', submitLimiter, async (req, res) => {
   try {
     console.log("Incoming /register request body:", req.body);
 
@@ -6191,7 +6241,7 @@ app.get("/", (req, res) =>{
   res.send("Backend server has started running successfully...");
 });
 
-app.delete('/usertodelete/:id', async (req, res) => {
+app.delete('/usertodelete/:id', verifyAdminToken, async (req, res) => {
   const { id } = req.params;
 
   try {
@@ -6305,7 +6355,14 @@ app.post('/upload-avatar', upload.single('image'), async (req, res) => {
 
 
 
-app.post('/user/:email/subscribe', async (req, res) => {
+app.post('/user/:email/subscribe', verifyToken, async (req, res) => {
+  // Bound to the signed-in account so one user cannot alter another's subscription.
+  {
+    const caller = await User.findById(String(req.user?.id || req.user?._id || '')).select('email').lean();
+    if (!caller || String(caller.email).toLowerCase() !== String(req.params.email).toLowerCase()) {
+      return res.status(403).json({ message: 'You can only change your own subscription.', code: 'NOT_OWNER' });
+    }
+  }
   const { email } = req.params;
   const { plan } = req.body;
 
@@ -6317,6 +6374,8 @@ app.post('/user/:email/subscribe', async (req, res) => {
     }
 
     // Check if the user has already availed the free plan
+    let freePlanBefore = NaN;
+    let stdPlanBefore = NaN;
     if (plan === 'Free') {
       if (user.hasAvailedFreePlan) {
         return res.status(400).json({ message: 'User has already availed the free plan' });
@@ -6326,14 +6385,31 @@ app.post('/user/:email/subscribe', async (req, res) => {
       user.currentPlan = 'Free';
       user.freePlanExpiryDate = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000); // 1 month from now
       user.hasAvailedFreePlan = true;
+      freePlanBefore = Number.parseInt(String(user.tokens || '0'), 10) || 0;
       user.tokens = '20'; // Allot 20 free tokens for the Free plan
 
     } else if (plan === 'Standard') {
       user.currentPlan = 'Standard';
+      stdPlanBefore = Number.parseInt(String(user.tokens || '0'), 10) || 0;
       user.tokens = '100'; // Allot 100 free tokens for the Standard plan
     }
 
     await user.save();
+    // Plan allotments SET a balance rather than adjust it, so the movement was
+    // previously invisible in any history.
+    const planAfter = Number.parseInt(String(user.tokens || '0'), 10) || 0;
+    const planBefore = plan === 'Standard' ? stdPlanBefore : freePlanBefore;
+    if (Number.isFinite(planBefore)) {
+      await recordWalletMove({
+        userId: user._id,
+        amount: planAfter - planBefore,
+        balanceBefore: planBefore,
+        balanceAfter: planAfter,
+        reason: 'plan_allotment',
+        reference: String(plan || '') + ':' + Date.now(),
+        meta: { plan },
+      });
+    }
     res.status(200).json({ message: 'Subscription updated successfully' });
 
   } catch (error) {
@@ -6876,7 +6952,18 @@ async function settlePaidCoinOrder(orderNumber, providerEventId = '') {
     const firstPurchase = !user.hasReceivedFirstPurchaseBonus;
     const bonusCoins = firstPurchase ? order.baseCoins : 0;
     const creditedCoins = order.baseCoins + bonusCoins;
+    const coinBalanceBefore = Number.parseInt(String(user.tokens || '0'), 10) || 0;
     user.tokens = addWalletTokens(user.tokens, creditedCoins);
+    await recordWalletMove({
+      userId: user._id,
+      amount: creditedCoins,
+      balanceBefore: coinBalanceBefore,
+      balanceAfter: Number.parseInt(String(user.tokens || '0'), 10) || 0,
+      reason: 'coin_purchase',
+      reference: String(order.orderNumber || ''),
+      meta: { baseCoins: order.baseCoins, bonusCoins },
+      session,
+    });
     user.hasReceivedFirstPurchaseBonus = true;
     await user.save({ session });
 
@@ -6961,7 +7048,17 @@ async function settlePaidFmPlusOrder(orderNumber, providerEventId = '') {
       ? new Date(user.fmPlusExpiresAt)
       : now;
     const expiry = new Date(currentExpiry.getTime() + Number(order.durationDays || 30) * 24 * 60 * 60 * 1000);
+    const fmPlusBalanceBefore = Number.parseInt(String(user.tokens || '0'), 10) || 0;
     user.tokens = addWalletTokens(user.tokens, order.bonusCoins);
+    await recordWalletMove({
+      userId: user._id,
+      amount: order.bonusCoins,
+      balanceBefore: fmPlusBalanceBefore,
+      balanceAfter: Number.parseInt(String(user.tokens || '0'), 10) || 0,
+      reason: 'fm_plus_bonus',
+      reference: String(order.orderNumber || ''),
+      session,
+    });
     user.isSubscribed = true;
     user.currentPlan = 'FM+';
     user.fmPlusPlan = order.plan;
@@ -7432,6 +7529,10 @@ app.post('/api/users/me/streak/save', verifyToken, async (req, res) => {
     const balance = Number(normalizeWalletTokenString(user.tokens));
     if (balance < cost) return res.status(409).json({ ok: false, message: `You need ${cost} FM to save this streak.` });
     user.tokens = normalizeWalletTokenString(balance - cost);
+    await recordWalletMove({
+      userId: user._id, amount: -cost, balanceBefore: balance, balanceAfter: balance - cost,
+      reason: 'streak_save_legacy', reference: String(Date.now()),
+    });
     user.streakExpiresAt = new Date(now.getTime() + 24 * 60 * 60 * 1000);
     await user.save();
     clearPublicResponseCache();
@@ -7831,7 +7932,7 @@ app.post('/admin/add-affiliate', verifyAdminToken, async (req, res) => {
 
 
 
-app.post('/affiliate-google-login', async (req, res) => {
+app.post('/affiliate-google-login', loginLimiter, async (req, res) => {
   const { token } = req.body;
 
   try {
@@ -8025,7 +8126,7 @@ const notification = new Notification({
 
 
 // Route to increment totalViews
-app.post('/affiliate/:affiliateId/incrementViews', async (req, res) => {
+app.post('/affiliate/:affiliateId/incrementViews', submitLimiter, async (req, res) => {
   try {
     const { affiliateId } = req.params;
     const updatedAffiliate = await Affiliate.findByIdAndUpdate(
@@ -8046,7 +8147,7 @@ app.post('/affiliate/:affiliateId/incrementViews', async (req, res) => {
 });
 
 
-app.post('/forgotPassword', async (req, res) => {
+app.post('/forgotPassword', submitLimiter, async (req, res) => {
   const { email } = req.body;
 
   try {
@@ -8089,7 +8190,7 @@ app.post('/forgotPassword', async (req, res) => {
 });
 
 
-app.post('/resetPassword/:token', async (req, res) => {
+app.post('/resetPassword/:token', submitLimiter, async (req, res) => {
   try {
     // Hash the token from the URL to match the stored hash
     const resetTokenHash = crypto.createHash('sha256').update(req.params.token).digest('hex');
@@ -8119,7 +8220,7 @@ app.post('/resetPassword/:token', async (req, res) => {
 });
 
 
-app.delete('/affiliates/:id/payouts-to-delete', async (req, res) => {
+app.delete('/affiliates/:id/payouts-to-delete', verifyAdminToken, async (req, res) => {
   const affiliateId = req.params.id;
 
   try {
@@ -8194,6 +8295,14 @@ app.post('/affiliate/:id/payout', verifyToken, async (req, res) => {
     // Debit now so the same balance cannot be requested again before the admin
     // processes it. A rejected payout must credit this back.
     affiliate.tokens = String(balance - requested);
+    await recordWalletMove({
+      userId: affiliate._id,
+      amount: -requested,
+      balanceBefore: balance,
+      balanceAfter: balance - requested,
+      reason: 'payout_requested',
+      reference: String(Date.now()),
+    });
 
     const payout = { amount: requested, status: 'pending', createdAt: new Date() };
     affiliate.payouts.push(payout);
@@ -8238,7 +8347,7 @@ app.post('/affiliate/:id/payout', verifyToken, async (req, res) => {
 
 
 // Endpoint to confirm payment
-app.post('/confirm-payment-affiliate', async (req, res) => {
+app.post('/confirm-payment-affiliate', verifyAdminToken, async (req, res) => {
     const { affiliateId, amount, payoutId } = req.body;
 
     try {
@@ -8258,6 +8367,11 @@ app.post('/confirm-payment-affiliate', async (req, res) => {
         }
 
         // Deduct the amount from tokens
+        await recordWalletMove({
+          userId: affiliate._id, amount: -amount, balanceBefore: currentTokens,
+          balanceAfter: currentTokens - amount,
+          reason: 'affiliate_payout_legacy', reference: String(Date.now()),
+        });
         affiliate.tokens = (currentTokens - amount).toString(); // Convert back to string
 
         // Update the payout status to completed
@@ -8280,11 +8394,17 @@ app.post('/confirm-payment-affiliate', async (req, res) => {
 });
 
 
-app.post('/affiliate/:affiliateId/remove-user', async (req, res) => {
+app.post('/affiliate/:affiliateId/remove-user', verifyToken, async (req, res) => {
   const { affiliateId } = req.params;
   const { userId } = req.body;
 
   try {
+    // Only the promoter who owns this league may remove its members.
+    const callerId = String(req.user?.id || req.user?._id || '').trim();
+    if (callerId !== String(affiliateId)) {
+      return res.status(403).json({ message: 'You can only manage your own league.', code: 'NOT_LEAGUE_OWNER' });
+    }
+
     const affiliate = await Affiliate.findById(affiliateId);
     const user = await User.findById(userId);
 
@@ -8364,7 +8484,7 @@ app.post('/affiliate/:affiliateId/remove-user', async (req, res) => {
 });
 
 
-app.post('/clean-affiliate-users', async (req, res) => {
+app.post('/clean-affiliate-users', verifyAdminToken, async (req, res) => {
   try {
     const affiliates = await Affiliate.find(); // Get all affiliates
     
@@ -8410,7 +8530,17 @@ app.post('/api/reward-tokens-to-affiliate/:affiliateId', verifyAdminToken, async
     }
 
     // Add tokens to the user's account
+    const grantBalanceBefore = Number.parseInt(String(user.tokens || '0'), 10) || 0;
     user.tokens = addWalletTokens(user.tokens, tokens);
+    await recordWalletMove({
+      userId: user._id,
+      amount: tokens,
+      balanceBefore: grantBalanceBefore,
+      balanceAfter: Number.parseInt(String(user.tokens || '0'), 10) || 0,
+      reason: 'admin_grant',
+      reference: String(req.params.userId || req.body?.matchId || Date.now()),
+      meta: { grantedBy: req.admin?.id || null },
+    });
 
     // Save the updated user
     await user.save();
@@ -8453,7 +8583,10 @@ app.get('/affiliateByName', async (req, res) => {
 
 
 
-app.post('/affiliate/updatePayment/:id', async (req, res) => {
+app.post('/affiliate/updatePayment/:id', verifyToken, async (req, res) => {
+  if (String(req.user?.id || req.user?._id || '') !== String(req.params.id)) {
+    return res.status(403).json({ message: 'You can only update your own payment details.', code: 'NOT_OWNER' });
+  }
   const { id } = req.params; // Get the affiliate ID from URL params
   const { preferredPaymentMethod, preferredPaymentMethodValue } = req.body; // Get data from request body
 
@@ -8592,9 +8725,13 @@ const sendAffiliateEmail = async (affiliate, user) => {
   await transporter.sendMail(mailOptions);
 };
 
-app.post('/affiliate/:affiliateId/join', async (req, res) => {
+app.post('/affiliate/:affiliateId/join', verifyToken, async (req, res) => {
   const { affiliateId } = req.params;
-  const { userId, userEmail } = req.body; // Receive userId and userEmail from the request body
+  // SECURITY: derived from the verified token. Body ids are ignored — otherwise
+  // any caller could join another player into a league.
+  const userId = String(req.user?.id || req.user?._id || '').trim();
+  const userEmail = String(req.body?.userEmail || '').trim();
+  if (!userId) return res.status(401).json({ message: 'Sign in to join a league.' });
 
   try {
     const affiliate = await Affiliate.findById(affiliateId);
@@ -8690,7 +8827,7 @@ app.put('/update-profile-affiliate/:userId', upload.single('image'), async (req,
 });
 
 // Delete Affiliate API
-app.delete('/affiliatetodelete/:id', async (req, res) => {
+app.delete('/affiliatetodelete/:id', verifyAdminToken, async (req, res) => {
   const { id } = req.params;
   console.log('Received DELETE request for Affiliate ID:', id);
 
@@ -8766,7 +8903,7 @@ app.get('/api/public/leagues', async (req, res) => {
   }
 });
 
-app.post('/send-email-affiliate', async (req, res) => {
+app.post('/send-email-affiliate', verifyAdminToken, async (req, res) => {
   const { email, subject, message } = req.body;
 
   // Check if email, subject, and message are provided
@@ -8793,7 +8930,7 @@ app.post('/send-email-affiliate', async (req, res) => {
 
 
 
-app.post('/affiliates/:id/verify', async (req, res) => {
+app.post('/affiliates/:id/verify', verifyAdminToken, async (req, res) => {
   try {
       const { id } = req.params;
       const affiliate = await Affiliate.findById(id);
@@ -9872,7 +10009,7 @@ app.get('/api/public/home-summary', async (req, res) => {
   }
 });
 
-app.delete('/api/scores', async (req, res) => {
+app.delete('/api/scores', verifyAdminToken, async (req, res) => {
   try {
     await Score.deleteMany({}); // This will delete all records in the Score collection
     clearPublicResponseCache();
@@ -9915,7 +10052,7 @@ adminSchema.set('toJSON', {
 
 const Admin = mongoose.models.Admin || mongoose.model('Admin', adminSchema);
 
-app.post('/admin/register', async (req, res) => {
+app.post('/admin/register', verifyAdminToken, async (req, res) => {
   const { firstName, lastName, email, password, profileUrl } = req.body;
 
   try {
@@ -10006,7 +10143,7 @@ const YoutubeVideos = mongoose.models.YoutubeVideos || mongoose.model('YoutubeVi
 
 
 // Delete Match API
-app.delete('/youtubevideotodelete/:id', async (req, res) => {
+app.delete('/youtubevideotodelete/:id', verifyAdminToken, async (req, res) => {
   const { id } = req.params;
   
   try {
@@ -10018,7 +10155,7 @@ app.delete('/youtubevideotodelete/:id', async (req, res) => {
   }
 });
 
-app.post('/youtubeVideos', async (req, res) => {
+app.post('/youtubeVideos', verifyAdminToken, async (req, res) => {
   const { videoUrl } = req.body;
 
   if (!videoUrl) {
@@ -10287,7 +10424,7 @@ userRemovedMatchesSchema.index({ userId: 1 });
 const UserRemovedMatches = mongoose.models.UserRemovedMatches || mongoose.model('UserRemovedMatches', userRemovedMatchesSchema);
 
 
-app.delete('/remove-matches-of-user/:userId', async (req, res) => {
+app.delete('/remove-matches-of-user/:userId', verifyAdminToken, async (req, res) => {
   const { userId } = req.params;
 
   try {
@@ -10305,8 +10442,10 @@ app.delete('/remove-matches-of-user/:userId', async (req, res) => {
 });
 
 // Add removed match for a user
-app.post('/remove-match-from-my-dashboard', async (req, res) => {
-  const { userId, matchId } = req.body;
+app.post('/remove-match-from-my-dashboard', verifyToken, async (req, res) => {
+  // userId comes from the token — a body id would let one user edit another's dashboard.
+  const userId = String(req.user?.id || req.user?._id || '').trim();
+  const { matchId } = req.body;
 
   try {
       // Find the user's removed matches document
@@ -10337,7 +10476,7 @@ app.post('/remove-match-from-my-dashboard', async (req, res) => {
 });
 
 // Remove a removed match for a user
-app.delete('/remove-match-from-my-dashboard', async (req, res) => {
+app.delete('/remove-match-from-my-dashboard', verifyToken, async (req, res) => {
   const { userId, matchId } = req.body;
 
   try {
@@ -10427,7 +10566,7 @@ customUserSchema.index({ createdAt: -1 });
 const Usernonregistered = mongoose.models.Usernonregistered || mongoose.model('Usernonregistered', customUserSchema);
 
 // POST API to create a new non-registered user
-app.post('/api/users/nonregistered', async (req, res) => {
+app.post('/api/users/nonregistered', submitLimiter, async (req, res) => {
   try {
     const { fullName, email } = req.body;
 
@@ -10462,7 +10601,7 @@ app.get('/api/users/nonregistered', async (req, res) => {
 
 
 // DELETE API to remove a non-registered user by ID
-app.delete('/api/users/nonregistered/:id', async (req, res) => {
+app.delete('/api/users/nonregistered/:id', verifyAdminToken, async (req, res) => {
   try {
       const { id } = req.params;
       const deletedUser = await Usernonregistered.findByIdAndDelete(id);
@@ -10522,7 +10661,7 @@ const ForumSchema = new mongoose.Schema({
 });
 
 const Forum = mongoose.models.Forum || mongoose.model('Forum', ForumSchema);
-app.post('/threads', async (req, res) => {
+app.post('/threads', verifyToken, async (req, res) => {
   try {
     const newThread = {
       title: req.body.title,
@@ -10554,7 +10693,7 @@ app.post('/threads', async (req, res) => {
 
 
 // Reply to a thread
-app.post('/threads/:threadId/replies', async (req, res) => {
+app.post('/threads/:threadId/replies', verifyToken, async (req, res) => {
   try {
     const forum = await Forum.findOne(); // Assuming one forum instance
     const thread = forum.threads.id(req.params.threadId);
@@ -10579,7 +10718,7 @@ app.post('/threads/:threadId/replies', async (req, res) => {
 });
 
 // Like a reply
-app.post('/threads/:threadId/replies/:replyId/like', async (req, res) => {
+app.post('/threads/:threadId/replies/:replyId/like', verifyToken, async (req, res) => {
   try {
     const forum = await Forum.findOne(); // Assuming one forum instance
     const thread = forum.threads.id(req.params.threadId);
@@ -10596,7 +10735,7 @@ app.post('/threads/:threadId/replies/:replyId/like', async (req, res) => {
 
 
 // Create a notification
-app.post('/notifications', async (req, res) => {
+app.post('/notifications', verifyAdminToken, async (req, res) => {
   try {
     const forum = await Forum.findOne(); // Assuming one forum instance
     const newNotification = {
@@ -10620,7 +10759,7 @@ app.post('/notifications', async (req, res) => {
 
 
 // Mark a notification as read
-app.post('/notifications/:notificationId/read', async (req, res) => {
+app.post('/notifications/:notificationId/read', verifyToken, async (req, res) => {
   try {
     const forum = await Forum.findOne(); // Assuming one forum instance
     const notification = forum.notifications.id(req.params.notificationId);
@@ -10713,7 +10852,7 @@ app.get('/notifications/:notificationId', async (req, res) => {
 });
 
 // Delete a thread
-app.delete('/threads/:threadId', async (req, res) => {
+app.delete('/threads/:threadId', verifyToken, async (req, res) => {
   try {
     const forum = await Forum.findOne(); // Assuming one forum instance
     const thread = forum.threads.id(req.params.threadId);
@@ -10729,7 +10868,7 @@ app.delete('/threads/:threadId', async (req, res) => {
   }
 });
 // Delete a reply from a thread
-app.delete('/threads/:threadId/replies/:replyId', async (req, res) => {
+app.delete('/threads/:threadId/replies/:replyId', verifyToken, async (req, res) => {
   try {
     const forum = await Forum.findOne();
     const thread = forum.threads.id(req.params.threadId);
@@ -10751,7 +10890,7 @@ app.delete('/threads/:threadId/replies/:replyId', async (req, res) => {
 
 
 // Delete a notification
-app.delete('/notifications/:notificationId', async (req, res) => {
+app.delete('/notifications/:notificationId', verifyAdminToken, async (req, res) => {
   try {
     const forum = await Forum.findOne(); // Assuming one forum instance
     const notification = forum.notifications.id(req.params.notificationId);
@@ -10768,7 +10907,7 @@ app.delete('/notifications/:notificationId', async (req, res) => {
 });
 
 // Delete all replies from a thread
-app.delete('/threads/:threadId/replies', async (req, res) => {
+app.delete('/threads/:threadId/replies', verifyToken, async (req, res) => {
   try {
     const forum = await Forum.findOne();
     const thread = forum.threads.id(req.params.threadId);
@@ -10785,7 +10924,7 @@ app.delete('/threads/:threadId/replies', async (req, res) => {
 });
 
 // Delete all threads in the forum
-app.delete('/threads', async (req, res) => {
+app.delete('/threads', verifyToken, async (req, res) => {
   try {
     const forum = await Forum.findOne(); // Assuming one forum instance
     forum.threads = []; // Clear all threads
@@ -10799,15 +10938,17 @@ app.delete('/threads', async (req, res) => {
 
 
 // Update a thread (only by the author)
-app.put('/threads/:threadId', async (req, res) => {
+app.put('/threads/:threadId', verifyToken, async (req, res) => {
   try {
     const forum = await Forum.findOne();
     const thread = forum.threads.id(req.params.threadId);
 
     if (!thread) return res.status(404).json({ message: 'Thread not found' });
 
-    // Check if the user is the author of the thread
-    if (thread.author.userId !== req.body.userId) {
+    // Compare against the TOKEN, not the request body. The old check used
+    // req.body.userId, which the caller controls, so anyone could pass the real
+    // author's id and edit their post.
+    if (String(thread.author.userId) !== String(req.user?.id || req.user?._id || '')) {
       return res.status(403).json({ message: 'Permission denied' });
     }
 
@@ -10824,7 +10965,7 @@ app.put('/threads/:threadId', async (req, res) => {
 });
 
 // Update a reply (only by the author)
-app.put('/threads/:threadId/replies/:replyId', async (req, res) => {
+app.put('/threads/:threadId/replies/:replyId', verifyToken, async (req, res) => {
   try {
     const forum = await Forum.findOne();
     const thread = forum.threads.id(req.params.threadId);
@@ -10835,7 +10976,8 @@ app.put('/threads/:threadId/replies/:replyId', async (req, res) => {
     if (!reply) return res.status(404).json({ message: 'Reply not found' });
 
     // Check if the user is the author of the reply
-    if (reply.author.userId !== req.body.userId) {
+    // Compare against the TOKEN, not the body — a caller-supplied id is not proof of identity.
+    if (String(reply.author.userId) !== String(req.user?.id || req.user?._id || '')) {
       return res.status(403).json({ message: 'Permission denied' });
     }
 
@@ -10851,7 +10993,7 @@ app.put('/threads/:threadId/replies/:replyId', async (req, res) => {
 });
 
 // Update a notification (only by the recipient)
-app.put('/notifications/:notificationId', async (req, res) => {
+app.put('/notifications/:notificationId', verifyToken, async (req, res) => {
   try {
     const forum = await Forum.findOne();
     const notification = forum.notifications.id(req.params.notificationId);
@@ -10859,7 +11001,8 @@ app.put('/notifications/:notificationId', async (req, res) => {
     if (!notification) return res.status(404).json({ message: 'Notification not found' });
 
     // Check if the user is the recipient of the notification
-    if (notification.recipient !== req.body.userId) {
+    // Compare against the TOKEN, not the body.
+    if (String(notification.recipient) !== String(req.user?.id || req.user?._id || '')) {
       return res.status(403).json({ message: 'Permission denied' });
     }
 
@@ -10874,7 +11017,7 @@ app.put('/notifications/:notificationId', async (req, res) => {
 });
 
 // Increment thread views
-app.put('/threads/:threadId/views', async (req, res) => {
+app.put('/threads/:threadId/views', submitLimiter, async (req, res) => {
   try {
     const forum = await Forum.findOne();
     const thread = forum.threads.id(req.params.threadId);
@@ -10916,7 +11059,7 @@ const redListSchema = new mongoose.Schema({
 
 const Redusers = mongoose.models.Redusers || mongoose.model('Redusers', redListSchema);
 
-app.post('/redusers', async (req, res) => {
+app.post('/redusers', submitLimiter, async (req, res) => {
   try {
     const { email, profileUrl } = req.body;
 
@@ -10988,7 +11131,7 @@ app.get('/redusers', async (req, res) => {
 });
 
 // DELETE API - Remove a user from the red list by email
-app.delete('/redusers/:email', async (req, res) => {
+app.delete('/redusers/:email', verifyAdminToken, async (req, res) => {
   try {
     const { email } = req.params;
     const deletedUser = await Redusers.findOneAndDelete({ email });
@@ -11024,7 +11167,7 @@ const siteStatsSchema = new mongoose.Schema({
 siteStatsSchema.index({ domain: 1 });
 const SiteStats = mongoose.models.SiteStats || mongoose.model('SiteStats', siteStatsSchema);
 
-app.post('/track-click', async (req, res) => {
+app.post('/track-click', submitLimiter, async (req, res) => {
   const { deviceId, domain } = req.body;
   const targetDomain = domain || "https://fantasymmadness.com/"; // default fallback
 
@@ -11108,7 +11251,7 @@ app.get('/get-all-time-clicks', async (req, res) => {
     res.status(500).send({ message: 'Error fetching total clicks' });
   }
 });
-app.post('/reset-stats', async (req, res) => {
+app.post('/reset-stats', verifyAdminToken, async (req, res) => {
   try {
     await SiteStats.deleteMany({});
     
@@ -11120,7 +11263,7 @@ app.post('/reset-stats', async (req, res) => {
 });
 
 
-app.post('/reset-unique-visitors', async (req, res) => {
+app.post('/reset-unique-visitors', verifyAdminToken, async (req, res) => {
   const domain = req.body.domain || "https://fantasymmadness.com/";
 
   try {
@@ -11140,7 +11283,7 @@ app.post('/reset-unique-visitors', async (req, res) => {
   }
 });
 
-app.post('/reset-all-visitors', async (req, res) => {
+app.post('/reset-all-visitors', verifyAdminToken, async (req, res) => {
   const domain = req.body.domain || "https://fantasymmadness.com/";
 
   try {
@@ -11159,7 +11302,7 @@ app.post('/reset-all-visitors', async (req, res) => {
   }
 });
 
-app.post('/assign-default-domain', async (req, res) => {
+app.post('/assign-default-domain', verifyAdminToken, async (req, res) => {
   const defaultDomain = "https://fantasymmadness.com/";
 
   try {
@@ -11197,7 +11340,7 @@ faqSchema.index({ title: 1 });
 const Faqs = mongoose.models.Faqs || mongoose.model('Faqs', faqSchema);
 
 
-app.delete('/all/delete/faqs', async (req, res) => {
+app.delete('/all/delete/faqs', verifyAdminToken, async (req, res) => {
   try {
     // Delete all documents from the Faqs collection
     const result = await Faqs.deleteMany({});
@@ -11210,7 +11353,7 @@ app.delete('/all/delete/faqs', async (req, res) => {
     res.status(500).json({ error: 'Failed to delete FAQs from the database.' });
   }
 });
-app.post('/faqs', async (req, res) => {
+app.post('/faqs', verifyAdminToken, async (req, res) => {
   try {
     const faq = new Faqs(req.body);
     await faq.save();
@@ -11236,7 +11379,7 @@ app.get('/faqs', async (req, res) => {
   }
 });
 
-app.put('/faqs/:id', async (req, res) => {
+app.put('/faqs/:id', verifyAdminToken, async (req, res) => {
   try {
     const faq = await Faqs.findByIdAndUpdate(req.params.id, req.body, {
       new: true,
@@ -11257,7 +11400,7 @@ app.put('/faqs/:id', async (req, res) => {
   }
 });
 
-app.delete('/faqs/:id', async (req, res) => {
+app.delete('/faqs/:id', verifyAdminToken, async (req, res) => {
   try {
     const faq = await Faqs.findByIdAndDelete(req.params.id);
     if (!faq) return res.status(404).json({ success: false, message: 'FAQ not found' });
@@ -11275,7 +11418,7 @@ app.delete('/faqs/:id', async (req, res) => {
 });
 
 
-app.post('/faqs/bulk', async (req, res) => {
+app.post('/faqs/bulk', verifyAdminToken, async (req, res) => {
   const faqs = req.body; // Expecting an array of FAQ objects in the request body
 
   if (!Array.isArray(faqs) || faqs.length === 0) {
@@ -11319,7 +11462,7 @@ testimonialSchema.index({ author: 1 });
 const Testimonials = mongoose.models.Testimonials || mongoose.model('Testimonials', testimonialSchema);
 
 
-app.delete('/all/delete/testimonials', async (req, res) => {
+app.delete('/all/delete/testimonials', verifyAdminToken, async (req, res) => {
   try {
     // Delete all documents from the Faqs collection
     const result = await Testimonials.deleteMany({});
@@ -11334,7 +11477,7 @@ app.delete('/all/delete/testimonials', async (req, res) => {
 });
 
 
-app.post('/testimonials', async (req, res) => {
+app.post('/testimonials', verifyAdminToken, async (req, res) => {
   const { userId, ...testimonialData } = req.body;
 
   try {
@@ -11374,7 +11517,7 @@ app.get('/testimonials', async (req, res) => {
   }
 });
 
-app.put('/testimonials/:id', async (req, res) => {
+app.put('/testimonials/:id', verifyAdminToken, async (req, res) => {
   try {
     const testimonials = await Testimonials.findByIdAndUpdate(req.params.id, req.body, {
       new: true,
@@ -11387,7 +11530,7 @@ app.put('/testimonials/:id', async (req, res) => {
   }
 });
 
-app.delete('/testimonials/:id', async (req, res) => {
+app.delete('/testimonials/:id', verifyAdminToken, async (req, res) => {
   try {
     const testimonials = await Testimonials.findByIdAndDelete(req.params.id);
     if (!testimonials) return res.status(404).json({ success: false, message: 'testimonials not found' });
@@ -11427,7 +11570,7 @@ const News = mongoose.models.News || mongoose.model('News', newsSchema);
 
 
 // Delete all News articles
-app.delete('/all/delete/news', async (req, res) => {
+app.delete('/all/delete/news', verifyAdminToken, async (req, res) => {
   try {
     const result = await News.deleteMany({});
     res.status(200).json({
@@ -11444,7 +11587,7 @@ app.delete('/all/delete/news', async (req, res) => {
 
 
 // Add a new News article
-app.post('/news', async (req, res) => {
+app.post('/news', verifyAdminToken, async (req, res) => {
   try {
     // Create and save the news article
     const news = new News(req.body);
@@ -11692,7 +11835,7 @@ app.get('/api/public/fight-news-calendar', async (req, res) => {
   }
 });
 // Update a News article by ID
-app.put('/news/:id', async (req, res) => {
+app.put('/news/:id', verifyAdminToken, async (req, res) => {
   try {
     const news = await News.findByIdAndUpdate(req.params.id, req.body, {
       new: true,
@@ -11712,7 +11855,7 @@ app.put('/news/:id', async (req, res) => {
 });
 
 // Delete a News article by ID
-app.delete('/news/:id', async (req, res) => {
+app.delete('/news/:id', verifyAdminToken, async (req, res) => {
   try {
     const news = await News.findByIdAndDelete(req.params.id);
     if (!news) return res.status(404).json({ success: false, message: 'News article not found' });
@@ -11781,7 +11924,7 @@ app.get('/sponsors/email/:email', async (req, res) => {
 });
 
 
-app.delete('/all/delete/sponsors', async (req, res) => {
+app.delete('/all/delete/sponsors', verifyAdminToken, async (req, res) => {
   try {
     const result = await Sponsors.deleteMany({});
     res.status(200).json({
@@ -11973,7 +12116,7 @@ app.put('/sponsor/:id', upload.single('image'), async (req, res) => {
     res.status(400).json({ success: false, message: error.message });
   }
 });
-app.delete('/sponsor/:id', async (req, res) => {
+app.delete('/sponsor/:id', verifyAdminToken, async (req, res) => {
   try {
     const sponsor = await Sponsors.findByIdAndDelete(req.params.id);
     if (!sponsor) return res.status(404).json({ success: false, message: 'Sponsor not found' });
@@ -12178,7 +12321,7 @@ app.get('/api/blogs/:id', async (req, res) => {
 });
 
 
-app.delete('/api/blogs/:id', async (req, res) => {
+app.delete('/api/blogs/:id', verifyAdminToken, async (req, res) => {
   try {
     const blog = await Blog.findById(req.params.id);
     if (!blog) return res.status(404).json({ error: 'Blog not found.' });
@@ -12206,7 +12349,7 @@ app.delete('/api/blogs/:id', async (req, res) => {
   }
 });
 
-app.delete('/api/delete/blogs', async (req, res) => {
+app.delete('/api/delete/blogs', verifyAdminToken, async (req, res) => {
   try {
     const blogs = await Blog.find();
 
@@ -12341,7 +12484,7 @@ app.get('/api/referrals/:id', async (req, res) => {
   }
 });
 
-app.delete('/api/referrals/:id', async (req, res) => {
+app.delete('/api/referrals/:id', verifyAdminToken, async (req, res) => {
   try {
     await Referral.findByIdAndDelete(req.params.id);
     res.status(204).send();
@@ -12376,7 +12519,7 @@ app.get('/api/notifications', async (req, res) => {
 });
 
 // DELETE a notification by ID
-app.delete('/api/notifications/:id', async (req, res) => {
+app.delete('/api/notifications/:id', verifyAdminToken, async (req, res) => {
   try {
     const { id } = req.params;
     const deleted = await Notification.findByIdAndDelete(id);
@@ -12388,7 +12531,7 @@ app.delete('/api/notifications/:id', async (req, res) => {
 });
 
 // PATCH - mark notification as read (automatically sets read to true)
-app.patch('/api/notifications/:id/read', async (req, res) => {
+app.patch('/api/notifications/:id/read', verifyToken, async (req, res) => {
   try {
     const { id } = req.params;
 
@@ -12438,7 +12581,7 @@ const pusher = new Pusher({
   cluster: process.env.PUSHER_CLUSTER,
   useTLS: true,
 });
-app.post('/api/messages/send', async (req, res) => {
+app.post('/api/messages/send', verifyToken, async (req, res) => {
   const {
     senderId,
     senderName,
@@ -12490,7 +12633,15 @@ app.get('/api/messages/get', async (req, res) => {
 });
 
 
-app.put('/api/messages/:id', async (req, res) => {
+app.put('/api/messages/:id', verifyToken, async (req, res) => {
+  // Only the sender may edit a message.
+  {
+    const existing = await Message.findById(req.params.id).select('senderId userId').lean().catch(() => null);
+    const callerId = String(req.user?.id || req.user?._id || '');
+    if (existing && ![String(existing.senderId || ''), String(existing.userId || '')].includes(callerId)) {
+      return res.status(403).json({ message: 'You can only edit your own messages.', code: 'NOT_OWNER' });
+    }
+  }
   try {
     const { id } = req.params;
     const { text } = req.body;
@@ -12519,7 +12670,7 @@ app.put('/api/messages/:id', async (req, res) => {
   }
 });
 
-app.delete('/api/message-to-del/:id', async (req, res) => {
+app.delete('/api/message-to-del/:id', verifyAdminToken, async (req, res) => {
   try {
     const { id } = req.params;
     const deletedMessage = await Message.findByIdAndDelete(id);
@@ -12538,7 +12689,7 @@ app.delete('/api/message-to-del/:id', async (req, res) => {
   }
 });
 
-app.delete('/api/messages/delete-all', async (req, res) => {
+app.delete('/api/messages/delete-all', verifyAdminToken, async (req, res) => {
   try {
     await Message.deleteMany({});
 
@@ -13317,6 +13468,10 @@ const adjustWrestlingUserTokens = async ({ userId, delta, session }) => {
   const balanceAfter = balanceBefore + Number(delta);
   if (balanceAfter < 0) throw wrestlingHttpError(400, 'Insufficient fight-wallet tokens.', 'INSUFFICIENT_TOKENS', { balance: balanceBefore });
   user.tokens = String(balanceAfter);
+  await recordWalletMove({
+    userId: user._id, amount: balanceAfter - balanceBefore, balanceBefore, balanceAfter,
+    reason: 'wrestling_wallet_adjustment', reference: String(Date.now()),
+  });
   await user.save(session ? { session } : undefined);
   return { user, balanceBefore, balanceAfter };
 };
@@ -14863,7 +15018,7 @@ app.put('/api/admin/wrestling/matches/:id/predictions/:userId', requireProWrestl
   }
 });
 
-app.post('/api/admin/wrestling/wallet-adjustment', requireProWrestlingEnabled, verifyAdminToken, async (req, res) => {
+app.post('/api/admin/wrestling/wallet-adjustment', verifyAdminToken, requireProWrestlingEnabled, verifyAdminToken, async (req, res) => {
   try {
     const userId = req.body.userId;
     const matchId = req.body.matchId;
@@ -16088,6 +16243,14 @@ const resolveAffiliatePayout = async ({ affiliateId, payoutIndex, nextStatus, re
   if (creditBack && amount > 0) {
     const balance = Number.parseInt(String(affiliate.tokens || '0'), 10) || 0;
     affiliate.tokens = String(balance + amount);
+    await recordWalletMove({
+      userId: affiliate._id,
+      amount,
+      balanceBefore: balance,
+      balanceAfter: balance + amount,
+      reason: 'payout_rejected_credit_back',
+      reference: String(payoutIndex),
+    });
   }
 
   payout.status = nextStatus;
@@ -16889,6 +17052,201 @@ app.get('/api/admin/duplicate-signups', verifyAdminToken, async (req, res) => {
     return res.status(500).json({ message: 'Could not build the duplicate report.' });
   }
 });
+
+
+// --------------------------------------------------------------------------
+// WALLET SPENDS & DAILY REWARD
+// Prices live HERE, not in the request. The app sends a purpose, never a cost —
+// otherwise a caller sets their own price for a streak save.
+// --------------------------------------------------------------------------
+const WALLET_SPEND_PRICES = Object.freeze({
+  streak_save: { base: 50, fmPlus: 25, label: 'Streak save' },
+  skip_wait:   { base: 75, fmPlus: 75, label: 'Skip the wait' },
+});
+
+app.post('/api/wallet/spend', verifyToken, async (req, res) => {
+  try {
+    const userId = String(req.user?.id || req.user?._id || '').trim();
+    const purpose = String(req.body?.purpose || '').trim();
+    const price = WALLET_SPEND_PRICES[purpose];
+    if (!price) {
+      return res.status(400).json({ message: 'Unknown purchase.', code: 'UNKNOWN_PURPOSE' });
+    }
+
+    const user = await User.findById(userId);
+    if (!user) return res.status(404).json({ message: 'User not found.' });
+
+    // FM+ pricing is decided by the server from the real subscription state.
+    const isSubscribed = Boolean(user.isSubscribed);
+    const cost = isSubscribed ? price.fmPlus : price.base;
+
+    const balanceBefore = Number.parseInt(String(user.tokens || '0'), 10) || 0;
+    if (balanceBefore < cost) {
+      return res.status(402).json({
+        message: `Not enough FM coins for ${price.label.toLowerCase()}.`,
+        code: 'INSUFFICIENT_FUNDS',
+        balance: balanceBefore,
+        cost,
+        shortfall: cost - balanceBefore,
+      });
+    }
+
+    const balanceAfter = balanceBefore - cost;
+    user.tokens = String(balanceAfter);
+    await user.save();
+
+    await FightEntryLedger.create([{
+      userId,
+      matchId: purpose,
+      sourceType: 'match',
+      type: 'FIGHT_ENTRY',
+      amount: -cost,
+      balanceBefore,
+      balanceAfter,
+      idempotencyKey: `spend:${purpose}:${userId}:${Date.now()}`,
+      metadata: { purpose, label: price.label, fmPlus: isSubscribed },
+    }]);
+
+    return res.status(200).json({
+      ok: true,
+      purpose,
+      cost,
+      coins: balanceAfter,
+      streakExpiresIn: purpose === 'streak_save' ? 24 * 3600 : undefined,
+    });
+  } catch (error) {
+    console.error('Wallet spend failed:', error);
+    return res.status(500).json({ message: 'Could not complete that purchase.' });
+  }
+});
+
+// Daily reward. Server owns the once-per-day rule — a client-side check is
+// trivially bypassed by clearing local storage.
+const DAILY_REWARD_COINS = Number(process.env.DAILY_REWARD_COINS || 25);
+
+app.post('/api/rewards/claim-daily', verifyToken, async (req, res) => {
+  try {
+    const userId = String(req.user?.id || req.user?._id || '').trim();
+    const user = await User.findById(userId);
+    if (!user) return res.status(404).json({ message: 'User not found.' });
+
+    const now = new Date();
+    const last = user.lastDailyRewardAt ? new Date(user.lastDailyRewardAt) : null;
+    if (last) {
+      const sameDay = last.toDateString() === now.toDateString();
+      if (sameDay) {
+        const tomorrow = new Date(now); tomorrow.setHours(24, 0, 0, 0);
+        return res.status(409).json({
+          message: 'You have already claimed today. Come back tomorrow.',
+          code: 'ALREADY_CLAIMED',
+          nextClaimAt: tomorrow,
+        });
+      }
+      // Consecutive-day streak, reset if a day was missed.
+      const yesterday = new Date(now); yesterday.setDate(yesterday.getDate() - 1);
+      user.dailyRewardStreak = last.toDateString() === yesterday.toDateString()
+        ? (Number(user.dailyRewardStreak) || 0) + 1
+        : 1;
+    } else {
+      user.dailyRewardStreak = 1;
+    }
+
+    const streak = Number(user.dailyRewardStreak) || 1;
+    // Small streak bonus, capped so it cannot run away.
+    const coins = DAILY_REWARD_COINS + Math.min(75, (streak - 1) * 5);
+
+    const balanceBefore = Number.parseInt(String(user.tokens || '0'), 10) || 0;
+    const balanceAfter = balanceBefore + coins;
+    user.tokens = String(balanceAfter);
+    user.lastDailyRewardAt = now;
+    await user.save();
+
+    await FightEntryLedger.create([{
+      userId,
+      matchId: 'daily-reward',
+      sourceType: 'match',
+      type: 'FIGHT_ENTRY_REFUND',
+      amount: coins,
+      balanceBefore,
+      balanceAfter,
+      idempotencyKey: `daily:${userId}:${now.toISOString().slice(0, 10)}`,
+      metadata: { streak },
+    }]);
+
+    return res.status(200).json({ ok: true, coins: balanceAfter, awarded: coins, streak });
+  } catch (error) {
+    if (error?.code === 11000) {
+      return res.status(409).json({ message: 'You have already claimed today.', code: 'ALREADY_CLAIMED' });
+    }
+    console.error('Daily reward failed:', error);
+    return res.status(500).json({ message: 'Could not claim your reward.' });
+  }
+});
+
+
+// --------------------------------------------------------------------------
+// NOTIFICATION READ STATE
+// The badge was cleared in phone memory only, so it reappeared on every reopen
+// and players learned to ignore it. Store a read timestamp per user instead.
+// --------------------------------------------------------------------------
+app.post('/api/users/me/notifications/read', verifyToken, async (req, res) => {
+  try {
+    const userId = String(req.user?.id || req.user?._id || '').trim();
+    const readAt = new Date();
+    const user = await User.findByIdAndUpdate(
+      userId,
+      { notificationsReadAt: readAt },
+      { new: true, select: 'notificationsReadAt' }
+    );
+    if (!user) return res.status(404).json({ message: 'User not found.' });
+    return res.status(200).json({ ok: true, notificationsReadAt: readAt });
+  } catch (error) {
+    console.error('Marking notifications read failed:', error);
+    return res.status(500).json({ message: 'Could not update notifications.' });
+  }
+});
+
+app.get('/api/users/me/notifications/state', verifyToken, async (req, res) => {
+  try {
+    const user = await User.findById(String(req.user?.id || req.user?._id || ''))
+      .select('notificationsReadAt').lean();
+    return res.status(200).json({ notificationsReadAt: user?.notificationsReadAt || null });
+  } catch (error) {
+    return res.status(500).json({ message: 'Could not read notification state.' });
+  }
+});
+
+
+// --------------------------------------------------------------------------
+// WALLET AUDIT TRAIL
+// Every balance change should be answerable later ("I had 3,000 coins
+// yesterday"). recordWalletMove writes one ledger row per movement.
+// --------------------------------------------------------------------------
+const recordWalletMove = async ({ userId, amount, balanceBefore, balanceAfter, reason, reference = '', meta = {}, session = null }) => {
+  const delta = Math.round(Number(amount) || 0);
+  if (!userId || !delta) return;
+  try {
+    const key = `move:${reason}:${userId}:${reference || Date.now()}`;
+    await FightEntryLedger.create(
+      [{
+        userId,
+        matchId: String(reference || reason).slice(0, 120),
+        sourceType: 'match',
+        type: delta < 0 ? 'FIGHT_ENTRY' : 'FIGHT_ENTRY_REFUND',
+        amount: delta,
+        balanceBefore: Math.round(Number(balanceBefore) || 0),
+        balanceAfter: Math.round(Number(balanceAfter) || 0),
+        idempotencyKey: key,
+        metadata: { reason, ...meta },
+      }],
+      session ? { session } : undefined
+    );
+  } catch (error) {
+    // Duplicate key = this movement was already recorded. Anything else is a
+    // real audit failure worth seeing in the logs.
+    if (error?.code !== 11000) console.warn('Wallet audit write failed:', reason, error.message);
+  }
+};
 
 // Centralized request/upload error handling. This keeps existing upload routes intact
 // while returning deterministic 4xx responses for malformed or oversized requests.
