@@ -18891,18 +18891,24 @@ const Challenge = mongoose.models.Challenge || mongoose.model('Challenge', chall
 // a script pointed at the wrong environment. Each now needs the collection named
 // back explicitly, and each logs who did it.
 // --------------------------------------------------------------------------
-const requireBulkConfirmation = (collectionName) => (req, res, next) => {
-  const supplied = String(req.body?.confirm || req.query?.confirm || '').trim();
-  if (supplied !== `DELETE-ALL-${collectionName}`) {
-    return res.status(400).json({
-      ok: false,
-      message: `This permanently deletes every record in ${collectionName}. Send confirm="DELETE-ALL-${collectionName}" to proceed.`,
-      code: 'BULK_CONFIRMATION_REQUIRED',
-    });
-  }
-  console.warn(`[bulk-delete] ${collectionName} wiped by admin ${req.admin?.id || 'unknown'} at ${new Date().toISOString()}`);
-  return next();
-};
+// Declared as a hoisted function, NOT a const arrow: the routes that use it are
+// registered earlier in this file, and a const would still be in the temporal
+// dead zone at that point — which crashed the server at boot with
+// "Cannot access 'requireBulkConfirmation' before initialization".
+function requireBulkConfirmation(collectionName) {
+  return (req, res, next) => {
+    const supplied = String(req.body?.confirm || req.query?.confirm || '').trim();
+    if (supplied !== `DELETE-ALL-${collectionName}`) {
+      return res.status(400).json({
+        ok: false,
+        message: `This permanently deletes every record in ${collectionName}. Send confirm="DELETE-ALL-${collectionName}" to proceed.`,
+        code: 'BULK_CONFIRMATION_REQUIRED',
+      });
+    }
+    console.warn(`[bulk-delete] ${collectionName} wiped by admin ${req.admin?.id || 'unknown'} at ${new Date().toISOString()}`);
+    return next();
+  };
+}
 
 const h2hError = (status, message, code, extra = {}) => {
   const error = new Error(message);
