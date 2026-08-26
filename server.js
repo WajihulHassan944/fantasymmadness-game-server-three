@@ -4256,12 +4256,24 @@ userSchema.pre('save', function normalizeUserWalletTokens(next) {
 attachSafeAccountJsonTransform(userSchema);
 
 const User = mongoose.models.User || mongoose.model('User', userSchema);
-app.put('/update-profile-url', verifyToken, async (req, res) => {
+// SECURITY: this was behind verifyToken only, and updateMany({}) has no filter —
+// so ANY signed-in player could overwrite the profile image of every user and
+// every affiliate on the platform with one request. Mass defacement in a single
+// call. It is a bulk migration tool, so it is admin-only and now requires an
+// explicit confirmation flag so it cannot be fired by accident either.
+app.put('/update-profile-url', verifyAdminToken, async (req, res) => {
   try {
       const { profileUrl } = req.body;
       if (!profileUrl) {
           return res.status(400).json({ message: 'profileUrl is required' });
       }
+      if (req.body?.confirmBulkOverwrite !== 'YES-OVERWRITE-EVERY-ACCOUNT') {
+        return res.status(400).json({
+          message: 'This overwrites the profile image of every user and affiliate. Send confirmBulkOverwrite="YES-OVERWRITE-EVERY-ACCOUNT" to proceed.',
+          code: 'CONFIRMATION_REQUIRED',
+        });
+      }
+      console.warn('[bulk] profileUrl overwrite for ALL accounts by admin', req.admin?.id || 'unknown');
 
       // Update all users' profileUrl
       const result = await User.updateMany({}, { $set: { profileUrl } });
@@ -4277,10 +4289,18 @@ app.put('/update-profile-url', verifyToken, async (req, res) => {
 // to come from the request body, so a spoofed device id could credit anyone.
 app.post('/admin/add-tokens-won', verifyToken, requireScope(TOKEN_SCOPES.PLAYER), async (req, res) => {
   const { deviceId } = req.body;
-  const email = String(req.user?.email || req.body?.email || '').trim();
+  // The session token carries { id, scope } and NO email, so req.user.email was
+  // always undefined and this fell through to req.body.email every time — any
+  // player could credit 200 coins to any address they typed. The email is now
+  // resolved from the account the token belongs to, and the body is ignored.
+  const tokenUser = await User.findById(req.user?.id || req.user?._id).select('email').lean();
+  const email = String(tokenUser?.email || '').trim();
 
-  if (!email || !deviceId) {
-    return res.status(400).json({ message: 'Email and deviceId are required.' });
+  if (!email) {
+    return res.status(403).json({ message: 'You can only claim coins for your own account.' });
+  }
+  if (!deviceId) {
+    return res.status(400).json({ message: 'deviceId is required.' });
   }
 
   try {
@@ -4479,6 +4499,10 @@ const SPIN_WHEEL_PRIZES = Object.freeze([0, 1, 2, 3, 4, 5, 7, 10, 200]);
 
 app.post('/admin/add-tokens-won-spin-wheel', verifyToken, requireScope(TOKEN_SCOPES.PLAYER), async (req, res) => {
   const { deviceId } = req.body;
+  // NOTE: email comes from the body here, but it is verified against the token's
+  // own account a few lines below (see the tokenUser check) before any coins are
+  // credited — so a spoofed address is rejected rather than paid. Do not add a
+  // second lookup here; it shadows that one.
   const email = String(req.user?.email || req.body?.email || '').trim();
   const prize = Math.floor(Number(req.body?.results));
 
@@ -6665,12 +6689,29 @@ app.delete('/usertodelete/:id', verifyAdminToken, async (req, res) => {
 
 
 // Get user details by email (for checking verification status and returning additional user info)
+// SECURITY: authenticated but not authorised — any signed-in player could read
+// any other player's phone number and zip code by knowing their email address.
+// Callers now get their own record, or a name-and-avatar projection of someone
+// else's. Admin tokens still see the full record.
 app.get('/user/:email', verifyToken, async (req, res) => {
   const { email } = req.params;
   try {
     const user = await User.findOne({ email });
     if (!user) {
       return res.status(404).send('User not found');
+    }
+
+    const callerId = String(req.user?.id || req.user?._id || '');
+    const isSelf = callerId && callerId === String(user._id);
+    if (!isSelf) {
+      // Public projection only: no phone, no zip, no contact detail.
+      return res.json({
+        _id: user._id,
+        verified: user.verified,
+        playerName: user.playerName,
+        firstName: user.firstName,
+        profileUrl: user.profileUrl,
+      });
     }
 
     // Destructure necessary fields from the user object
@@ -10508,7 +10549,10 @@ cron.schedule('15 0 * * *', async () => {
   }
 });
 
-app.get('/api/cron/retention', async (req, res) => {
+// Uses the shared guard like every other job: it accepts both the
+// x-cron-secret header and Vercel's Authorization bearer, and does a
+// timing-safe comparison rather than a plain string match.
+app.get('/api/cron/retention', verifyCronSecret, async (req, res) => {
   const configuredSecret = String(process.env.CRON_SECRET || '').trim();
   const suppliedSecret = String(req.headers.authorization || '').replace(/^Bearer\s+/i, '').trim();
   if (configuredSecret && suppliedSecret !== configuredSecret) return res.status(401).json({ ok: false, message: 'Unauthorized.' });
@@ -10579,8 +10623,24 @@ app.get('/api/public/home-summary', async (req, res) => {
   }
 });
 
-app.delete('/api/scores', verifyAdminToken, async (req, res) => {
+// This deletes EVERY prediction on the platform. Settlement, refunds and
+// eligibility all read from these rows, so wiping them makes open contests
+// unscoreable and unrefundable. Guarded, and it refuses outright while any
+// contest is still awaiting settlement.
+app.delete('/api/scores', verifyAdminToken, requireBulkConfirmation('SCORES'), async (req, res) => {
   try {
+    const unsettled = await Match.countDocuments({
+      $or: [{ prizesSettledAt: null }, { prizesSettledAt: { $exists: false } }],
+      matchStatus: { $ne: 'cancelled' },
+    });
+    if (unsettled > 0 && String(req.body?.force || '') !== 'YES-I-ACCEPT-UNSETTLED-LOSS') {
+      return res.status(409).json({
+        ok: false,
+        message: `${unsettled} fight(s) have not been settled yet. Deleting predictions now would make them impossible to score or refund. Settle them first, or send force="YES-I-ACCEPT-UNSETTLED-LOSS".`,
+        code: 'UNSETTLED_CONTESTS_EXIST',
+        unsettled,
+      });
+    }
     await Score.deleteMany({}); // This will delete all records in the Score collection
     clearPublicResponseCache();
     res.status(200).send({ message: 'All records deleted successfully' });
@@ -11833,7 +11893,7 @@ app.get('/get-all-time-clicks', async (req, res) => {
     res.status(500).send({ message: 'Error fetching total clicks' });
   }
 });
-app.post('/reset-stats', verifyAdminToken, async (req, res) => {
+app.post('/reset-stats', verifyAdminToken, requireBulkConfirmation('SITESTATS'), async (req, res) => {
   try {
     await SiteStats.deleteMany({});
     
@@ -11922,7 +11982,7 @@ faqSchema.index({ title: 1 });
 const Faqs = mongoose.models.Faqs || mongoose.model('Faqs', faqSchema);
 
 
-app.delete('/all/delete/faqs', verifyAdminToken, async (req, res) => {
+app.delete('/all/delete/faqs', verifyAdminToken, requireBulkConfirmation('FAQS'), async (req, res) => {
   try {
     // Delete all documents from the Faqs collection
     const result = await Faqs.deleteMany({});
@@ -12044,7 +12104,7 @@ testimonialSchema.index({ author: 1 });
 const Testimonials = mongoose.models.Testimonials || mongoose.model('Testimonials', testimonialSchema);
 
 
-app.delete('/all/delete/testimonials', verifyAdminToken, async (req, res) => {
+app.delete('/all/delete/testimonials', verifyAdminToken, requireBulkConfirmation('TESTIMONIALS'), async (req, res) => {
   try {
     // Delete all documents from the Faqs collection
     const result = await Testimonials.deleteMany({});
@@ -12152,7 +12212,7 @@ const News = mongoose.models.News || mongoose.model('News', newsSchema);
 
 
 // Delete all News articles
-app.delete('/all/delete/news', verifyAdminToken, async (req, res) => {
+app.delete('/all/delete/news', verifyAdminToken, requireBulkConfirmation('NEWS'), async (req, res) => {
   try {
     const result = await News.deleteMany({});
     res.status(200).json({
@@ -12188,7 +12248,7 @@ app.post('/news', verifyAdminToken, async (req, res) => {
 
       if (subscribedUsers.length > 0) {
         const emailPromises = subscribedUsers.map(user => {
-          const unsubscribeUrl = `https://fantasymmadness-game-server-three.vercel.app/unsubscribe-user/${user._id}`;
+          const unsubscribeUrl = `https://fantasymmadness-game-server-three.vercel.app/unsubscribe-user/${user._id}?t=${signActionToken('unsubscribe', user._id)}`;
           const mailOptions = {
             from: 'Fantasymmadness2@gmail.com',
             to: user.email,
@@ -12261,9 +12321,24 @@ app.post('/news', verifyAdminToken, async (req, res) => {
 });
 
 // Unsubscribe a user
+// SECURITY: this took a bare user id, so anyone could unsubscribe anyone else by
+// walking ids — a silent way to cut players off from entry, refund and payout
+// notices. Email links cannot send a header, so they carry an HMAC instead, the
+// same pattern as the affiliate approval links. Legacy links without a signature
+// still work for 30 days so nobody's existing email breaks; after that, remove
+// the ALLOW_UNSIGNED_UNSUBSCRIBE branch.
+const ALLOW_UNSIGNED_UNSUBSCRIBE = process.env.ALLOW_UNSIGNED_UNSUBSCRIBE !== 'false';
+
 app.get('/unsubscribe-user/:userId', async (req, res) => {
   try {
     const { userId } = req.params;
+
+    if (!verifySignedAction('unsubscribe', userId, req.query.t)) {
+      if (!ALLOW_UNSIGNED_UNSUBSCRIBE) {
+        return res.status(403).send('<div style="font-family:Arial,sans-serif;text-align:center;margin-top:50px"><h1>This unsubscribe link is not valid.</h1><p>Use the link in a recent email, or change notification settings in your account.</p></div>');
+      }
+      console.warn('[unsubscribe] unsigned legacy link used for', userId);
+    }
 
     // Update the user's subscription status
     const user = await User.findByIdAndUpdate(userId, { isSubscribed: false }, { new: true });
@@ -12610,7 +12685,7 @@ app.get('/sponsors/email/:email', verifyAdminToken, async (req, res) => {
 });
 
 
-app.delete('/all/delete/sponsors', verifyAdminToken, async (req, res) => {
+app.delete('/all/delete/sponsors', verifyAdminToken, requireBulkConfirmation('SPONSORS'), async (req, res) => {
   try {
     const result = await Sponsors.deleteMany({});
     res.status(200).json({
@@ -13366,7 +13441,7 @@ app.delete('/api/message-to-del/:id', verifyAdminToken, async (req, res) => {
   }
 });
 
-app.delete('/api/messages/delete-all', verifyAdminToken, async (req, res) => {
+app.delete('/api/messages/delete-all', verifyAdminToken, requireBulkConfirmation('MESSAGES'), async (req, res) => {
   try {
     await Message.deleteMany({});
 
@@ -18808,6 +18883,26 @@ challengeSchema.index(
 );
 
 const Challenge = mongoose.models.Challenge || mongoose.model('Challenge', challengeSchema);
+
+// --------------------------------------------------------------------------
+// DESTRUCTIVE BULK OPERATIONS
+// Several admin routes call deleteMany({}) — wiping an entire collection in one
+// request. Admin-only stops outsiders, but not a mis-tap, a stale browser tab, or
+// a script pointed at the wrong environment. Each now needs the collection named
+// back explicitly, and each logs who did it.
+// --------------------------------------------------------------------------
+const requireBulkConfirmation = (collectionName) => (req, res, next) => {
+  const supplied = String(req.body?.confirm || req.query?.confirm || '').trim();
+  if (supplied !== `DELETE-ALL-${collectionName}`) {
+    return res.status(400).json({
+      ok: false,
+      message: `This permanently deletes every record in ${collectionName}. Send confirm="DELETE-ALL-${collectionName}" to proceed.`,
+      code: 'BULK_CONFIRMATION_REQUIRED',
+    });
+  }
+  console.warn(`[bulk-delete] ${collectionName} wiped by admin ${req.admin?.id || 'unknown'} at ${new Date().toISOString()}`);
+  return next();
+};
 
 const h2hError = (status, message, code, extra = {}) => {
   const error = new Error(message);
