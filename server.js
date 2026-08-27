@@ -428,11 +428,22 @@ setInterval(() => {
   }
 }, 5 * 60 * 1000).unref?.();
 
-const rateLimit = ({ windowMs = 60000, max = 30, keyPrefix = 'rl', message } = {}) => (req, res, next) => {
+const rateLimit = ({ windowMs = 60000, max = 30, keyPrefix = 'rl', message, keyBy = 'ip' } = {}) => (req, res, next) => {
   const ip = String(
     req.headers['x-forwarded-for'] || req.socket?.remoteAddress || 'unknown'
   ).split(',')[0].trim();
-  const key = `${keyPrefix}:${ip}`;
+
+  // keyBy 'caller' buckets per SESSION rather than per IP. This limiter runs
+  // before verifyToken on most routes, so the raw token is used as the identity —
+  // unverified is fine for bucketing, and an invalid token falls back to IP.
+  // Without this, everyone sharing a WiFi shares one bucket: a watch party of
+  // eight would lock itself out of entering the same fight.
+  let identity = ip;
+  if (keyBy === 'caller') {
+    const bearer = String(req.headers.authorization || '').replace(/^Bearer\s+/i, '').trim();
+    if (bearer.length > 24) identity = 't:' + bearer.slice(-24);
+  }
+  const key = `${keyPrefix}:${identity}`;
   const now = Date.now();
 
   let bucket = rateBuckets.get(key);
@@ -463,8 +474,17 @@ const loginLimiter = rateLimit({
   message: 'Too many sign-in attempts. Please wait 15 minutes and try again.',
 });
 
-// Support/contact: stops inbox flooding without blocking genuine users.
-const submitLimiter = rateLimit({ windowMs: 10 * 60 * 1000, max: 8, keyPrefix: 'submit' });
+// Authenticated actions — entries, drafts, league notices, support. Keyed per
+// caller, not per IP, so a household or a watch party does not lock itself out.
+// 20 in 10 minutes is generous for a real player and still stops flooding: a
+// signed-out caller falls back to IP, and someone with many accounts is caught by
+// duplicate-account prevention rather than by this.
+const submitLimiter = rateLimit({
+  windowMs: 10 * 60 * 1000,
+  max: 20,
+  keyPrefix: 'submit',
+  keyBy: 'caller',
+});
 
 
 // Client feedback helper utilities for fight freshness, manual scoring, and edit forms.
@@ -2572,8 +2592,33 @@ app.post("/activate-match/:matchId", verifyAdminToken, async (req, res) => {
 
     console.log(`Match ${matchId} status set to active.`);
 
-    // Fetch users
-    const users = await User.find().select('email firstName isSubscribed isNotificationsEnabled').limit(20000).lean();
+    // EMAIL IS FOR FEATURED FIGHTS ONLY.
+    // This used to mail every user and every guest on every activation. Players
+    // now receive all fights through the in-app bell
+    // (GET /api/users/me/notifications), so the inbox is reserved for cards you
+    // have actually marked as featured. An admin can force a send with
+    // { "notify": true } in the body for a one-off.
+    const isFeatured = Boolean(match.featuredThisWeek || match.featuredFight);
+    const forceNotify = req.body?.notify === true;
+    const shouldEmail = isFeatured || forceNotify;
+
+    if (!shouldEmail) {
+      console.log(`Match ${matchId} activated without email — not featured.`);
+      clearPublicResponseCache();
+      return res.status(200).json({
+        message: "Fight activated. No email sent — mark it Featured This Week (or send notify:true) to email your list.",
+        emailed: false,
+        reason: 'NOT_FEATURED',
+        inAppNotified: true,
+      });
+    }
+
+    // Fetch users. Respect the two opt-outs that already exist on the account —
+    // mailing someone who unsubscribed is the fastest route to a spam complaint.
+    const users = await User.find({
+      isSubscribed: { $ne: false },
+      isNotificationsEnabled: { $ne: false },
+    }).select('email firstName isSubscribed isNotificationsEnabled').limit(20000).lean();
     const nonRegisteredUsers = await Usernonregistered.find();
 
     // Match details for email
@@ -3293,6 +3338,29 @@ app.post(
       const savedMatch = await newMatch.save();
       clearPublicResponseCache();
 
+  // Roster upkeep: make sure both fighters exist as profiles and their
+  // appearance counts are current. Wrapped so a roster problem can never stop a
+  // fight from being published.
+  try {
+    for (const [name, image] of [
+      [savedMatch.matchFighterA, savedMatch.fighterAImage],
+      [savedMatch.matchFighterB, savedMatch.fighterBImage],
+    ]) {
+      if (!fighterKeyOf(name)) continue;
+      await upsertFighterProfile({
+        name,
+        sport: String(savedMatch.matchCategory || '').toLowerCase(),
+        imageUrl: image || '',
+      });
+      await recountFighterAppearances(fighterKeyOf(name));
+    }
+  } catch (rosterError) {
+    console.error('Fight saved but roster upkeep failed:', rosterError.message);
+  }
+
+  // Admin-console record only. Players get this through
+  // GET /api/users/me/notifications, which derives from the fight itself — a row
+  // per user per fight would be tens of thousands of writes per publish.
   const notification = new Notification({
       title: `New Fight Added: ${savedMatch.matchName}`,
     });
@@ -3316,7 +3384,12 @@ app.post(
 
   if (req.body.notify === 'true' || req.body.notify === true) {
 
-  const users = await User.find();
+  // Opt-in already, but it was mailing people who had unsubscribed and loading
+  // whole user documents (password hashes included) to do it.
+  const users = await User.find({
+    isSubscribed: { $ne: false },
+    isNotificationsEnabled: { $ne: false },
+  }).select('email firstName lastName').limit(20000).lean();
   
   
   const registeredUserMailPromises = users.map(user => {
@@ -4121,8 +4194,24 @@ app.get('/api/spin-wheel/eligibility', async (req, res) => {
   try {
     const deviceId = String(req.query.deviceId || '').trim().slice(0, 128);
     if (!deviceId) return res.status(400).json({ ok: false, message: 'deviceId is required.' });
-    const existing = await DeviceInfoSpinWheel.findOne({ deviceId }).select('_id createdAt').lean();
-    res.json({ ok: true, deviceId, alreadySpun: Boolean(existing), lastSpinAt: existing?.createdAt || null });
+    const email = String(req.query.email || '').trim().toLowerCase();
+
+    // Same two checks the claim makes. Without the email check the wheel would
+    // appear for a player who already spun elsewhere, then refuse the spin.
+    const [byDevice, byAccount] = await Promise.all([
+      DeviceInfoSpinWheel.findOne({ deviceId }).select('_id createdAt').lean(),
+      email
+        ? DeviceInfoSpinWheel.findOne({ email: new RegExp(`^${email.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`, 'i') }).select('_id createdAt').lean()
+        : null,
+    ]);
+    const existing = byDevice || byAccount;
+    res.json({
+      ok: true,
+      deviceId,
+      alreadySpun: Boolean(existing),
+      reason: byDevice ? 'DEVICE' : byAccount ? 'ACCOUNT' : null,
+      lastSpinAt: existing?.createdAt || null,
+    });
   } catch (error) {
     res.status(500).json({ ok: false, message: 'Spin eligibility is temporarily unavailable.' });
   }
@@ -4246,6 +4335,10 @@ const userSchema = new mongoose.Schema({
     zip: String,
     country: String
   },
+  // Set only by POST /api/admin/test-accounts. Lets test data be excluded from
+  // public numbers and purged in one call without ever touching a real account.
+  isTestAccount: { type: Boolean, default: false, index: true },
+
 }, { timestamps: true });
 userSchema.index({ playerName: 1 });
 userSchema.index({ createdAt: -1 });
@@ -4521,12 +4614,20 @@ app.post('/admin/add-tokens-won-spin-wheel', verifyToken, requireScope(TOKEN_SCO
   }
 
   try {
-    const existingDevice = await DeviceInfoSpinWheel.findOne({ deviceId });
+    // Once per DEVICE and once per ACCOUNT. The device check alone let the same
+    // player spin again on a second phone, or after clearing app data.
+    const [existingDevice, existingClaim] = await Promise.all([
+      DeviceInfoSpinWheel.findOne({ deviceId }).select('_id').lean(),
+      DeviceInfoSpinWheel.findOne({ email: new RegExp(`^${email.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`, 'i') }).select('_id').lean(),
+    ]);
 
     if (existingDevice) {
-      return res.status(400).json({ message: 'Device ID already registered.' });
+      return res.status(400).json({ message: 'This device has already had its spin.', code: 'DEVICE_ALREADY_SPUN' });
     }
-    
+    if (existingClaim) {
+      return res.status(400).json({ message: 'You have already used your welcome spin.', code: 'ALREADY_SPUN' });
+    }
+
     await new DeviceInfoSpinWheel({ email, deviceId }).save();
     
     // Check if User already exists
@@ -4542,7 +4643,7 @@ app.post('/admin/add-tokens-won-spin-wheel', verifyToken, requireScope(TOKEN_SCO
         transporter.sendMail({
           from: '"Fantasy Madness" <Fantasymmadness2@gmail.com>',
           to: email,
-          subject: `${results} Tokens Added!`,
+          subject: `${prize} Tokens Added!`,
           html: `
             <table width="100%" cellpadding="0" cellspacing="0" border="0" style="width:100%; max-width:600px; margin:auto;">
               <tr>
@@ -4555,7 +4656,7 @@ app.post('/admin/add-tokens-won-spin-wheel', verifyToken, requireScope(TOKEN_SCO
                 <td style="padding: 10px 0;">
                   <p style="font-size: 16px; font-family: Arial, sans-serif; color: #333;">Dear User,</p>
                   <p style="font-size: 16px; font-family: Arial, sans-serif; color: #333;">
-                    You have received ${results} tokens added to your account! Your new token balance is ${existingUser.tokens}.
+                    You have received ${prize} tokens added to your account! Your new token balance is ${existingUser.tokens}.
                   </p>
                   <p style="font-size: 16px; font-family: Arial, sans-serif; color: #333;">
                     If you have any questions, feel free to reach out to us!
@@ -4587,7 +4688,7 @@ app.post('/admin/add-tokens-won-spin-wheel', verifyToken, requireScope(TOKEN_SCO
               <tr>
                 <td style="padding: 10px 0;">
                   <p style="font-size: 16px; font-family: Arial, sans-serif; color: #333;">
-                    ${results} tokens have been successfully added to the user with the email: ${email}.
+                    ${prize} tokens have been successfully added to the user with the email: ${email}.
                   </p>
                 </td>
               </tr>
@@ -4616,7 +4717,7 @@ app.post('/admin/add-tokens-won-spin-wheel', verifyToken, requireScope(TOKEN_SCO
         firstName,
         email,
         password: hashedPassword,
-        tokens: String(results),
+        tokens: String(prize),
         currentPlan: 'Free',
         verified: true,
         isNotificationsEnabled: true,
@@ -8209,7 +8310,11 @@ rewardImageDeleteUrl: { type: String, select: false },
     resolvedAt: Date,      // when an admin approved or rejected it
     resolvedBy: String,    // admin id that actioned it
     reason: String         // rejection reason, or payment reference on approval
-  }]
+  }],
+  // Set only by POST /api/admin/test-accounts. Lets test data be excluded from
+  // public numbers and purged in one call without ever touching a real account.
+  isTestAccount: { type: Boolean, default: false, index: true },
+
 }, { timestamps: true });
 affiliateSchema.index({ email: 1 });
 affiliateSchema.index({ createdAt: -1 });
@@ -10671,6 +10776,9 @@ const adminSchema = new mongoose.Schema({
   email: String,
   password: { type: String, select: false },
   profileUrl: String, // Add profileUrl field
+  // Set only by POST /api/admin/test-accounts, so a seeded back-office login can
+  // be listed and purged with the other test data.
+  isTestAccount: { type: Boolean, default: false, index: true },
 });
 adminSchema.index({ email: 1 });
 adminSchema.set('toJSON', {
@@ -10922,7 +11030,12 @@ app.post('/addShadow', verifyAdminToken, upload.fields([
     });
     await notification.save();
     if (req.body.notify === 'true' || req.body.notify === true) {
-      const users = await Affiliate.find();
+      // Only the fields the mail needs — this was loading payout and tax details
+      // to read an email address.
+      const users = await Affiliate.find()
+        .select('email firstName lastName playerName')
+        .limit(20000)
+        .lean();
 
       const mailPromises = users.map((user) => {
         const mailOptions = {
@@ -11007,6 +11120,8 @@ app.post('/addShadow', verifyAdminToken, upload.fields([
 });
 
 
+// Counts exclude test accounts — otherwise a testing group inflates the numbers
+// the business is judged on.
 app.get('/dashboard-counts', verifyAdminToken, async (req, res) => {
   try {
     // Fetch entity counts
@@ -17826,6 +17941,211 @@ app.get('/api/admin/affiliate-tax-report', verifyAdminToken, async (req, res) =>
   }
 });
 
+// ==========================================================================
+// TESTER FEEDBACK
+//
+// Kept separate from support tickets on purpose. A support ticket is "help me" —
+// it needs a reply. Test feedback is "here is what broke", and it needs a
+// different shape: which step, what you expected, what happened, on what phone.
+//
+// The expected-vs-actual pair is the whole point. "It's broken" cannot be acted
+// on; "I expected my balance to drop 500 and it dropped 1000" can be fixed in
+// minutes. The endpoint asks for both.
+//
+// Open to guests (optionalVerifyToken) so whoever is testing the signed-out
+// experience can report too — they are the ones who see the first impression.
+// ==========================================================================
+const FEEDBACK_AREAS = Object.freeze([
+  'signup', 'signin', 'scorecard', 'entry-fee', 'team-card', 'season-card',
+  'standings', 'leagues', 'promoter-tools', 'notifications', 'coins-purchase',
+  'wallet', 'apparel', 'rewards', 'back-office', 'looks-wrong', 'slow', 'other',
+]);
+const FEEDBACK_SEVERITY = Object.freeze(['blocker', 'wrong', 'confusing', 'cosmetic', 'praise']);
+
+const testerFeedbackSchema = new mongoose.Schema({
+  reference: { type: String, unique: true, index: true },
+  // Who, as loosely as possible — a tester should never be blocked from
+  // reporting because they were signed out when it happened.
+  userId: { type: String, default: '' },
+  reportedBy: { type: String, default: '' },
+  role: { type: String, enum: ['player', 'league', 'admin', 'guest'], default: 'player' },
+
+  area: { type: String, default: 'other' },
+  severity: { type: String, default: 'wrong', index: true },
+  step: { type: String, default: '' },
+
+  expected: { type: String, default: '' },
+  actual: { type: String, required: true },
+  screenshotUrl: { type: String, default: '' },
+
+  // Captured automatically — a tester should not have to know their own browser.
+  device: { type: String, default: '' },
+  screen: { type: String, default: '' },
+  appPath: { type: String, default: '' },
+
+  status: { type: String, enum: ['new', 'triaged', 'fixed', 'wontfix', 'cannot-reproduce'], default: 'new', index: true },
+  ownerNote: { type: String, default: '' },
+}, { timestamps: true });
+
+const TesterFeedback = mongoose.models.TesterFeedback || mongoose.model('TesterFeedback', testerFeedbackSchema);
+
+app.post('/api/feedback', submitLimiter, optionalVerifyToken, async (req, res) => {
+  try {
+    const actual = String(req.body?.actual || '').trim();
+    if (actual.length < 3) {
+      return res.status(422).json({ ok: false, message: 'Tell us what happened.', code: 'ACTUAL_REQUIRED' });
+    }
+
+    const reference = 'FB-' + Date.now().toString(36).toUpperCase().slice(-6)
+      + '-' + Math.random().toString(36).slice(2, 5).toUpperCase();
+
+    // Resolve the reporter from the token where possible, so the report is
+    // attributable without asking them to type their own email.
+    let reportedBy = String(req.body?.reportedBy || '').trim().slice(0, 160);
+    let role = 'guest';
+    const callerId = String(req.user?.id || req.user?._id || '').trim();
+    if (callerId) {
+      const scope = String(req.user?.scope || '').trim();
+      role = scope === 'affiliate' ? 'league' : 'player';
+      if (!reportedBy) {
+        const who = scope === 'affiliate'
+          ? await Affiliate.findById(callerId).select('email leagueName').lean()
+          : await User.findById(callerId).select('email playerName').lean();
+        reportedBy = who?.email || '';
+      }
+    }
+
+    const ticket = await TesterFeedback.create({
+      reference,
+      userId: callerId,
+      reportedBy,
+      role,
+      area: FEEDBACK_AREAS.includes(String(req.body?.area)) ? req.body.area : 'other',
+      severity: FEEDBACK_SEVERITY.includes(String(req.body?.severity)) ? req.body.severity : 'wrong',
+      step: String(req.body?.step || '').trim().slice(0, 40),
+      expected: String(req.body?.expected || '').trim().slice(0, 1000),
+      actual: actual.slice(0, 2000),
+      screenshotUrl: String(req.body?.screenshotUrl || '').trim().slice(0, 500),
+      device: String(req.body?.device || req.headers['user-agent'] || '').slice(0, 300),
+      screen: String(req.body?.screen || '').slice(0, 40),
+      appPath: String(req.body?.appPath || '').slice(0, 200),
+    });
+
+    // A blocker should not wait for someone to check a dashboard.
+    if (ticket.severity === 'blocker') {
+      try {
+        await transporter.sendMail({
+          from: process.env.SMTP_USER || 'Fantasymmadness2@gmail.com',
+          to: OWNER_EMAIL,
+          subject: `BLOCKER from testing — ${ticket.reference}`,
+          html: `<div style="font-family:Arial,sans-serif">
+            <p><strong>${escapeHtml(ticket.area)}</strong>${ticket.step ? ' · step ' + escapeHtml(ticket.step) : ''}</p>
+            ${ticket.expected ? `<p><em>Expected:</em> ${escapeHtml(ticket.expected)}</p>` : ''}
+            <p><em>Happened:</em> ${escapeHtml(ticket.actual)}</p>
+            <p style="color:#666;font-size:12px">${escapeHtml(ticket.reportedBy || 'guest')} · ${escapeHtml(ticket.device)}</p>
+          </div>`,
+        });
+      } catch (mailError) { /* never fail the report because mail failed */ }
+    }
+
+    return res.status(201).json({
+      ok: true,
+      reference,
+      message: 'Thanks — logged as ' + reference + '.',
+    });
+  } catch (error) {
+    console.error('Feedback submission failed:', error);
+    return res.status(500).json({ ok: false, message: 'Could not save that. Try again, or text it to me.' });
+  }
+});
+
+app.get('/api/admin/feedback', verifyAdminToken, async (req, res) => {
+  try {
+    const status = String(req.query.status || 'new');
+    const query = status === 'all' ? {} : { status };
+    const items = await TesterFeedback.find(query)
+      .sort({ severity: 1, createdAt: -1 }).limit(300).lean();
+    const counts = await TesterFeedback.aggregate([
+      { $group: { _id: '$severity', n: { $sum: 1 } } },
+    ]);
+    return res.json({
+      ok: true,
+      counts: counts.reduce((acc, row) => ({ ...acc, [row._id]: row.n }), {}),
+      items,
+    });
+  } catch (error) {
+    return res.status(500).json({ ok: false, message: 'Could not load feedback.' });
+  }
+});
+
+app.patch('/api/admin/feedback/:id', verifyAdminToken, async (req, res) => {
+  try {
+    const next = String(req.body?.status || '').trim();
+    const allowed = ['new', 'triaged', 'fixed', 'wontfix', 'cannot-reproduce'];
+    const update = {};
+    if (allowed.includes(next)) update.status = next;
+    if (typeof req.body?.ownerNote === 'string') update.ownerNote = req.body.ownerNote.slice(0, 1000);
+    const item = await TesterFeedback.findByIdAndUpdate(req.params.id, { $set: update }, { new: true }).lean();
+    if (!item) return res.status(404).json({ ok: false, message: 'Not found.' });
+    return res.json({ ok: true, reference: item.reference, status: item.status });
+  } catch (error) {
+    return res.status(500).json({ ok: false, message: 'Could not update that.' });
+  }
+});
+
+// THE POINT OF ALL THIS: a plain-text digest, grouped by severity, that can be
+// copied straight into a conversation with whoever is fixing things. JSON is for
+// machines; this is for pasting.
+app.get('/api/admin/feedback/digest', verifyAdminToken, async (req, res) => {
+  try {
+    const status = String(req.query.status || 'new');
+    const query = status === 'all' ? {} : { status };
+    const items = await TesterFeedback.find(query).sort({ createdAt: 1 }).limit(300).lean();
+
+    const order = ['blocker', 'wrong', 'confusing', 'cosmetic', 'praise'];
+    const label = {
+      blocker: 'BLOCKERS — could not continue',
+      wrong: 'WRONG — it did the wrong thing',
+      confusing: 'CONFUSING — worked, but unclear',
+      cosmetic: 'COSMETIC — looks off',
+      praise: 'WORKED WELL',
+    };
+
+    const lines = [
+      '# Tester feedback — ' + new Date().toISOString().slice(0, 10),
+      '',
+      items.length + ' report' + (items.length === 1 ? '' : 's') + ' (' + status + ')',
+      '',
+    ];
+
+    order.forEach((sev) => {
+      const group = items.filter((row) => row.severity === sev);
+      if (!group.length) return;
+      lines.push('## ' + label[sev] + ' (' + group.length + ')', '');
+      group.forEach((row) => {
+        lines.push('### ' + row.reference + ' · ' + row.area + (row.step ? ' · step ' + row.step : ''));
+        if (row.expected) lines.push('- Expected: ' + row.expected);
+        lines.push('- Happened: ' + row.actual);
+        if (row.appPath) lines.push('- Screen: ' + row.appPath);
+        if (row.screenshotUrl) lines.push('- Screenshot: ' + row.screenshotUrl);
+        lines.push('- Reporter: ' + (row.reportedBy || 'guest') + ' (' + row.role + ')');
+        // Device string trimmed — the full user-agent is noise in a digest.
+        const device = String(row.device || '').replace(/Mozilla\/[\d.]+ /, '').slice(0, 90);
+        if (device) lines.push('- Device: ' + device + (row.screen ? ' · ' + row.screen : ''));
+        lines.push('');
+      });
+    });
+
+    if (!items.length) lines.push('_No reports yet._');
+
+    res.setHeader('Content-Type', 'text/plain; charset=utf-8');
+    return res.send(lines.join('\n'));
+  } catch (error) {
+    console.error('Feedback digest failed:', error);
+    return res.status(500).send('Could not build the digest.');
+  }
+});
+
 // --- Support tickets -------------------------------------------------------
 const supportTicketSchema = new mongoose.Schema({
   ticketNumber: { type: String, unique: true, index: true },
@@ -18256,6 +18576,1710 @@ app.post('/api/users/me/notifications/read', verifyToken, async (req, res) => {
   } catch (error) {
     console.error('Marking notifications read failed:', error);
     return res.status(500).json({ message: 'Could not update notifications.' });
+  }
+});
+
+// ==========================================================================
+// DEMO CARD — something for testers to actually spend coins on
+//
+// Test accounts with 25,000 coins are useless against an empty database. This
+// seeds a full card so a tester can exercise every path without waiting for a
+// real fight night:
+//
+//   - one upcoming fight in each of the five disciplines, mixed free and paid
+//   - one fight ALREADY SCORED, so results, standings and "results are in"
+//     notifications work the moment they sign in rather than after a settle
+//   - a league they can join
+//   - a Team Card over the upcoming bouts, and a free Season Card
+//
+// Gated behind the same TEST_ACCOUNTS_ENABLED switch, so it cannot create
+// fictional fights on production.
+// ==========================================================================
+const DEMO_TAG = '[DEMO]';
+
+// Round stats in the shape the scorecards and Season/Team scoring already read.
+const demoRounds = (family, rounds, bias = 1) => Array.from({ length: rounds }, (_, index) => {
+  const r = index + 1;
+  if (family === 'boxing') {
+    return {
+      round: r,
+      HP: Math.round((14 + r * 2) * bias),
+      BP: Math.round((9 + r) * bias),
+      TP: Math.round((31 + r * 3) * bias),
+      RW: bias >= 1 && r % 2 === 1 ? 1 : 0,
+      KO: 0,
+    };
+  }
+  if (family === 'wrestling') {
+    return { round: r, SIG: Math.round(3 * bias), NF: Math.round(2 * bias), RV: Math.round(2 * bias), PIN: 0 };
+  }
+  return {
+    round: r,
+    ST: Math.round((22 + r * 3) * bias),
+    KI: Math.round((6 + r) * bias),
+    KN: Math.round(2 * bias),
+    EL: Math.round(1 * bias),
+    RW: bias >= 1 && r % 2 === 1 ? 1 : 0,
+    KO: 0,
+  };
+});
+
+// A stakes ladder, not five near-identical fees. The top rung is deliberately a
+// large share of the starting balance so entering it is an actual decision —
+// which is the only way a tester behaves like a player.
+const DEMO_CARD = Object.freeze([
+  // Free: anyone can enter, tests the no-consideration path.
+  { cat: 'kickboxing', a: 'SOMCHAI PETCH', b: 'LARS EIDE', rounds: 3, fee: 0, days: 3 },
+  // Cheap: enter without thinking.
+  { cat: 'wrestling', a: 'THE ARCHITECT', b: 'KID DYNAMO', rounds: 1, fee: 100, days: 4 },
+  // Mid: worth a look at the pot first.
+  { cat: 'bareknuckle', a: 'DUSTY WHEELER', b: 'MARCUS VANE', rounds: 5, fee: 500, days: 5 },
+  // Main event with a GUARANTEED pot the promoter has staked. Entries fill it;
+  // past break-even the promoter profits. This is the Shadow Fight mechanic, so
+  // testers exercise it rather than a mocked-up number.
+  {
+    cat: 'boxing', a: 'IRON JACKSON', b: 'DEXTER FOLD', rounds: 12, fee: 1500, days: 6,
+    featured: true, potTarget: 20000, promoterStake: 20000,
+  },
+  // High roller: a serious share of the stack. Tests the shortfall guard too —
+  // if too few enter, it must void and refund rather than pay a thin prize.
+  { cat: 'mma', a: 'RAFAEL MENDES', b: 'COLE BRANNIGAN', rounds: 3, fee: 4000, days: 7, minimumEntrants: 4 },
+]);
+
+app.post('/api/admin/demo-card', verifyAdminToken, requireTestAccounts, async (req, res) => {
+  try {
+    const created = { upcoming: [], scored: null, league: null, teamContest: null, season: null };
+
+    // 1. Upcoming fights, one per discipline. Dated in the future so entry is
+    //    open — isFightOpenForEntry locks on matchDate.
+    for (const spec of DEMO_CARD) {
+      const matchName = `${DEMO_TAG} ${spec.a} vs ${spec.b}`;
+      const existing = await Match.findOne({ matchName }).select('_id').lean();
+      if (existing) { created.upcoming.push({ id: existing._id, name: matchName, reused: true }); continue; }
+
+      const matchDate = new Date(Date.now() + spec.days * 86400000);
+      const fight = await Match.create({
+        matchName,
+        matchCategory: spec.cat,
+        matchFighterA: spec.a,
+        matchFighterB: spec.b,
+        matchDate,
+        matchTime: '21:00',
+        maxRounds: spec.rounds,
+        matchTokens: spec.fee,
+        matchStatus: 'active',
+        matchShadowStatus: 'active',
+        // Default low enough that a handful of testers clears it, but the high
+        // roller sets its own so the void-and-refund guard gets exercised.
+        minimumEntrants: spec.minimumEntrants ?? 2,
+        autoRefundIfShort: true,
+        // A declared pot the promoter has put up. Entries fill it; the promoter
+        // takes the surplus past break-even.
+        ...(spec.potTarget ? { potTarget: spec.potTarget, pot: spec.potTarget } : {}),
+        ...(spec.promoterStake ? { promoterStake: spec.promoterStake } : {}),
+        featuredThisWeek: Boolean(spec.featured),
+        venue: 'Demo Arena',
+        matchDescription: 'Seeded demo fight for the private testing group.',
+      });
+      created.upcoming.push({ id: fight._id, name: matchName, category: spec.cat, fee: spec.fee, reused: false });
+
+      // Keep the roster in step, so fighter profiles exist for these names.
+      try {
+        await upsertFighterProfile({ name: spec.a, sport: spec.cat });
+        await upsertFighterProfile({ name: spec.b, sport: spec.cat });
+      } catch (rosterError) { /* non-fatal */ }
+    }
+
+    // 2. One fight already in the past WITH stats, so a tester sees a finished
+    //    result immediately instead of waiting for someone to settle something.
+    const scoredName = `${DEMO_TAG} VICTOR HALE vs OMAR SAIF`;
+    let scored = await Match.findOne({ matchName: scoredName }).select('_id').lean();
+    if (!scored) {
+      scored = await Match.create({
+        matchName: scoredName,
+        matchCategory: 'mma',
+        matchFighterA: 'VICTOR HALE',
+        matchFighterB: 'OMAR SAIF',
+        matchDate: new Date(Date.now() - 2 * 86400000),
+        maxRounds: 3,
+        matchTokens: 0,
+        matchStatus: 'finished',
+        matchShadowStatus: 'active',
+        minimumEntrants: 0,
+        venue: 'Demo Arena',
+        MMAMatch: {
+          fighterOneStats: demoRounds('mma', 3, 1.15),
+          fighterTwoStats: demoRounds('mma', 3, 0.85),
+        },
+      });
+    }
+    created.scored = { id: scored._id, name: scoredName };
+
+    // 3. A league to join. Attached to the first test league account if one
+    //    exists, so the promoter panel has something real behind it.
+    // Spread the fights across the league accounts. One promoter owning all six
+    // cannot show what a player sees when two leagues promote the same night.
+    const leagueOwners = await Affiliate.find({ isTestAccount: true })
+      .select('_id leagueName').sort({ createdAt: 1 }).lean();
+    if (leagueOwners.length) {
+      created.league = { id: leagueOwners[0]._id, name: leagueOwners[0].leagueName };
+      created.leagues = leagueOwners.map((row) => ({ id: row._id, name: row.leagueName }));
+      const demoFights = await Match.find({ matchName: demoTagRegex() }).select('_id').lean();
+      for (let i = 0; i < demoFights.length; i += 1) {
+        const owner = leagueOwners[i % leagueOwners.length];
+        await Match.updateOne({ _id: demoFights[i]._id }, { $set: { affiliateId: String(owner._id) } });
+      }
+    }
+
+    // 4. A Team Card over the upcoming bouts. Needs at least as many bouts as
+    //    picks, which is why all five disciplines are seeded.
+    const upcomingIds = created.upcoming.map((row) => String(row.id));
+    if (TEAM_CARDS_ENABLED && upcomingIds.length >= 5) {
+      const name = `${DEMO_TAG} Fight Night Team Card`;
+      let contest = await TeamContest.findOne({ name }).select('_id').lean();
+      if (!contest) {
+        contest = await TeamContest.create({
+          name,
+          eventName: 'Demo Fight Night',
+          fightIds: upcomingIds,
+          picksRequired: 5,
+          // Free, so nobody is blocked by a state rule while testing.
+          entryFee: 0,
+          affiliateId: leagueOwner ? String(leagueOwner._id) : '',
+        });
+      }
+      created.teamContest = { id: contest._id, name };
+    }
+
+    // 5. A free season, drafting open, so Season Cards can be exercised too.
+    if (SEASON_CARDS_ENABLED) {
+      const name = `${DEMO_TAG} Test Season`;
+      let season = await Season.findOne({ name }).select('_id').lean();
+      if (!season) {
+        season = await Season.create({
+          name,
+          description: 'Seeded season for the private testing group.',
+          startsAt: new Date(Date.now() - 86400000),
+          endsAt: new Date(Date.now() + 30 * 86400000),
+          draftClosesAt: new Date(Date.now() + 2 * 86400000),
+          entryFee: 0,
+          status: 'DRAFT_OPEN',
+        });
+      }
+      created.season = { id: season._id, name };
+    }
+
+    clearPublicResponseCache();
+    console.warn(`[demo-card] seeded by admin ${req.admin?.id || 'unknown'}`);
+
+    return res.status(201).json({
+      ok: true,
+      created,
+      next: [
+        'Testers can now enter fights in all five disciplines.',
+        'One fight is already scored, so results and standings work immediately.',
+        created.teamContest ? 'A free Team Card is open over the five upcoming bouts.' : 'Team Cards are disabled.',
+        created.season ? 'A free Season is open for drafting.' : 'Season Cards are disabled.',
+      ],
+      reminder: 'Run DELETE /api/admin/demo-card before going live.',
+    });
+  } catch (error) {
+    console.error('Demo card seed failed:', error);
+    return res.status(500).json({ ok: false, message: 'Could not seed the demo card.', detail: String(error?.message || '').slice(0, 200) });
+  }
+});
+
+// Live pot state for the demo card. The whole point of a stakes ladder is that
+// testers watch the pot move as people enter — without this they would have to
+// take it on trust.
+app.get('/api/public/demo-card/pots', async (req, res) => {
+  try {
+    const fights = await Match.find({ matchName: demoTagRegex() })
+      .select('matchName matchCategory matchTokens pot potTarget promoterStake minimumEntrants matchDate prizesSettledAt')
+      .sort({ matchDate: 1 }).lean();
+    if (!fights.length) return res.json({ ok: true, fights: [] });
+
+    const ids = fights.map((row) => String(row._id));
+    // Entry counts from the real Score rows, so the number cannot drift from
+    // what settlement will actually see.
+    const counts = await Score.aggregate([
+      { $match: { matchId: { $in: ids }, refunded: { $ne: true } } },
+      { $group: { _id: '$matchId', entries: { $sum: 1 } } },
+    ]);
+    const byFight = new Map(counts.map((row) => [String(row._id), row.entries]));
+
+    return res.json({
+      ok: true,
+      fights: fights.map((fight) => {
+        const entries = byFight.get(String(fight._id)) || 0;
+        const fee = Math.max(0, Number(fight.matchTokens) || 0);
+        const collected = entries * fee;
+        const guaranteed = Math.max(0, Number(fight.potTarget) || 0);
+        const minimum = Math.max(0, Number(fight.minimumEntrants) || 0);
+        return {
+          id: fight._id,
+          name: String(fight.matchName).replace(DEMO_TAG, '').trim(),
+          category: fight.matchCategory,
+          entryFee: fee,
+          entries,
+          // What a winner would actually be playing for right now.
+          livePot: guaranteed > 0 ? Math.max(guaranteed, collected) : collected,
+          guaranteedPot: guaranteed || null,
+          // Honest about whether this contest can pay yet.
+          entriesNeeded: Math.max(0, minimum - entries),
+          willVoidIfSettledNow: minimum > 0 && entries < minimum,
+          settled: Boolean(fight.prizesSettledAt),
+        };
+      }),
+    });
+  } catch (error) {
+    console.error('Demo pot state failed:', error);
+    return res.status(500).json({ ok: false, message: 'Could not load pot state.' });
+  }
+});
+
+// --------------------------------------------------------------------------
+// FAST-FORWARD — collapse a whole fight night into one call
+//
+// Testers should not have to wait days to see a score. This fills in official
+// round stats, moves the demo fights into the past, and settles everything, so
+// points, prizes and standings all appear immediately.
+//
+// It settles through the REAL endpoint rather than a shortcut — the admin's own
+// Authorization header is forwarded to POST /api/admin/fights/:id/settle. That
+// matters: a demo path that fakes settlement would prove nothing about the code
+// that will actually pay people.
+// --------------------------------------------------------------------------
+const demoTagRegex = () => new RegExp('^\\' + DEMO_TAG.replace(/[[\]]/g, '\\$&'));
+
+app.post('/api/admin/demo-card/fast-forward', verifyAdminToken, requireTestAccounts, async (req, res) => {
+  try {
+    const fights = await Match.find({ matchName: demoTagRegex() })
+      .select('_id matchName matchCategory maxRounds prizesSettledAt').lean();
+    if (!fights.length) {
+      return res.status(404).json({ ok: false, message: 'No demo fights found. Seed the card first.', code: 'NO_DEMO_CARD' });
+    }
+
+    const prepared = [];
+    for (const fight of fights) {
+      if (fight.prizesSettledAt) { prepared.push({ name: fight.matchName, skipped: 'already settled' }); continue; }
+      const family = String(fight.matchCategory || '').toLowerCase().includes('box')
+        || String(fight.matchCategory || '').toLowerCase().includes('knuckle') ? 'boxing'
+        : String(fight.matchCategory || '').toLowerCase().includes('wrestl') ? 'wrestling' : 'mma';
+      const rounds = Math.max(1, Number(fight.maxRounds) || 3);
+
+      // Fighter A slightly ahead, so there is a clear winner to read.
+      const update = {
+        // In the past, so the fight reads as complete and entry is locked.
+        matchDate: new Date(Date.now() - 3600000),
+        matchStatus: 'finished',
+      };
+      const statsBlock = {
+        fighterOneStats: demoRounds(family, rounds, 1.2),
+        fighterTwoStats: demoRounds(family, rounds, 0.85),
+      };
+      if (family === 'boxing') update.BoxingMatch = statsBlock;
+      else update.MMAMatch = statsBlock;
+
+      await Match.updateOne({ _id: fight._id }, { $set: update });
+      prepared.push({ id: String(fight._id), name: fight.matchName });
+    }
+
+    // Settle through the real route, forwarding the caller's own admin token.
+    const base = `${req.protocol}://${req.get('host')}`;
+    const authHeader = req.headers.authorization || '';
+    const settled = [];
+    for (const entry of prepared) {
+      if (!entry.id) continue;
+      try {
+        const response = await fetch(`${base}/api/admin/fights/${entry.id}/settle`, {
+          method: 'POST',
+          headers: { Authorization: authHeader, 'Content-Type': 'application/json' },
+        });
+        const payload = await response.json().catch(() => ({}));
+        settled.push({ name: entry.name, status: response.status, paid: payload?.payout ?? payload?.prizePoolPaid ?? null });
+      } catch (error) {
+        settled.push({ name: entry.name, error: String(error?.message || '').slice(0, 120) });
+      }
+    }
+
+    // Team Cards settle once every bout on the card is scored, which has just
+    // happened — so they can be swept now rather than waiting for the cron.
+    const teamResults = [];
+    if (TEAM_CARDS_ENABLED) {
+      const contests = await TeamContest.find({ name: demoTagRegex(), status: { $in: ['OPEN', 'LOCKED'] } }).select('_id name').lean();
+      for (const contest of contests) {
+        try {
+          const summary = await settleTeamContest(String(contest._id));
+          teamResults.push({ name: contest.name, ...summary });
+        } catch (error) {
+          teamResults.push({ name: contest.name, error: String(error?.message || '').slice(0, 120) });
+        }
+      }
+    }
+
+    // Seasons need to be RUNNING before they can settle.
+    const seasonResults = [];
+    if (SEASON_CARDS_ENABLED) {
+      const seasons = await Season.find({ name: demoTagRegex(), status: { $in: ['DRAFT_OPEN', 'RUNNING'] } }).select('_id name').lean();
+      for (const season of seasons) {
+        try {
+          await Season.updateOne({ _id: season._id }, { $set: { status: 'RUNNING' } });
+          const summary = await settleSeason(String(season._id));
+          seasonResults.push({ name: season.name, ...summary });
+        } catch (error) {
+          seasonResults.push({ name: season.name, error: String(error?.message || '').slice(0, 120) });
+        }
+      }
+    }
+
+    clearPublicResponseCache();
+    return res.json({
+      ok: true,
+      fights: settled,
+      teamContests: teamResults,
+      seasons: seasonResults,
+      next: 'Testers can now see their scores and standings. Call /api/admin/demo-card/replay to reset and go again.',
+    });
+  } catch (error) {
+    console.error('Demo fast-forward failed:', error);
+    return res.status(500).json({ ok: false, message: 'Fast-forward failed.', detail: String(error?.message || '').slice(0, 200) });
+  }
+});
+
+// --------------------------------------------------------------------------
+// REPLAY — reset the demo card so the same testers can go again
+//
+// Clears every demo entry, reopens the fights with fresh future dates, wipes the
+// settlement stamps, and tops the test accounts back up. Touches only [DEMO]
+// fights and only isTestAccount players.
+// --------------------------------------------------------------------------
+app.post('/api/admin/demo-card/replay', verifyAdminToken, requireTestAccounts, async (req, res) => {
+  try {
+    const coins = Math.max(0, Math.round(Number(req.body?.coins ?? TEST_ACCOUNT_START_COINS)));
+    const fights = await Match.find({ matchName: demoTagRegex() }).select('_id matchName').lean();
+    const fightIds = fights.map((row) => String(row._id));
+    if (!fightIds.length) {
+      return res.status(404).json({ ok: false, message: 'No demo fights found. Seed the card first.', code: 'NO_DEMO_CARD' });
+    }
+
+    // 1. Clear the entries so everyone can enter again. Scoped to demo fights.
+    const clearedScores = await Score.deleteMany({ matchId: { $in: fightIds } });
+
+    const contests = await TeamContest.find({ name: demoTagRegex() }).select('_id').lean();
+    const contestIds = contests.map((row) => String(row._id));
+    const clearedTeams = contestIds.length
+      ? await TeamEntry.deleteMany({ contestId: { $in: contestIds } })
+      : { deletedCount: 0 };
+
+    const seasons = await Season.find({ name: demoTagRegex() }).select('_id').lean();
+    const seasonIds = seasons.map((row) => String(row._id));
+    const clearedRosters = seasonIds.length
+      ? await SeasonRoster.deleteMany({ seasonId: { $in: seasonIds } })
+      : { deletedCount: 0 };
+
+    // 2. Reopen the fights. Staggered future dates so the card looks real, and
+    //    the settlement stamps are cleared or settle would refuse next time.
+    let day = 3;
+    for (const fight of fights) {
+      await Match.updateOne({ _id: fight._id }, {
+        $set: {
+          matchDate: new Date(Date.now() + day * 86400000),
+          matchStatus: 'active',
+          matchShadowStatus: 'active',
+        },
+        $unset: {
+          prizesSettledAt: '', prizePoolPaid: '', houseCutTaken: '',
+          voidedAt: '', voidReason: '', collectedFees: '', profit: '',
+        },
+      });
+      day += 1;
+    }
+
+    // 3. Reopen the contests, clearing their pots — the coins in them were just
+    //    refunded to the testers, so leaving a pot behind would double-count.
+    if (contestIds.length) {
+      await TeamContest.updateMany({ _id: { $in: contestIds } }, {
+        $set: { status: 'OPEN', prizePool: 0, settledAt: null, voidReason: '' },
+      });
+    }
+    if (seasonIds.length) {
+      await Season.updateMany({ _id: { $in: seasonIds } }, {
+        $set: {
+          status: 'DRAFT_OPEN',
+          prizePool: 0,
+          settledAt: null,
+          draftClosesAt: new Date(Date.now() + 2 * 86400000),
+          endsAt: new Date(Date.now() + 30 * 86400000),
+        },
+      });
+    }
+
+    // 4. Top the testers back up. Only isTestAccount rows.
+    const refilled = await User.updateMany({ isTestAccount: true }, { $set: { tokens: String(coins) } });
+
+    // 5. Clear their notification read marks so the bell lights up again.
+    await User.updateMany({ isTestAccount: true }, { $set: { notificationsReadAt: null } });
+
+    clearPublicResponseCache();
+    return res.json({
+      ok: true,
+      reset: {
+        fights: fights.length,
+        predictionsCleared: clearedScores?.deletedCount || 0,
+        teamEntriesCleared: clearedTeams?.deletedCount || 0,
+        seasonRostersCleared: clearedRosters?.deletedCount || 0,
+        testersRefilled: refilled?.modifiedCount || 0,
+        coins,
+      },
+      next: 'Card is open again. Testers can enter, then call fast-forward to see results.',
+    });
+  } catch (error) {
+    console.error('Demo replay failed:', error);
+    return res.status(500).json({ ok: false, message: 'Replay failed.', detail: String(error?.message || '').slice(0, 200) });
+  }
+});
+
+// Removes everything the seed created, and only that — matched on the [DEMO]
+// prefix, so a real fight can never be caught by it.
+app.delete('/api/admin/demo-card', verifyAdminToken, requireBulkConfirmation('DEMOCARD'), async (req, res) => {
+  try {
+    const tagRegex = new RegExp('^\\' + DEMO_TAG.replace(/[[\]]/g, '\\$&'));
+    const fights = await Match.find({ matchName: tagRegex }).select('_id').lean();
+    const fightIds = fights.map((row) => String(row._id));
+
+    // Collect the demo contest and season ids BEFORE deleting them, so their
+    // entries can be scoped precisely.
+    const [demoContests, demoSeasons] = await Promise.all([
+      TeamContest.find({ name: tagRegex }).select('_id').lean(),
+      Season.find({ name: tagRegex }).select('_id').lean(),
+    ]);
+    const contestIds = demoContests.map((row) => String(row._id));
+    const seasonIds = demoSeasons.map((row) => String(row._id));
+
+    const [scores, teamEntries, rosters, contests, seasons, matches] = await Promise.all([
+      Score.deleteMany({ matchId: { $in: fightIds } }),
+      // Scoped to the demo contests. An unscoped filter here would have wiped
+      // every team entry on the platform.
+      contestIds.length ? TeamEntry.deleteMany({ contestId: { $in: contestIds } }) : Promise.resolve({ deletedCount: 0 }),
+      seasonIds.length ? SeasonRoster.deleteMany({ seasonId: { $in: seasonIds } }) : Promise.resolve({ deletedCount: 0 }),
+      TeamContest.deleteMany({ name: tagRegex }),
+      Season.deleteMany({ name: tagRegex }),
+      Match.deleteMany({ matchName: tagRegex }),
+    ]);
+
+    return res.json({
+      ok: true,
+      deleted: {
+        fights: matches?.deletedCount || 0,
+        predictions: scores?.deletedCount || 0,
+        teamContests: contests?.deletedCount || 0,
+        teamEntries: teamEntries?.deletedCount || 0,
+        seasons: seasons?.deletedCount || 0,
+        seasonRosters: rosters?.deletedCount || 0,
+      },
+    });
+  } catch (error) {
+    console.error('Demo card purge failed:', error);
+    return res.status(500).json({ ok: false, message: 'Could not remove the demo card.' });
+  }
+});
+
+// ==========================================================================
+// TEST ACCOUNTS — for a private testing group
+//
+// The obvious approach — one shared login handed to everyone — does not work for
+// this app. Testers would overwrite each other's predictions, spend the same
+// coins, and every entry would collide on the one-entry-per-player rule. It also
+// cannot exercise duplicate-account prevention, per-user notifications, or
+// head-to-head, all of which need two distinct people.
+//
+// So this mints a SEPARATE pre-verified, pre-funded account per tester, and
+// returns the credentials once so they can be handed out.
+//
+// It is a login generator, which is a backdoor if it ever ships enabled. Three
+// guards: off unless TEST_ACCOUNTS_ENABLED=true, admin-only, and it refuses to
+// run in production unless ALLOW_TEST_ACCOUNTS_IN_PRODUCTION is also set. Every
+// account it creates is flagged isTestAccount so they can be excluded from
+// public numbers and purged in one call afterwards.
+// ==========================================================================
+const TEST_ACCOUNTS_ENABLED = String(process.env.TEST_ACCOUNTS_ENABLED || 'false').trim().toLowerCase() === 'true';
+const TEST_ACCOUNT_DOMAIN = String(process.env.TEST_ACCOUNT_DOMAIN || 'fmmtest.com').trim().toLowerCase();
+// Deliberately modest. With 25,000 coins nothing on the card is a decision, and a
+// tester who cannot run out never behaves like a player. 6,000 makes the main
+// event a quarter of the stack and the high roller two thirds of it — so they
+// have to choose, which is when the interesting bugs surface.
+const TEST_ACCOUNT_START_COINS = Math.max(0, Number(process.env.TEST_ACCOUNT_START_COINS || 6000));
+
+// Hoisted function, NOT a const arrow: the demo-card routes register earlier in
+// this file than this line, and a const would still be in the temporal dead zone
+// at that point — which is exactly what crashed the server on the last guard.
+function requireTestAccounts(req, res, next) {
+  if (!TEST_ACCOUNTS_ENABLED) {
+    return res.status(404).json({
+      ok: false,
+      message: 'Test account creation is disabled. Set TEST_ACCOUNTS_ENABLED=true on the preview environment.',
+      code: 'TEST_ACCOUNTS_DISABLED',
+    });
+  }
+  if (process.env.NODE_ENV === 'production' && process.env.ALLOW_TEST_ACCOUNTS_IN_PRODUCTION !== 'true') {
+    return res.status(403).json({
+      ok: false,
+      message: 'Refusing to mint test logins in production. Use the preview environment.',
+      code: 'PRODUCTION_BLOCKED',
+    });
+  }
+  return next();
+}
+
+// Predictable so they can be relayed by text message without a password manager.
+// Safe only because the whole feature is env-gated and the accounts are
+// disposable — never enable this on production.
+// Distinct names, because six leagues called "Test League N" tells you nothing
+// about which one a tester actually joined.
+const DEMO_LEAGUE_NAMES = Object.freeze([
+  'Southside Fight Club', 'The Cutmen', 'Iron Row Collective',
+  'Backyard Brawlers', 'Championship Circle', 'The Corner Crew',
+]);
+
+const testCredentials = (role, index) => ({
+  email: `${role}${index}@${TEST_ACCOUNT_DOMAIN}`,
+  password: `FightNight-${role}${index}`,
+});
+
+app.post('/api/admin/test-accounts', verifyAdminToken, requireTestAccounts, async (req, res) => {
+  try {
+    const players = Math.max(0, Math.min(25, Math.round(Number(req.body?.players ?? 6))));
+    const affiliates = Math.max(0, Math.min(10, Math.round(Number(req.body?.affiliates ?? 6))));
+    // A paid-contest state by default, or nothing paid can be tested at all.
+    const state = String(req.body?.state || 'GA').trim().toUpperCase().slice(0, 2);
+    const coins = Math.max(0, Math.round(Number(req.body?.coins ?? TEST_ACCOUNT_START_COINS)));
+    // Comfortably over the 21+ threshold in every state that has one.
+    const dateOfBirth = new Date('1990-01-15');
+
+    const created = { players: [], affiliates: [] };
+
+    for (let index = 1; index <= players; index += 1) {
+      const { email, password } = testCredentials('tester', index);
+      const existing = await User.findOne({ email }).select('_id').lean();
+      if (existing) {
+        // Re-issue rather than skip: a tester who forgot their password should be
+        // recoverable without deleting their entries.
+        await User.updateOne({ _id: existing._id }, {
+          $set: {
+            password: await bcrypt.hash(password, 10),
+            verified: true,
+            tokens: String(coins),
+            isTestAccount: true,
+          },
+        });
+        created.players.push({ email, password, reset: true });
+        continue;
+      }
+      await User.create({
+        email,
+        password: await bcrypt.hash(password, 10),
+        firstName: 'Tester',
+        lastName: String(index),
+        playerName: `TESTER${index}`,
+        // Pre-verified: an email-verification step would block testers on
+        // addresses that do not receive mail.
+        verified: true,
+        tokens: String(coins),
+        residenceState: state,
+        isUSCitizen: true,
+        dateOfBirth,
+        isTestAccount: true,
+      });
+      created.players.push({ email, password, reset: false });
+    }
+
+    for (let index = 1; index <= affiliates; index += 1) {
+      const { email, password } = testCredentials('league', index);
+      const existing = await Affiliate.findOne({ email }).select('_id').lean();
+      if (existing) {
+        await Affiliate.updateOne({ _id: existing._id }, {
+          $set: {
+            password: await bcrypt.hash(password, 10),
+            // Verified, or they cannot run a contest or send a league notice.
+            verified: true,
+            isTestAccount: true,
+          },
+        });
+        created.affiliates.push({ email, password, reset: true });
+        continue;
+      }
+      await Affiliate.create({
+        email,
+        password: await bcrypt.hash(password, 10),
+        firstName: 'League',
+        lastName: String(index),
+        playerName: `TESTLEAGUE${index}`,
+        leagueName: DEMO_LEAGUE_NAMES[index - 1] || `Test League ${index}`,
+        verified: true,
+        residenceState: state,
+        dateOfBirth,
+        // Seeded balance so a payout request is testable immediately, instead of
+        // waiting for rake to build up across several settled contests.
+        tokens: String(coins),
+        isTestAccount: true,
+      });
+      created.affiliates.push({ email, password, reset: false });
+    }
+
+    // One admin login, so the back office can be walked end to end — settle a
+    // fight, refund a player, approve a payout — without using the real admin
+    // account. Single, because a second admin proves nothing extra and every
+    // extra privileged login is another thing to remember to delete.
+    if (req.body?.admin !== false) {
+      const { email, password } = testCredentials('backoffice', 1);
+      const existing = await Admin.findOne({ email }).select('_id').lean();
+      if (existing) {
+        await Admin.updateOne({ _id: existing._id }, {
+          $set: { password: await bcrypt.hash(password, 10), isTestAccount: true },
+        });
+        created.admin = { email, password, reset: true };
+      } else {
+        await Admin.create({
+          firstName: 'Back',
+          lastName: 'Office',
+          email,
+          password: await bcrypt.hash(password, 10),
+          isTestAccount: true,
+        });
+        created.admin = { email, password, reset: false };
+      }
+    }
+
+    console.warn(`[test-accounts] ${players} player + ${affiliates} affiliate + ${created.admin ? 1 : 0} admin logins minted by admin ${req.admin?.id || 'unknown'}`);
+
+    return res.status(201).json({
+      ok: true,
+      state,
+      coins,
+      created,
+      reminder: 'Set TEST_ACCOUNTS_ENABLED=false and purge these before going live.',
+    });
+  } catch (error) {
+    console.error('Test account creation failed:', error);
+    return res.status(500).json({ ok: false, message: 'Could not create test accounts.' });
+  }
+});
+
+// What exists, without re-issuing anything.
+app.get('/api/admin/test-accounts', verifyAdminToken, async (req, res) => {
+  try {
+    const [players, affiliates, admins] = await Promise.all([
+      User.find({ isTestAccount: true }).select('email playerName tokens residenceState createdAt').lean(),
+      Affiliate.find({ isTestAccount: true }).select('email leagueName verified createdAt').lean(),
+      Admin.find({ isTestAccount: true }).select('email createdAt').lean(),
+    ]);
+    return res.json({
+      ok: true,
+      enabled: TEST_ACCOUNTS_ENABLED,
+      players: players.map((row) => ({
+        email: row.email,
+        name: row.playerName,
+        coins: Number.parseInt(String(row.tokens || '0'), 10) || 0,
+        state: row.residenceState,
+      })),
+      affiliates: affiliates.map((row) => ({ email: row.email, league: row.leagueName, verified: row.verified })),
+      admins: admins.map((row) => ({ email: row.email })),
+    });
+  } catch (error) {
+    return res.status(500).json({ ok: false, message: 'Could not load test accounts.' });
+  }
+});
+
+// --------------------------------------------------------------------------
+// RECONCILE — proof that a simultaneous session did not corrupt anything
+//
+// Every money bug found in this codebase was a race: two settles paying the same
+// pot, two accepts debiting the same stake, an entry charged without being
+// recorded. Races only appear under concurrency, which makes a group session the
+// most valuable test available — and useless without a way to check afterwards.
+//
+// A tester will not notice 100 missing coins. This does: it re-derives every test
+// account's balance from the ledger and compares it to the stored balance. If
+// those agree for everyone, no race lost or duplicated money.
+// --------------------------------------------------------------------------
+app.get('/api/admin/test-accounts/reconcile', verifyAdminToken, async (req, res) => {
+  try {
+    const players = await User.find({ isTestAccount: true }).select('_id email tokens').lean();
+    if (!players.length) {
+      return res.json({ ok: true, message: 'No test accounts found.', players: [] });
+    }
+    const ids = players.map((row) => String(row._id));
+
+    // Ledger rows are the source of truth: every credit and debit that any money
+    // path claims to have made.
+    const ledgerRows = await FightEntryLedger.find({ userId: { $in: ids } })
+      .select('userId amount balanceAfter reason createdAt').lean();
+    const byUser = new Map();
+    ledgerRows.forEach((row) => {
+      const list = byUser.get(String(row.userId)) || [];
+      list.push(row);
+      byUser.set(String(row.userId), list);
+    });
+
+    const startCoins = Math.max(0, Number(req.query.startCoins ?? TEST_ACCOUNT_START_COINS));
+    const findings = [];
+
+    const report = players.map((player) => {
+      const rows = (byUser.get(String(player._id)) || [])
+        .sort((a, b) => new Date(a.createdAt) - new Date(b.createdAt));
+      const net = rows.reduce((sum, row) => sum + (Number(row.amount) || 0), 0);
+      const actual = Number.parseInt(String(player.tokens || '0'), 10) || 0;
+      const expected = startCoins + net;
+      const drift = actual - expected;
+
+      // balanceAfter on each row should chain: every row's after-value must equal
+      // the next row's before-value. A break means two writes interleaved.
+      let chainBreak = null;
+      for (let i = 1; i < rows.length; i += 1) {
+        const prevAfter = Number(rows[i - 1].balanceAfter);
+        const thisBefore = Number(rows[i].balanceAfter) - (Number(rows[i].amount) || 0);
+        if (Number.isFinite(prevAfter) && Number.isFinite(thisBefore) && prevAfter !== thisBefore) {
+          chainBreak = { at: rows[i].createdAt, reason: rows[i].reason, expected: prevAfter, saw: thisBefore };
+          break;
+        }
+      }
+
+      if (drift !== 0) {
+        findings.push(`${player.email}: balance is ${actual}, ledger says ${expected} (off by ${drift > 0 ? '+' : ''}${drift})`);
+      }
+      if (chainBreak) {
+        findings.push(`${player.email}: ledger chain breaks at "${chainBreak.reason}" — two writes interleaved`);
+      }
+
+      return {
+        email: player.email,
+        balance: actual,
+        ledgerExpected: expected,
+        drift,
+        movements: rows.length,
+        chainBreak,
+      };
+    });
+
+    // Duplicate entries: the one-entry-per-player rule should make this
+    // impossible, so any hit is a race that got through.
+    const dupes = await Score.aggregate([
+      { $match: { playerId: { $in: ids }, refunded: { $ne: true } } },
+      { $group: { _id: { playerId: '$playerId', matchId: '$matchId' }, count: { $sum: 1 } } },
+      { $match: { count: { $gt: 1 } } },
+    ]);
+    if (dupes.length) findings.push(`${dupes.length} duplicate fight entries — the one-entry rule was bypassed`);
+
+    // Contest pots should equal what was actually collected.
+    const contests = await TeamContest.find({ name: demoTagRegex() }).select('_id name entryFee prizePool status').lean();
+    const potChecks = [];
+    for (const contest of contests) {
+      const paidEntries = await TeamEntry.countDocuments({ contestId: String(contest._id), entryFeePaid: { $gt: 0 } });
+      const expectedPot = paidEntries * Math.max(0, Number(contest.entryFee) || 0);
+      const actualPot = Math.max(0, Number(contest.prizePool) || 0);
+      // A settled contest has paid its pot out, so a zero there is correct.
+      const mismatch = contest.status !== 'SETTLED' && actualPot !== expectedPot;
+      if (mismatch) findings.push(`${contest.name}: pot is ${actualPot}, ${paidEntries} paid entries should make it ${expectedPot}`);
+      potChecks.push({ name: contest.name, status: contest.status, paidEntries, expectedPot, actualPot, mismatch });
+    }
+
+    return res.json({
+      ok: true,
+      clean: findings.length === 0,
+      // The headline: one line the owner can read without interpreting the rest.
+      verdict: findings.length === 0
+        ? 'Books balance. Every test account matches its ledger, no duplicate entries, pots correct.'
+        : `${findings.length} problem${findings.length === 1 ? '' : 's'} found — see findings.`,
+      findings,
+      assumedStartingCoins: startCoins,
+      players: report,
+      duplicateEntries: dupes.length,
+      pots: potChecks,
+    });
+  } catch (error) {
+    console.error('Reconcile failed:', error);
+    return res.status(500).json({ ok: false, message: 'Reconcile failed.', detail: String(error?.message || '').slice(0, 200) });
+  }
+});
+
+// Top everyone back up mid-session, so a tester who spent their coins is not
+// stuck waiting on you.
+app.post('/api/admin/test-accounts/refill', verifyAdminToken, requireTestAccounts, async (req, res) => {
+  try {
+    const coins = Math.max(0, Math.round(Number(req.body?.coins ?? TEST_ACCOUNT_START_COINS)));
+    const result = await User.updateMany({ isTestAccount: true }, { $set: { tokens: String(coins) } });
+    return res.json({ ok: true, refilled: result?.modifiedCount || 0, coins });
+  } catch (error) {
+    return res.status(500).json({ ok: false, message: 'Could not refill test accounts.' });
+  }
+});
+
+// Purge. Uses the same confirmation guard as the other destructive routes, and
+// only ever touches rows flagged isTestAccount — a real player cannot be caught
+// by it.
+app.delete('/api/admin/test-accounts', verifyAdminToken, requireBulkConfirmation('TESTACCOUNTS'), async (req, res) => {
+  try {
+    const players = await User.find({ isTestAccount: true }).select('_id').lean();
+    const ids = players.map((row) => String(row._id));
+    const [scores, ledger, users, affiliates, admins] = await Promise.all([
+      Score.deleteMany({ playerId: { $in: ids } }),
+      FightEntryLedger.deleteMany({ userId: { $in: ids } }),
+      User.deleteMany({ isTestAccount: true }),
+      Affiliate.deleteMany({ isTestAccount: true }),
+      // A leftover privileged login is the worst thing to forget, so it goes
+      // with the same purge rather than needing a separate step.
+      Admin.deleteMany({ isTestAccount: true }),
+    ]);
+    return res.json({
+      ok: true,
+      deleted: {
+        players: users?.deletedCount || 0,
+        affiliates: affiliates?.deletedCount || 0,
+        admins: admins?.deletedCount || 0,
+        predictions: scores?.deletedCount || 0,
+        ledgerRows: ledger?.deletedCount || 0,
+      },
+    });
+  } catch (error) {
+    console.error('Test account purge failed:', error);
+    return res.status(500).json({ ok: false, message: 'Could not purge test accounts.' });
+  }
+});
+
+// ==========================================================================
+// FIGHTER PROFILES — the roster foundation
+//
+// A CombatFighter library already exists (fights carry fighterAId/fighterBId),
+// but its schema lives in a sibling module, and it holds none of the roster
+// identity a branding pipeline needs. Rather than modify a model defined
+// elsewhere, this is a COMPANION collection keyed by a normalised fighter name.
+//
+// Why keyed by name and not by CombatFighter id: most existing fights carry only
+// matchFighterA / matchFighterB strings, so a name key covers the whole back
+// catalogue. Where a CombatFighter row exists it is linked too.
+//
+// Deliberately holds no AI generation. This is the filing system: permanent IDs,
+// appearance counts computed from real fights, gear tiers as data, version
+// history, and a consent gate that any future generation must pass.
+// ==========================================================================
+const fighterKeyOf = (name) => String(name || '')
+  .toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
+
+const FIGHTER_LEVELS = Object.freeze([
+  { key: 'ROOKIE', minAppearances: 0 },
+  { key: 'CONTENDER', minAppearances: 3 },
+  { key: 'VETERAN', minAppearances: 6 },
+  { key: 'ELITE', minAppearances: 10 },
+  { key: 'LEGEND', minAppearances: 25 },
+]);
+
+const fighterProfileSchema = new mongoose.Schema({
+  // Permanent, never reused. Allocated from an atomic counter.
+  fmId: { type: String, required: true, unique: true },
+  fighterKey: { type: String, required: true, unique: true, index: true },
+  displayName: { type: String, required: true },
+  combatFighterId: { type: String, default: '' },
+  sport: { type: String, default: '' },
+
+  // Images. The original is never overwritten — that is the whole point.
+  originalImageUrl: { type: String, default: '' },
+  brandedImageUrl: { type: String, default: '' },
+  useBrandedImage: { type: Boolean, default: false },
+  imageStatus: {
+    type: String,
+    enum: ['not_started', 'queued', 'processing', 'review', 'completed', 'failed'],
+    default: 'not_started',
+  },
+  imageError: { type: String, default: '' },
+
+  // LIKENESS CONSENT. No generation may run without this. Recorded with a date
+  // and a source so it is auditable, not a checkbox someone remembers ticking.
+  likenessConsent: {
+    granted: { type: Boolean, default: false },
+    grantedAt: { type: Date, default: null },
+    source: { type: String, default: '' },
+    recordedBy: { type: String, default: '' },
+  },
+
+  // Computed from real fights, never typed in.
+  appearances: { type: Number, default: 0 },
+  appearancesUpdatedAt: { type: Date, default: null },
+  gearTier: { type: Number, default: 1 },
+  level: { type: String, default: 'ROOKIE' },
+
+  affiliateStatus: { type: Boolean, default: false },
+  affiliateSince: { type: Date, default: null },
+  foundingAffiliate: { type: Boolean, default: false },
+}, { timestamps: true });
+
+const fighterImageVersionSchema = new mongoose.Schema({
+  fighterKey: { type: String, required: true, index: true },
+  sourceImageUrl: { type: String, default: '' },
+  generatedImageUrl: { type: String, default: '' },
+  sport: { type: String, default: '' },
+  gearDesignId: { type: String, default: '' },
+  promptVersion: { type: String, default: '' },
+  provider: { type: String, default: '' },
+  status: { type: String, default: 'review' },
+  approved: { type: Boolean, default: false },
+  note: { type: String, default: '' },
+}, { timestamps: true });
+
+const gearDesignSchema = new mongoose.Schema({
+  name: { type: String, required: true },
+  sport: { type: String, default: 'all' },
+  tier: { type: Number, default: 1 },
+  minimumAppearances: { type: Number, default: 0 },
+  maximumAppearances: { type: Number, default: 0 },
+  primaryColor: { type: String, default: '#000000' },
+  secondaryColor: { type: String, default: '#df111b' },
+  accentColor: { type: String, default: '#f2b544' },
+  designPrompt: { type: String, default: '' },
+  logoPlacement: { type: String, default: 'shorts_lower_leg' },
+  logoScale: { type: Number, default: 0.06 },
+  specialRequirement: { type: String, default: '' },
+  active: { type: Boolean, default: true },
+}, { timestamps: true });
+
+const fighterIdCounterSchema = new mongoose.Schema({
+  _id: { type: String, default: 'fighter' },
+  seq: { type: Number, default: 0 },
+});
+
+const FighterProfile = mongoose.models.FighterProfile || mongoose.model('FighterProfile', fighterProfileSchema);
+const FighterImageVersion = mongoose.models.FighterImageVersion || mongoose.model('FighterImageVersion', fighterImageVersionSchema);
+const GearDesign = mongoose.models.GearDesign || mongoose.model('GearDesign', gearDesignSchema);
+const FighterIdCounter = mongoose.models.FighterIdCounter || mongoose.model('FighterIdCounter', fighterIdCounterSchema);
+
+// Atomic, so two simultaneous fighter creations cannot collide on an id.
+const allocateFighterId = async () => {
+  const counter = await FighterIdCounter.findByIdAndUpdate(
+    'fighter',
+    { $inc: { seq: 1 } },
+    { new: true, upsert: true },
+  );
+  return 'FM-' + String(counter.seq).padStart(6, '0');
+};
+
+const levelForAppearances = (appearances) => {
+  let level = 'ROOKIE';
+  FIGHTER_LEVELS.forEach((entry) => { if (appearances >= entry.minAppearances) level = entry.key; });
+  return level;
+};
+
+// Tiers as thresholds here, but the DESIGNS are rows in GearDesign — so a new
+// look is a back-office record, not a code change.
+const tierForAppearances = (appearances) => {
+  if (appearances >= 10) return 4;
+  if (appearances >= 6) return 3;
+  if (appearances >= 3) return 2;
+  return 1;
+};
+
+// Find or create by name. Called whenever a fight names a fighter, so the roster
+// builds itself from the fights that already exist.
+const upsertFighterProfile = async ({ name, sport = '', imageUrl = '', combatFighterId = '' }) => {
+  const fighterKey = fighterKeyOf(name);
+  if (!fighterKey) return null;
+
+  const existing = await FighterProfile.findOne({ fighterKey });
+  if (existing) {
+    let dirty = false;
+    // Fill blanks only. Never overwrite an original image, and never rename a
+    // fighter from a fight record — an admin owns those fields.
+    if (!existing.originalImageUrl && imageUrl) { existing.originalImageUrl = imageUrl; dirty = true; }
+    if (!existing.sport && sport) { existing.sport = sport; dirty = true; }
+    if (!existing.combatFighterId && combatFighterId) { existing.combatFighterId = String(combatFighterId); dirty = true; }
+    if (dirty) await existing.save();
+    return existing;
+  }
+
+  try {
+    return await FighterProfile.create({
+      fmId: await allocateFighterId(),
+      fighterKey,
+      displayName: String(name).trim().slice(0, 120),
+      sport,
+      originalImageUrl: imageUrl,
+      combatFighterId: String(combatFighterId || ''),
+    });
+  } catch (error) {
+    // Unique index race: another request created it a moment ago.
+    if (error?.code === 11000) return FighterProfile.findOne({ fighterKey });
+    throw error;
+  }
+};
+
+// Appearances counted from actual fights, as the spec asks — a number nobody can
+// inflate by typing.
+const recountFighterAppearances = async (fighterKey) => {
+  const profile = await FighterProfile.findOne({ fighterKey });
+  if (!profile) return null;
+  const nameRegex = new RegExp('^' + profile.displayName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '$', 'i');
+  const [asA, asB] = await Promise.all([
+    Match.countDocuments({ matchFighterA: nameRegex }),
+    Match.countDocuments({ matchFighterB: nameRegex }),
+  ]);
+  const appearances = asA + asB;
+  const tier = tierForAppearances(appearances);
+  const tierChanged = tier !== profile.gearTier;
+
+  profile.appearances = appearances;
+  profile.appearancesUpdatedAt = new Date();
+  profile.gearTier = tier;
+  profile.level = levelForAppearances(appearances);
+  await profile.save();
+
+  return { profile, tierChanged };
+};
+
+// THE RESOLVER. One place decides which picture represents a fighter, so a
+// switch from original to branded changes every screen at once.
+const getActiveFighterImage = (profile) => {
+  if (!profile) return '';
+  if (profile.useBrandedImage && profile.brandedImageUrl) return profile.brandedImageUrl;
+  return profile.originalImageUrl || '';
+};
+
+// --------------------------------------------------------------------------
+// PUBLIC
+// --------------------------------------------------------------------------
+app.get('/api/fighters/:key', async (req, res) => {
+  try {
+    const fighterKey = fighterKeyOf(req.params.key);
+    const profile = await FighterProfile.findOne({ fighterKey }).lean();
+    if (!profile) return res.status(404).json({ ok: false, message: 'Fighter not found.' });
+    return res.json({
+      ok: true,
+      fighter: {
+        fmId: profile.fmId,
+        name: profile.displayName,
+        sport: profile.sport,
+        image: getActiveFighterImage(profile),
+        appearances: profile.appearances,
+        level: profile.level,
+        gearTier: profile.gearTier,
+        affiliate: profile.affiliateStatus,
+        foundingAffiliate: profile.foundingAffiliate,
+      },
+    });
+  } catch (error) {
+    console.error('Fighter lookup failed:', error);
+    return res.status(500).json({ ok: false, message: 'Could not load that fighter.' });
+  }
+});
+
+app.get('/api/fighters', async (req, res) => {
+  try {
+    const filter = {};
+    const sport = String(req.query.sport || '').trim();
+    if (sport) filter.sport = sport;
+    const fighters = await FighterProfile.find(filter)
+      .sort({ appearances: -1, displayName: 1 })
+      .limit(parsePositiveInteger(req.query.limit, 100, 300))
+      .lean();
+    return res.json({
+      ok: true,
+      fighters: fighters.map((profile) => ({
+        fmId: profile.fmId,
+        key: profile.fighterKey,
+        name: profile.displayName,
+        sport: profile.sport,
+        image: getActiveFighterImage(profile),
+        appearances: profile.appearances,
+        level: profile.level,
+        affiliate: profile.affiliateStatus,
+      })),
+    });
+  } catch (error) {
+    console.error('Fighter list failed:', error);
+    return res.status(500).json({ ok: false, message: 'Could not load fighters.' });
+  }
+});
+
+// --------------------------------------------------------------------------
+// ADMIN
+// --------------------------------------------------------------------------
+// Builds the roster from every fight already in the database. Safe to re-run:
+// upsertFighterProfile fills blanks and never overwrites.
+app.post('/api/admin/fighters/backfill', verifyAdminToken, async (req, res) => {
+  try {
+    const fights = await Match.find({})
+      .select('matchFighterA matchFighterB fighterAImage fighterBImage matchCategory fighterAId fighterBId')
+      .limit(5000).lean();
+
+    let created = 0;
+    const seen = new Set();
+    for (const fight of fights) {
+      for (const [name, image, id] of [
+        [fight.matchFighterA, fight.fighterAImage, fight.fighterAId],
+        [fight.matchFighterB, fight.fighterBImage, fight.fighterBId],
+      ]) {
+        const key = fighterKeyOf(name);
+        if (!key || seen.has(key)) continue;
+        seen.add(key);
+        const before = await FighterProfile.countDocuments({ fighterKey: key });
+        await upsertFighterProfile({
+          name,
+          sport: String(fight.matchCategory || '').toLowerCase(),
+          imageUrl: image || '',
+          combatFighterId: id ? String(id) : '',
+        });
+        if (!before) created += 1;
+      }
+    }
+
+    // Then count appearances for everyone found.
+    let recounted = 0;
+    for (const key of seen) {
+      try { await recountFighterAppearances(key); recounted += 1; } catch (error) { /* keep going */ }
+    }
+
+    return res.json({ ok: true, fightsScanned: fights.length, fightersFound: seen.size, created, recounted });
+  } catch (error) {
+    console.error('Fighter backfill failed:', error);
+    return res.status(500).json({ ok: false, message: 'Backfill failed.' });
+  }
+});
+
+// Consent. Deliberately its own endpoint with its own audit fields — this is the
+// gate any future generation must pass, so it should be hard to set by accident.
+app.post('/api/admin/fighters/:key/consent', verifyAdminToken, async (req, res) => {
+  try {
+    const fighterKey = fighterKeyOf(req.params.key);
+    const granted = req.body?.granted === true;
+    const source = String(req.body?.source || '').trim();
+    if (granted && !source) {
+      return res.status(422).json({
+        ok: false,
+        message: 'Record where the consent came from (signed agreement, email, affiliate contract).',
+        code: 'CONSENT_SOURCE_REQUIRED',
+      });
+    }
+    const profile = await FighterProfile.findOneAndUpdate(
+      { fighterKey },
+      {
+        $set: {
+          'likenessConsent.granted': granted,
+          'likenessConsent.grantedAt': granted ? new Date() : null,
+          'likenessConsent.source': granted ? source.slice(0, 200) : '',
+          'likenessConsent.recordedBy': String(req.admin?.id || 'admin'),
+        },
+      },
+      { new: true },
+    ).lean();
+    if (!profile) return res.status(404).json({ ok: false, message: 'Fighter not found.' });
+    console.log(`[consent] ${fighterKey} likeness consent ${granted ? 'GRANTED' : 'revoked'} by ${req.admin?.id || 'admin'}`);
+    return res.json({ ok: true, fmId: profile.fmId, likenessConsent: profile.likenessConsent });
+  } catch (error) {
+    console.error('Consent update failed:', error);
+    return res.status(500).json({ ok: false, message: 'Could not record consent.' });
+  }
+});
+
+// The gate itself, so it exists before anything can generate.
+const assertLikenessConsent = async (fighterKey) => {
+  const profile = await FighterProfile.findOne({ fighterKey }).select('likenessConsent displayName').lean();
+  if (!profile) throw new Error('FIGHTER_NOT_FOUND');
+  if (!profile.likenessConsent?.granted) {
+    const error = new Error(`No likeness consent recorded for ${profile.displayName}. Generation refused.`);
+    error.code = 'LIKENESS_CONSENT_MISSING';
+    throw error;
+  }
+  return profile;
+};
+
+app.post('/api/admin/fighters/:key/image', verifyAdminToken, async (req, res) => {
+  try {
+    const fighterKey = fighterKeyOf(req.params.key);
+    const profile = await FighterProfile.findOne({ fighterKey });
+    if (!profile) return res.status(404).json({ ok: false, message: 'Fighter not found.' });
+
+    // A branded image may only be attached to a fighter who consented — the same
+    // gate a generator would hit, applied to a manual upload too.
+    if (req.body?.brandedImageUrl) {
+      try {
+        await assertLikenessConsent(fighterKey);
+      } catch (error) {
+        return res.status(403).json({ ok: false, message: error.message, code: error.code || 'CONSENT_REQUIRED' });
+      }
+      // Keep the previous look recoverable before replacing it.
+      if (profile.brandedImageUrl) {
+        await FighterImageVersion.create({
+          fighterKey,
+          sourceImageUrl: profile.originalImageUrl,
+          generatedImageUrl: profile.brandedImageUrl,
+          sport: profile.sport,
+          status: 'superseded',
+          approved: profile.useBrandedImage,
+          note: 'Replaced by a newer branded image.',
+        });
+      }
+      profile.brandedImageUrl = String(req.body.brandedImageUrl).trim();
+      profile.imageStatus = 'review';
+    }
+
+    if (typeof req.body?.useBrandedImage === 'boolean') {
+      if (req.body.useBrandedImage && !profile.brandedImageUrl) {
+        return res.status(422).json({ ok: false, message: 'No branded image to switch to.' });
+      }
+      profile.useBrandedImage = req.body.useBrandedImage;
+      if (req.body.useBrandedImage) profile.imageStatus = 'completed';
+    }
+    if (req.body?.originalImageUrl && !profile.originalImageUrl) {
+      profile.originalImageUrl = String(req.body.originalImageUrl).trim();
+    }
+
+    await profile.save();
+    return res.json({
+      ok: true,
+      fmId: profile.fmId,
+      activeImage: getActiveFighterImage(profile),
+      imageStatus: profile.imageStatus,
+    });
+  } catch (error) {
+    console.error('Fighter image update failed:', error);
+    return res.status(500).json({ ok: false, message: 'Could not update that fighter.' });
+  }
+});
+
+app.get('/api/admin/fighters/:key/versions', verifyAdminToken, async (req, res) => {
+  try {
+    const versions = await FighterImageVersion.find({ fighterKey: fighterKeyOf(req.params.key) })
+      .sort({ createdAt: -1 }).limit(50).lean();
+    return res.json({ ok: true, versions });
+  } catch (error) {
+    return res.status(500).json({ ok: false, message: 'Could not load versions.' });
+  }
+});
+
+app.post('/api/admin/fighters/:key/recount', verifyAdminToken, async (req, res) => {
+  try {
+    const result = await recountFighterAppearances(fighterKeyOf(req.params.key));
+    if (!result) return res.status(404).json({ ok: false, message: 'Fighter not found.' });
+    return res.json({
+      ok: true,
+      fmId: result.profile.fmId,
+      appearances: result.profile.appearances,
+      gearTier: result.profile.gearTier,
+      level: result.profile.level,
+      tierChanged: result.tierChanged,
+    });
+  } catch (error) {
+    console.error('Recount failed:', error);
+    return res.status(500).json({ ok: false, message: 'Recount failed.' });
+  }
+});
+
+app.post('/api/admin/gear-designs', verifyAdminToken, async (req, res) => {
+  try {
+    const name = String(req.body?.name || '').trim();
+    if (!name) return res.status(422).json({ ok: false, message: 'A design name is required.' });
+    const design = await GearDesign.create({
+      name: name.slice(0, 120),
+      sport: String(req.body?.sport || 'all').toLowerCase(),
+      tier: Math.max(1, Math.round(Number(req.body?.tier) || 1)),
+      minimumAppearances: Math.max(0, Math.round(Number(req.body?.minimumAppearances) || 0)),
+      maximumAppearances: Math.max(0, Math.round(Number(req.body?.maximumAppearances) || 0)),
+      primaryColor: String(req.body?.primaryColor || '#000000'),
+      secondaryColor: String(req.body?.secondaryColor || '#df111b'),
+      accentColor: String(req.body?.accentColor || '#f2b544'),
+      designPrompt: String(req.body?.designPrompt || '').slice(0, 2000),
+      logoPlacement: String(req.body?.logoPlacement || 'shorts_lower_leg'),
+      logoScale: Number(req.body?.logoScale) || 0.06,
+      specialRequirement: String(req.body?.specialRequirement || '').slice(0, 200),
+    });
+    return res.status(201).json({ ok: true, designId: design._id });
+  } catch (error) {
+    console.error('Gear design create failed:', error);
+    return res.status(500).json({ ok: false, message: 'Could not create that design.' });
+  }
+});
+
+app.get('/api/admin/gear-designs', verifyAdminToken, async (req, res) => {
+  try {
+    const designs = await GearDesign.find({}).sort({ sport: 1, tier: 1 }).limit(200).lean();
+    return res.json({ ok: true, designs });
+  } catch (error) {
+    return res.status(500).json({ ok: false, message: 'Could not load designs.' });
+  }
+});
+
+// Roster overview for the back office: who needs consent, who needs an image.
+app.get('/api/admin/fighters/overview', verifyAdminToken, async (req, res) => {
+  try {
+    const [total, consented, branded, live] = await Promise.all([
+      FighterProfile.countDocuments({}),
+      FighterProfile.countDocuments({ 'likenessConsent.granted': true }),
+      FighterProfile.countDocuments({ brandedImageUrl: { $ne: '' } }),
+      FighterProfile.countDocuments({ useBrandedImage: true }),
+    ]);
+    const needsConsent = await FighterProfile.find({ 'likenessConsent.granted': { $ne: true } })
+      .select('fmId displayName appearances sport').sort({ appearances: -1 }).limit(50).lean();
+    return res.json({
+      ok: true,
+      totals: { fighters: total, withConsent: consented, withBrandedImage: branded, showingBranded: live },
+      // Highest appearance count first — the fighters worth asking first.
+      needsConsent,
+    });
+  } catch (error) {
+    console.error('Fighter overview failed:', error);
+    return res.status(500).json({ ok: false, message: 'Could not load the roster overview.' });
+  }
+});
+
+// ==========================================================================
+// LEAGUE NOTICES — how a promoter reaches the players they brought in
+//
+// Nothing existed. A promoter could put a card up and their league members had
+// no way to learn about it except opening the app and noticing. That breaks the
+// affiliate model: you ask someone to bring you players, then give them no way
+// to reach them.
+//
+// A promoter ANNOUNCES deliberately rather than the system firing on every
+// promotion. Two reasons: the promoter knows which of their cards is worth an
+// inbox, and an automatic send on every write path (creation, shadow link, admin
+// edit) would fire several times for one fight.
+//
+// Every notice reaches the league's bells. Email is rate-limited, because one
+// promoter with a large league mailing every card would burn the platform's
+// sending reputation exactly as the old platform-wide blast did.
+// ==========================================================================
+const LEAGUE_EMAIL_COOLDOWN_HOURS = Math.max(1, Number(process.env.LEAGUE_EMAIL_COOLDOWN_HOURS || 24));
+const LEAGUE_EMAIL_MAX_RECIPIENTS = Math.max(1, Number(process.env.LEAGUE_EMAIL_MAX_RECIPIENTS || 5000));
+
+const leagueNoticeSchema = new mongoose.Schema({
+  affiliateId: { type: String, required: true, index: true },
+  affiliateName: { type: String, default: '' },
+  fightId: { type: String, default: '' },
+  sourceType: { type: String, enum: ['match', 'shadow'], default: 'match' },
+  headline: { type: String, required: true },
+  body: { type: String, default: '' },
+  // Snapshot of who it went to, so reach is answerable later and the promoter
+  // can see whether it landed.
+  memberCount: { type: Number, default: 0 },
+  emailedCount: { type: Number, default: 0 },
+  emailSkippedReason: { type: String, default: '' },
+}, { timestamps: true });
+
+leagueNoticeSchema.index({ affiliateId: 1, createdAt: -1 });
+
+const LeagueNotice = mongoose.models.LeagueNotice || mongoose.model('LeagueNotice', leagueNoticeSchema);
+
+// --------------------------------------------------------------------------
+// ANNOUNCE
+// --------------------------------------------------------------------------
+app.post('/api/affiliates/me/promotions/:fightId/announce', submitLimiter, verifyToken, requireScope(TOKEN_SCOPES.AFFILIATE), async (req, res) => {
+  try {
+    const affiliateId = String(req.user?.id || req.user?._id || '').trim();
+    const fightId = String(req.params.fightId || '').trim();
+
+    const affiliate = await Affiliate.findById(affiliateId)
+      .select('_id verified playerName firstName lastName leagueName usersJoined').lean();
+    if (!affiliate) return res.status(404).json({ ok: false, message: 'Affiliate account not found.' });
+    if (!affiliate.verified) {
+      return res.status(403).json({ ok: false, message: 'Your league must be approved before you can send notices.', code: 'NOT_VERIFIED' });
+    }
+
+    // The promoter must actually be attached to this fight — otherwise a
+    // promoter could announce, and take credit for, somebody else's card.
+    let fight = null;
+    let sourceType = 'match';
+    if (mongoose.isValidObjectId(fightId)) {
+      fight = await Match.findOne({ _id: fightId, affiliateId }).select('matchFighterA matchFighterB matchDate matchTokens matchCategory').lean();
+      if (!fight) {
+        const shadow = await Shadow.findOne({
+          _id: fightId,
+          'AffiliateIds.AffiliateId': mongoose.Types.ObjectId.isValid(affiliateId) ? new mongoose.Types.ObjectId(affiliateId) : affiliateId,
+        }).select('matchFighterA matchFighterB matchDate matchTokens matchCategory').lean();
+        if (shadow) { fight = shadow; sourceType = 'shadow'; }
+      }
+    }
+    if (!fight) {
+      return res.status(403).json({ ok: false, message: 'That fight is not one of yours to announce.', code: 'NOT_YOUR_FIGHT' });
+    }
+
+    const members = Array.isArray(affiliate.usersJoined) ? affiliate.usersJoined : [];
+    if (members.length === 0) {
+      return res.status(422).json({ ok: false, message: 'Nobody has joined your league yet.', code: 'EMPTY_LEAGUE' });
+    }
+
+    const promoterName = [affiliate.leagueName, affiliate.playerName, affiliate.firstName].map((v) => String(v || '').trim()).find(Boolean) || 'Your league';
+    const pair = [fight.matchFighterA, fight.matchFighterB].filter(Boolean).join(' vs ');
+    const fee = Math.max(0, Math.round(Number(fight.matchTokens) || 0));
+    const headline = String(req.body?.headline || '').trim().slice(0, 120)
+      || (pair ? `${promoterName} put up ${pair}` : `${promoterName} has a new card`);
+    const body = String(req.body?.message || '').trim().slice(0, 300)
+      || (fee > 0 ? `${fee.toLocaleString()} FM to enter.` : 'Free to enter.');
+
+    // Email cooldown, per promoter. The notice still goes to every bell —
+    // only the inbox is throttled.
+    const cutoff = new Date(Date.now() - LEAGUE_EMAIL_COOLDOWN_HOURS * 3600 * 1000);
+    const recentEmail = await LeagueNotice.findOne({
+      affiliateId, emailedCount: { $gt: 0 }, createdAt: { $gte: cutoff },
+    }).select('createdAt').lean();
+
+    let emailedCount = 0;
+    let emailSkippedReason = '';
+
+    if (recentEmail) {
+      const hoursLeft = Math.max(1, Math.ceil((new Date(recentEmail.createdAt).getTime() + LEAGUE_EMAIL_COOLDOWN_HOURS * 3600 * 1000 - Date.now()) / 3600000));
+      emailSkippedReason = `Email cooldown — you can email your league again in about ${hoursLeft}h. This notice still went to every member's notifications.`;
+    } else {
+      // Only members who have not opted out of mail.
+      const memberIds = members.map((m) => String(m.userId)).filter((id) => mongoose.isValidObjectId(id));
+      const recipients = memberIds.length
+        ? await User.find({
+          _id: { $in: memberIds },
+          isSubscribed: { $ne: false },
+          isNotificationsEnabled: { $ne: false },
+        }).select('email firstName').limit(LEAGUE_EMAIL_MAX_RECIPIENTS).lean()
+        : [];
+
+      const appUrl = String(process.env.PUBLIC_APP_URL || 'https://www.fantasymmadness.com').replace(/\/$/, '');
+      await Promise.allSettled(recipients.filter((r) => r.email).map((recipient) => transporter.sendMail({
+        from: process.env.SMTP_USER || 'Fantasymmadness2@gmail.com',
+        to: recipient.email,
+        subject: headline,
+        html: `<div style="font-family:Arial,Helvetica,sans-serif;color:#201f1d;max-width:600px;margin:auto">
+          <p>Hi ${escapeHtml(recipient.firstName || 'there')},</p>
+          <p style="font-size:17px"><strong>${escapeHtml(headline)}</strong></p>
+          <p>${escapeHtml(body)}</p>
+          ${fight.matchDate ? `<p style="color:#5d5a55">Fight date: ${escapeHtml(String(fight.matchDate).slice(0, 10))}</p>` : ''}
+          <p><a href="${appUrl}" style="display:inline-block;padding:11px 20px;background:#f2b544;color:#2b1b00;text-decoration:none;border-radius:6px;font-weight:bold">Open Fantasy MMAdness</a></p>
+          <p style="font-size:12px;color:#8a8579">You are getting this because you joined ${escapeHtml(promoterName)} on Fantasy MMAdness. You can turn league emails off in your account settings.</p>
+        </div>`,
+      }).catch((error) => { console.error('League notice mail failed:', error.message); })));
+      emailedCount = recipients.length;
+    }
+
+    const notice = await LeagueNotice.create({
+      affiliateId,
+      affiliateName: promoterName,
+      fightId: String(fight._id),
+      sourceType,
+      headline,
+      body,
+      memberCount: members.length,
+      emailedCount,
+      emailSkippedReason,
+    });
+
+    return res.status(201).json({
+      ok: true,
+      noticeId: notice._id,
+      reachedBells: members.length,
+      emailed: emailedCount,
+      emailSkippedReason: emailSkippedReason || undefined,
+      message: emailedCount
+        ? `Sent to ${members.length} member${members.length === 1 ? '' : 's'} — ${emailedCount} by email.`
+        : `Posted to ${members.length} member${members.length === 1 ? '' : 's'}' notifications.`,
+    });
+  } catch (error) {
+    console.error('League announce failed:', error);
+    return res.status(500).json({ ok: false, message: 'Could not send that notice.' });
+  }
+});
+
+// What the promoter can see about their own reach.
+app.get('/api/affiliates/me/promotions/reach', verifyToken, requireScope(TOKEN_SCOPES.AFFILIATE), async (req, res) => {
+  try {
+    const affiliateId = String(req.user?.id || req.user?._id || '').trim();
+    const affiliate = await Affiliate.findById(affiliateId).select('usersJoined leagueName playerName').lean();
+    if (!affiliate) return res.status(404).json({ ok: false, message: 'Affiliate account not found.' });
+
+    const members = Array.isArray(affiliate.usersJoined) ? affiliate.usersJoined : [];
+    const notices = await LeagueNotice.find({ affiliateId }).sort({ createdAt: -1 }).limit(20).lean();
+    const cutoff = new Date(Date.now() - LEAGUE_EMAIL_COOLDOWN_HOURS * 3600 * 1000);
+    const lastEmail = notices.find((n) => n.emailedCount > 0 && new Date(n.createdAt) >= cutoff);
+
+    // How many of this promoter's members have actually entered something — the
+    // number that tells them whether their league is alive.
+    const memberIds = members.map((m) => String(m.userId)).filter((id) => mongoose.isValidObjectId(id));
+    const activeMembers = memberIds.length
+      ? (await Score.distinct('playerId', { playerId: { $in: memberIds } })).length
+      : 0;
+
+    return res.json({
+      ok: true,
+      leagueName: [affiliate.leagueName, affiliate.playerName].map((v) => String(v || '').trim()).find(Boolean) || 'Your league',
+      members: members.length,
+      activeMembers,
+      joinedLast7Days: members.filter((m) => m.joinedAt && (Date.now() - new Date(m.joinedAt).getTime()) < 7 * 86400000).length,
+      emailAvailable: !lastEmail,
+      emailCooldownHours: LEAGUE_EMAIL_COOLDOWN_HOURS,
+      notices: notices.map((n) => ({
+        id: n._id,
+        headline: n.headline,
+        sentAt: n.createdAt,
+        reachedBells: n.memberCount,
+        emailed: n.emailedCount,
+        note: n.emailSkippedReason || '',
+      })),
+    });
+  } catch (error) {
+    console.error('Promoter reach failed:', error);
+    return res.status(500).json({ ok: false, message: 'Could not load your reach.' });
+  }
+});
+
+// Ready-made share text and link, so a promoter is not composing a post from
+// scratch every time. Distribution is mostly friction — this removes some.
+app.get('/api/affiliates/me/promotions/:fightId/share', verifyToken, requireScope(TOKEN_SCOPES.AFFILIATE), async (req, res) => {
+  try {
+    const affiliateId = String(req.user?.id || req.user?._id || '').trim();
+    const fightId = String(req.params.fightId || '').trim();
+    const affiliate = await Affiliate.findById(affiliateId).select('leagueName playerName profileUrl').lean();
+    if (!affiliate) return res.status(404).json({ ok: false, message: 'Affiliate account not found.' });
+
+    const fight = mongoose.isValidObjectId(fightId)
+      ? await Match.findById(fightId).select('matchFighterA matchFighterB matchDate matchTokens matchCategory').lean()
+      : null;
+
+    const appUrl = String(process.env.PUBLIC_APP_URL || 'https://www.fantasymmadness.com').replace(/\/$/, '');
+    // The ref parameter is what ties a signup back to this promoter.
+    const joinLink = `${appUrl}/?ref=${encodeURIComponent(affiliateId)}`;
+    const fightLink = fight ? `${appUrl}/?ref=${encodeURIComponent(affiliateId)}&fight=${encodeURIComponent(fightId)}` : joinLink;
+    const pair = fight ? [fight.matchFighterA, fight.matchFighterB].filter(Boolean).join(' vs ') : '';
+    const fee = fight ? Math.max(0, Math.round(Number(fight.matchTokens) || 0)) : 0;
+    const league = [affiliate.leagueName, affiliate.playerName].map((v) => String(v || '').trim()).find(Boolean) || 'my league';
+
+    return res.json({
+      ok: true,
+      joinLink,
+      fightLink,
+      // Per platform, because a post that works on X reads wrong on Facebook.
+      share: {
+        short: pair ? `${pair} — predict it with ${league}. ${fightLink}` : `Play fight predictions with ${league}. ${joinLink}`,
+        facebook: pair
+          ? `I've got ${pair} up on Fantasy MMAdness. Score it round by round against ${league}${fee > 0 ? ` — ${fee.toLocaleString()} FM to enter` : ' — free to enter'}. ${fightLink}`
+          : `Join ${league} on Fantasy MMAdness and predict the fights round by round. ${joinLink}`,
+        tiktok: pair ? `${pair}. My picks are locked. Beat me: ${fightLink}` : `Beat my fight picks: ${joinLink}`,
+        sms: pair ? `${pair} is up on Fantasy MMAdness — come score it: ${fightLink}` : `Join my Fantasy MMAdness league: ${joinLink}`,
+      },
+    });
+  } catch (error) {
+    console.error('Share payload failed:', error);
+    return res.status(500).json({ ok: false, message: 'Could not build a share link.' });
+  }
+});
+
+// --------------------------------------------------------------------------
+// PLAYER NOTIFICATION FEED
+// Publishing a fight wrote a single global Notification row with no userId, so
+// no player ever saw it and one admin marking it read cleared it for everyone.
+// The bell had a read timestamp but nothing to count against.
+//
+// Derived rather than fanned out: a row per user per fight would mean tens of
+// thousands of writes each time a card is published, and would need pruning.
+// This reads recent fights and the caller's own money events, then compares
+// against notificationsReadAt for the unread count.
+// --------------------------------------------------------------------------
+app.get('/api/users/me/notifications', verifyToken, async (req, res) => {
+  try {
+    const userId = String(req.user?.id || req.user?._id || '').trim();
+    const user = await User.findById(userId).select('notificationsReadAt residenceState').lean();
+    if (!user) return res.status(404).json({ ok: false, message: 'Account not found.' });
+
+    const readAt = user.notificationsReadAt ? new Date(user.notificationsReadAt) : new Date(0);
+    const since = new Date(Date.now() - 21 * 24 * 3600 * 1000);
+    const notifications = [];
+
+    // 1. Fights published in the last three weeks — the thing that was missing.
+    const fights = await Match.find({ createdAt: { $gte: since } })
+      .select('matchName matchFighterA matchFighterB matchDate matchCategory matchTokens createdAt prizesSettledAt')
+      .sort({ createdAt: -1 }).limit(40).lean();
+
+    fights.forEach((fight) => {
+      const pair = [fight.matchFighterA, fight.matchFighterB].filter(Boolean).join(' vs ');
+      notifications.push({
+        id: 'fight:' + fight._id,
+        type: 'NEW_FIGHT',
+        title: pair ? `New fight: ${pair}` : `New fight: ${fight.matchName || 'card published'}`,
+        body: (fight.matchCategory ? String(fight.matchCategory).toUpperCase() + ' · ' : '')
+          + (Number(fight.matchTokens) > 0 ? `${Number(fight.matchTokens).toLocaleString()} FM entry` : 'Free entry'),
+        fightId: String(fight._id),
+        at: fight.createdAt,
+      });
+    });
+
+    // 2. Results for fights this player actually entered — a settled fight they
+    //    were not in is not news for them.
+    const myEntries = await Score.find({ playerId: userId, refunded: { $ne: true } })
+      .select('matchId').limit(200).lean();
+    const myFightIds = myEntries.map((row) => String(row.matchId)).filter((id) => mongoose.isValidObjectId(id));
+    if (myFightIds.length) {
+      const settled = await Match.find({ _id: { $in: myFightIds }, prizesSettledAt: { $gte: since } })
+        .select('matchFighterA matchFighterB prizesSettledAt').sort({ prizesSettledAt: -1 }).limit(25).lean();
+      settled.forEach((fight) => {
+        notifications.push({
+          id: 'settled:' + fight._id,
+          type: 'FIGHT_SETTLED',
+          title: 'Results are in: ' + [fight.matchFighterA, fight.matchFighterB].filter(Boolean).join(' vs '),
+          body: 'Your scorecard has been scored — check where you finished.',
+          fightId: String(fight._id),
+          at: fight.prizesSettledAt,
+        });
+      });
+    }
+
+    // 3. Notices from leagues this player has joined. This is the promoter's
+    //    channel to the players they brought in — it reaches every member's bell
+    //    even when the email was held back by the cooldown.
+    const myLeagues = await Affiliate.find({ 'usersJoined.userId': userId })
+      .select('_id leagueName playerName').limit(25).lean();
+    if (myLeagues.length) {
+      const leagueNames = new Map(myLeagues.map((league) => [
+        String(league._id),
+        [league.leagueName, league.playerName].map((v) => String(v || '').trim()).find(Boolean) || 'Your league',
+      ]));
+      const notices = await LeagueNotice.find({
+        affiliateId: { $in: myLeagues.map((league) => String(league._id)) },
+        createdAt: { $gte: since },
+      }).sort({ createdAt: -1 }).limit(25).lean();
+
+      notices.forEach((notice) => {
+        notifications.push({
+          id: 'league:' + notice._id,
+          type: 'LEAGUE_NOTICE',
+          title: notice.headline,
+          body: [notice.body, leagueNames.get(String(notice.affiliateId))].filter(Boolean).join(' · '),
+          fightId: notice.fightId || undefined,
+          at: notice.createdAt,
+        });
+      });
+    }
+
+    // 4. This player's own money movements, straight off the ledger.
+    const moves = await FightEntryLedger.find({ userId, createdAt: { $gte: since } })
+      .select('type amount matchId createdAt').sort({ createdAt: -1 }).limit(25).lean();
+    moves.forEach((move) => {
+      const credit = Number(move.amount) > 0;
+      notifications.push({
+        id: 'ledger:' + move._id,
+        type: credit ? 'COINS_IN' : 'COINS_OUT',
+        title: credit
+          ? `+${Math.abs(Number(move.amount)).toLocaleString()} FM added`
+          : `${Math.abs(Number(move.amount)).toLocaleString()} FM spent`,
+        body: String(move.type || '').replace(/_/g, ' ').toLowerCase(),
+        at: move.createdAt,
+      });
+    });
+
+    notifications.sort((a, b) => new Date(b.at) - new Date(a.at));
+    const trimmed = notifications.slice(0, 50);
+    const unread = trimmed.filter((row) => new Date(row.at) > readAt).length;
+
+    return res.json({
+      ok: true,
+      unread,
+      notificationsReadAt: user.notificationsReadAt || null,
+      notifications: trimmed.map((row) => ({ ...row, unread: new Date(row.at) > readAt })),
+    });
+  } catch (error) {
+    console.error('Notification feed failed:', error);
+    return res.status(500).json({ ok: false, message: 'Could not load notifications.' });
   }
 });
 
