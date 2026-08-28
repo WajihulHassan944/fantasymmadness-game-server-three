@@ -18731,6 +18731,40 @@ app.post('/api/admin/demo-card', verifyAdminToken, requireTestAccounts, async (r
       }
     }
 
+    // 3b. FEATURE FLAGS. Without these the app's "Featured This Week" and
+    //     "Featured Fight" sections have nothing to render, and the website's
+    //     promoted-fights query — which filters on homepagePromoted /
+    //     featuredThisWeek / featuredFight — returns an empty list. The seed
+    //     created fights but never flagged any, so both surfaces looked broken
+    //     while the data was actually there.
+    {
+      const seeded = await Match.find({ matchName: demoTagRegex() })
+        .select('_id matchDate').sort({ matchDate: 1 }).lean();
+      if (seeded.length) {
+        // First upcoming bout carries the big card; second fills the compact
+        // featured-fight strip. Both are homepage-promoted so the website shows
+        // them too.
+        await Match.updateOne({ _id: seeded[0]._id }, {
+          $set: { featuredThisWeek: true, homepagePromoted: true },
+        });
+        if (seeded[1]) {
+          await Match.updateOne({ _id: seeded[1]._id }, {
+            $set: { featuredFight: true, homepagePromoted: true },
+          });
+        }
+        // Everything else still appears in the open-cards grid.
+        const rest = seeded.slice(2).map((row) => row._id);
+        if (rest.length) {
+          await Match.updateMany({ _id: { $in: rest } }, { $set: { homepagePromoted: true } });
+        }
+        created.featured = {
+          featuredThisWeek: String(seeded[0]._id),
+          featuredFight: seeded[1] ? String(seeded[1]._id) : null,
+          homepagePromoted: seeded.length,
+        };
+      }
+    }
+
     // 4. A Team Card over the upcoming bouts. Needs at least as many bouts as
     //    picks, which is why all five disciplines are seeded.
     const upcomingIds = created.upcoming.map((row) => String(row.id));
@@ -18851,6 +18885,36 @@ app.get('/api/public/demo-card/pots', async (req, res) => {
 // that will actually pay people.
 // --------------------------------------------------------------------------
 const demoTagRegex = () => new RegExp('^\\' + DEMO_TAG.replace(/[[\]]/g, '\\$&'));
+
+// Sets the feature flags on already-seeded demo fights. The first version of the
+// seed created fights but never flagged any, so a database seeded before this
+// shows empty "Featured This Week" and "Featured Fight" sections in the app and
+// an empty promoted list on the website — the data was fine, nothing was flagged.
+app.post('/api/admin/demo-card/repair-featured', verifyAdminToken, requireTestAccounts, async (req, res) => {
+  try {
+    const seeded = await Match.find({ matchName: demoTagRegex() })
+      .select('_id matchName matchDate').sort({ matchDate: 1 }).lean();
+    if (!seeded.length) {
+      return res.status(404).json({ ok: false, message: 'No demo fights found — seed the card first.' });
+    }
+    await Match.updateOne({ _id: seeded[0]._id }, { $set: { featuredThisWeek: true, homepagePromoted: true } });
+    if (seeded[1]) {
+      await Match.updateOne({ _id: seeded[1]._id }, { $set: { featuredFight: true, homepagePromoted: true } });
+    }
+    await Match.updateMany({ _id: { $in: seeded.map((row) => row._id) } }, { $set: { homepagePromoted: true } });
+    clearPublicResponseCache();
+    return res.json({
+      ok: true,
+      featuredThisWeek: seeded[0].matchName,
+      featuredFight: seeded[1] ? seeded[1].matchName : null,
+      homepagePromoted: seeded.length,
+      message: 'Featured flags set. Reload the app and the website.',
+    });
+  } catch (error) {
+    console.error('Repair featured failed:', error);
+    return res.status(500).json({ ok: false, message: 'Could not set the featured flags.' });
+  }
+});
 
 app.post('/api/admin/demo-card/fast-forward', verifyAdminToken, requireTestAccounts, async (req, res) => {
   try {
