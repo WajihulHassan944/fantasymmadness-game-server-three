@@ -7705,6 +7705,28 @@ app.get('/api/public/fm-plus-plans', (_req, res) => {
 
 app.post('/api/checkout/coin-orders', optionalVerifyToken, async (req, res) => {
   try {
+    // TEST ACCOUNTS MUST NEVER REACH A LIVE PAYMENT PAGE.
+    // The gateway runs in production, so a tester tapping "buy coins" would be
+    // charged a real card. Checkout previously knew nothing about test accounts.
+    // Admins grant coins to testers instead: POST /api/admin/test-accounts/grant.
+    if (getAuthorizeNetEnvironment().isLive) {
+      const buyerEmail = String(
+        req.body?.email
+        || (req.user?.id ? (await User.findById(req.user.id).select('email').lean())?.email : '')
+        || '',
+      ).trim().toLowerCase();
+      const buyer = req.user?.id
+        ? await User.findById(req.user.id).select('isTestAccount').lean()
+        : null;
+      if (buyer?.isTestAccount || buyerEmail.endsWith('@fmmtest.com')) {
+        return res.status(403).json({
+          ok: false,
+          code: 'TEST_ACCOUNT_LIVE_PAYMENT_BLOCKED',
+          message: 'This is a test account and the payment gateway is live. Ask an admin to add coins to your wallet instead of buying them.',
+        });
+      }
+    }
+
     // Free-play states must not be able to buy coins. If they could, the coins
     // would have cash value there and the free mode would be the paid product
     // with extra steps.
