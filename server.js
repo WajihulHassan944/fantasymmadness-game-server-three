@@ -4011,25 +4011,22 @@ app.get('/api/public/prediction-fights', async (req, res) => {
   try {
     const loadPredictionFightPayload = async () => {
       const limit = Math.min(Math.max(parseInt(req.query.limit, 10) || 20, 1), 100);
-      const queryLimit = Math.min(Math.max(limit * 6, 200), 500);
+      // Mirrors /api/admin/fights (source=all): draft-exclusion only, no
+      // timeline/eligibility heuristics — those were silently dropping real
+      // LIVE fights from the public feed while the admin registry, which
+      // skips them, showed everything. If the admin list can show a fight,
+      // the public list must be able to show it too.
       let baseFilter = {};
       baseFilter = appendAndFilter(baseFilter, buildEffectiveFightCategoryFilter(req.query.category));
-      if (shouldUseStrictPlayableFightFilter(req.query)) {
-        baseFilter = appendAndFilter(baseFilter, buildPredictionEligibleFightFilter());
-      }
       const visibleFilter = applyFightPublicVisibilityFilter(baseFilter, req.query);
       const [matches, shadows] = await Promise.all([
-        applyFightFreshSortLean(Match.find(visibleFilter).populate('fighterAId fighterBId')).limit(queryLimit),
-        applyFightFreshSortLean(Shadow.find(visibleFilter).populate('fighterAId fighterBId')).limit(queryLimit).catch(() => []),
+        applyFightFreshSortLean(Match.find(visibleFilter).populate('fighterAId fighterBId')).limit(500),
+        applyFightFreshSortLean(Shadow.find(visibleFilter).populate('fighterAId fighterBId')).limit(500).catch(() => []),
       ]);
       let items = [
         ...matches.map((item) => ({ ...item, sourceType: 'match' })),
         ...shadows.map((item) => ({ ...item, sourceType: 'shadow' })),
-      ].filter((item) => isPublicHomeActiveFightRecord(item));
-
-      if (shouldUseStrictPlayableFightFilter(req.query)) {
-        items = items.filter((item) => isPredictionEligibleFightRecord(item));
-      }
+      ].filter((item) => !isDraftFightRecord(item));
 
       if (!isAllFilterValue(req.query.category)) {
         items = items.filter((item) => isFightRecordInEffectiveCategory(item, req.query.category));
@@ -4045,11 +4042,6 @@ app.get('/api/public/prediction-fights', async (req, res) => {
       }).map((item) => attachCombatFighterReadFallbacks(item, item.sourceType || 'match'));
 
       items = await attachPlayerPredictionStateToFightItems(items, req.query);
-      const requestedTimeline = String(req.query.status || req.query.bucket || req.query.view || '').trim().toLowerCase();
-      items = applyPublicFightStatusIntent(items, req.query);
-      if (!requestedTimeline || ['upcoming', 'future', 'scheduled', 'active-contests', 'playable', 'prediction', 'predictions', 'all'].includes(requestedTimeline)) {
-        items = items.filter((item) => isPublicHomeActiveFightRecord(item));
-      }
       items = items.slice(0, limit);
 
       return {
