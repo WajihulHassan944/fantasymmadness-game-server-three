@@ -11004,7 +11004,7 @@ app.post('/admin/login', loginLimiter, async (req, res) => {
     const token = jwt.sign(
       { id: admin._id, email: admin.email },
       process.env.JWT_SECRET_ADMIN,
-      { expiresIn: '1h' }
+      { expiresIn: '12h' }
     );
 
     
