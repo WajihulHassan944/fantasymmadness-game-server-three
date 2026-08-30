@@ -3872,7 +3872,12 @@ app.post(
       if (promotionBackgroundDeleteUrl)
         existingMatch.promotionBackgroundDeleteUrl = promotionBackgroundDeleteUrl;
 
-      clearLegacyFighterFieldsForLibraryRefs(existingMatch);
+      // NOTE: previously called clearLegacyFighterFieldsForLibraryRefs(existingMatch)
+      // here, which wiped matchFighterA/matchFighterB back to blank on every save
+      // whenever the record had a fighterAId/fighterBId ref — undoing the admin's
+      // just-typed name edit in the same request, and blanking names on any fight
+      // linked to the fighter library (now the normal case). The name the admin
+      // submits (assignIfProvided above) is the one that should stick.
 
       // Save the updated match to the database
       const updatedMatch = await existingMatch.save();
