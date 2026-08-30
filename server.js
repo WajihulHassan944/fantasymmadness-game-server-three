@@ -3451,7 +3451,14 @@ app.post(
         matchData.sourceShadowId = shadowFightId;
         matchData.promotedShadowFightId = shadowFightId;
       }
-      clearLegacyFighterFieldsForLibraryRefs(matchData);
+      // NOT clearing matchFighterA/matchFighterB here anymore: this used to wipe
+      // them immediately on creation, relying entirely on fighterAId/fighterBId
+      // populating correctly on every future read. When that population ever
+      // came back empty (deleted fighter, ref mismatch, etc.) the fight had no
+      // name left at all — "FIGHTER A VS FIGHTER B" placeholders forever, with
+      // real photos. The name string is now kept as a permanent fallback;
+      // attachCombatFighterReadFallbacks still prefers the live fighter-library
+      // name whenever population succeeds.
       Object.assign(matchData, buildAutoHomepagePromotionFields({
         body: req.body,
         admin: req.admin,
