@@ -1971,6 +1971,8 @@ const shadowSchema = new mongoose.Schema({
 shadowSchema.index({ matchStatus: 1, matchShadowOpenStatus: 1, updatedAt: -1 });
 shadowSchema.index({ matchDate: -1, updatedAt: -1 });
 shadowSchema.index({ homepagePromoted: 1, homepagePromotionRank: -1, matchDate: 1, updatedAt: -1 });
+shadowSchema.index({ featuredThisWeek: 1, matchDate: 1 });
+shadowSchema.index({ featuredFight: 1, matchDate: 1 });
 shadowSchema.index({ fighterAId: 1, fighterBId: 1 });
 shadowSchema.pre('save', function cacheInitialShadowScoutingReport(next) {
   if (!this.aiScoutingReport) {
@@ -2505,6 +2507,8 @@ matchReward: { type: String, enum: ['Rewarded', 'NotRewarded'], default: 'NotRew
 matchSchema.index({ matchStatus: 1, matchShadowOpenStatus: 1, updatedAt: -1 });
 matchSchema.index({ matchDate: -1, updatedAt: -1 });
 matchSchema.index({ homepagePromoted: 1, homepagePromotionRank: -1, matchDate: 1, updatedAt: -1 });
+matchSchema.index({ featuredThisWeek: 1, matchDate: 1 });
+matchSchema.index({ featuredFight: 1, matchDate: 1 });
 matchSchema.index({ affiliateId: 1, updatedAt: -1 });
 matchSchema.index({ autoDiscoveryKey: 1 }, { sparse: true });
 matchSchema.index({ ufcEventNumber: 1 }, { sparse: true });
@@ -10754,6 +10758,13 @@ async function ensureDeadWeekShadowFight(now = new Date()) {
     { shadowAutoPublished: true, shadowExpiresAt: { $lte: now } },
     { $set: { matchStatus: 'Closed', matchShadowOpenStatus: 'closed', homepagePromoted: false } },
   ).catch(() => null);
+  // Dead-week mystery fights no longer claim a homepage slot on their own — that
+  // locked admins out of putting a real fight in that position. Clear it off any
+  // still-active one immediately; admins place fights there manually now.
+  await Shadow.updateMany(
+    { shadowAutoPublished: true, homepagePromoted: true },
+    { $set: { homepagePromoted: false } },
+  ).catch(() => null);
   if (!calendar.deadWeek) return { ...calendar, shadow: null, published: false };
 
   const active = await Shadow.findOne({
@@ -10792,11 +10803,6 @@ async function ensureDeadWeekShadowFight(now = new Date()) {
   candidate.shadowPublishedAt = now;
   candidate.shadowExpiresAt = expiresAt;
   candidate.shadowLastUsedAt = now;
-  candidate.homepagePromoted = true;
-  candidate.homepagePromotionTitle = 'MYSTERY SHADOW FIGHT';
-  candidate.homepagePromotionSubtitle = 'No live fight this week — test your skills on an archived mystery card.';
-  candidate.homepagePromotionUpdatedAt = now;
-  candidate.homepagePromotionUpdatedBy = 'dead-week-retention';
   await candidate.save();
   clearPublicResponseCache();
   return { ...calendar, shadow: candidate, published: true };
