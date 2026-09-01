@@ -17291,6 +17291,58 @@ app.get('/api/admin/affiliate-payouts', verifyAdminToken, async (req, res) => {
   }
 });
 
+// Every fight an affiliate has created, live or not — the admin's own view into
+// affiliate-run cards. Staking a guaranteed pot is optional (promoterStake > 0);
+// most affiliate fights build their pot purely from entries.
+app.get('/api/admin/affiliate-fights', verifyAdminToken, async (req, res) => {
+  try {
+    const affiliateFilter = { $or: [{ affiliateId: { $exists: true, $ne: '' } }, { 'AffiliateIds.0': { $exists: true } }] };
+    const fields = 'matchName matchFighterA matchFighterB matchCategory matchCategoryTwo matchStatus matchDate matchTokens pot potTarget promoterStake profitZoneReachedAt affiliateId AffiliateIds fighterAId fighterBId';
+    const [matches, shadows, affiliates] = await Promise.all([
+      Match.find(affiliateFilter).select(fields).populate('fighterAId fighterBId').lean(),
+      Shadow.find(affiliateFilter).select(fields).populate('fighterAId fighterBId').lean(),
+      Affiliate.find().select('_id firstName lastName playerName email verified').lean(),
+    ]);
+    const affiliateById = new Map(affiliates.map((affiliate) => [String(affiliate._id), affiliate]));
+    const rowsFor = (docs, sourceType) => docs.map((fight) => {
+      const item = attachCombatFighterReadFallbacks(fight, sourceType);
+      const ownerIds = [
+        item.affiliateId,
+        ...(Array.isArray(item.AffiliateIds) ? item.AffiliateIds.map((entry) => entry?.AffiliateId) : []),
+      ].filter(Boolean).map(String);
+      const owner = ownerIds.map((id) => affiliateById.get(id)).find(Boolean) || null;
+      const stake = Math.max(0, Number(item.promoterStake) || 0);
+      const potTarget = Math.max(0, Number(item.potTarget) || 0);
+      return {
+        _id: item._id,
+        sourceType,
+        matchName: item.matchName || `${item.matchFighterA || 'Fighter A'} vs ${item.matchFighterB || 'Fighter B'}`,
+        matchFighterA: item.matchFighterA,
+        matchFighterB: item.matchFighterB,
+        matchCategory: item.matchCategoryTwo || item.matchCategory,
+        matchStatus: item.matchStatus,
+        matchDate: item.matchDate,
+        entryFee: Math.max(0, Number(item.matchTokens) || 0),
+        pot: Math.max(0, Number(item.pot) || 0),
+        potTarget,
+        promoterStake: stake,
+        guaranteed: stake > 0,
+        profitZoneReached: Boolean(item.profitZoneReachedAt),
+        affiliateId: owner ? String(owner._id) : (ownerIds[0] || null),
+        affiliateName: owner ? (owner.playerName || [owner.firstName, owner.lastName].filter(Boolean).join(' ')) : 'Unknown affiliate',
+        affiliateEmail: owner?.email || '',
+        affiliateVerified: Boolean(owner?.verified),
+      };
+    });
+    const rows = [...rowsFor(matches, 'match'), ...rowsFor(shadows, 'shadow')]
+      .sort((a, b) => new Date(b.matchDate || 0) - new Date(a.matchDate || 0));
+    return res.status(200).json({ count: rows.length, fights: rows });
+  } catch (error) {
+    console.error('Listing affiliate fights failed:', error);
+    return res.status(500).json({ message: 'Could not load affiliate fights.' });
+  }
+});
+
 const resolveAffiliatePayout = async ({ affiliateId, payoutIndex, nextStatus, reason, adminId, creditBack }) => {
   const affiliate = await Affiliate.findById(affiliateId);
   if (!affiliate) throw fightEntryError(404, 'Affiliate not found.', 'AFFILIATE_NOT_FOUND');
