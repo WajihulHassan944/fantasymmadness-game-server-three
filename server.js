@@ -16364,6 +16364,10 @@ function getHomepagePromotionUpdate(req) {
     homepagePromotionUpdatedAt: now,
     homepagePromotionUpdatedBy: req.admin?.id || req.admin?._id || req.admin?.email || 'admin',
   };
+  // A mystery/hidden-identity shadow fight put on the homepage defeats its own
+  // purpose \u2014 the spotlight slot showed "MYSTERY RED CORNER / MYSTERY BLUE
+  // CORNER" instead of the fighter the admin picked. Promoting a fight reveals it.
+  if (promoted) update.shadowIdentityHidden = false;
   if (req.body?.rank !== undefined || req.body?.homepagePromotionRank !== undefined) {
     update.homepagePromotionRank = Number(req.body?.homepagePromotionRank ?? req.body?.rank) || 0;
   }
@@ -16446,6 +16450,10 @@ app.patch('/api/admin/fights/:id/homepage-placement', verifyAdminToken, async (r
       ]);
     }
     resolved.doc[placementField] = selected;
+    // Same reveal rule as homepage-promotion: a mystery fight put into a
+    // named spotlight surface should show its real fighters, not the hidden
+    // placeholder.
+    if (selected) resolved.doc.shadowIdentityHidden = false;
     if (surface === 'featured-this-week' && req.body?.image !== undefined) resolved.doc.featuredThisWeekImage = String(req.body.image || '').trim();
     if (surface === 'featured-fight') {
       if (req.body?.backgroundImage !== undefined) resolved.doc.featuredFightBackgroundImage = String(req.body.backgroundImage || '').trim();
