@@ -1847,6 +1847,7 @@ const shadowSchema = new mongoose.Schema({
   division: String,
   weightClass: String,
   homepagePromotionRank: { type: Number, default: 0 },
+  homepageSlot: { type: Number, default: 0 },
   homepagePromotionTitle: String,
   homepagePromotionSubtitle: String,
   homepagePromotionCtaLabel: String,
@@ -2402,6 +2403,7 @@ matchReward: { type: String, enum: ['Rewarded', 'NotRewarded'], default: 'NotRew
   division: String,
   weightClass: String,
   homepagePromotionRank: { type: Number, default: 0 },
+  homepageSlot: { type: Number, default: 0 },
   homepagePromotionTitle: String,
   homepagePromotionSubtitle: String,
   homepagePromotionCtaLabel: String,
@@ -16364,6 +16366,11 @@ function getHomepagePromotionUpdate(req) {
   };
   if (req.body?.rank !== undefined || req.body?.homepagePromotionRank !== undefined) {
     update.homepagePromotionRank = Number(req.body?.homepagePromotionRank ?? req.body?.rank) || 0;
+  }
+  // Explicit slot (1-5) the admin picked directly. 0 means unassigned — the
+  // homepage falls back to weight/date ordering for those fights.
+  if (req.body?.homepageSlot !== undefined) {
+    update.homepageSlot = Math.max(0, Math.min(5, Number(req.body.homepageSlot) || 0));
   }
   if (req.body?.title !== undefined || req.body?.homepagePromotionTitle !== undefined) update.homepagePromotionTitle = String(req.body?.homepagePromotionTitle ?? req.body?.title ?? '').trim();
   if (req.body?.subtitle !== undefined || req.body?.homepagePromotionSubtitle !== undefined) update.homepagePromotionSubtitle = String(req.body?.homepagePromotionSubtitle ?? req.body?.subtitle ?? '').trim();
