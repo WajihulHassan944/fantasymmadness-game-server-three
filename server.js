@@ -24505,19 +24505,28 @@ app.post('/api/admin/fights/:fightId/scorers', verifyAdminToken, async (req, res
     const appOrigin = String(process.env.PUBLIC_APP_URL || 'https://www.fantasymmadness.com').replace(/\/$/, '');
     const link = `${appOrigin}/score/${rawToken}`;
 
+    let emailSent = false;
+    let emailError = '';
     if (assignment.scorerEmail) {
-      transporter.sendMail({
-        from: process.env.SMTP_USER || 'Fantasymmadness2@gmail.com',
-        to: assignment.scorerEmail,
-        subject: `You are scoring ${fightLabel}`,
-        html: `<p>You have been asked to score <strong>${fightLabel}</strong>.</p>
-               <p><a href="${link}">Open the scorecard</a></p>
-               <p>This link works once and expires in ${SCORER_LINK_TTL_HOURS} hours. You can submit rounds as they happen; only the promoter can finalize the fight.</p>`,
-      }).catch((mailError) => console.warn('Scorer invite email failed:', mailError?.message));
+      try {
+        await transporter.sendMail({
+          from: process.env.SMTP_USER || 'Fantasymmadness2@gmail.com',
+          to: assignment.scorerEmail,
+          subject: `You are scoring ${fightLabel}`,
+          html: `<p>You have been asked to score <strong>${fightLabel}</strong>.</p>
+                 <p><a href="${link}">Open the scorecard</a></p>
+                 <p>This link works once and expires in ${SCORER_LINK_TTL_HOURS} hours. You can submit rounds as they happen; only the promoter can finalize the fight.</p>`,
+        });
+        emailSent = true;
+      } catch (mailError) {
+        console.warn('Scorer invite email failed:', mailError?.message);
+        emailError = mailError?.message || 'Email delivery failed.';
+      }
     }
 
-    // The raw token is returned exactly once, here.
-    return res.status(201).json({ ok: true, assignment: { id: assignment._id, mode: 'link', expiresAt }, link });
+    // The raw token is returned exactly once, here \u2014 so the admin can still
+    // copy/paste it manually if the email failed to send.
+    return res.status(201).json({ ok: true, assignment: { id: assignment._id, mode: 'link', expiresAt }, link, emailSent, emailError });
   } catch (error) {
     console.error('Assign scorer failed:', error);
     return res.status(500).json({ message: 'Could not assign a scorer.' });
