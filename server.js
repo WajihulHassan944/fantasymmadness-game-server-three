@@ -40,6 +40,11 @@ const xml2js = require('xml2js');
 const { registerSwarmPhase2Routes } = require('./swarm-phase2');
 const { registerSeoPerformancePhase2Routes } = require('./seo-performance-phase2');
 const { registerFightDataQualityRoutes } = require('./fight-data-quality');
+const { registerAdminPushRoutes } = require('./admin-push');
+// Populated once registerAdminPushRoutes runs below; declared early so the
+// signup handlers further up the file can close over it safely (they only
+// call it at request time, long after the server has finished booting).
+let sendAdminPush = async () => ({ sent: 0, failed: 0, skipped: true });
 const { registerUfcEventDiscovery, GOOGLE_NEWS_UFC_RSS_FEED_URL, _private: ufcEventDiscoveryPrivate } = require('./ufc-event-discovery');
 const {
   FM_COIN_PRODUCTS,
@@ -6812,6 +6817,7 @@ app.post('/register', submitLimiter, async (req, res) => {
 
     // Notification
     await new Notification({ title: `New User Signed Up: ${newUser.firstName}` }).save();
+    sendAdminPush({ title: 'New player sign-up', body: `${newUser.firstName} just joined.`, url: '/administration/RegisteredUsers' }).catch(() => null);
 
     // Handle referral safely
     if (referrerId && referrerId !== newUser._id.toString()) {
@@ -8780,6 +8786,7 @@ const notification = new Notification({
 
       // Send email notification to admin for approval
       const approvalLink = `https://fantasymmadness-game-server-three.vercel.app/approveAffiliate/${affiliate._id}?t=${signActionToken('affiliate-approval', affiliate._id)}`;
+      sendAdminPush({ title: 'New affiliate sign-up', body: `${affiliate.firstName} needs approval.`, url: '/administration/AffiliateUsers' }).catch(() => null);
 
       await transporter.sendMail({
         from: '"Fantasy Madness" <Fantasymmadness2@gmail.com>',
@@ -9848,6 +9855,7 @@ const notification = new Notification({
     });
     await notification.save();
     const approvalLink = `https://fantasymmadness-game-server-three.vercel.app/approveAffiliate/${newUser._id}?t=${signActionToken('affiliate-approval', newUser._id)}`;
+    sendAdminPush({ title: 'New affiliate sign-up', body: `${newUser.firstName} needs approval.`, url: '/administration/AffiliateUsers' }).catch(() => null);
 
     // Send email notification to the admin
     await transporter.sendMail({
@@ -16786,6 +16794,10 @@ registerFightDataQualityRoutes({
   Match,
   Shadow,
 });
+
+// PHASE: Admin push alerts — lets an admin install the back office to their
+// phone home screen and get a real push (not just email) on new signups.
+({ sendAdminPush } = registerAdminPushRoutes({ app, mongoose, verifyAdminToken }));
 
 // ==========================================================================
 // ATOMIC FIGHT ENTRY — charges the entry fee and saves the prediction together
