@@ -104,11 +104,10 @@ function registerSeoPerformancePhase2Routes(options = {}) {
     res.json({ ok: true, ...result });
   }));
 
-  // NOTE: '/api/public/prediction-fights' used to be redefined here too. Express
-  // routes to the FIRST handler registered for a path, and server.js registers
-  // the real one (same permissive draft-exclusion logic) earlier at boot, so
-  // this copy was always dead code — removed to stop it looking like a second
-  // source of truth.
+  app.get('/api/public/prediction-fights', cachePublicResponse, asyncHandler(async (req, res) => {
+    const result = await listFights({ req: withMergedQuery(req, { playable: 'true', intent: 'active-contests' }), Match: models.Match, Shadow: models.Shadow });
+    res.json({ ok: true, ...result, feed: 'prediction-ready' });
+  }));
 
   app.get('/api/public/fights/:id', cachePublicResponse, asyncHandler(async (req, res) => {
     const fight = await findFightById(models.Match, models.Shadow, req.params.id, req.query);

@@ -1,0 +1,48 @@
+{
+  "name": "backend-for-share-experiences",
+  "version": "1.0.0",
+  "description": "",
+  "main": "index.js",
+  "engines": {
+    "node": ">=14.20.1"
+  },
+  "scripts": {
+    "test": "node client-feedback-core.test.js && node pro-wrestling-core.test.js && node pro-wrestling-routes.test.js && node swarm-phase2.test.js && node seo-performance-phase2.test.js && node fight-data-quality.test.js && node ufc-event-discovery.test.js",
+    "start": "node server.js",
+    "test:pro-wrestling": "node pro-wrestling-core.test.js && node pro-wrestling-routes.test.js",
+    "test:swarm-phase2": "node swarm-phase2.test.js",
+    "test:seo-performance-phase2": "node seo-performance-phase2.test.js"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "authorizenet": "^1.0.9",
+    "axios": "^1.7.7",
+    "bcrypt": "^5.1.0",
+    "body-parser": "^1.20.2",
+    "cloudinary": "^2.5.1",
+    "cors": "^2.8.5",
+    "crypto": "^1.0.1",
+    "express": "^4.18.2",
+    "form-data": "^4.0.0",
+    "google-auth-library": "^9.14.1",
+    "jsonwebtoken": "^9.0.2",
+    "moment": "^2.30.1",
+    "mongodb": "^6.12.0",
+    "mongoose": "^7.1.0",
+    "multer": "^1.4.5-lts.1",
+    "node-cron": "^3.0.3",
+    "node-fetch": "^2.7.0",
+    "nodemailer": "^6.9.3",
+    "pusher": "^5.2.0",
+    "rss-parser": "^3.13.0",
+    "stripe": "^16.8.0",
+    "util": "^0.12.5",
+    "web-push": "^3.6.7",
+    "xml2js": "^0.6.2"
+  },
+  "devDependencies": {
+    "@types/authorizenet": "^1.0.2"
+  }
+}

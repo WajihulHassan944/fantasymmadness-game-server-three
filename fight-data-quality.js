@@ -515,19 +515,6 @@ function registerFightDataQualityRoutes(options) {
     res.json({ ok: true, softDeleted: true, fighter: serializeCombatFighter(fighter), note: 'Fighter was soft-deleted/inactivated. Existing fights keep their old name/image fallback fields.' });
   }));
 
-  // Permanent removal, separate from the soft-delete above. Deactivate is the
-  // default (existing fights keep a name/image fallback); this actually erases
-  // the fighter record so it never shows up in the library again.
-  app.delete('/api/admin/combat-fighters/:id/permanent', verifyAdminToken, asyncHandler(async (req, res) => {
-    const fighter = await CombatFighter.findById(req.params.id);
-    if (!fighter) return res.status(404).json({ ok: false, code: 'COMBAT_FIGHTER_NOT_FOUND', message: 'Combat fighter not found.' });
-    if (fighter.imagePublicId && cloudinary) {
-      await cloudinary.uploader.destroy(fighter.imagePublicId).catch(() => null);
-    }
-    await CombatFighter.findByIdAndDelete(req.params.id);
-    res.json({ ok: true, permanentlyDeleted: true, id: req.params.id, note: 'Fighter record was permanently removed. Fights already using this fighter keep their existing fallback name/image fields.' });
-  }));
-
   app.post('/api/admin/combat-fighters/:id/restore', verifyAdminToken, asyncHandler(async (req, res) => {
     const fighter = await CombatFighter.findById(req.params.id);
     if (!fighter) return res.status(404).json({ ok: false, code: 'COMBAT_FIGHTER_NOT_FOUND', message: 'Combat fighter not found.' });
