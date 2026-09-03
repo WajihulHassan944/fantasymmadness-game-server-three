@@ -7,7 +7,7 @@ step gates the next.
 ---
 
 ## 1. Set environment variables (do this first — the server refuses to boot without them)
-
+done
 A boot guard in `backend-fix/server.js` validates configuration and, in
 production, exits with a `FATAL:` line naming the problem.
 
