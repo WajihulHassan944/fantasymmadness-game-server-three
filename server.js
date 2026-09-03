@@ -8502,6 +8502,18 @@ attachSafeAccountJsonTransform(affiliateSchema);
 
 const Affiliate = mongoose.models.Affiliate || mongoose.model('Affiliate', affiliateSchema);
 
+// Instant-approval affiliate invites — the admin generates a link for a known
+// fighter/influencer to skip the manual-approval wait entirely. One-time use,
+// expires after 14 days by default.
+const affiliateInviteSchema = new mongoose.Schema({
+  code: { type: String, required: true, unique: true, index: true },
+  note: { type: String, default: '' },
+  expiresAt: { type: Date, required: true },
+  usedAt: { type: Date, default: null },
+  usedByAffiliateId: { type: mongoose.Schema.Types.ObjectId, ref: 'Affiliate', default: null },
+}, { timestamps: true });
+const AffiliateInvite = mongoose.models.AffiliateInvite || mongoose.model('AffiliateInvite', affiliateInviteSchema);
+
 
 app.post('/upload-affiliate-reward', verifyAdminToken, upload.single('image'), async (req, res) => {
   try {
@@ -9787,6 +9799,36 @@ app.post('/affiliates/:id/verify', verifyAdminToken, async (req, res) => {
   }
 });
 
+// Admin generates a one-time instant-approval link to send directly to a
+// known fighter/influencer — they land on the normal signup form but skip
+// the manual-approval wait.
+app.post('/api/admin/affiliate-invites', verifyAdminToken, async (req, res) => {
+  try {
+    const days = Number(req.body?.expiresInDays) > 0 ? Number(req.body.expiresInDays) : 14;
+    const code = crypto.randomBytes(9).toString('base64url');
+    const invite = await AffiliateInvite.create({
+      code,
+      note: String(req.body?.note || '').slice(0, 200),
+      expiresAt: new Date(Date.now() + days * 24 * 60 * 60 * 1000),
+    });
+    const siteBase = String(process.env.PUBLIC_SITE_URL || 'https://fantasymmadness.com').replace(/\/$/, '');
+    res.status(201).json({ invite, url: `${siteBase}/auth?mode=signup&role=affiliate&invite=${code}` });
+  } catch (error) {
+    console.error('Error creating affiliate invite:', error);
+    res.status(500).json({ message: 'Could not create the invite link.' });
+  }
+});
+
+app.get('/api/admin/affiliate-invites', verifyAdminToken, async (req, res) => {
+  try {
+    const invites = await AffiliateInvite.find().sort({ createdAt: -1 }).limit(100).populate('usedByAffiliateId', 'firstName lastName email');
+    res.json({ invites });
+  } catch (error) {
+    console.error('Error listing affiliate invites:', error);
+    res.status(500).json({ message: 'Could not load invites.' });
+  }
+});
+
 app.post('/registerAffiliate', submitLimiter, upload.single('image'), async (req, res) => {
   try {
     const {
@@ -9801,7 +9843,8 @@ app.post('/registerAffiliate', submitLimiter, upload.single('image'), async (req
       isSubscribed,
       isUSCitizen,
       isAgreed,
-      hearing
+      hearing,
+      inviteCode,
     } = req.body;
 
     // Check if email already exists
@@ -9828,6 +9871,13 @@ app.post('/registerAffiliate', submitLimiter, upload.single('image'), async (req
       profileDeleteUrl = result.public_id;
     }
 
+    // Redeem an instant-approval invite, if a valid unused/unexpired one was supplied.
+    let redeemedInvite = null;
+    const trimmedInviteCode = String(inviteCode || '').trim();
+    if (trimmedInviteCode) {
+      redeemedInvite = await AffiliateInvite.findOne({ code: trimmedInviteCode, usedAt: null, expiresAt: { $gt: new Date() } });
+    }
+
     // Create new user with hashed password
     const newUser = new Affiliate({
       firstName,
@@ -9841,7 +9891,7 @@ app.post('/registerAffiliate', submitLimiter, upload.single('image'), async (req
       isSubscribed,
       isUSCitizen,
       isAgreed,
-      verified: false,
+      verified: Boolean(redeemedInvite),
       password: await bcrypt.hash(password, 10),
       profileUrl, // Save the profile image URL
       profileDeleteUrl, // Save the delete URL for future image deletion
@@ -9850,10 +9900,23 @@ app.post('/registerAffiliate', submitLimiter, upload.single('image'), async (req
     // Save the new user to the database
     await newUser.save();
 
+    if (redeemedInvite) {
+      redeemedInvite.usedAt = new Date();
+      redeemedInvite.usedByAffiliateId = newUser._id;
+      await redeemedInvite.save();
+    }
+
 const notification = new Notification({
-      title: `Affiliate Signed Up: ${newUser.firstName}`,
+      title: redeemedInvite ? `Affiliate auto-approved via invite: ${newUser.firstName}` : `Affiliate Signed Up: ${newUser.firstName}`,
     });
     await notification.save();
+
+    if (redeemedInvite) {
+      // Instant-approved — no admin action needed, just let them know it happened.
+      sendAdminPush({ title: 'Affiliate auto-approved', body: `${newUser.firstName} signed up via instant invite and is live.`, url: '/administration/AffiliateUsers' }).catch(() => null);
+      return res.status(201).json({ message: 'Affiliate account created and instantly approved.', instantApproved: true });
+    }
+
     const approvalLink = `https://fantasymmadness-game-server-three.vercel.app/approveAffiliate/${newUser._id}?t=${signActionToken('affiliate-approval', newUser._id)}`;
     sendAdminPush({ title: 'New affiliate sign-up', body: `${newUser.firstName} needs approval.`, url: '/administration/AffiliateUsers' }).catch(() => null);
 

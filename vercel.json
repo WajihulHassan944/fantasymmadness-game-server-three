@@ -1,18 +1,33 @@
 {
-  "version": 2,
-  "name": "backend-for-share-experiences",
-  "builds": [{ "src": "server.js", "use": "@vercel/node" }],
-  "routes": [
-    { "src": "/(.*)", "dest": "/server.js" }
-  ],
+  "$schema": "https://openapi.vercel.sh/vercel.json",
   "crons": [
     {
-      "path": "/api/cron-job",
-      "schedule": "0 0 * * *"
+      "path": "/api/cron/team-contests/settle",
+      "schedule": "*/15 * * * *"
+    },
+    {
+      "path": "/api/cron/challenges/expire",
+      "schedule": "*/30 * * * *"
+    },
+    {
+      "path": "/api/cron/seasons/advance",
+      "schedule": "0 * * * *"
     },
     {
       "path": "/api/update-shadow-open-status",
-      "schedule": "0 0 * * *"
+      "schedule": "5 * * * *"
+    },
+    {
+      "path": "/api/cron-job",
+      "schedule": "15 * * * *"
+    },
+    {
+      "path": "/api/cron/retention",
+      "schedule": "0 15 * * *"
+    },
+    {
+      "path": "/api/cron/owner-integrity",
+      "schedule": "0 8 * * *"
     }
   ]
 }
