@@ -601,22 +601,70 @@ function normalizeCombatCategory(category) {
   return value;
 }
 
-async function resolveCombatFighterSelectionForMatchInput({ fighterAId, fighterBId }) {
+async function resolveCombatFighterSelectionForMatchInput({ fighterAId, fighterBId, matchFighterA, matchFighterB, fighterAImage, fighterBImage, fighterAImagePublicId, fighterBImagePublicId, matchCategory }) {
   const CombatFighter = mongoose.models.CombatFighter;
   const result = { fighterA: null, fighterB: null };
   const ids = [fighterAId, fighterBId].map((value) => String(value || '').trim()).filter(Boolean);
   const uniqueIds = [...new Set(ids)].filter((id) => mongoose.isValidObjectId(id));
 
-  if (!CombatFighter || uniqueIds.length === 0) return result;
+  if (CombatFighter && uniqueIds.length) {
+    const fighters = await CombatFighter.find({ _id: { $in: uniqueIds }, status: { $ne: 'inactive' } }).lean();
+    const byId = new Map(fighters.map((fighter) => [String(fighter._id), fighter]));
+    result.fighterA = byId.get(String(fighterAId || '').trim()) || null;
+    result.fighterB = byId.get(String(fighterBId || '').trim()) || null;
+  }
 
-  const fighters = await CombatFighter.find({ _id: { $in: uniqueIds }, status: { $ne: 'inactive' } }).lean();
-  const byId = new Map(fighters.map((fighter) => [String(fighter._id), fighter]));
-  const fighterAKey = String(fighterAId || '').trim();
-  const fighterBKey = String(fighterBId || '').trim();
+  // Any fighter that arrives with a name + image but no library id — someone
+  // uploaded straight onto the fight instead of picking from the library —
+  // gets registered into the library automatically, so they show up there
+  // for editing/deletion instead of only existing as fields on this one fight.
+  if (CombatFighter) {
+    if (!result.fighterA && matchFighterA && fighterAImage) {
+      result.fighterA = await autoRegisterCombatFighter(CombatFighter, { name: matchFighterA, image: fighterAImage, imagePublicId: fighterAImagePublicId, category: matchCategory });
+    }
+    if (!result.fighterB && matchFighterB && fighterBImage) {
+      result.fighterB = await autoRegisterCombatFighter(CombatFighter, { name: matchFighterB, image: fighterBImage, imagePublicId: fighterBImagePublicId, category: matchCategory });
+    }
+  }
 
-  result.fighterA = byId.get(fighterAKey) || null;
-  result.fighterB = byId.get(fighterBKey) || null;
   return result;
+}
+
+async function autoRegisterCombatFighter(CombatFighter, { name, image, imagePublicId, category }) {
+  const displayName = String(name || '').trim();
+  const normalizedName = displayName.toLowerCase();
+  // Match resolveSport() on the client: a bare-knuckle bout is stored as
+  // matchCategory 'boxing' + matchCategoryTwo 'Bare-knuckle', so the caller
+  // passes categoryTwo first when set. Normalize the same "bare"/"bkfc"
+  // wording here so an auto-registered fighter's category actually matches
+  // the sport pill's lookup key ('bare-knuckle') instead of silently
+  // defaulting to 'boxing' and never showing up in that carousel.
+  const rawCategory = String(category || 'combat').trim().toLowerCase();
+  const normalizedCategory = (rawCategory.includes('bare') || rawCategory.includes('bkfc')) ? 'bare-knuckle' : (rawCategory || 'combat');
+  if (!displayName || !image) return null;
+  try {
+    return await CombatFighter.findOneAndUpdate(
+      { normalizedName, category: normalizedCategory },
+      {
+        $setOnInsert: {
+          displayName,
+          normalizedName,
+          category: normalizedCategory,
+          primaryImage: image,
+          imagePublicId: imagePublicId || undefined,
+          status: 'active',
+          source: 'auto-registered-from-fight',
+        },
+      },
+      { upsert: true, new: true, setDefaultsOnInsert: true }
+    ).lean();
+  } catch (error) {
+    // Duplicate-key race on the unique (normalizedName, category) index — just
+    // re-read the record another request just created.
+    if (error?.code === 11000) return CombatFighter.findOne({ normalizedName, category: normalizedCategory }).lean();
+    console.error('Auto-register fighter from fight failed:', error);
+    return null;
+  }
 }
 
 function applyCombatFighterSelectionToMatchPayload(matchData, selection = {}, options = {}) {
@@ -2019,6 +2067,25 @@ app.post('/compare-matches', verifyAdminToken, async (req, res) => {
   }
 });
 
+// Uncached admin fetch for a single fight, by id, across MMA/Boxing/wrestling
+// collections. Edit screens must never read through the public-fights cache
+// (clearPublicResponseCache() runs on save, but CDN/edge layers in front of
+// the public route can still serve a stale copy) — this always hits the DB.
+app.get('/api/admin/matches/:id', verifyAdminToken, async (req, res) => {
+  try {
+    const { id } = req.params;
+    if (!mongoose.isValidObjectId(id)) return res.status(400).json({ message: 'Invalid fight id.' });
+    const match = (await MMAMatch.findById(id).lean())
+      || (await BoxingMatch.findById(id).lean())
+      || (await ProWrestlingMatch.findById(id).lean());
+    if (!match) return res.status(404).json({ message: 'Fight not found.' });
+    res.json({ match });
+  } catch (error) {
+    console.error('Error loading admin match by id:', error);
+    res.status(500).json({ message: 'Could not load this fight.' });
+  }
+});
+
 app.post(
   '/editShadow',
   verifyAdminToken,
@@ -3410,7 +3477,10 @@ app.post(
         promotionBackgroundDeleteUrl = resultBackground.public_id;
       }
 
-      const fighterSelection = await resolveCombatFighterSelectionForMatchInput({ fighterAId, fighterBId });
+      const fighterSelection = await resolveCombatFighterSelectionForMatchInput({
+        fighterAId, fighterBId, matchFighterA, matchFighterB, fighterAImage, fighterBImage,
+        fighterAImagePublicId: fighterAImageDeleteUrl, fighterBImagePublicId: fighterBImageDeleteUrl, matchCategory: matchCategoryTwo || matchCategory,
+      });
       const requestedMatchDate = matchDate || req.body?.fightDate || req.body?.scheduledDate;
       const requestedMatchTime = matchTime || req.body?.fightTime || req.body?.scheduledTime;
       const normalizedRequestedDate = normalizeCalendarDateInput(requestedMatchDate);
@@ -3829,7 +3899,10 @@ app.post(
         promotionBackground = promotionBackgroundUrl;
       }
 
-      const fighterSelection = await resolveCombatFighterSelectionForMatchInput({ fighterAId, fighterBId });
+      const fighterSelection = await resolveCombatFighterSelectionForMatchInput({
+        fighterAId, fighterBId, matchFighterA, matchFighterB, fighterAImage, fighterBImage,
+        fighterAImagePublicId: fighterAImageDeleteUrl, fighterBImagePublicId: fighterBImageDeleteUrl, matchCategory: matchCategoryTwo || matchCategory,
+      });
       const selectedFighterPatch = applyCombatFighterSelectionToMatchPayload({}, fighterSelection);
 
       // Update the match object. Use explicit provided-value checks so 0 remains valid.
@@ -18642,12 +18715,18 @@ const MAX_ACCOUNTS_PER_DEVICE = Number(process.env.MAX_ACCOUNTS_PER_DEVICE || 2)
 const checkDuplicateSignup = async ({ email, deviceId, ip }) => {
   const normalizedEmail = normalizeEmailForDupes(email);
 
-  const aliasMatch = await User.findOne({
-    email: { $ne: String(email).toLowerCase() },
-  }).select('email').lean().then(async () => {
-    const candidates = await User.find({}).select('email').limit(5000).lean();
-    return candidates.find((u) => normalizeEmailForDupes(u.email) === normalizedEmail);
-  }).catch(() => null);
+  // Was: a discarded findOne() immediately followed by an unconditional
+  // full-collection email scan (up to 5000 docs) on EVERY signup attempt —
+  // one wasted round trip plus a large one, both before the user's account is
+  // even created. On a large user base this is slow enough to time out the
+  // whole /register request on serverless, which is what "can't sign up"
+  // reports traced back to. Query is now direct (no wasted call), and capped
+  // with a hard timeout so a slow scan fails OPEN instead of hanging signup.
+  const aliasMatch = await Promise.race([
+    User.find({}).select('email').limit(5000).lean()
+      .then((candidates) => candidates.find((u) => normalizeEmailForDupes(u.email) === normalizedEmail)),
+    new Promise((resolve) => setTimeout(() => resolve(null), 2500)),
+  ]).catch(() => null);
 
   if (aliasMatch) {
     return {
