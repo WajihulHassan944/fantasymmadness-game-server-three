@@ -6912,7 +6912,12 @@ app.post('/register', submitLimiter, async (req, res) => {
       }
     }
 
-    // Schedule verification timeout cleanup
+    // Schedule verification timeout cleanup. Was 120000ms (2 minutes) — far
+    // too aggressive: any real-world email delay (spam filtering, provider
+    // lag) meant the account was deleted before the person could even open
+    // their inbox, so a late-arriving link failed with no clear reason and
+    // there was no way to get a fresh one. 24 hours, plus a real resend route
+    // below.
     setTimeout(async () => {
       try {
         const user = await User.findOne({ email });
@@ -6929,7 +6934,7 @@ app.post('/register', submitLimiter, async (req, res) => {
       } catch (err) {
         console.error('Error during verification timeout cleanup:', err);
       }
-    }, 120000);
+    }, 24 * 60 * 60 * 1000);
 
     // Send verification email
     const verificationLink = `https://fantasymmadness-game-server-three.vercel.app/verify-email?token=${verificationToken}`;
@@ -6952,6 +6957,33 @@ app.post('/register', submitLimiter, async (req, res) => {
   } catch (error) {
     console.error("Unhandled registration error:", error);
     return res.status(500).json({ error: 'Error during registration' });
+  }
+});
+
+app.post('/resend-verification', submitLimiter, async (req, res) => {
+  try {
+    const email = String(req.body?.email || '').trim().toLowerCase();
+    if (!email) return res.status(400).json({ message: 'Email is required.' });
+    const user = await User.findOne({ email });
+    // Same response whether or not the account exists / is already verified —
+    // this endpoint must not confirm which emails are registered.
+    if (!user || user.verified) {
+      return res.status(200).json({ message: 'If that account needs verification, a new email is on its way.' });
+    }
+    const verificationToken = crypto.randomBytes(20).toString('hex');
+    user.verificationToken = verificationToken;
+    await user.save();
+    const verificationLink = `https://fantasymmadness-game-server-three.vercel.app/verify-email?token=${verificationToken}`;
+    await transporter.sendMail({
+      from: 'Fantasymmadness2@gmail.com',
+      to: email,
+      subject: 'Email Verification',
+      html: `<p>Click below to verify your email:</p><a href="${verificationLink}">Verify Email</a>`,
+    });
+    res.status(200).json({ message: 'Verification email resent.' });
+  } catch (error) {
+    console.error('Error resending verification email:', error);
+    res.status(500).json({ message: 'Could not resend the verification email.' });
   }
 });
 
