@@ -10943,7 +10943,19 @@ async function ensureDeadWeekShadowFight(now = new Date()) {
     { shadowAutoPublished: true, homepagePromoted: true },
     { $set: { homepagePromoted: false } },
   ).catch(() => null);
-  if (!calendar.deadWeek) return { ...calendar, shadow: null, published: false };
+  if (!calendar.deadWeek) {
+    // Was: only expired shadow fights got closed above; an active one from a
+    // PRIOR dead week kept running (and showing "MYSTERY RED/BLUE CORNER")
+    // for up to its full 7-day window even after a real fight was published —
+    // masking the real fight instead of stepping aside for it. Retire it
+    // immediately once a real upcoming fight exists.
+    await Shadow.updateMany(
+      { shadowAutoPublished: true, matchShadowOpenStatus: 'open' },
+      { $set: { matchStatus: 'Closed', matchShadowOpenStatus: 'closed', homepagePromoted: false } },
+    ).catch(() => null);
+    clearPublicResponseCache();
+    return { ...calendar, shadow: null, published: false };
+  }
 
   const active = await Shadow.findOne({
     shadowAutoPublished: true,
@@ -10996,6 +11008,20 @@ async function buildRetentionState() {
     shadowPublishedNow: Boolean(result.published),
   };
 }
+
+app.post('/api/admin/retention/retire-shadow-fight', verifyAdminToken, async (req, res) => {
+  try {
+    await Shadow.updateMany(
+      { shadowAutoPublished: true, matchShadowOpenStatus: 'open' },
+      { $set: { matchStatus: 'Closed', matchShadowOpenStatus: 'closed', homepagePromoted: false } },
+    );
+    clearPublicResponseCache();
+    res.json({ ok: true, message: 'Mystery fight retired. Real fights will show now.' });
+  } catch (error) {
+    console.error('Error retiring shadow fight:', error);
+    res.status(500).json({ message: 'Could not retire the mystery fight.' });
+  }
+});
 
 cron.schedule('15 0 * * *', async () => {
   try {
