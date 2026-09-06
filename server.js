@@ -5216,7 +5216,7 @@ app.post('/forgotPassword-user', submitLimiter, async (req, res) => {
 
     const mailOptions = {
       to: user.email,
-      from: 'wajih786hassan@gmail.com',
+      from: process.env.SMTP_USER || 'Fantasymmadness2@gmail.com',
       subject: 'Password Reset Request',
       text: `You are receiving this because you have requested a password reset for your account.\n\n
       Please click the following link to reset your password:\n\n
@@ -5641,7 +5641,7 @@ const notification = new Notification({
       // Notify admins about the new signup
       await transporter.sendMail({
         from: 'Fantasymmadness2@gmail.com',
-        to: ['wajih786hassan@gmail.com', 'Fantasymmadness2@gmail.com'], // Replace with actual admin emails
+        to: 'Fantasymmadness2@gmail.com',
         subject: 'New User Signup Notification',
         html: `
         <p>A new user has signed up on Fantasy Madness:</p>
@@ -5673,7 +5673,7 @@ const notification = new Notification({
     // Send error email to admins
     await transporter.sendMail({
       from: 'Fantasymmadness2@gmail.com',
-      to: ['wajih786hassan@gmail.com', 'Fantasymmadness2@gmail.com'], // Replace with actual admin emails
+      to: 'Fantasymmadness2@gmail.com',
       subject: 'Google Login Error Notification',
       html: `
       <p>An error occurred during a Google login attempt. Please investigate the issue.</p>
@@ -8976,7 +8976,7 @@ const notification = new Notification({
     // Send email notification about login failure
     await transporter.sendMail({
       from: '"Fantasy Madness" <Fantasymmadness2@gmail.com>',
-      to: ['Fantasymmadness2@gmail.com', 'wajih786hassan@gmail.com'], // Recipients
+      to: 'Fantasymmadness2@gmail.com',
       subject: 'Affiliate Google Login Failed',
       html: `
         <table width="100%" cellpadding="0" cellspacing="0" border="0" style="width:100%; max-width:600px; margin:auto;">
@@ -9068,7 +9068,7 @@ app.post('/forgotPassword', submitLimiter, async (req, res) => {
 
     const mailOptions = {
       to: affiliate.email,
-      from: 'wajih786hassan@gmail.com',
+      from: process.env.SMTP_USER || 'Fantasymmadness2@gmail.com',
       subject: 'Password Reset Request',
       text: `You are receiving this because you have requested a password reset for your account.\n\n
       Please click the following link to reset your password:\n\n
