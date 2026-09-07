@@ -5935,7 +5935,7 @@ app.get('/api/public/user-directory', async (req, res) => {
 
 app.get('/users', verifyAdminToken, async (req, res) => {
   try {
-    const users = await User.find().select(USER_SAFE_SELECT).lean();
+    const users = await User.find().select(USER_SAFE_SELECT).sort({ createdAt: -1 }).lean();
     res.send(sanitizeAccountList(users));
   } catch (error) {
     console.error('Error fetching users:', error);
@@ -6936,7 +6936,12 @@ app.post('/register', submitLimiter, async (req, res) => {
       }
     }, 24 * 60 * 60 * 1000);
 
-    // Send verification email
+    // Send verification email. A failure here must NOT fail the whole signup —
+    // the account is already saved, and the resend-verification endpoint can
+    // recover from a one-time send failure (e.g. SMTP credentials not set on
+    // the backend, which silently drops every outgoing email including this
+    // one). Previously this threw a 500 after the account existed, leaving
+    // the user stuck with no account confirmation and no email, ever.
     const verificationLink = `https://fantasymmadness-game-server-three.vercel.app/verify-email?token=${verificationToken}`;
     try {
       await transporter.sendMail({
@@ -6952,7 +6957,12 @@ app.post('/register', submitLimiter, async (req, res) => {
       });
     } catch (err) {
       console.error('Error sending verification email:', err);
-      return res.status(500).json({ error: 'Error sending verification email' });
+      // Account still exists and is usable via /resend-verification —
+      // tell the client that plainly instead of a bare failure.
+      return res.status(201).json({
+        message: 'Account created, but the verification email could not be sent. Use "Resend verification email" to try again.',
+        emailFailed: true,
+      });
     }
   } catch (error) {
     console.error("Unhandled registration error:", error);
@@ -9812,8 +9822,7 @@ app.get('/api/public/affiliates', async (req, res) => {
 
 app.get('/affiliates', verifyAdminToken, async (req, res) => {
   try {
-    const affiliates = await Affiliate.find().select(AFFILIATE_SAFE_SELECT).lean();
-    res.send(sanitizeAccountList(affiliates));
+    const affiliates = await Affiliate.find().select(AFFILIATE_SAFE_SELECT).sort({ createdAt: -1 }).lean();
   } catch (error) {
     console.error('Error fetching affiliates:', error);
     res.status(500).json({ message: 'Error fetching affiliates' });
