@@ -5985,12 +5985,11 @@ const transporter = nodemailer.createTransport({
 });
 
 const STATIC_PUBLIC_APPAREL_PRODUCTS = [
-  { sku: 'FMM-HOODIE-001', name: 'MMAdness Hoodie', price: 49.99, currency: 'USD', image: '/images/mobile-home/final-v35/ap1.webp', sizes: ['S', 'M', 'L', 'XL', '2XL'], source: 'fallback' },
-  { sku: 'FMM-TEE-001', name: 'Fight Tee', price: 29.99, currency: 'USD', image: '/images/mobile-home/final-v35/ap2.webp', sizes: ['S', 'M', 'L', 'XL', '2XL'], source: 'fallback' },
-  { sku: 'FMM-CAP-001', name: 'Snapback Cap', price: 24.99, currency: 'USD', image: '/images/mobile-home/final-v35/ap3.webp', sizes: ['One Size'], source: 'fallback' },
-  { sku: 'FMM-BKFC-TEE-001', name: 'BKFC Bareknuckle Boxing Tee', price: 34.99, currency: 'USD', image: '/images/mobile-home/final-v35/bkfc-tee-opt.webp', sizes: ['S', 'M', 'L', 'XL', '2XL'], source: 'fallback' },
-  { sku: 'FMM-SHORTS-001', name: 'Fight Shorts', price: 39.99, currency: 'USD', image: '/images/mobile-home/final-v35/ap1-2.webp', sizes: ['S', 'M', 'L', 'XL', '2XL'], source: 'fallback' },
-  { sku: 'FMM-GLOVES-001', name: 'Training Gloves', price: 34.99, currency: 'USD', image: '/images/mobile-home/final-v35/ap2-2.webp', sizes: ['S/M', 'L/XL'], source: 'fallback' },
+  { sku: 'FMM-ETSY-4552218538', name: 'Every Fight Has A Formula Tee', price: 49.95, currency: 'USD', image: 'https://i.etsystatic.com/14114660/r/il/6ecaae/8355959330/il_794xN.8355959330_ru4j.jpg', sizes: ['M', 'L', 'XL', '2XL'], source: 'etsy', buyUrl: 'https://www.etsy.com/listing/4552218538/fantasy-mmadness-combat-sports-t-shirt' },
+  { sku: 'FMM-ETSY-4552212559', name: 'Fighting Is In The Bones Tee', price: 49.95, currency: 'USD', image: 'https://i.etsystatic.com/14114660/r/il/e0f448/8403876627/il_794xN.8403876627_fcdb.jpg', sizes: ['M', 'L', 'XL', '2XL'], source: 'etsy', buyUrl: 'https://www.etsy.com/listing/4552212559/fantasy-mmadness-combat-sports-t-shirt' },
+  { sku: 'FMM-ETSY-4552225010', name: 'The Fight Factory Tee', price: 49.95, currency: 'USD', image: 'https://i.etsystatic.com/14114660/r/il/0df5ca/8403887913/il_794xN.8403887913_lics.jpg', sizes: ['M', 'L', 'XL', '2XL'], source: 'etsy', buyUrl: 'https://www.etsy.com/listing/4552225010/fantasy-mmadness-combat-sports-t-shirt' },
+  { sku: 'FMM-ETSY-4549330994', name: 'Raw Dawg Tee', price: 49.95, currency: 'USD', image: 'https://i.etsystatic.com/14114660/r/il/0c238f/8335272402/il_794xN.8335272402_ceu7.jpg', sizes: ['M', 'L', 'XL', '2XL'], source: 'etsy', buyUrl: 'https://www.etsy.com/listing/4549330994/fantasy-mmadness-combat-sports-t-shirt' },
+  { sku: 'FMM-ETSY-4541697432', name: 'The Darkness Walks Tee', price: 49.95, currency: 'USD', image: 'https://i.etsystatic.com/14114660/r/il/c431a4/8328853743/il_794xN.8328853743_efn0.jpg', sizes: ['M', 'L', 'XL', '2XL'], source: 'etsy', buyUrl: 'https://www.etsy.com/listing/4541697432/inspired-by-champions-built-for-the' },
 ];
 const PUBLIC_APPAREL_PRODUCTS = STATIC_PUBLIC_APPAREL_PRODUCTS;
 const ETSY_API_BASE_URL = String(process.env.ETSY_API_BASE_URL || 'https://api.etsy.com/v3/application').replace(/\/$/, '');
@@ -7693,7 +7692,80 @@ async function attachAuthorizeNetHostedCheckout(order) {
   return hosted;
 }
 
+// Direct in-page charge via Accept.js: the browser tokenizes the card with
+// Authorize.Net directly (raw card digits never touch our server), and this
+// takes the resulting opaqueData token and settles the order synchronously —
+// the alternative to the hostedPaymentPage redirect above.
+async function authorizeNetChargeOpaqueData(order, opaqueData) {
+  if (!hasAuthorizeNetCredentials()) {
+    const error = new Error('Secure payment is awaiting merchant gateway configuration.');
+    error.status = 503;
+    error.code = 'AUTHORIZE_NET_NOT_CONFIGURED';
+    throw error;
+  }
+  const environment = getAuthorizeNetEnvironment();
+  const invoiceNumber = order.providerInvoiceNumber || buildAuthorizeNetInvoiceNumber(order);
+  const requestBody = {
+    createTransactionRequest: {
+      merchantAuthentication: authorizeNetMerchantAuthentication(),
+      transactionRequest: {
+        transactionType: 'authCaptureTransaction',
+        amount: (Number(order.subtotalCents || 0) / 100).toFixed(2),
+        payment: { opaqueData: { dataDescriptor: String(opaqueData?.dataDescriptor || ''), dataValue: String(opaqueData?.dataValue || '') } },
+        order: {
+          invoiceNumber,
+          description: order.plan ? `${order.plan === 'monthly' ? 'FM+ Monthly' : 'FM+ 30-Day Pass'} membership` : `${Number(order.baseCoins || 0).toLocaleString('en-US')} FM coins`,
+        },
+        customer: { email: order.email },
+        billTo: {
+          firstName: order.firstName || '',
+          lastName: order.lastName || '',
+          address: order.billing?.address || '',
+          city: order.billing?.city || '',
+          state: order.billing?.state || '',
+          zip: order.billing?.zipCode || '',
+          country: order.billing?.country || 'US',
+        },
+      },
+    },
+  };
+  const response = await axios.post(environment.apiUrl, requestBody, {
+    headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+    timeout: 15000,
+  });
+  const payload = response.data || {};
+  const txn = payload.transactionResponse || {};
+  const approved = String(txn.responseCode || '').trim() === '1';
+  if (!approved) {
+    const declineMessage = txn.errors?.[0]?.errorText || txn.messages?.[0]?.description || getAuthorizeNetMessage(payload);
+    const error = new Error(declineMessage || 'The card was declined.');
+    error.status = 402;
+    error.declined = true;
+    throw error;
+  }
+  return { transactionId: txn.transId, invoiceNumber };
+}
+
+function getAuthorizeNetClientConfig() {
+  const clientKey = String(process.env.AUTHORIZE_NET_CLIENT_KEY || '').trim();
+  const apiLoginId = String(process.env.AUTHORIZE_NET_API_LOGIN_ID || '').trim();
+  const environment = getAuthorizeNetEnvironment();
+  return {
+    ok: Boolean(clientKey && apiLoginId),
+    apiLoginID: apiLoginId,
+    clientKey,
+    jsUrl: environment.live ? 'https://js.authorize.net/v1/Accept.js' : 'https://jstest.authorize.net/v1/Accept.js',
+  };
+}
+
+app.get('/api/checkout/accept-js-config', (req, res) => {
+  const config = getAuthorizeNetClientConfig();
+  if (!config.ok) return res.status(503).json({ ok: false, code: 'AUTHORIZE_NET_NOT_CONFIGURED', message: 'Secure card entry is awaiting merchant gateway configuration.' });
+  return res.json(config);
+});
+
 function verifyAuthorizeNetWebhookSignature(rawBody, signatureHeader) {
+
   const signatureKey = String(process.env.AUTHORIZE_NET_SIGNATURE_KEY || '').replace(/\s+/g, '').trim();
   const received = String(signatureHeader || '').replace(/^sha512=/i, '').trim().toLowerCase();
   if (!signatureKey || !/^[a-f0-9]+$/i.test(signatureKey) || signatureKey.length % 2 !== 0 || !/^[a-f0-9]{128}$/i.test(received)) return false;
@@ -8109,6 +8181,18 @@ app.post('/api/checkout/coin-orders', optionalVerifyToken, async (req, res) => {
     });
     order.providerInvoiceNumber = buildAuthorizeNetInvoiceNumber(order);
     await order.save();
+
+    if (req.body?.opaqueData?.dataValue) {
+      try {
+        const charge = await authorizeNetChargeOpaqueData(order, req.body.opaqueData);
+        await CoinPurchaseOrder.updateOne({ orderNumber: order.orderNumber }, { $set: { provider: 'authorize-net', providerReference: charge.transactionId } });
+        const result = await settlePaidCoinOrder(order.orderNumber, charge.transactionId);
+        return res.status(201).json({ ok: true, orderNumber: order.orderNumber, charged: true, creditedCoins: result.order.creditedCoins, firstPurchaseOffer: order.firstPurchaseOffer });
+      } catch (chargeError) {
+        return res.status(chargeError.status || 402).json({ ok: false, declined: true, message: chargeError.message || 'The card was declined.' });
+      }
+    }
+
     const hosted = await attachAuthorizeNetHostedCheckout(order);
 
     return res.status(201).json({
@@ -8201,6 +8285,18 @@ app.post('/api/checkout/fm-plus-orders', optionalVerifyToken, async (req, res) =
     });
     order.providerInvoiceNumber = buildAuthorizeNetInvoiceNumber(order);
     await order.save();
+
+    if (req.body?.opaqueData?.dataValue) {
+      try {
+        const charge = await authorizeNetChargeOpaqueData(order, req.body.opaqueData);
+        await FmPlusOrder.updateOne({ orderNumber: order.orderNumber }, { $set: { provider: 'authorize-net', providerReference: charge.transactionId } });
+        const result = await settlePaidFmPlusOrder(order.orderNumber, charge.transactionId);
+        return res.status(201).json({ ok: true, orderNumber: order.orderNumber, charged: true, creditedCoins: result.order.bonusCoins, plan: order.plan });
+      } catch (chargeError) {
+        return res.status(chargeError.status || 402).json({ ok: false, declined: true, message: chargeError.message || 'The card was declined.' });
+      }
+    }
+
     const hosted = await attachAuthorizeNetHostedCheckout(order);
     return res.status(201).json({
       ok: true,
