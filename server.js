@@ -4087,6 +4087,36 @@ app.get('/match', async (req, res) => {
       responseItems = responseItems.filter((item) => isPublicHomeActiveFightRecord(item));
     }
 
+    // Fight-operations economics: live entrant counts alongside the pot/entry
+    // fee the admin declared on creation, so the back office can see whether a
+    // fight is covered without opening it. Only meaningful for real Match rows
+    // (Shadow templates never take entries) — skip the aggregate otherwise.
+    if (shouldIncludeDraftFights(req.query)) {
+      const matchIds = responseItems
+        .filter((item) => item.sourceType !== 'shadow' && item._id)
+        .map((item) => item._id);
+      let entrantCounts = {};
+      if (matchIds.length) {
+        try {
+          const rows = await Score.aggregate([
+            { $match: { matchId: { $in: matchIds }, entryStatus: { $ne: 'refunded' } } },
+            { $group: { _id: '$matchId', count: { $sum: 1 } } },
+          ]);
+          entrantCounts = Object.fromEntries(rows.map((row) => [String(row._id), row.count]));
+        } catch (aggregateError) {
+          console.warn('Entrant-count aggregate failed:', aggregateError.message);
+        }
+      }
+      responseItems = responseItems.map((item) => {
+        const declaredPot = Math.max(0, Math.round(Number(item.pot) || 0));
+        const entryFee = Math.max(0, Math.round(Number(item.matchTokens) || 0));
+        const breakEvenEntrants = entryFee > 0 ? Math.ceil(declaredPot / entryFee) : 0;
+        const minimumEntrants = Math.max(0, Math.round(Number(item.minimumEntrants) || 0)) || breakEvenEntrants;
+        const entrants = item.sourceType === 'shadow' ? null : (entrantCounts[String(item._id)] || 0);
+        return { ...item, entrants, breakEvenEntrants, minimumEntrants };
+      });
+    }
+
     res.setHeader('Cache-Control', 'private, no-store, no-cache, max-age=0, must-revalidate');
     res.setHeader('Pragma', 'no-cache');
     res.setHeader('Expires', '0');
@@ -5955,11 +5985,12 @@ const transporter = nodemailer.createTransport({
 });
 
 const STATIC_PUBLIC_APPAREL_PRODUCTS = [
-  { sku: 'FMM-HOODIE-001', name: 'MMAdness Hoodie', price: 49.99, currency: 'USD', image: '/images/mobile-home/app-fixed-v32/ap1-hq.webp', sizes: ['S', 'M', 'L', 'XL', '2XL'], source: 'fallback' },
-  { sku: 'FMM-TEE-001', name: 'Fight Tee', price: 29.99, currency: 'USD', image: '/images/mobile-home/app-fixed-v32/ap2-hq.webp', sizes: ['S', 'M', 'L', 'XL', '2XL'], source: 'fallback' },
-  { sku: 'FMM-CAP-001', name: 'Snapback Cap', price: 24.99, currency: 'USD', image: '/images/mobile-home/app-fixed-v32/ap3-hq.webp', sizes: ['One Size'], source: 'fallback' },
-  { sku: 'FMM-SHORTS-001', name: 'Fight Shorts', price: 39.99, currency: 'USD', image: '/images/mobile-home/app-fixed-v32/ap1-2-hq.webp', sizes: ['S', 'M', 'L', 'XL', '2XL'], source: 'fallback' },
-  { sku: 'FMM-GLOVES-001', name: 'Training Gloves', price: 34.99, currency: 'USD', image: '/images/mobile-home/app-fixed-v32/ap2-2-hq.webp', sizes: ['S/M', 'L/XL'], source: 'fallback' },
+  { sku: 'FMM-HOODIE-001', name: 'MMAdness Hoodie', price: 49.99, currency: 'USD', image: '/images/mobile-home/final-v35/ap1.webp', sizes: ['S', 'M', 'L', 'XL', '2XL'], source: 'fallback' },
+  { sku: 'FMM-TEE-001', name: 'Fight Tee', price: 29.99, currency: 'USD', image: '/images/mobile-home/final-v35/ap2.webp', sizes: ['S', 'M', 'L', 'XL', '2XL'], source: 'fallback' },
+  { sku: 'FMM-CAP-001', name: 'Snapback Cap', price: 24.99, currency: 'USD', image: '/images/mobile-home/final-v35/ap3.webp', sizes: ['One Size'], source: 'fallback' },
+  { sku: 'FMM-BKFC-TEE-001', name: 'BKFC Bareknuckle Boxing Tee', price: 34.99, currency: 'USD', image: '/images/mobile-home/final-v35/bkfc-tee-opt.webp', sizes: ['S', 'M', 'L', 'XL', '2XL'], source: 'fallback' },
+  { sku: 'FMM-SHORTS-001', name: 'Fight Shorts', price: 39.99, currency: 'USD', image: '/images/mobile-home/final-v35/ap1-2.webp', sizes: ['S', 'M', 'L', 'XL', '2XL'], source: 'fallback' },
+  { sku: 'FMM-GLOVES-001', name: 'Training Gloves', price: 34.99, currency: 'USD', image: '/images/mobile-home/final-v35/ap2-2.webp', sizes: ['S/M', 'L/XL'], source: 'fallback' },
 ];
 const PUBLIC_APPAREL_PRODUCTS = STATIC_PUBLIC_APPAREL_PRODUCTS;
 const ETSY_API_BASE_URL = String(process.env.ETSY_API_BASE_URL || 'https://api.etsy.com/v3/application').replace(/\/$/, '');
@@ -6066,7 +6097,7 @@ function normalizeEtsyPrice(price, fallbackCurrency = 'USD') {
 const APPAREL_FALLBACK_IMAGES = STATIC_PUBLIC_APPAREL_PRODUCTS.map((product) => product.image);
 
 function getApparelFallbackImage(index = 0) {
-  return APPAREL_FALLBACK_IMAGES[index % APPAREL_FALLBACK_IMAGES.length] || '/images/mobile-home/app-fixed-v32/ap2-hq.webp';
+  return APPAREL_FALLBACK_IMAGES[index % APPAREL_FALLBACK_IMAGES.length] || '/images/mobile-home/final-v35/ap2.webp';
 }
 
 function getEtsyImageUrl(image) {
