@@ -7579,6 +7579,73 @@ function getAuthorizeNetEnvironment() {
   };
 }
 
+// TEMPORARY DIAGNOSTIC — remove once the payment issue is confirmed fixed.
+// Verifies the 4 Authorize.Net credentials without touching the payment flow:
+// masked presence check + a real authenticateTestRequest call (no charge, no
+// customer/card data) to confirm the login/transaction key pair is accepted.
+const mask = (value) => {
+  const str = String(value || '').trim();
+  if (!str) return null;
+  return str.length <= 4 ? '*'.repeat(str.length) : `${str.slice(0, 2)}${'*'.repeat(Math.max(0, str.length - 6))}${str.slice(-4)}`;
+};
+
+app.get('/api/diagnostics/authorize-net', async (req, res) => {
+  const keys = {
+    AUTHORIZE_NET_API_LOGIN_ID: process.env.AUTHORIZE_NET_API_LOGIN_ID,
+    AUTHORIZE_NET_TRANSACTION_KEY: process.env.AUTHORIZE_NET_TRANSACTION_KEY,
+    AUTHORIZE_NET_SIGNATURE_KEY: process.env.AUTHORIZE_NET_SIGNATURE_KEY,
+    AUTHORIZE_NET_CLIENT_KEY: process.env.AUTHORIZE_NET_CLIENT_KEY,
+  };
+  const keyStatus = Object.fromEntries(Object.entries(keys).map(([name, value]) => [
+    name,
+    { loaded: Boolean(String(value || '').trim()), masked: mask(value) },
+  ]));
+  const allLoaded = Object.values(keyStatus).every((entry) => entry.loaded);
+  const environment = getAuthorizeNetEnvironment();
+
+  const result = {
+    ok: false,
+    checkedAt: new Date().toISOString(),
+    environment: environment.live ? 'production' : 'sandbox',
+    keys: keyStatus,
+    allKeysLoaded: allLoaded,
+    credentialsValid: false,
+    authorizeNet: null,
+  };
+
+  if (!allLoaded) {
+    result.message = 'One or more Authorize.Net keys are missing from the environment.';
+    return res.status(200).json(result);
+  }
+
+  try {
+    const response = await axios.post(environment.apiUrl, {
+      authenticateTestRequest: {
+        $: { 'xmlns': 'AnetApi/xml/v1/schema/AnetApiSchema.xsd' },
+        merchantAuthentication: authorizeNetMerchantAuthentication(),
+      },
+    }, { headers: { 'Content-Type': 'application/json' } });
+
+    // Authorize.Net's JSON API replies with a leading BOM on some payloads.
+    const raw = typeof response.data === 'string' ? response.data.replace(/^\uFEFF/, '') : response.data;
+    const payload = typeof raw === 'string' ? JSON.parse(raw) : raw;
+    const resultCode = payload?.messages?.resultCode;
+    const messages = (payload?.messages?.message || []).map((m) => ({ code: m.code, text: m.text }));
+
+    result.authorizeNet = { resultCode, messages };
+    result.credentialsValid = resultCode === 'Ok';
+    result.ok = result.credentialsValid;
+    result.message = result.credentialsValid
+      ? 'Authorize.Net accepted the API Login ID / Transaction Key pair.'
+      : 'Authorize.Net rejected the credentials — see authorizeNet.messages.';
+  } catch (error) {
+    result.message = 'Could not reach Authorize.Net to verify credentials.';
+    result.error = error.message;
+  }
+
+  return res.status(200).json(result);
+});
+
 function hasAuthorizeNetCredentials() {
   return Boolean(
     String(process.env.AUTHORIZE_NET_API_LOGIN_ID || '').trim()
@@ -17123,6 +17190,7 @@ registerFightDataQualityRoutes({
   verifyAdminToken,
   Match,
   Shadow,
+  Score,
 });
 
 // PHASE: Admin push alerts — lets an admin install the back office to their
