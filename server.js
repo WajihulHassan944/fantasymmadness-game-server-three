@@ -7742,7 +7742,6 @@ async function requestAuthorizeNetHostedToken(order) {
             unitPrice: (Number(order.subtotalCents || 0) / 100).toFixed(2),
           }],
         },
-        customer: { email: order.email },
         billTo: {
           firstName: order.firstName || '',
           lastName: order.lastName || '',
@@ -7825,7 +7824,6 @@ async function authorizeNetChargeOpaqueData(order, opaqueData) {
           invoiceNumber,
           description: order.plan ? `${order.plan === 'monthly' ? 'FM+ Monthly' : 'FM+ 30-Day Pass'} membership` : `${Number(order.baseCoins || 0).toLocaleString('en-US')} FM coins`,
         },
-        customer: { email: order.email },
         billTo: {
           firstName: order.firstName || '',
           lastName: order.lastName || '',
