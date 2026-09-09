@@ -7570,6 +7570,7 @@ function getAuthorizeNetEnvironment() {
   const live = ['production', 'prod', 'live'].includes(requested);
   return {
     live,
+    isLive: live,
     apiUrl: live
       ? 'https://api.authorize.net/xml/v1/request.api'
       : 'https://apitest.authorize.net/xml/v1/request.api',
@@ -8222,9 +8223,10 @@ app.post('/api/checkout/coin-orders', optionalVerifyToken, async (req, res) => {
     const existingOrder = await CoinPurchaseOrder.findOne({ idempotencyKey }).select('+checkoutToken');
     if (existingOrder) {
       const tokenAge = Date.now() - new Date(existingOrder.checkoutTokenCreatedAt || 0).getTime();
-      const hosted = existingOrder.checkoutToken && tokenAge < 12 * 60 * 1000
-        ? { token: existingOrder.checkoutToken, checkoutUrl: existingOrder.checkoutUrl }
-        : await attachAuthorizeNetHostedCheckout(existingOrder);
+      // Hosted Payment Page tokens are single-use — reusing one that already
+      // rendered (even without a completed payment) hands the browser back a
+      // spent token, which renders as a blank Order Summary. Always mint fresh.
+      const hosted = await attachAuthorizeNetHostedCheckout(existingOrder);
       return res.status(200).json({
         ok: true,
         orderNumber: existingOrder.orderNumber,
@@ -8308,7 +8310,7 @@ app.post('/api/checkout/coin-orders', optionalVerifyToken, async (req, res) => {
     if (error?.code === 11000 && error?.keyPattern?.idempotencyKey) {
       const reused = await CoinPurchaseOrder.findOne({ idempotencyKey: String(req.headers['idempotency-key'] || req.body?.idempotencyKey || '').trim() }).select('+checkoutToken');
       if (reused) {
-        const hosted = reused.checkoutToken ? { token: reused.checkoutToken, checkoutUrl: reused.checkoutUrl } : await attachAuthorizeNetHostedCheckout(reused);
+        const hosted = await attachAuthorizeNetHostedCheckout(reused);
         return res.status(200).json({ ok: true, orderNumber: reused.orderNumber, checkoutUrl: hosted.checkoutUrl, checkoutMethod: 'POST', formToken: hosted.token, reused: true });
       }
     }
@@ -8339,10 +8341,7 @@ app.post('/api/checkout/fm-plus-orders', optionalVerifyToken, async (req, res) =
     }
     const existingOrder = await FmPlusOrder.findOne({ idempotencyKey }).select('+checkoutToken');
     if (existingOrder) {
-      const tokenAge = Date.now() - new Date(existingOrder.checkoutTokenCreatedAt || 0).getTime();
-      const hosted = existingOrder.checkoutToken && tokenAge < 12 * 60 * 1000
-        ? { token: existingOrder.checkoutToken, checkoutUrl: existingOrder.checkoutUrl }
-        : await attachAuthorizeNetHostedCheckout(existingOrder);
+      const hosted = await attachAuthorizeNetHostedCheckout(existingOrder);
       return res.status(200).json({ ok: true, orderNumber: existingOrder.orderNumber, checkoutUrl: hosted.checkoutUrl, checkoutMethod: 'POST', formToken: hosted.token, plan: existingOrder.plan, reused: true });
     }
 
@@ -8410,7 +8409,7 @@ app.post('/api/checkout/fm-plus-orders', optionalVerifyToken, async (req, res) =
     if (error?.code === 11000 && error?.keyPattern?.idempotencyKey) {
       const reused = await FmPlusOrder.findOne({ idempotencyKey: String(req.headers['idempotency-key'] || req.body?.idempotencyKey || '').trim() }).select('+checkoutToken');
       if (reused) {
-        const hosted = reused.checkoutToken ? { token: reused.checkoutToken, checkoutUrl: reused.checkoutUrl } : await attachAuthorizeNetHostedCheckout(reused);
+        const hosted = await attachAuthorizeNetHostedCheckout(reused);
         return res.status(200).json({ ok: true, orderNumber: reused.orderNumber, checkoutUrl: hosted.checkoutUrl, checkoutMethod: 'POST', formToken: hosted.token, plan: reused.plan, reused: true });
       }
     }
