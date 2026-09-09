@@ -7733,6 +7733,15 @@ async function requestAuthorizeNetHostedToken(order) {
         transactionType: 'authCaptureTransaction',
         amount: (Number(order.subtotalCents || 0) / 100).toFixed(2),
         order: { invoiceNumber, description },
+        lineItems: {
+          lineItem: [{
+            itemId: order.plan ? `plan-${order.plan}` : 'fm-coins',
+            name: description.slice(0, 31),
+            description: description.slice(0, 255),
+            quantity: '1',
+            unitPrice: (Number(order.subtotalCents || 0) / 100).toFixed(2),
+          }],
+        },
         customer: { email: order.email },
         billTo: {
           firstName: order.firstName || '',
