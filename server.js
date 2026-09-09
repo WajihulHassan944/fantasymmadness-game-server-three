@@ -7621,7 +7621,6 @@ app.get('/api/diagnostics/authorize-net', async (req, res) => {
   try {
     const response = await axios.post(environment.apiUrl, {
       authenticateTestRequest: {
-        $: { 'xmlns': 'AnetApi/xml/v1/schema/AnetApiSchema.xsd' },
         merchantAuthentication: authorizeNetMerchantAuthentication(),
       },
     }, { headers: { 'Content-Type': 'application/json' } });
