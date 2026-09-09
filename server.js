@@ -7637,6 +7637,39 @@ app.get('/api/diagnostics/authorize-net', async (req, res) => {
     result.message = result.credentialsValid
       ? 'Authorize.Net accepted the API Login ID / Transaction Key pair.'
       : 'Authorize.Net rejected the credentials — see authorizeNet.messages.';
+
+    // The real coin/FM+ checkout doesn't use authenticateTestRequest — it calls
+    // getHostedPaymentPageRequest (redirect-to-Authorize.Net flow). That request
+    // can fail on its own (e.g. Hosted Payment Page not enabled on the account)
+    // even when the basic credential check above passes, so probe it too with a
+    // throwaway $0.01 request — no order is created, nothing is saved.
+    if (result.credentialsValid) {
+      try {
+        const hppResponse = await axios.post(environment.apiUrl, {
+          getHostedPaymentPageRequest: {
+            merchantAuthentication: authorizeNetMerchantAuthentication(),
+            transactionRequest: {
+              transactionType: 'authOnlyTransaction',
+              amount: '0.01',
+              order: { invoiceNumber: `DIAG-${Date.now()}`, description: 'Diagnostic check (not charged)' },
+              billTo: { firstName: 'Diagnostic', lastName: 'Check', address: '123 Test St', city: 'Test', state: 'GA', zip: '30000', country: 'US' },
+            },
+            hostedPaymentSettings: { setting: [{ settingName: 'hostedPaymentSecurityOptions', settingValue: JSON.stringify({ captcha: false }) }] },
+          },
+        }, { headers: { 'Content-Type': 'application/json' } });
+        const hppRaw = typeof hppResponse.data === 'string' ? hppResponse.data.replace(/^\uFEFF/, '') : hppResponse.data;
+        const hppPayload = typeof hppRaw === 'string' ? JSON.parse(hppRaw) : hppRaw;
+        const hppResultCode = hppPayload?.messages?.resultCode;
+        result.hostedPaymentPage = {
+          ok: hppResultCode === 'Ok' && Boolean(hppPayload.token),
+          resultCode: hppResultCode,
+          messages: (hppPayload?.messages?.message || []).map((m) => ({ code: m.code, text: m.text })),
+          hasToken: Boolean(hppPayload.token),
+        };
+      } catch (hppError) {
+        result.hostedPaymentPage = { ok: false, error: hppError.message };
+      }
+    }
   } catch (error) {
     result.message = 'Could not reach Authorize.Net to verify credentials.';
     result.error = error.message;
