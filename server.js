@@ -8279,7 +8279,7 @@ app.post('/api/checkout/coin-orders', optionalVerifyToken, async (req, res) => {
         const charge = await authorizeNetChargeOpaqueData(order, req.body.opaqueData);
         await CoinPurchaseOrder.updateOne({ orderNumber: order.orderNumber }, { $set: { provider: 'authorize-net', providerReference: charge.transactionId } });
         const result = await settlePaidCoinOrder(order.orderNumber, charge.transactionId);
-        return res.status(201).json({ ok: true, orderNumber: order.orderNumber, charged: true, creditedCoins: result.order.creditedCoins, firstPurchaseOffer: order.firstPurchaseOffer });
+        return res.status(201).json({ ok: true, orderNumber: order.orderNumber, charged: true, creditedCoins: result?.order?.creditedCoins ?? order.baseCoins ?? 0, firstPurchaseOffer: order.firstPurchaseOffer });
       } catch (chargeError) {
         return res.status(chargeError.status || 402).json({ ok: false, declined: true, message: chargeError.message || 'The card was declined.' });
       }
@@ -8481,8 +8481,8 @@ app.post('/api/webhooks/authorize-net', async (req, res) => {
     return res.status(200).json({
       ok: true,
       orderNumber: order.orderNumber,
-      creditedCoins: invoiceNumber.startsWith('FP') ? result.order.bonusCoins : result.order.creditedCoins,
-      alreadyCredited: result.alreadyCredited,
+      creditedCoins: invoiceNumber.startsWith('FP') ? (result?.order?.bonusCoins ?? 0) : (result?.order?.creditedCoins ?? 0),
+      alreadyCredited: result?.alreadyCredited,
     });
   } catch (error) {
     console.error('[authorize-net-checkout] Webhook settlement failed:', error);
@@ -8517,9 +8517,9 @@ app.post('/api/webhooks/kurv', async (req, res) => {
     return res.json({
       ok: true,
       orderNumber,
-      creditedCoins: isFmPlus ? result.order.bonusCoins : result.order.creditedCoins,
-      benefitExpiresAt: isFmPlus ? result.order.benefitExpiresAt : undefined,
-      alreadyCredited: result.alreadyCredited,
+      creditedCoins: isFmPlus ? (result?.order?.bonusCoins ?? 0) : (result?.order?.creditedCoins ?? 0),
+      benefitExpiresAt: isFmPlus ? result?.order?.benefitExpiresAt : undefined,
+      alreadyCredited: result?.alreadyCredited,
     });
   } catch (error) {
     console.error('[coin-checkout] Webhook settlement failed:', error);
