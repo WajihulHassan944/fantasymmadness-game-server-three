@@ -7590,6 +7590,16 @@ const mask = (value) => {
   return str.length <= 4 ? '*'.repeat(str.length) : `${str.slice(0, 2)}${'*'.repeat(Math.max(0, str.length - 6))}${str.slice(-4)}`;
 };
 
+app.get('/api/diagnostics/authorize-net-checkout-test', async (req, res) => {
+  try {
+    const testOrder = { subtotalCents: 1000, orderNumber: `DIAG-${Date.now()}`, returnUrl: '' };
+    const hosted = await requestAuthorizeNetHostedToken(testOrder);
+    res.send(`<!doctype html><html><body style="margin:0"><form id="f" method="POST" action="${hosted.checkoutUrl}"><input type="hidden" name="token" value="${hosted.token}"></form><script>document.getElementById('f').submit()</script>Redirecting to Authorize.Net test checkout ($10.00, not charged unless you complete it)...</body></html>`);
+  } catch (error) {
+    res.status(500).send(`Failed to create test checkout: ${error.message}`);
+  }
+});
+
 app.get('/api/diagnostics/authorize-net', async (req, res) => {
   const keys = {
     AUTHORIZE_NET_API_LOGIN_ID: process.env.AUTHORIZE_NET_API_LOGIN_ID,
@@ -7732,14 +7742,12 @@ async function requestAuthorizeNetHostedToken(order) {
       transactionRequest: {
         transactionType: 'authCaptureTransaction',
         amount: (Number(order.subtotalCents || 0) / 100).toFixed(2),
-        order: { invoiceNumber, description },
       },
       hostedPaymentSettings: {
         setting: [
           {
             settingName: 'hostedPaymentReturnOptions',
             settingValue: JSON.stringify({
-              showReceipt: true,
               url: buildCheckoutResultUrl(order, 'return'),
               urlText: 'Return to Fantasy MMAdness',
               cancelUrl: buildCheckoutResultUrl(order, 'cancelled'),
