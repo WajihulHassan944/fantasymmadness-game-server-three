@@ -7733,15 +7733,6 @@ async function requestAuthorizeNetHostedToken(order) {
         transactionType: 'authCaptureTransaction',
         amount: (Number(order.subtotalCents || 0) / 100).toFixed(2),
         order: { invoiceNumber, description },
-        lineItems: {
-          lineItem: [{
-            itemId: order.plan ? `plan-${order.plan}` : 'fm-coins',
-            name: description.slice(0, 31),
-            description: description.slice(0, 255),
-            quantity: '1',
-            unitPrice: (Number(order.subtotalCents || 0) / 100).toFixed(2),
-          }],
-        },
         billTo: {
           firstName: order.firstName || '',
           lastName: order.lastName || '',
@@ -7764,12 +7755,7 @@ async function requestAuthorizeNetHostedToken(order) {
               cancelUrlText: 'Cancel',
             }),
           },
-          { settingName: 'hostedPaymentButtonOptions', settingValue: JSON.stringify({ text: `Pay ${(Number(order.subtotalCents || 0) / 100).toFixed(2)} USD` }) },
-          { settingName: 'hostedPaymentPaymentOptions', settingValue: JSON.stringify({ cardCodeRequired: true, showCreditCard: true, showBankAccount: false }) },
-          { settingName: 'hostedPaymentSecurityOptions', settingValue: JSON.stringify({ captcha: false }) },
-          { settingName: 'hostedPaymentShippingAddressOptions', settingValue: JSON.stringify({ show: false, required: false }) },
           { settingName: 'hostedPaymentBillingAddressOptions', settingValue: JSON.stringify({ show: true, required: true }) },
-          { settingName: 'hostedPaymentOrderOptions', settingValue: JSON.stringify({ show: true, merchantName: 'Fantasy MMAdness' }) },
         ],
       },
     },
