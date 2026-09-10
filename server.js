@@ -7733,15 +7733,6 @@ async function requestAuthorizeNetHostedToken(order) {
         transactionType: 'authCaptureTransaction',
         amount: (Number(order.subtotalCents || 0) / 100).toFixed(2),
         order: { invoiceNumber, description },
-        billTo: {
-          firstName: order.firstName || '',
-          lastName: order.lastName || '',
-          address: order.billing?.address || '',
-          city: order.billing?.city || '',
-          state: order.billing?.state || '',
-          zip: order.billing?.zipCode || '',
-          country: order.billing?.country || 'US',
-        },
       },
       hostedPaymentSettings: {
         setting: [
