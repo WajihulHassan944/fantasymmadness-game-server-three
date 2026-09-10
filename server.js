@@ -7769,7 +7769,6 @@ async function requestAuthorizeNetHostedToken(order) {
           { settingName: 'hostedPaymentSecurityOptions', settingValue: JSON.stringify({ captcha: false }) },
           { settingName: 'hostedPaymentShippingAddressOptions', settingValue: JSON.stringify({ show: false, required: false }) },
           { settingName: 'hostedPaymentBillingAddressOptions', settingValue: JSON.stringify({ show: true, required: true }) },
-          { settingName: 'hostedPaymentCustomerOptions', settingValue: JSON.stringify({ showEmail: false, requiredEmail: false, addPaymentProfile: false }) },
           { settingName: 'hostedPaymentOrderOptions', settingValue: JSON.stringify({ show: true, merchantName: 'Fantasy MMAdness' }) },
         ],
       },
