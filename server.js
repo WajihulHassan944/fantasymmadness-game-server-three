@@ -22282,15 +22282,27 @@ app.post('/api/admin/fights/:fightId/prize-guard', verifyAdminToken, async (req,
     if (req.body?.pot !== undefined) {
       update.pot = Math.max(0, Math.round(Number(req.body.pot) || 0));
     }
+    if (req.body?.maxRounds !== undefined) {
+      update.maxRounds = Math.max(1, Math.min(30, Math.round(Number(req.body.maxRounds) || 12)));
+    }
+    if (req.body?.matchDate !== undefined && req.body.matchDate) {
+      update.matchDate = req.body.matchDate;
+    }
+    if (req.body?.matchTime !== undefined) {
+      update.matchTime = req.body.matchTime;
+    }
+    ['notify', 'addToShadow', 'homepagePromoted', 'featuredThisWeek', 'featuredFight'].forEach((key) => {
+      if (req.body?.[key] !== undefined) update[key] = ['true', '1', 'yes', true].includes(req.body[key]);
+    });
     if (!Object.keys(update).length) {
       return res.status(400).json({ ok: false, message: 'Nothing to change.' });
     }
 
     const [matchResult, shadowResult] = await Promise.all([
       Match.findOneAndUpdate({ _id: fightId }, { $set: update }, { new: true })
-        .select('pot matchTokens minimumEntrants autoRefundIfShort').lean(),
+        .select('pot matchTokens minimumEntrants autoRefundIfShort maxRounds matchDate matchTime notify addToShadow homepagePromoted featuredThisWeek featuredFight').lean(),
       Shadow.findOneAndUpdate({ _id: fightId }, { $set: update }, { new: true })
-        .select('pot matchTokens minimumEntrants autoRefundIfShort').lean(),
+        .select('pot matchTokens minimumEntrants autoRefundIfShort maxRounds matchDate matchTime notify addToShadow homepagePromoted featuredThisWeek featuredFight').lean(),
     ]);
     const fight = matchResult || shadowResult;
     if (!fight) return res.status(404).json({ ok: false, message: 'Fight not found.' });
@@ -22302,6 +22314,14 @@ app.post('/api/admin/fights/:fightId/prize-guard', verifyAdminToken, async (req,
       fightId,
       matchTokens: fight.matchTokens,
       pot: fight.pot,
+      maxRounds: fight.maxRounds,
+      matchDate: fight.matchDate,
+      matchTime: fight.matchTime,
+      notify: fight.notify,
+      addToShadow: fight.addToShadow,
+      homepagePromoted: fight.homepagePromoted,
+      featuredThisWeek: fight.featuredThisWeek,
+      featuredFight: fight.featuredFight,
       minimumEntrants: fight.minimumEntrants || breakEven,
       breakEvenEntrants: breakEven,
       autoRefundIfShort: fight.autoRefundIfShort !== false,
