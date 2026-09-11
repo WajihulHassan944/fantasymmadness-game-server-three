@@ -22276,6 +22276,12 @@ app.post('/api/admin/fights/:fightId/prize-guard', verifyAdminToken, async (req,
     if (req.body?.autoRefundIfShort !== undefined) {
       update.autoRefundIfShort = ['true', '1', 'yes', true].includes(req.body.autoRefundIfShort);
     }
+    if (req.body?.matchTokens !== undefined) {
+      update.matchTokens = Math.max(0, Math.round(Number(req.body.matchTokens) || 0));
+    }
+    if (req.body?.pot !== undefined) {
+      update.pot = Math.max(0, Math.round(Number(req.body.pot) || 0));
+    }
     if (!Object.keys(update).length) {
       return res.status(400).json({ ok: false, message: 'Nothing to change.' });
     }
@@ -22294,6 +22300,8 @@ app.post('/api/admin/fights/:fightId/prize-guard', verifyAdminToken, async (req,
     return res.json({
       ok: true,
       fightId,
+      matchTokens: fight.matchTokens,
+      pot: fight.pot,
       minimumEntrants: fight.minimumEntrants || breakEven,
       breakEvenEntrants: breakEven,
       autoRefundIfShort: fight.autoRefundIfShort !== false,
