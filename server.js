@@ -7345,43 +7345,35 @@ function buildShadowTemplatePayloadFromLiveMatch(match = {}) {
 async function convertPastLiveFightsToShadowTemplates({ notifyAffiliates = false } = {}) {
   const now = new Date();
   const liveMatches = await Match.find(applyFightPublicVisibilityFilter({ matchType: 'LIVE' }, { includeDrafts: 'false' }));
-  const matchesToConvert = liveMatches.filter((match) => {
+  const expiredUnresolved = liveMatches.filter((match) => {
     const fightDate = parseFightDateTime(match);
-    return Boolean(fightDate && fightDate.getTime() < now.getTime());
+    const status = String(match.matchStatus || '').trim().toLowerCase();
+    const completed = ['finished', 'completed', 'closed', 'settled'].includes(status) || Boolean(match.prizesSettledAt);
+    return Boolean(fightDate && fightDate.getTime() < now.getTime() && !completed);
   });
 
-  const converted = [];
-  const skipped = [];
-
-  for (const match of matchesToConvert) {
-    let shadowMatch = await Shadow.findOne({ sourceMatchId: match._id });
-    if (!shadowMatch) {
-      shadowMatch = new Shadow(buildShadowTemplatePayloadFromLiveMatch(match));
-      await shadowMatch.save();
-      converted.push({ sourceMatchId: String(match._id), shadowId: String(shadowMatch._id), matchName: match.matchName });
-    } else {
-      skipped.push({ sourceMatchId: String(match._id), shadowId: String(shadowMatch._id), reason: 'shadow-template-already-exists' });
-    }
-
-    match.matchType = 'SHADOW';
-    match.matchStatus = match.matchStatus === 'Draft' ? 'Draft' : 'Finished';
-    match.matchShadowOpenStatus = 'closed';
-    match.shadowTemplatesAdditionStatus = true;
-    match.homepagePromoted = false;
-    match.homepagePromotionUpdatedAt = new Date();
-    match.homepagePromotionUpdatedBy = 'live-to-shadow-rollover';
-    await match.save();
-  }
-
-  if (converted.length || skipped.length) clearPublicResponseCache();
-  return { processedAt: now.toISOString(), converted, skipped, checked: liveMatches.length };
+  // Never convert a production fight merely because its scheduled time passed.
+  // It may be delayed, awaiting official scoring, or need an admin to close it.
+  // Shadow creation must be an explicit admin action after the result is known.
+  return {
+    processedAt: now.toISOString(),
+    converted: [],
+    skipped: expiredUnresolved.map((match) => ({
+      sourceMatchId: String(match._id),
+      matchName: match.matchName,
+      reason: 'expired-live-fight-requires-admin-review',
+    })),
+    requiresAdminReview: expiredUnresolved.length,
+    checked: liveMatches.length,
+    notifyAffiliates: Boolean(notifyAffiliates),
+  };
 }
 
 app.get('/api/cron-job', verifyCronSecret, async (req, res) => {
   try {
     const notifyAffiliates = ['true', '1', 'yes'].includes(String(req.query.notifyAffiliates || '').toLowerCase());
     const result = await convertPastLiveFightsToShadowTemplates({ notifyAffiliates });
-    res.status(200).json({ ok: true, message: 'Live fight rollover completed.', ...result });
+    res.status(200).json({ ok: true, message: 'Expired live-fight review completed. No fights were converted automatically.', ...result });
   } catch (error) {
     console.error('Error in cron job:', error);
     res.status(500).json({ ok: false, error: 'Cron job failed.' });
@@ -10126,7 +10118,7 @@ app.post('/send-email-affiliate', verifyAdminToken, async (req, res) => {
   try {
       // Send mail with the defined transport object
       await transporter.sendMail({
-          from: FMM_MAIL_FROM,
+          from: FMM_MAIL_FROM, // sender address
           to: email, // list of receivers
           subject: subject, // Subject line
           text: message, // plain text body
