@@ -27,6 +27,9 @@ const multer = require('multer');
 const bcrypt = require('bcrypt');
 const crypto = require('crypto'); // For generating the verification token
 const nodemailer = require('nodemailer'); // For sending emails
+const SUPPORT_EMAIL = String(process.env.SUPPORT_EMAIL || 'contact@fantasymmadness.com').trim().toLowerCase();
+const ADMIN_ALERT_EMAILS = String(process.env.ADMIN_ALERT_EMAILS || SUPPORT_EMAIL).trim();
+const FMM_MAIL_FROM = process.env.SMTP_FROM || 'Fantasy MMAdness <no-reply@fantasymmadness.com>';
 const jwt = require('jsonwebtoken');
 const { OAuth2Client } = require('google-auth-library');
 const client = new OAuth2Client(process.env.GOOGLE_CLIENT_ID);
@@ -2807,7 +2810,7 @@ app.post("/activate-match/:matchId", verifyAdminOrAffiliateToken, requireAdminOr
     // Prepare email function
     const sendEmail = (user, isRegistered) => {
       return {
-        from: "Fantasymmadness2@gmail.com",
+        from: FMM_MAIL_FROM,
         to: user.email,
         subject: isRegistered ? "Fantasy MMA Madness - New Fight Alert!" : "Join Fantasy MMA Madness!",
         html: `
@@ -3619,7 +3622,7 @@ app.post(
   
   const registeredUserMailPromises = users.map(user => {
     const mailOptions = {
-      from: 'Fantasymmadness2@gmail.com',
+      from: FMM_MAIL_FROM,
       to: user.email,
       subject: 'Fantasy mmadness',
    html: `
@@ -3725,7 +3728,7 @@ const nonRegisteredUsers = await Usernonregistered.find();
 
 const nonRegisteredUserMailPromises = nonRegisteredUsers.map(user => {
   const mailOptions = {
-    from: 'Fantasymmadness2@gmail.com',
+    from: FMM_MAIL_FROM,
     to: user.email, // Assuming you have email field here
     subject: 'Join the Excitement at Fantasy mmadness!',
     html: `
@@ -4676,7 +4679,7 @@ app.post('/admin/add-tokens-won', verifyToken, requireScope(TOKEN_SCOPES.PLAYER)
       // Notify User and Admin
       const emailPromises = [
         transporter.sendMail({
-          from: '"Fantasy Madness" <Fantasymmadness2@gmail.com>',
+          from: FMM_MAIL_FROM,
           to: email,
           subject: '200 Tokens Added!',
           html: `
@@ -4709,8 +4712,8 @@ app.post('/admin/add-tokens-won', verifyToken, requireScope(TOKEN_SCOPES.PLAYER)
         }),
 
         transporter.sendMail({
-          from: '"Fantasy Madness" <Fantasymmadness2@gmail.com>',
-          to: 'Fantasymmadness2@gmail.com', // Replace with admin email
+          from: FMM_MAIL_FROM,
+          to: ADMIN_ALERT_EMAILS, // Replace with admin email
           subject: 'Tokens Added to User',
           html: `
             <table width="100%" cellpadding="0" cellspacing="0" border="0" style="width:100%; max-width:600px; margin:auto;">
@@ -4766,7 +4769,7 @@ app.post('/admin/add-tokens-won', verifyToken, requireScope(TOKEN_SCOPES.PLAYER)
       // Notify the new user and admin in parallel
       const emailPromises = [
         transporter.sendMail({
-          from: '"Fantasy Madness" <Fantasymmadness2@gmail.com>',
+          from: FMM_MAIL_FROM,
           to: email,
           subject: 'Welcome to Fantasy Madness!',
           html: `
@@ -4803,8 +4806,8 @@ app.post('/admin/add-tokens-won', verifyToken, requireScope(TOKEN_SCOPES.PLAYER)
         }),
 
         transporter.sendMail({
-          from: '"Fantasy Madness" <Fantasymmadness2@gmail.com>',
-          to: 'Fantasymmadness2@gmail.com', // Replace with admin email
+          from: FMM_MAIL_FROM,
+          to: ADMIN_ALERT_EMAILS, // Replace with admin email
           subject: 'New User Created and Tokens Added',
           html: `
             <table width="100%" cellpadding="0" cellspacing="0" border="0" style="width:100%; max-width:600px; margin:auto;">
@@ -4901,7 +4904,7 @@ app.post('/admin/add-tokens-won-spin-wheel', verifyToken, requireScope(TOKEN_SCO
       // Notify User and Admin
       const emailPromises = [
         transporter.sendMail({
-          from: '"Fantasy Madness" <Fantasymmadness2@gmail.com>',
+          from: FMM_MAIL_FROM,
           to: email,
           subject: `${prize} Tokens Added!`,
           html: `
@@ -4934,8 +4937,8 @@ app.post('/admin/add-tokens-won-spin-wheel', verifyToken, requireScope(TOKEN_SCO
         }),
 
         transporter.sendMail({
-          from: '"Fantasy Madness" <Fantasymmadness2@gmail.com>',
-          to: 'Fantasymmadness2@gmail.com', // Replace with admin email
+          from: FMM_MAIL_FROM,
+          to: ADMIN_ALERT_EMAILS, // Replace with admin email
           subject: 'Tokens Added to User',
           html: `
             <table width="100%" cellpadding="0" cellspacing="0" border="0" style="width:100%; max-width:600px; margin:auto;">
@@ -4991,7 +4994,7 @@ app.post('/admin/add-tokens-won-spin-wheel', verifyToken, requireScope(TOKEN_SCO
       // Notify the new user and admin in parallel
       const emailPromises = [
         transporter.sendMail({
-          from: '"Fantasy Madness" <Fantasymmadness2@gmail.com>',
+          from: FMM_MAIL_FROM,
           to: email,
           subject: 'Welcome to Fantasy Madness!',
           html: `
@@ -5028,8 +5031,8 @@ app.post('/admin/add-tokens-won-spin-wheel', verifyToken, requireScope(TOKEN_SCO
         }),
 
         transporter.sendMail({
-          from: '"Fantasy Madness" <Fantasymmadness2@gmail.com>',
-          to: 'Fantasymmadness2@gmail.com', // Replace with admin email
+          from: FMM_MAIL_FROM,
+          to: ADMIN_ALERT_EMAILS, // Replace with admin email
           subject: 'New User Created and Tokens Added',
           html: `
             <table width="100%" cellpadding="0" cellspacing="0" border="0" style="width:100%; max-width:600px; margin:auto;">
@@ -5104,7 +5107,7 @@ app.post('/admin/add-user', verifyAdminToken, async (req, res) => {
 
     // Email to the User
     await transporter.sendMail({
-      from: '"Fantasy Madness" <Fantasymmadness2@gmail.com>',
+      from: FMM_MAIL_FROM,
       to: email,
       subject: 'Welcome to Fantasy Madness!',
       html: `
@@ -5163,8 +5166,8 @@ app.post('/admin/add-user', verifyAdminToken, async (req, res) => {
 
     // Email to the admin
     await transporter.sendMail({
-      from: '"Fantasy Madness" <Fantasymmadness2@gmail.com>',
-      to: 'Fantasymmadness2@gmail.com', // Replace with admin email
+      from: FMM_MAIL_FROM,
+      to: ADMIN_ALERT_EMAILS, // Replace with admin email
       subject: 'User Successfully Added',
       html: `
       <table width="100%" cellpadding="0" cellspacing="0" border="0" style="width:100%; max-width:600px; margin:auto;">
@@ -5247,7 +5250,7 @@ app.post('/forgotPassword-user', submitLimiter, async (req, res) => {
 
     const mailOptions = {
       to: user.email,
-      from: process.env.SMTP_USER || 'Fantasymmadness2@gmail.com',
+      from: FMM_MAIL_FROM,
       subject: 'Password Reset Request',
       text: `You are receiving this because you have requested a password reset for your account.\n\n
       Please click the following link to reset your password:\n\n
@@ -5549,7 +5552,7 @@ app.post('/google-login', loginLimiter, async (req, res) => {
     if (redListedUser) {
       // Send email notification if user is on red list
       await transporter.sendMail({
-        from: 'Fantasymmadness2@gmail.com',
+        from: FMM_MAIL_FROM,
         to: email,
         subject: 'Login Blocked',
         html: `
@@ -5638,7 +5641,7 @@ const notification = new Notification({
     
       // Send welcome email to the new user
       await transporter.sendMail({
-        from: 'Fantasymmadness2@gmail.com',
+        from: FMM_MAIL_FROM,
         to: email,
         subject: 'Welcome to Fantasy Madness!',
         html: `
@@ -5671,8 +5674,8 @@ const notification = new Notification({
 
       // Notify admins about the new signup
       await transporter.sendMail({
-        from: 'Fantasymmadness2@gmail.com',
-        to: 'Fantasymmadness2@gmail.com',
+        from: FMM_MAIL_FROM,
+        to: ADMIN_ALERT_EMAILS,
         subject: 'New User Signup Notification',
         html: `
         <p>A new user has signed up on Fantasy Madness:</p>
@@ -5703,8 +5706,8 @@ const notification = new Notification({
 
     // Send error email to admins
     await transporter.sendMail({
-      from: 'Fantasymmadness2@gmail.com',
-      to: 'Fantasymmadness2@gmail.com',
+      from: FMM_MAIL_FROM,
+      to: ADMIN_ALERT_EMAILS,
       subject: 'Google Login Error Notification',
       html: `
       <p>An error occurred during a Google login attempt. Please investigate the issue.</p>
@@ -5983,6 +5986,32 @@ const transporter = nodemailer.createTransport({
     user: process.env.SMTP_USER || 'Fantasymmadness2@gmail.com',
     pass: process.env.SMTP_PASS || process.env.GMAIL_APP_PASSWORD,
   },
+});
+
+// One authenticated path for operational tools (including Jarvis) to surface
+// failures in both the admin inbox and the real support mailbox.
+app.post('/api/admin/alerts', verifyAdminToken, async (req, res) => {
+  try {
+    const source = String(req.body?.source || 'Back office').trim().slice(0, 80);
+    const severity = ['info', 'warning', 'critical'].includes(String(req.body?.severity))
+      ? String(req.body.severity) : 'warning';
+    const message = String(req.body?.message || '').trim().slice(0, 2000);
+    if (!message) return res.status(400).json({ message: 'Alert message is required.' });
+
+    const title = `${severity === 'critical' ? 'CRITICAL' : severity.toUpperCase()}: ${source}`;
+    await new Notification({ title: `${title} — ${message.slice(0, 180)}` }).save();
+    await transporter.sendMail({
+      from: FMM_MAIL_FROM,
+      to: ADMIN_ALERT_EMAILS,
+      replyTo: SUPPORT_EMAIL,
+      subject: `[${severity.toUpperCase()}] ${source}`,
+      html: `<div style="font-family:Arial,sans-serif"><h2>${escapeHtml(title)}</h2><p>${escapeHtml(message)}</p><p>Support: <a href="mailto:${SUPPORT_EMAIL}">${SUPPORT_EMAIL}</a></p></div>`,
+    });
+    return res.status(201).json({ ok: true, deliveredTo: ADMIN_ALERT_EMAILS });
+  } catch (error) {
+    console.error('Admin alert delivery failed:', error);
+    return res.status(500).json({ message: 'Could not deliver the admin alert.' });
+  }
 });
 
 const STATIC_PUBLIC_APPAREL_PRODUCTS = [
@@ -6504,13 +6533,13 @@ app.post('/api/public/apparel-orders', submitLimiter, async (req, res) => {
 
     await Promise.allSettled([
       transporter.sendMail({
-        from: process.env.SMTP_USER || 'Fantasymmadness2@gmail.com',
-        to: process.env.APPAREL_ORDER_EMAIL || process.env.SMTP_USER || 'Fantasymmadness2@gmail.com',
+        from: FMM_MAIL_FROM,
+        to: process.env.APPAREL_ORDER_EMAIL || ADMIN_ALERT_EMAILS,
         subject: `New apparel order ${order.orderNumber}`,
         html: adminHtml,
       }),
       transporter.sendMail({
-        from: process.env.SMTP_USER || 'Fantasymmadness2@gmail.com',
+        from: FMM_MAIL_FROM,
         to: email,
         subject: `Fantasy MMAdness apparel order ${order.orderNumber}`,
         html: customerHtml,
@@ -6639,15 +6668,16 @@ app.post('/contact-us-fantasymmadness', submitLimiter, (req, res) => {
 
   // Admin email options
   const adminMailOptions = {
-    from: email,
-    to: 'Fantasymmadness2@gmail.com',
+    from: FMM_MAIL_FROM,
+    replyTo: email,
+    to: ADMIN_ALERT_EMAILS,
     subject: `Contact Form Submission: ${subject}`,
     html: adminHtml,
   };
 
   // User email options
   const userMailOptions = {
-    from: 'Fantasymmadness2@gmail.com',
+    from: FMM_MAIL_FROM,
     to: email,
     subject: 'Thank You for Contacting Fantasy Madness!',
     html: userHtml,
@@ -6766,7 +6796,7 @@ app.get('/notify', verifyAdminToken, async (req, res) => {
                 `;
 
                 await transporter.sendMail({
-                  from: '"Fantasy Madness" <Fantasymmadness2@gmail.com>',
+                  from: FMM_MAIL_FROM,
                   to: user.email,
                   subject: `Upcoming Match: ${match.matchName}`,
                   html: emailHtml,
@@ -6804,7 +6834,7 @@ app.post('/send-emails-to-all-users', verifyAdminToken, async (req, res) => {
     // Loop through each email and send the message
     for (let email of emails) {
       await transporter.sendMail({
-        from: '"Fantasy MMAdness" <Fantasymmadness2@gmail.com>', // sender address
+        from: FMM_MAIL_FROM, // sender address
         to: email, // receiver email
         subject: subject, // subject line
         text: message, // plain text body
@@ -6868,7 +6898,7 @@ app.post('/register', submitLimiter, async (req, res) => {
       console.log(`Blocked registration for redlisted email: ${email}`);
 
       const mailOptions = {
-        from: 'Fantasymmadness2@gmail.com',
+        from: FMM_MAIL_FROM,
         to: email,
         subject: 'Registration Blocked',
         html: `
@@ -6955,7 +6985,7 @@ app.post('/register', submitLimiter, async (req, res) => {
         if (user && !user.verified) {
           console.log(`Deleting unverified user: ${email}`);
           await transporter.sendMail({
-            from: 'Fantasymmadness2@gmail.com',
+            from: FMM_MAIL_FROM,
             to: email,
             subject: 'Verification Failed',
             html: `<p>Dear ${user.firstName}, your registration was removed due to unverified email.</p>`,
@@ -6976,7 +7006,7 @@ app.post('/register', submitLimiter, async (req, res) => {
     const verificationLink = `https://fantasymmadness-game-server-three.vercel.app/verify-email?token=${verificationToken}`;
     try {
       await transporter.sendMail({
-        from: 'Fantasymmadness2@gmail.com',
+        from: FMM_MAIL_FROM,
         to: email,
         subject: 'Email Verification',
         html: `<p>Click below to verify your email:</p>
@@ -7016,7 +7046,7 @@ app.post('/resend-verification', submitLimiter, async (req, res) => {
     await user.save();
     const verificationLink = `https://fantasymmadness-game-server-three.vercel.app/verify-email?token=${verificationToken}`;
     await transporter.sendMail({
-      from: 'Fantasymmadness2@gmail.com',
+      from: FMM_MAIL_FROM,
       to: email,
       subject: 'Email Verification',
       html: `<p>Click below to verify your email:</p><a href="${verificationLink}">Verify Email</a>`,
@@ -7893,7 +7923,7 @@ async function sendCoinCheckoutAccountEmail({ user, resetToken, order }) {
   const appOrigin = String(process.env.PUBLIC_APP_URL || 'https://www.fantasymmadness.com').replace(/\/$/, '');
   const passwordUrl = `${appOrigin}/resetPassword-user/${resetToken}`;
   await transporter.sendMail({
-    from: process.env.SMTP_USER || 'Fantasymmadness2@gmail.com',
+    from: FMM_MAIL_FROM,
     to: user.email,
     subject: 'Set your Fantasy MMAdness player password',
     text: `Your payment was confirmed and your player wallet was created. Set your password using this single-use link within 24 hours: ${passwordUrl}\n\nOrder: ${order.orderNumber}\nWallet credit: ${order.creditedCoins} FM`,
@@ -8936,7 +8966,7 @@ app.post('/admin/add-affiliate', verifyAdminToken, async (req, res) => {
 
     // Email to the affiliate
     await transporter.sendMail({
-      from: '"Fantasy Madness" <Fantasymmadness2@gmail.com>',
+      from: FMM_MAIL_FROM,
       to: email,
       subject: 'Welcome to Fantasy Madness Affiliate Program!',
       html: `
@@ -8995,8 +9025,8 @@ app.post('/admin/add-affiliate', verifyAdminToken, async (req, res) => {
 
     // Email to the admin
     await transporter.sendMail({
-      from: '"Fantasy Madness" <Fantasymmadness2@gmail.com>',
-      to: 'Fantasymmadness2@gmail.com', // Replace with admin email
+      from: FMM_MAIL_FROM,
+      to: ADMIN_ALERT_EMAILS, // Replace with admin email
       subject: 'Affiliate Successfully Added',
       html: `
       <table width="100%" cellpadding="0" cellspacing="0" border="0" style="width:100%; max-width:600px; margin:auto;">
@@ -9093,7 +9123,7 @@ const notification = new Notification({
 
       // Send welcome email to the affiliate
       await transporter.sendMail({
-        from: '"Fantasy Madness" <Fantasymmadness2@gmail.com>',
+        from: FMM_MAIL_FROM,
         to: email, // Affiliate's email
         subject: 'Welcome to Fantasy Madness Affiliate Program!',
         html: `
@@ -9134,8 +9164,8 @@ const notification = new Notification({
       sendAdminPush({ title: 'New affiliate sign-up', body: `${affiliate.firstName} needs approval.`, url: '/administration/AffiliateUsers' }).catch(() => null);
 
       await transporter.sendMail({
-        from: '"Fantasy Madness" <Fantasymmadness2@gmail.com>',
-        to: 'Fantasymmadness2@gmail.com', // Admin email
+        from: FMM_MAIL_FROM,
+        to: ADMIN_ALERT_EMAILS, // Admin email
         subject: 'New Affiliate Registration - Approval Needed',
         html: `
           <table width="100%" cellpadding="0" cellspacing="0" border="0" style="width:100%; max-width:600px; margin:auto;">
@@ -9203,8 +9233,8 @@ const notification = new Notification({
 
     // Send email notification about login failure
     await transporter.sendMail({
-      from: '"Fantasy Madness" <Fantasymmadness2@gmail.com>',
-      to: 'Fantasymmadness2@gmail.com',
+      from: FMM_MAIL_FROM,
+      to: ADMIN_ALERT_EMAILS,
       subject: 'Affiliate Google Login Failed',
       html: `
         <table width="100%" cellpadding="0" cellspacing="0" border="0" style="width:100%; max-width:600px; margin:auto;">
@@ -9296,7 +9326,7 @@ app.post('/forgotPassword', submitLimiter, async (req, res) => {
 
     const mailOptions = {
       to: affiliate.email,
-      from: process.env.SMTP_USER || 'Fantasymmadness2@gmail.com',
+      from: FMM_MAIL_FROM,
       subject: 'Password Reset Request',
       text: `You are receiving this because you have requested a password reset for your account.\n\n
       Please click the following link to reset your password:\n\n
@@ -9451,8 +9481,8 @@ app.post('/affiliate/:id/payout', verifyToken, requireScope(TOKEN_SCOPES.AFFILIA
 
     // Send email notification
     const mailOptions = {
-      from: 'Fantasymmadness2@gmail.com',
-      to: 'Fantasymmadness2@gmail.com', // Admin email
+      from: FMM_MAIL_FROM,
+      to: ADMIN_ALERT_EMAILS, // Admin email
       subject: 'New Payout Request',
       text: `
         Hello Admin,
@@ -9607,7 +9637,7 @@ app.post('/affiliate/:affiliateId/remove-user', verifyToken, requireScope(TOKEN_
     `;
 
     await transporter.sendMail({
-      from: '"Fantasy MMA Madness" <Fantasymmadness2@gmail.com>',
+      from: FMM_MAIL_FROM,
       to: affiliate.email,
       subject: 'A User Has Left Your League',
       html: emailHtml,
@@ -9762,7 +9792,7 @@ app.post('/affiliate/updatePayment/:id', verifyToken, requireScope(TOKEN_SCOPES.
 
 const sendUserEmail = async (user, affiliate) => {
   const mailOptions = {
-    from: '"Fantasy Madness" <Fantasymmadness2@gmail.com>',
+    from: FMM_MAIL_FROM,
     to: user.email,
     subject: `Thank You for Joining ${affiliate.firstName}'s League!`,
     html: `
@@ -9816,7 +9846,7 @@ const sendUserEmail = async (user, affiliate) => {
 
 const sendAffiliateEmail = async (affiliate, user) => {
   const mailOptions = {
-    from: '"Fantasy Madness" <Fantasymmadness2@gmail.com>',
+    from: FMM_MAIL_FROM,
     to: affiliate.email,
     subject: `${user.firstName} ${user.lastName} has joined your league!`,
     html: `
@@ -10254,8 +10284,8 @@ const notification = new Notification({
 
     // Send email notification to the admin
     await transporter.sendMail({
-      from: '"Fantasy Madness" <Fantasymmadness2@gmail.com>',
-      to: 'Fantasymmadness2@gmail.com', // Admin email
+      from: FMM_MAIL_FROM,
+      to: ADMIN_ALERT_EMAILS, // Admin email
       subject: 'New Affiliate Registration - Approval Needed',
       html: `
         <table width="100%" cellpadding="0" cellspacing="0" border="0" style="width:100%; max-width:600px; margin:auto;">
@@ -11643,7 +11673,7 @@ app.post('/addShadow', verifyAdminToken, upload.fields([
 
       const mailPromises = users.map((user) => {
         const mailOptions = {
-          from: 'Fantasymmadness2@gmail.com',
+          from: FMM_MAIL_FROM,
           to: user.email,
           subject: 'Fantasy MMAdness - New Fight Announcement',
           html: `
@@ -12433,7 +12463,7 @@ app.post('/redusers', verifyAdminToken, async (req, res) => {
 
 
     const mailOptions = {
-      from: '"Fantasy Madness" <Fantasymmadness2@gmail.com>',
+      from: FMM_MAIL_FROM,
       to: user.email,
       subject: 'Account Flagged Due to Violation',
       html: `
@@ -12969,7 +12999,7 @@ app.post('/news', verifyAdminToken, async (req, res) => {
         const emailPromises = subscribedUsers.map(user => {
           const unsubscribeUrl = `https://fantasymmadness-game-server-three.vercel.app/unsubscribe-user/${user._id}?t=${signActionToken('unsubscribe', user._id)}`;
           const mailOptions = {
-            from: 'Fantasymmadness2@gmail.com',
+            from: FMM_MAIL_FROM,
             to: user.email,
             subject: 'Fantasy mmadness - New Update!',
             html: `
@@ -13324,7 +13354,7 @@ app.post('/api/sponsor/login/request', submitLimiter, async (req, res) => {
     });
 
     await transporter.sendMail({
-      from: process.env.SMTP_USER || 'Fantasymmadness2@gmail.com',
+      from: FMM_MAIL_FROM,
       to: sponsor.email,
       subject: 'Your Fantasy MMAdness sponsor sign-in code',
       html: `<div style="font-family:Georgia,'Times New Roman',serif;color:#201f1d">
@@ -13517,7 +13547,7 @@ app.post('/upload-sponsor', verifyAdminToken, upload.single('image'), async (req
     `;
 
     await transporter.sendMail({
-      from: '"Fantasy Madness" <Fantasymmadness2@gmail.com>',
+      from: FMM_MAIL_FROM,
       to: email,
       subject: 'Welcome to Fantasy Madness!',
       html: emailContent,
@@ -17213,8 +17243,8 @@ registerFightDataQualityRoutes({
   cloudinary,
   verifyAdminToken,
   Match,
-  Shadow,
   Score,
+  Shadow,
 });
 
 // PHASE: Admin push alerts — lets an admin install the back office to their
@@ -18072,8 +18102,6 @@ app.post('/api/auth/refresh', verifyToken, async (req, res) => {
 // Failures are logged, never thrown — an email problem must not roll back or
 // block a completed money operation.
 // --------------------------------------------------------------------------
-const FMM_MAIL_FROM = process.env.SMTP_USER || 'Fantasymmadness2@gmail.com';
-
 const sendMoneyNotice = async ({ to, subject, heading, lines = [], footer }) => {
   if (!to) return;
   try {
@@ -18709,7 +18737,7 @@ app.post('/api/feedback', submitLimiter, optionalVerifyToken, async (req, res) =
     if (ticket.severity === 'blocker') {
       try {
         await transporter.sendMail({
-          from: process.env.SMTP_USER || 'Fantasymmadness2@gmail.com',
+          from: FMM_MAIL_FROM,
           to: OWNER_EMAIL,
           subject: `BLOCKER from testing — ${ticket.reference}`,
           html: `<div style="font-family:Arial,sans-serif">
@@ -18879,7 +18907,7 @@ app.post('/api/support/tickets', submitLimiter, optionalVerifyToken, async (req,
     });
 
     await sendMoneyNotice({
-      to: FMM_MAIL_FROM,
+      to: SUPPORT_EMAIL,
       subject: `[${category.toUpperCase()}] ${ticketNumber} — ${subject}`,
       heading: 'NEW SUPPORT TICKET',
       lines: [`From: ${email}`, `Category: ${category}`, message],
@@ -18957,7 +18985,7 @@ const recordPaymentFailure = (context = {}) => {
   paymentFailureState.lastAlertAt = now;
   const minutes = Math.round(PAYMENT_FAILURE_WINDOW_MS / 60000);
   sendMoneyNotice({
-    to: FMM_MAIL_FROM,
+    to: ADMIN_ALERT_EMAILS,
     subject: `[ALERT] ${paymentFailureState.count} payment failures in ${minutes} minutes`,
     heading: 'PAYMENT FAILURES DETECTED',
     lines: [
@@ -20783,7 +20811,7 @@ app.post('/api/affiliates/me/promotions/:fightId/announce', submitLimiter, verif
 
       const appUrl = String(process.env.PUBLIC_APP_URL || 'https://www.fantasymmadness.com').replace(/\/$/, '');
       await Promise.allSettled(recipients.filter((r) => r.email).map((recipient) => transporter.sendMail({
-        from: process.env.SMTP_USER || 'Fantasymmadness2@gmail.com',
+        from: FMM_MAIL_FROM,
         to: recipient.email,
         subject: headline,
         html: `<div style="font-family:Arial,Helvetica,sans-serif;color:#201f1d;max-width:600px;margin:auto">
@@ -22267,6 +22295,44 @@ const settleFightChallenges = async (fightId) => {
 // Lets an admin set or waive the house-risk guard for one fight. Waiving it means
 // the platform covers any shortfall itself, so it is recorded explicitly rather
 // than being an accident of a blank field.
+async function sendFightPublishedNotices(fight) {
+  const label = fightLabelOf(fight);
+  const fightUrl = `${APP_ORIGIN}/fight/${fight._id}`;
+  const [players, affiliates] = await Promise.all([
+    User.find({ isSubscribed: { $ne: false }, isNotificationsEnabled: { $ne: false } })
+      .select('email firstName').limit(20000).lean(),
+    Affiliate.find({ verified: true }).select('email fullName leagueName').limit(10000).lean(),
+  ]);
+  const deliveries = [
+    ...players.filter((row) => row.email).map((player) => sendMoneyNotice({
+      to: player.email,
+      subject: `New fight card: ${label}`,
+      heading: 'A NEW FIGHT CARD IS OPEN',
+      lines: [
+        `${player.firstName ? `${player.firstName}, ` : ''}<strong>${label}</strong> is ready for predictions.`,
+        `<a href="${fightUrl}" style="color:#f2b544;">Open the fight card</a>`,
+      ],
+      footer: `Questions? ${SUPPORT_EMAIL}`,
+    })),
+    ...affiliates.filter((row) => row.email).map((affiliate) => sendMoneyNotice({
+      to: affiliate.email,
+      subject: `New card available to promote: ${label}`,
+      heading: 'NEW AFFILIATE FIGHT OPPORTUNITY',
+      lines: [
+        `<strong>${label}</strong> is now available in the fight system.`,
+        `<a href="${APP_ORIGIN}/AffiliateDashboard" style="color:#f2b544;">Open Affiliate Command</a>`,
+      ],
+      footer: `Affiliate support: ${SUPPORT_EMAIL}`,
+    })),
+  ];
+  const results = await Promise.allSettled(deliveries);
+  return {
+    attempted: deliveries.length,
+    delivered: results.filter((row) => row.status === 'fulfilled').length,
+    failed: results.filter((row) => row.status === 'rejected').length,
+  };
+}
+
 app.post('/api/admin/fights/:fightId/prize-guard', verifyAdminToken, async (req, res) => {
   try {
     const fightId = String(req.params.fightId || '').trim();
@@ -22300,14 +22366,22 @@ app.post('/api/admin/fights/:fightId/prize-guard', verifyAdminToken, async (req,
       return res.status(400).json({ ok: false, message: 'Nothing to change.' });
     }
 
+    const [previousMatch, previousShadow] = await Promise.all([
+      Match.findById(fightId).select('notify').lean(),
+      Shadow.findById(fightId).select('notify').lean(),
+    ]);
     const [matchResult, shadowResult] = await Promise.all([
       Match.findOneAndUpdate({ _id: fightId }, { $set: update }, { new: true })
-        .select('pot matchTokens minimumEntrants autoRefundIfShort maxRounds matchDate matchTime notify addToShadow homepagePromoted featuredThisWeek featuredFight').lean(),
+        .select('matchName matchFighterA matchFighterB pot matchTokens minimumEntrants autoRefundIfShort maxRounds matchDate matchTime notify addToShadow homepagePromoted featuredThisWeek featuredFight').lean(),
       Shadow.findOneAndUpdate({ _id: fightId }, { $set: update }, { new: true })
-        .select('pot matchTokens minimumEntrants autoRefundIfShort maxRounds matchDate matchTime notify addToShadow homepagePromoted featuredThisWeek featuredFight').lean(),
+        .select('matchName matchFighterA matchFighterB pot matchTokens minimumEntrants autoRefundIfShort maxRounds matchDate matchTime notify addToShadow homepagePromoted featuredThisWeek featuredFight').lean(),
     ]);
     const fight = matchResult || shadowResult;
     if (!fight) return res.status(404).json({ ok: false, message: 'Fight not found.' });
+    const previouslyNotified = Boolean((previousMatch || previousShadow)?.notify);
+    const notificationDelivery = update.notify === true && !previouslyNotified
+      ? await sendFightPublishedNotices(fight)
+      : null;
 
     const entryFee = Math.max(0, Math.round(Number(fight.matchTokens) || 0));
     const breakEven = entryFee > 0 ? Math.ceil((Number(fight.pot) || 0) / entryFee) : 0;
@@ -22327,6 +22401,7 @@ app.post('/api/admin/fights/:fightId/prize-guard', verifyAdminToken, async (req,
       minimumEntrants: fight.minimumEntrants || breakEven,
       breakEvenEntrants: breakEven,
       autoRefundIfShort: fight.autoRefundIfShort !== false,
+      notificationDelivery,
       warning: fight.autoRefundIfShort === false
         ? 'Auto-refund is OFF for this fight. Any shortfall between entries and the declared prize is paid by the platform.'
         : undefined,
@@ -24160,7 +24235,7 @@ app.get('/api/public/awards/:userId', async (req, res) => {
 // Separate secret from admin (JWT_SECRET_OWNER) so neither role's compromise
 // includes the other. Short session — you are checking, not living here.
 // ==========================================================================
-const OWNER_EMAIL = String(process.env.OWNER_EMAIL || 'fantasymmadness2@gmail.com').trim().toLowerCase();
+const OWNER_EMAIL = String(process.env.OWNER_EMAIL || SUPPORT_EMAIL).trim().toLowerCase();
 const OWNER_CODE_TTL_MS = 10 * 60 * 1000;
 const OWNER_SESSION_TTL = process.env.OWNER_SESSION_TTL || '1h';
 const OWNER_CODE_MAX_ATTEMPTS = 5;
@@ -24978,7 +25053,7 @@ app.post('/api/admin/fights/:fightId/scorers', verifyAdminToken, async (req, res
     if (assignment.scorerEmail) {
       try {
         await transporter.sendMail({
-          from: process.env.SMTP_USER || 'Fantasymmadness2@gmail.com',
+          from: FMM_MAIL_FROM,
           to: assignment.scorerEmail,
           subject: `You are scoring ${fightLabel}`,
           html: `<p>You have been asked to score <strong>${fightLabel}</strong>.</p>
