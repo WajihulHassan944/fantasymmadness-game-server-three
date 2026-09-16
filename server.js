@@ -1629,6 +1629,7 @@ function pickPublicFightFields(fight = {}, sourceType = 'match') {
 
 function calculateClassicPredictionPoints(userPrediction = [], fighterOneStats = [], fighterTwoStats = [], matchCategory = '') {
   if (!Array.isArray(userPrediction) || !Array.isArray(fighterOneStats) || !Array.isArray(fighterTwoStats)) return 0;
+  const combatCategory = normalizeCombatCategory(matchCategory);
 
   return userPrediction.reduce((totalScore, roundPrediction, index) => {
     const fighterOneRound = fighterOneStats[index];
@@ -1648,7 +1649,7 @@ function calculateClassicPredictionPoints(userPrediction = [], fighterOneStats =
       if (Number.isFinite(prediction) && Number.isFinite(actual) && prediction === actual && Number.isFinite(score)) roundScore += score;
     };
 
-    if (String(matchCategory).toLowerCase() === 'boxing') {
+    if (combatCategory === 'boxing') {
       addIfUnderOrEqual(roundPrediction.hpPrediction1, fighterOneRound.HP);
       addIfUnderOrEqual(roundPrediction.bpPrediction1, fighterOneRound.BP);
       addIfUnderOrEqual(roundPrediction.tpPrediction1, fighterOneRound.TP);
@@ -1659,7 +1660,7 @@ function calculateClassicPredictionPoints(userPrediction = [], fighterOneStats =
       addIfUnderOrEqual(roundPrediction.tpPrediction2, fighterTwoRound.TP);
       addIfEqualPrediction(roundPrediction.rwPrediction2, fighterTwoRound.RW);
       addIfEqualPrediction(roundPrediction.koPrediction2, fighterTwoRound.KO, fighterTwoRound.KO);
-    } else if (String(matchCategory).toLowerCase() === 'mma') {
+    } else if (combatCategory === 'mma') {
       addIfUnderOrEqual(roundPrediction.hpPrediction1, fighterOneRound.ST);
       addIfUnderOrEqual(roundPrediction.bpPrediction1, fighterOneRound.KI);
       addIfUnderOrEqual(roundPrediction.tpPrediction1, fighterOneRound.KN);
@@ -7029,18 +7030,19 @@ app.post('/resend-verification', submitLimiter, async (req, res) => {
 
 app.get('/verify-email', async (req, res) => {
   const { token } = req.query;
+  const frontendOrigin = String(process.env.FRONTEND_URL || process.env.APP_URL || 'https://www.fantasymmadness.com').replace(/\/$/, '');
 
   const user = await User.findOne({ verificationToken: token });
 
   if (!user) {
-    return res.status(400).send('Invalid or expired token');
+    return res.redirect(`${frontendOrigin}/auth?mode=login&role=player&verification=invalid`);
   }
 
   user.verified = true;
   user.verificationToken = null; // Clear the token after verification
   await user.save();
 
-  res.status(200).send('Email verified successfully!');
+  return res.redirect(`${frontendOrigin}/auth?mode=login&role=player&verified=1`);
 });
 
 
