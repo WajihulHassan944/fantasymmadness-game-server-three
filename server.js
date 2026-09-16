@@ -10126,7 +10126,7 @@ app.post('/send-email-affiliate', verifyAdminToken, async (req, res) => {
   try {
       // Send mail with the defined transport object
       await transporter.sendMail({
-          from: '"Fantasy mmadnress Team" <Fantasymmadness2@gmail.com>', // sender address
+          from: FMM_MAIL_FROM,
           to: email, // list of receivers
           subject: subject, // Subject line
           text: message, // plain text body
