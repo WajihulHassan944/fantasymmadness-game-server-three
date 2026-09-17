@@ -1921,6 +1921,8 @@ const shadowSchema = new mongoose.Schema({
   fighterAImage: String,  // URL of Fighter A's image
   fighterBImage: String,  // URL of Fighter B's image
   matchType: String,      // LIVE or SHADOW
+  sourceShadowId: { type: mongoose.Schema.Types.ObjectId, ref: 'Shadow', index: true },
+  activatedFromShadowAt: Date,
   matchTokens: { type: Number, min: 0, default: 0 },
   pot: { type: Number, min: 0, default: 0 },
   // The prize is declared up front and never grows with entries, so the platform
@@ -2529,6 +2531,8 @@ matchReward: { type: String, enum: ['Rewarded', 'NotRewarded'], default: 'NotRew
   fighterAImage: String,  // URL of Fighter A's image
   fighterBImage: String,  // URL of Fighter B's image
   matchType: String,      // LIVE or SHADOW
+  sourceShadowId: { type: mongoose.Schema.Types.ObjectId, ref: 'Shadow', index: true },
+  activatedFromShadowAt: Date,
   maxRounds: Number,
   fighterAImageDeleteUrl: String,
   fighterBImageDeleteUrl: String,
@@ -22306,6 +22310,67 @@ const settleFightChallenges = async (fightId) => {
   clearPublicResponseCache();
   return { settled, voided, total: open.length };
 };
+
+// Activate a reusable Shadow template as a new live contest. The source
+// template is never modified, so it remains available for future quiet weeks.
+app.post('/api/admin/shadow/:shadowId/activate', verifyAdminToken, async (req, res) => {
+  try {
+    const shadowId = String(req.params.shadowId || '').trim();
+    const shadow = await Shadow.findById(shadowId).lean();
+    if (!shadow) return res.status(404).json({ ok: false, message: 'Shadow fight not found.' });
+
+    const {
+      _id, __v, createdAt, updatedAt, sourceMatchId, convertedFromLiveAt,
+      matchShadowStatus, matchShadowOpenStatus, shadowIdentityHidden,
+      shadowAutoPublished, shadowPublishedAt, shadowExpiresAt, shadowLastUsedAt,
+      shadowOriginalMatchDate, userPredictions, collectedFees, prizesSettledAt,
+      voidedAt, voidReason, shortfallPromoterWarnedAt, shortfallPlayersWarnedAt,
+      ...template
+    } = shadow;
+
+    const numberOrTemplate = (key) => req.body?.[key] !== undefined
+      ? Math.max(0, Math.round(Number(req.body[key]) || 0))
+      : Math.max(0, Math.round(Number(shadow[key]) || 0));
+    const requestedStatus = String(req.body?.matchStatus || 'Draft');
+    const matchStatus = ['Draft', 'Scheduled', 'Open'].includes(requestedStatus) ? requestedStatus : 'Draft';
+
+    const liveFight = await Match.create({
+      ...template,
+      sourceShadowId: shadow._id,
+      activatedFromShadowAt: new Date(),
+      matchType: 'LIVE',
+      matchStatus,
+      matchDate: req.body?.matchDate || shadow.matchDate || new Date(),
+      matchTime: req.body?.matchTime ?? shadow.matchTime,
+      matchTokens: numberOrTemplate('matchTokens'),
+      pot: numberOrTemplate('pot'),
+      promoterStake: numberOrTemplate('promoterStake'),
+      platformContribution: numberOrTemplate('platformContribution'),
+      projectedEntrants: numberOrTemplate('projectedEntrants'),
+      minimumEntrants: numberOrTemplate('minimumEntrants'),
+      autoRefundIfShort: req.body?.autoRefundIfShort !== false,
+      homepagePromoted: Boolean(req.body?.homepagePromoted),
+      featuredThisWeek: Boolean(req.body?.featuredThisWeek),
+      featuredFight: Boolean(req.body?.featuredFight),
+      notify: false,
+      addToShadow: false,
+      userPredictions: [],
+      collectedFees: 0,
+      profitZoneReachedAt: null,
+    });
+
+    clearPublicResponseCache();
+    return res.status(201).json({
+      ok: true,
+      message: 'Shadow template activated as a new live contest.',
+      sourceShadowId: shadowId,
+      fight: liveFight.toObject(),
+    });
+  } catch (error) {
+    console.error('Shadow activation failed:', error);
+    return res.status(500).json({ ok: false, message: 'Could not activate that Shadow fight.' });
+  }
+});
 
 // Lets an admin set or waive the house-risk guard for one fight. Waiving it means
 // the platform covers any shortfall itself, so it is recorded explicitly rather
