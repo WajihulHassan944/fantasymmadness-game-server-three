@@ -2409,7 +2409,23 @@ app.delete('/shadowfighttodelete/:id', verifyAdminToken, async (req, res) => {
 // Get Matches API
 app.get('/shadow', async (req, res) => {
   try {
-    const matches = await Shadow.find().populate('fighterAId fighterBId').sort({ _id: -1 }).lean(); // Sort by _id in descending order
+    const requestedLimit = Math.max(0, Math.min(500, Number(req.query.limit) || 0));
+    const compact = String(req.query.compact || '').toLowerCase();
+    let shadowQuery = Shadow.find();
+    if (compact === 'promotion' || compact === 'card' || compact === 'true') {
+      shadowQuery = shadowQuery.select([
+        'matchCategory', 'matchCategoryTwo', 'matchName', 'matchFighterA', 'matchFighterB',
+        'fighterAId', 'fighterBId', 'fighterAImage', 'fighterBImage',
+        'fighterAImageDeleteUrl', 'fighterBImageDeleteUrl', 'promotionBackground',
+        'promotionBackgroundDeleteUrl', 'matchDescription', 'matchVideoUrl', 'matchDate',
+        'matchTime', 'matchTokens', 'matchStatus', 'matchShadowStatus', 'matchShadowOpenStatus',
+        'pot', 'profit', 'amountOverPotBudget', 'maxRounds', 'BoxingMatch', 'MMAMatch',
+        'AffiliateIds', 'createdAt', 'updatedAt',
+      ].join(' '));
+    }
+    shadowQuery = shadowQuery.populate('fighterAId fighterBId').sort({ _id: -1 });
+    if (requestedLimit) shadowQuery = shadowQuery.limit(requestedLimit);
+    const matches = await shadowQuery.lean(); // Sort by _id in descending order
     res.send(matches.map((item) => attachCombatFighterReadFallbacks(item, 'shadow')));
   } catch (err) {
     res.status(500).send({ message: 'Error fetching matches' });
@@ -3420,27 +3436,10 @@ app.post(
           return res.status(403).json({ message: 'Affiliate session is missing an account id.', code: 'NO_AFFILIATE_ID' });
         }
 
-        // FUNDING RULE. On a PAID affiliate card the prize is a promise and the
-        // entry fees are what actually arrives; if the room is small, the gap
-        // has to come from somewhere. It comes from the promoter's stake, not
-        // from us. Enforced here and not only in the form, because the form is
-        // just a suggestion to anyone posting straight at the endpoint.
-        //
-        // FREE cards are exempt by design: no fee means nothing was ever meant
-        // to fund the prize, so there is no shortfall. Those are the free-play
-        // states, where winners take apparel and crowns.
-        const declaredPot = Math.max(0, Math.round(Number(pot) || 0));
-        const entryFee = Math.max(0, Math.round(Number(matchTokens) || 0));
-        const stake = Math.max(0, Math.round(Number(req.body.promoterStake) || 0));
-        if (entryFee > 0 && declaredPot > stake) {
-          return res.status(400).json({
-            message: `Stake at least ${declaredPot} to cover the prize you are advertising. You are short ${declaredPot - stake}.`,
-            code: 'PRIZE_NOT_STAKED',
-            declaredPot,
-            promoterStake: stake,
-            shortfall: declaredPot - stake,
-          });
-        }
+        // Promoter staking is optional. Unstaked paid cards use the existing
+        // minimum-entrant/auto-refund settlement guard; fully staked cards are
+        // guaranteed. A previous route-level rejection contradicted that
+        // settlement model and prevented ordinary affiliates from publishing.
       }
 
       // Upload images to Cloudinary if files are provided; otherwise, use URLs from req.body
@@ -3463,19 +3462,19 @@ app.post(
       let fighterBImageDeleteUrl = fighterBImageDeleteUrlFromReq || null;
       let promotionBackgroundDeleteUrl = promotionBackgroundDeleteUrlFromReq || null;
 
-      if (req.files.fighterAImage) {
+      if (req.files?.fighterAImage) {
         const resultA = await uploadToCloudinary(req.files.fighterAImage[0].buffer, 'fighter_images');
         fighterAImage = resultA.secure_url;
         fighterAImageDeleteUrl = resultA.public_id;
       }
 
-      if (req.files.fighterBImage) {
+      if (req.files?.fighterBImage) {
         const resultB = await uploadToCloudinary(req.files.fighterBImage[0].buffer, 'fighter_images');
         fighterBImage = resultB.secure_url;
         fighterBImageDeleteUrl = resultB.public_id;
       }
 
-      if (req.files.promotionBackground) {
+      if (req.files?.promotionBackground) {
         const resultBackground = await uploadToCloudinary(req.files.promotionBackground[0].buffer, 'promotion_backgrounds');
         promotionBackground = resultBackground.secure_url;
         promotionBackgroundDeleteUrl = resultBackground.public_id;
@@ -3495,7 +3494,7 @@ app.post(
       // Admin-created/affiliate-promoted public fight cards are LIVE by design.
       // Historical/template records live in Shadow and are created by the rollover job.
       const normalizedLiveMatchType = 'LIVE';
-      const normalizedLiveStatus = matchStatus || 'Ongoing';
+      const normalizedLiveStatus = req.actorRole === 'affiliate' ? 'Ongoing' : (matchStatus || 'Ongoing');
 
       // Create match data object
       const matchData = applyCombatFighterSelectionToMatchPayload({
@@ -3518,6 +3517,9 @@ app.post(
         // measures against. Zero on admin cards and on free cards.
         promoterStake: Math.max(0, Math.round(Number(req.body.promoterStake) || 0)),
         potTarget: Math.max(0, Math.round(Number(req.body.potTarget) || 0)),
+        autoRefundIfShort: req.body.autoRefundIfShort === undefined
+          ? true
+          : ['true', '1', 'yes', true].includes(req.body.autoRefundIfShort),
         matchBy,
         profit,
         amountOverPotBudget,
@@ -3786,7 +3788,11 @@ const nonRegisteredUserMailPromises = nonRegisteredUsers.map(user => {
   res.status(200).json({ message: 'Match Added Successfully and Notifications Sent', matchId: savedMatch._id, automation: swarmAutomation || null });
 } catch (error) {
   console.error('Error adding match:', error);
-  res.status(500).json({ message: 'Server error' });
+  const isValidationError = error?.name === 'ValidationError' || error?.name === 'CastError';
+  res.status(isValidationError ? 400 : 500).json({
+    message: isValidationError ? (error.message || 'The fight information is invalid.') : 'The fight could not be published.',
+    code: isValidationError ? 'INVALID_FIGHT_DATA' : 'PUBLISH_FAILED',
+  });
 }
 }
 );
