@@ -95,7 +95,8 @@ app.use(express.json({
 
 // CORS configuration
 const defaultAllowedOrigins = [
-  'https://fantasymmadness-version2.vercel.app', // Production
+  'https://fantasymmadness-version2.vercel.app', // Legacy production
+  'https://fmm-ver2.vercel.app', // Current production
   'http://localhost:3000',
   'https://www.fantasymmadness.com',
   'https://fantasymmadness.com', // Add this line
@@ -123,9 +124,12 @@ const allowedOrigins = [
   ]),
 ];
 
+const isFantasyFrontendPreview = (origin = '') =>
+  /^https:\/\/fmm-ver2(?:-[a-z0-9-]+)?\.vercel\.app$/i.test(origin);
+
 app.use(cors({
   origin: function (origin, callback) {
-    if (allowedOrigins.includes(origin) || !origin) {
+    if (allowedOrigins.includes(origin) || isFantasyFrontendPreview(origin) || !origin) {
       callback(null, true);
     } else {
       callback(new Error('Not allowed by CORS'));
