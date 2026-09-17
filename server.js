@@ -1931,6 +1931,8 @@ const shadowSchema = new mongoose.Schema({
   voidedAt: Date,
   voidReason: String,
   collectedFees: { type: Number, min: 0, default: 0 },
+  projectedEntrants: { type: Number, min: 0, default: 0 },
+  platformContribution: { type: Number, min: 0, default: 0 },
   maxRounds: Number,
   fighterAImageDeleteUrl: String, // ImgBB delete URL for Fighter A's image
   fighterBImageDeleteUrl: String, 
@@ -2516,6 +2518,8 @@ matchReward: { type: String, enum: ['Rewarded', 'NotRewarded'], default: 'NotRew
   voidedAt: Date,
   voidReason: String,
   collectedFees: { type: Number, min: 0, default: 0 },
+  projectedEntrants: { type: Number, min: 0, default: 0 },
+  platformContribution: { type: Number, min: 0, default: 0 },
   profit: Number,
   amountOverPotBudget: Number,
   fighterAImage: String,  // URL of Fighter A's image
@@ -4120,7 +4124,11 @@ app.get('/match', async (req, res) => {
       responseItems = responseItems.map((item) => {
         const declaredPot = Math.max(0, Math.round(Number(item.pot) || 0));
         const entryFee = Math.max(0, Math.round(Number(item.matchTokens) || 0));
-        const breakEvenEntrants = entryFee > 0 ? Math.ceil(declaredPot / entryFee) : 0;
+        const committedFunding = Math.min(declaredPot,
+          Math.max(0, Math.round(Number(item.promoterStake) || 0))
+          + Math.max(0, Math.round(Number(item.platformContribution) || 0)));
+        const uncoveredPrize = Math.max(0, declaredPot - committedFunding);
+        const breakEvenEntrants = entryFee > 0 ? Math.ceil(uncoveredPrize / entryFee) : 0;
         const minimumEntrants = Math.max(0, Math.round(Number(item.minimumEntrants) || 0)) || breakEvenEntrants;
         const entrants = item.sourceType === 'shadow' ? null : (entrantCounts[String(item._id)] || 0);
         return { ...item, entrants, breakEvenEntrants, minimumEntrants };
@@ -21310,7 +21318,11 @@ app.post('/api/admin/fights/:fightId/settle', verifyAdminToken, async (req, res)
     // minimum we use that figure rather than leaving old fights unprotected.
     const declaredPot = Math.max(0, Math.round(Number(fight.pot) || 0));
     const entryFee = Math.max(0, Math.round(Number(fight.matchTokens) || 0));
-    const breakEvenEntrants = entryFee > 0 ? Math.ceil(declaredPot / entryFee) : 0;
+    const committedFunding = Math.min(declaredPot,
+      Math.max(0, Math.round(Number(fight.promoterStake) || 0))
+      + Math.max(0, Math.round(Number(fight.platformContribution) || 0)));
+    const uncoveredPrize = Math.max(0, declaredPot - committedFunding);
+    const breakEvenEntrants = entryFee > 0 ? Math.ceil(uncoveredPrize / entryFee) : 0;
     const minimumEntrants = Math.max(0, Math.round(Number(fight.minimumEntrants) || 0)) || breakEvenEntrants;
     // Nothing was charged, so there is no shortfall to protect against.
     const autoRefundIfShort = !isFreeContest && fight.autoRefundIfShort !== false;
@@ -22349,6 +22361,9 @@ app.post('/api/admin/fights/:fightId/prize-guard', verifyAdminToken, async (req,
     if (req.body?.pot !== undefined) {
       update.pot = Math.max(0, Math.round(Number(req.body.pot) || 0));
     }
+    ['promoterStake', 'platformContribution', 'projectedEntrants'].forEach((key) => {
+      if (req.body?.[key] !== undefined) update[key] = Math.max(0, Math.round(Number(req.body[key]) || 0));
+    });
     if (req.body?.maxRounds !== undefined) {
       update.maxRounds = Math.max(1, Math.min(30, Math.round(Number(req.body.maxRounds) || 12)));
     }
@@ -22361,6 +22376,11 @@ app.post('/api/admin/fights/:fightId/prize-guard', verifyAdminToken, async (req,
     ['notify', 'addToShadow', 'homepagePromoted', 'featuredThisWeek', 'featuredFight'].forEach((key) => {
       if (req.body?.[key] !== undefined) update[key] = ['true', '1', 'yes', true].includes(req.body[key]);
     });
+    if (req.body?.matchStatus !== undefined) {
+      const allowedStatuses = ['Draft', 'Scheduled', 'Open', 'Live', 'Closed', 'Finished'];
+      if (!allowedStatuses.includes(req.body.matchStatus)) return res.status(400).json({ ok: false, message: 'Invalid publishing status.' });
+      update.matchStatus = req.body.matchStatus;
+    }
     if (!Object.keys(update).length) {
       return res.status(400).json({ ok: false, message: 'Nothing to change.' });
     }
@@ -22371,9 +22391,9 @@ app.post('/api/admin/fights/:fightId/prize-guard', verifyAdminToken, async (req,
     ]);
     const [matchResult, shadowResult] = await Promise.all([
       Match.findOneAndUpdate({ _id: fightId }, { $set: update }, { new: true })
-        .select('matchName matchFighterA matchFighterB pot matchTokens minimumEntrants autoRefundIfShort maxRounds matchDate matchTime notify addToShadow homepagePromoted featuredThisWeek featuredFight').lean(),
+        .select('matchName matchFighterA matchFighterB pot matchTokens promoterStake platformContribution projectedEntrants minimumEntrants autoRefundIfShort maxRounds matchDate matchTime matchStatus notify addToShadow homepagePromoted featuredThisWeek featuredFight').lean(),
       Shadow.findOneAndUpdate({ _id: fightId }, { $set: update }, { new: true })
-        .select('matchName matchFighterA matchFighterB pot matchTokens minimumEntrants autoRefundIfShort maxRounds matchDate matchTime notify addToShadow homepagePromoted featuredThisWeek featuredFight').lean(),
+        .select('matchName matchFighterA matchFighterB pot matchTokens promoterStake platformContribution projectedEntrants minimumEntrants autoRefundIfShort maxRounds matchDate matchTime matchStatus notify addToShadow homepagePromoted featuredThisWeek featuredFight').lean(),
     ]);
     const fight = matchResult || shadowResult;
     if (!fight) return res.status(404).json({ ok: false, message: 'Fight not found.' });
@@ -22383,15 +22403,21 @@ app.post('/api/admin/fights/:fightId/prize-guard', verifyAdminToken, async (req,
       : null;
 
     const entryFee = Math.max(0, Math.round(Number(fight.matchTokens) || 0));
-    const breakEven = entryFee > 0 ? Math.ceil((Number(fight.pot) || 0) / entryFee) : 0;
+    const declaredPot = Math.max(0, Math.round(Number(fight.pot) || 0));
+    const committedFunding = Math.min(declaredPot, Math.max(0, Number(fight.promoterStake) || 0) + Math.max(0, Number(fight.platformContribution) || 0));
+    const breakEven = entryFee > 0 ? Math.ceil(Math.max(0, declaredPot - committedFunding) / entryFee) : 0;
     return res.json({
       ok: true,
       fightId,
       matchTokens: fight.matchTokens,
       pot: fight.pot,
+      promoterStake: fight.promoterStake || 0,
+      platformContribution: fight.platformContribution || 0,
+      projectedEntrants: fight.projectedEntrants || 0,
       maxRounds: fight.maxRounds,
       matchDate: fight.matchDate,
       matchTime: fight.matchTime,
+      matchStatus: fight.matchStatus,
       notify: fight.notify,
       addToShadow: fight.addToShadow,
       homepagePromoted: fight.homepagePromoted,
@@ -25455,13 +25481,14 @@ async function sweepShortFights({ now = new Date() } = {}) {
     const fee = Math.max(0, Math.round(Number(fight.matchTokens) || 0));
     const pot = Math.max(0, Math.round(Number(fight.pot) || 0));
     const stake = Math.max(0, Math.round(Number(fight.promoterStake) || 0));
+    const platformFunding = Math.max(0, Math.round(Number(fight.platformContribution) || 0));
 
     // Guaranteed card: the promoter's money is already behind the prize, so a
     // thin room is their problem and the fight still runs.
-    if (stake >= pot && pot > 0) continue;
+    if (stake + platformFunding >= pot && pot > 0) continue;
     if (fight.autoRefundIfShort === false) continue;
 
-    const breakEven = fee > 0 ? Math.ceil(pot / fee) : 0;
+    const breakEven = fee > 0 ? Math.ceil(Math.max(0, pot - stake - platformFunding) / fee) : 0;
     const required = Math.max(0, Math.round(Number(fight.minimumEntrants) || 0)) || breakEven;
     if (required <= 0) continue;
 
