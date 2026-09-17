@@ -1,9 +1,9 @@
 {
   "version": 2,
   "name": "backend-for-share-experiences",
-  "builds": [{ "src": "server.js", "use": "@vercel/node" }],
+  "builds": [{ "src": "full-card-bootstrap.js", "use": "@vercel/node" }],
   "routes": [
-    { "src": "/(.*)", "dest": "/server.js" }
+    { "src": "/(.*)", "dest": "/full-card-bootstrap.js" }
   ],
   "crons": [
     {
