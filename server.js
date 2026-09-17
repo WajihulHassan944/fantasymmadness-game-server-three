@@ -10069,6 +10069,7 @@ app.get('/api/public/affiliates', async (req, res) => {
 app.get('/affiliates', verifyAdminToken, async (req, res) => {
   try {
     const affiliates = await Affiliate.find().select(AFFILIATE_SAFE_SELECT).sort({ createdAt: -1 }).lean();
+    return res.json(sanitizeAccountList(affiliates));
   } catch (error) {
     console.error('Error fetching affiliates:', error);
     res.status(500).json({ message: 'Error fetching affiliates' });
