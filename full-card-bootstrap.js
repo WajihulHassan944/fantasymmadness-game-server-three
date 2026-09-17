@@ -94,3 +94,8 @@ require('./full-card-promoter')({
   upload, cloudinary,
 });
 
+require('./affiliate-league-roster')({
+  app: capturedApp, mongoose, Affiliate, User, verifyToken, requireScope,
+  affiliateScope: 'affiliate',
+});
+
