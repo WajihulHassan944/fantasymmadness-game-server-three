@@ -2971,7 +2971,12 @@ async function createSwarmCampaign({ config, axios, crypto, mongoose, models, bo
     if (!config.enabled) {
       return createLocalCampaign({ config, axios, crypto, mongoose, models, normalized, admin, eventDoc, fallbackError: null });
     }
-    const result = await callSwarm(config, axios, crypto, 'POST', '/internal/v1/campaigns', normalized);
+    // When local generation is available, IONOS is the preferred worker but
+    // must not consume the entire request window before failover begins.
+    const externalConfig = config.localWorkerEnabled
+      ? { ...config, timeoutMs: Math.min(config.timeoutMs, 3500) }
+      : config;
+    const result = await callSwarm(externalConfig, axios, crypto, 'POST', '/internal/v1/campaigns', normalized);
     const campaign = result.campaign || result.data?.campaign || null;
     const jobs = Array.isArray(result.jobs) ? result.jobs : [];
     await upsertCampaignFromSwarm(models, campaign, {
@@ -3538,7 +3543,10 @@ async function submitNormalizedJobToSwarm({ config, axios, crypto, mongoose, mod
 
   let externalError = null;
   if (config.enabled) try {
-    const swarmResult = await callSwarm(config, axios, crypto, 'POST', '/internal/v1/jobs', {
+    const externalConfig = config.localWorkerEnabled
+      ? { ...config, timeoutMs: Math.min(config.timeoutMs, 3500) }
+      : config;
+    const swarmResult = await callSwarm(externalConfig, axios, crypto, 'POST', '/internal/v1/jobs', {
       ...normalized,
       idempotencyKey,
       backendCorrelationId,
