@@ -1,17 +1,21 @@
 'use strict';
 
+const { getVercelOidcToken } = require('@vercel/oidc');
+
 const DEFAULT_MODEL = 'gpt-5';
 
 function getLocalWorkerConfig() {
   const openAiApiKey = String(process.env.OPENAI_API_KEY || '').trim();
-  const gatewayToken = String(process.env.AI_GATEWAY_API_KEY || process.env.VERCEL_OIDC_TOKEN || '').trim();
+  const gatewayToken = String(process.env.AI_GATEWAY_API_KEY || '').trim();
+  const runningOnVercel = Boolean(process.env.VERCEL || process.env.VERCEL_ENV);
   const apiKey = openAiApiKey || gatewayToken;
-  const provider = openAiApiKey ? 'openai' : (gatewayToken ? 'vercel_ai_gateway' : 'unconfigured');
+  const provider = openAiApiKey ? 'openai' : ((gatewayToken || runningOnVercel) ? 'vercel_ai_gateway' : 'unconfigured');
   const enabled = String(process.env.SWARM_LOCAL_WORKER_ENABLED || 'true').toLowerCase() !== 'false';
   return {
-    enabled: enabled && Boolean(apiKey),
+    enabled: enabled && (Boolean(apiKey) || runningOnVercel),
     requested: enabled,
     apiKey,
+    runningOnVercel,
     provider,
     endpoint: provider === 'vercel_ai_gateway'
       ? 'https://ai-gateway.vercel.sh/v1/responses'
@@ -29,7 +33,7 @@ function localWorkerHealth() {
     enabled: config.enabled,
     requested: config.requested,
     provider: config.provider,
-    authenticationConfigured: Boolean(config.apiKey),
+    authenticationConfigured: Boolean(config.apiKey) || config.runningOnVercel,
     openAiConfigured: config.provider === 'openai',
     vercelAiGatewayConfigured: config.provider === 'vercel_ai_gateway',
     model: config.model,
@@ -41,6 +45,14 @@ async function runLocalJob({ axios, mongoose, models, normalized, localJob, subm
   if (!config.enabled) {
     const error = new Error(config.requested ? 'No OpenAI key or Vercel AI Gateway identity is available for the local Swarm worker.' : 'The local Swarm worker is disabled.');
     error.code = 'LOCAL_SWARM_DISABLED';
+    error.httpStatus = 503;
+    throw error;
+  }
+
+  const authToken = config.apiKey || await getVercelOidcToken();
+  if (!authToken) {
+    const error = new Error('Vercel could not provide an OIDC token for the self-contained worker.');
+    error.code = 'LOCAL_SWARM_AUTH_UNAVAILABLE';
     error.httpStatus = 503;
     throw error;
   }
@@ -62,7 +74,7 @@ async function runLocalJob({ axios, mongoose, models, normalized, localJob, subm
     const response = await axios({
       method: 'POST',
       url: config.endpoint,
-      headers: { Authorization: `Bearer ${config.apiKey}`, 'Content-Type': 'application/json' },
+      headers: { Authorization: `Bearer ${authToken}`, 'Content-Type': 'application/json' },
       timeout: config.timeoutMs,
       validateStatus: () => true,
       data: {
