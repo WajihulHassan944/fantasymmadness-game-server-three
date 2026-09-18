@@ -140,6 +140,9 @@ assert(localWorkerSource.includes('SWARM_LOCAL_WORKER_TIMEOUT_MS, 40000'), 'Loca
 assert(localWorkerSource.includes('requestGenerationWithRetry'), 'Local worker must retry transient AI Gateway generation failures.');
 assert(localWorkerSource.includes("message.includes('tls')"), 'Local worker must recognize transient TLS failures.');
 assert(localWorkerSource.includes('Math.min(config.timeoutMs, 18000)'), 'AI retries must remain inside the campaign request window.');
+assert(localWorkerSource.includes("SWARM_FREE_FALLBACK_ENABLED || 'true'"), 'Free rule-based fallback must be enabled by default.');
+assert(localWorkerSource.includes('buildFreeFallbackPayload'), 'Worker must create useful drafts when paid Gateway access is unavailable.');
+assert(localWorkerSource.includes("executionEngine = freePayload"), 'Free artifacts must be labeled with their actual execution engine.');
 assert(gatewaySource.match(/Math\.min\(config\.timeoutMs, 3500\)/g)?.length >= 2, 'IONOS job and campaign submissions must fail over quickly when the local worker is ready.');
 assert(localWorkerSource.includes("reviewStatus: 'AWAITING_REVIEW'"), 'Local worker output must require human review.');
 assert(gatewaySource.includes('IONOS is unavailable, but the self-contained worker is ready'), 'Health must remain successful while local failover can accept jobs.');
