@@ -11,8 +11,10 @@ function getLocalWorkerConfig() {
   const apiKey = openAiApiKey || gatewayToken;
   const provider = openAiApiKey ? 'openai' : ((gatewayToken || runningOnVercel) ? 'vercel_ai_gateway' : 'unconfigured');
   const enabled = String(process.env.SWARM_LOCAL_WORKER_ENABLED || 'true').toLowerCase() !== 'false';
+  const freeFallbackEnabled = String(process.env.SWARM_FREE_FALLBACK_ENABLED || 'true').toLowerCase() !== 'false';
+  const paidAiEnabled = String(process.env.SWARM_PAID_AI_ENABLED || 'false').toLowerCase() === 'true';
   return {
-    enabled: enabled && (Boolean(apiKey) || runningOnVercel),
+    enabled: enabled && (freeFallbackEnabled || Boolean(apiKey) || runningOnVercel),
     requested: enabled,
     apiKey,
     runningOnVercel,
@@ -26,7 +28,8 @@ function getLocalWorkerConfig() {
     // Leave enough time for campaign aggregation and the frontend proxy to
     // return a structured error instead of a Vercel function-timeout page.
     timeoutMs: positiveInt(process.env.SWARM_LOCAL_WORKER_TIMEOUT_MS, 40000),
-    freeFallbackEnabled: String(process.env.SWARM_FREE_FALLBACK_ENABLED || 'true').toLowerCase() !== 'false',
+    freeFallbackEnabled,
+    paidAiEnabled,
   };
 }
 
@@ -40,6 +43,8 @@ function localWorkerHealth() {
     openAiConfigured: config.provider === 'openai',
     vercelAiGatewayConfigured: config.provider === 'vercel_ai_gateway',
     freeFallbackEnabled: config.freeFallbackEnabled,
+    paidAiEnabled: config.paidAiEnabled,
+    activeMode: config.freeFallbackEnabled && !config.paidAiEnabled ? 'free_rule_based' : config.provider,
     model: config.model,
   };
 }
@@ -53,8 +58,9 @@ async function runLocalJob({ axios, mongoose, models, normalized, localJob, subm
     throw error;
   }
 
-  const authToken = config.apiKey || await getVercelOidcToken();
-  if (!authToken) {
+  const freeOnlyMode = config.freeFallbackEnabled && !config.paidAiEnabled;
+  const authToken = freeOnlyMode ? '' : (config.apiKey || await getVercelOidcToken());
+  if (!freeOnlyMode && !authToken) {
     const error = new Error('Vercel could not provide an OIDC token for the self-contained worker.');
     error.code = 'LOCAL_SWARM_AUTH_UNAVAILABLE';
     error.httpStatus = 503;
@@ -75,20 +81,20 @@ async function runLocalJob({ axios, mongoose, models, normalized, localJob, subm
   await localJob.save();
 
   try {
-    const response = await requestGenerationWithRetry({
-      axios,
-      config,
-      authToken,
-      data: {
-        model: config.model,
-        instructions: buildInstructions(normalized),
-        input: JSON.stringify(buildSafeInput(normalized)),
-        max_output_tokens: 2200,
-      },
-    });
+    const response = freeOnlyMode ? null : await requestGenerationWithRetry({
+        axios,
+        config,
+        authToken,
+        data: {
+          model: config.model,
+          instructions: buildInstructions(normalized),
+          input: JSON.stringify(buildSafeInput(normalized)),
+          max_output_tokens: 2200,
+        },
+      });
 
-    const detail = response.data?.error?.message || response.data?.message || `OpenAI returned HTTP ${response.status}.`;
-    const useFreeFallback = config.freeFallbackEnabled && isGatewayBillingRequired(response.status, detail);
+    const detail = response?.data?.error?.message || response?.data?.message || (response ? `OpenAI returned HTTP ${response.status}.` : 'Free worker selected.');
+    const useFreeFallback = freeOnlyMode || (config.freeFallbackEnabled && isGatewayBillingRequired(response?.status, detail));
     if (!useFreeFallback && (response.status < 200 || response.status >= 300)) {
       const error = new Error(String(detail).slice(0, 1000));
       error.code = 'LOCAL_SWARM_OPENAI_ERROR';
@@ -97,7 +103,7 @@ async function runLocalJob({ axios, mongoose, models, normalized, localJob, subm
     }
 
     const freePayload = useFreeFallback ? buildFreeFallbackPayload(normalized) : null;
-    const text = freePayload ? JSON.stringify(freePayload) : extractResponseText(response.data);
+    const text = freePayload ? JSON.stringify(freePayload) : extractResponseText(response?.data);
     if (!text) throw new Error('The local Swarm worker received no generated content.');
     const parsed = freePayload || parseGeneratedPayload(text);
     const executionEngine = freePayload
