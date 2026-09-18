@@ -95,7 +95,9 @@ module.exports = function registerAffiliateLeagueRoster({ app, mongoose, Affilia
         { $set: { ...updates, note: clean(req.body?.note, 300), updatedBy: affiliateId } },
         { upsert: true, new: true, setDefaultsOnInsert: true },
       );
-      return res.json({ ok: true, action, memberKey: member.key });
+      const updatedRoster = await loadRoster(affiliateId);
+      const updatedMember = updatedRoster?.find((row) => row.key === member.key);
+      return res.json({ ok: true, action, memberKey: member.key, member: updatedMember || member });
     } catch (error) {
       console.error('Affiliate roster update failed:', error);
       return res.status(500).json({ ok: false, message: 'Could not update that league member.' });
