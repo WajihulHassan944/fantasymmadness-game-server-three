@@ -147,7 +147,7 @@ for (const jobType of [...PHASE1_SEO_FOUNDATION_JOB_TYPES, ...JULY_10000_GROWTH_
   }
 }
 
-const DEFAULT_SPORTS = new Set(['mma', 'boxing', 'kickboxing', 'combat', 'pro_wrestling']);
+const DEFAULT_SPORTS = new Set(['mma', 'boxing', 'kickboxing', 'bare_knuckle', 'combat', 'pro_wrestling']);
 
 const CAMPAIGN_TYPES = new Set([
   'fight_full_campaign',
