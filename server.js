@@ -27,9 +27,6 @@ const multer = require('multer');
 const bcrypt = require('bcrypt');
 const crypto = require('crypto'); // For generating the verification token
 const nodemailer = require('nodemailer'); // For sending emails
-const SUPPORT_EMAIL = String(process.env.SUPPORT_EMAIL || 'contact@fantasymmadness.com').trim().toLowerCase();
-const ADMIN_ALERT_EMAILS = String(process.env.ADMIN_ALERT_EMAILS || SUPPORT_EMAIL).trim();
-const FMM_MAIL_FROM = process.env.SMTP_FROM || 'Fantasy MMAdness <no-reply@fantasymmadness.com>';
 const jwt = require('jsonwebtoken');
 const { OAuth2Client } = require('google-auth-library');
 const client = new OAuth2Client(process.env.GOOGLE_CLIENT_ID);
@@ -95,8 +92,7 @@ app.use(express.json({
 
 // CORS configuration
 const defaultAllowedOrigins = [
-  'https://fantasymmadness-version2.vercel.app', // Legacy production
-  'https://fmm-ver2.vercel.app', // Current production
+  'https://fantasymmadness-version2.vercel.app', // Production
   'http://localhost:3000',
   'https://www.fantasymmadness.com',
   'https://fantasymmadness.com', // Add this line
@@ -124,12 +120,9 @@ const allowedOrigins = [
   ]),
 ];
 
-const isFantasyFrontendPreview = (origin = '') =>
-  /^https:\/\/fmm-ver2(?:-[a-z0-9-]+)?\.vercel\.app$/i.test(origin);
-
 app.use(cors({
   origin: function (origin, callback) {
-    if (allowedOrigins.includes(origin) || isFantasyFrontendPreview(origin) || !origin) {
+    if (allowedOrigins.includes(origin) || !origin) {
       callback(null, true);
     } else {
       callback(new Error('Not allowed by CORS'));
@@ -1636,7 +1629,6 @@ function pickPublicFightFields(fight = {}, sourceType = 'match') {
 
 function calculateClassicPredictionPoints(userPrediction = [], fighterOneStats = [], fighterTwoStats = [], matchCategory = '') {
   if (!Array.isArray(userPrediction) || !Array.isArray(fighterOneStats) || !Array.isArray(fighterTwoStats)) return 0;
-  const combatCategory = normalizeCombatCategory(matchCategory);
 
   return userPrediction.reduce((totalScore, roundPrediction, index) => {
     const fighterOneRound = fighterOneStats[index];
@@ -1656,7 +1648,7 @@ function calculateClassicPredictionPoints(userPrediction = [], fighterOneStats =
       if (Number.isFinite(prediction) && Number.isFinite(actual) && prediction === actual && Number.isFinite(score)) roundScore += score;
     };
 
-    if (combatCategory === 'boxing') {
+    if (String(matchCategory).toLowerCase() === 'boxing') {
       addIfUnderOrEqual(roundPrediction.hpPrediction1, fighterOneRound.HP);
       addIfUnderOrEqual(roundPrediction.bpPrediction1, fighterOneRound.BP);
       addIfUnderOrEqual(roundPrediction.tpPrediction1, fighterOneRound.TP);
@@ -1667,7 +1659,7 @@ function calculateClassicPredictionPoints(userPrediction = [], fighterOneStats =
       addIfUnderOrEqual(roundPrediction.tpPrediction2, fighterTwoRound.TP);
       addIfEqualPrediction(roundPrediction.rwPrediction2, fighterTwoRound.RW);
       addIfEqualPrediction(roundPrediction.koPrediction2, fighterTwoRound.KO, fighterTwoRound.KO);
-    } else if (combatCategory === 'mma') {
+    } else if (String(matchCategory).toLowerCase() === 'mma') {
       addIfUnderOrEqual(roundPrediction.hpPrediction1, fighterOneRound.ST);
       addIfUnderOrEqual(roundPrediction.bpPrediction1, fighterOneRound.KI);
       addIfUnderOrEqual(roundPrediction.tpPrediction1, fighterOneRound.KN);
@@ -1921,8 +1913,6 @@ const shadowSchema = new mongoose.Schema({
   fighterAImage: String,  // URL of Fighter A's image
   fighterBImage: String,  // URL of Fighter B's image
   matchType: String,      // LIVE or SHADOW
-  sourceShadowId: { type: mongoose.Schema.Types.ObjectId, ref: 'Shadow', index: true },
-  activatedFromShadowAt: Date,
   matchTokens: { type: Number, min: 0, default: 0 },
   pot: { type: Number, min: 0, default: 0 },
   // The prize is declared up front and never grows with entries, so the platform
@@ -2417,23 +2407,7 @@ app.delete('/shadowfighttodelete/:id', verifyAdminToken, async (req, res) => {
 // Get Matches API
 app.get('/shadow', async (req, res) => {
   try {
-    const requestedLimit = Math.max(0, Math.min(500, Number(req.query.limit) || 0));
-    const compact = String(req.query.compact || '').toLowerCase();
-    let shadowQuery = Shadow.find();
-    if (compact === 'promotion' || compact === 'card' || compact === 'true') {
-      shadowQuery = shadowQuery.select([
-        'matchCategory', 'matchCategoryTwo', 'matchName', 'matchFighterA', 'matchFighterB',
-        'fighterAId', 'fighterBId', 'fighterAImage', 'fighterBImage',
-        'fighterAImageDeleteUrl', 'fighterBImageDeleteUrl', 'promotionBackground',
-        'promotionBackgroundDeleteUrl', 'matchDescription', 'matchVideoUrl', 'matchDate',
-        'matchTime', 'matchTokens', 'matchStatus', 'matchShadowStatus', 'matchShadowOpenStatus',
-        'pot', 'profit', 'amountOverPotBudget', 'maxRounds', 'BoxingMatch', 'MMAMatch',
-        'AffiliateIds', 'createdAt', 'updatedAt',
-      ].join(' '));
-    }
-    shadowQuery = shadowQuery.populate('fighterAId fighterBId').sort({ _id: -1 });
-    if (requestedLimit) shadowQuery = shadowQuery.limit(requestedLimit);
-    const matches = await shadowQuery.lean(); // Sort by _id in descending order
+    const matches = await Shadow.find().populate('fighterAId fighterBId').sort({ _id: -1 }).lean(); // Sort by _id in descending order
     res.send(matches.map((item) => attachCombatFighterReadFallbacks(item, 'shadow')));
   } catch (err) {
     res.status(500).send({ message: 'Error fetching matches' });
@@ -2531,8 +2505,6 @@ matchReward: { type: String, enum: ['Rewarded', 'NotRewarded'], default: 'NotRew
   fighterAImage: String,  // URL of Fighter A's image
   fighterBImage: String,  // URL of Fighter B's image
   matchType: String,      // LIVE or SHADOW
-  sourceShadowId: { type: mongoose.Schema.Types.ObjectId, ref: 'Shadow', index: true },
-  activatedFromShadowAt: Date,
   maxRounds: Number,
   fighterAImageDeleteUrl: String,
   fighterBImageDeleteUrl: String,
@@ -2838,7 +2810,7 @@ app.post("/activate-match/:matchId", verifyAdminOrAffiliateToken, requireAdminOr
     // Prepare email function
     const sendEmail = (user, isRegistered) => {
       return {
-        from: FMM_MAIL_FROM,
+        from: "Fantasymmadness2@gmail.com",
         to: user.email,
         subject: isRegistered ? "Fantasy MMA Madness - New Fight Alert!" : "Join Fantasy MMA Madness!",
         html: `
@@ -3448,10 +3420,27 @@ app.post(
           return res.status(403).json({ message: 'Affiliate session is missing an account id.', code: 'NO_AFFILIATE_ID' });
         }
 
-        // Promoter staking is optional. Unstaked paid cards use the existing
-        // minimum-entrant/auto-refund settlement guard; fully staked cards are
-        // guaranteed. A previous route-level rejection contradicted that
-        // settlement model and prevented ordinary affiliates from publishing.
+        // FUNDING RULE. On a PAID affiliate card the prize is a promise and the
+        // entry fees are what actually arrives; if the room is small, the gap
+        // has to come from somewhere. It comes from the promoter's stake, not
+        // from us. Enforced here and not only in the form, because the form is
+        // just a suggestion to anyone posting straight at the endpoint.
+        //
+        // FREE cards are exempt by design: no fee means nothing was ever meant
+        // to fund the prize, so there is no shortfall. Those are the free-play
+        // states, where winners take apparel and crowns.
+        const declaredPot = Math.max(0, Math.round(Number(pot) || 0));
+        const entryFee = Math.max(0, Math.round(Number(matchTokens) || 0));
+        const stake = Math.max(0, Math.round(Number(req.body.promoterStake) || 0));
+        if (entryFee > 0 && declaredPot > stake) {
+          return res.status(400).json({
+            message: `Stake at least ${declaredPot} to cover the prize you are advertising. You are short ${declaredPot - stake}.`,
+            code: 'PRIZE_NOT_STAKED',
+            declaredPot,
+            promoterStake: stake,
+            shortfall: declaredPot - stake,
+          });
+        }
       }
 
       // Upload images to Cloudinary if files are provided; otherwise, use URLs from req.body
@@ -3474,19 +3463,19 @@ app.post(
       let fighterBImageDeleteUrl = fighterBImageDeleteUrlFromReq || null;
       let promotionBackgroundDeleteUrl = promotionBackgroundDeleteUrlFromReq || null;
 
-      if (req.files?.fighterAImage) {
+      if (req.files.fighterAImage) {
         const resultA = await uploadToCloudinary(req.files.fighterAImage[0].buffer, 'fighter_images');
         fighterAImage = resultA.secure_url;
         fighterAImageDeleteUrl = resultA.public_id;
       }
 
-      if (req.files?.fighterBImage) {
+      if (req.files.fighterBImage) {
         const resultB = await uploadToCloudinary(req.files.fighterBImage[0].buffer, 'fighter_images');
         fighterBImage = resultB.secure_url;
         fighterBImageDeleteUrl = resultB.public_id;
       }
 
-      if (req.files?.promotionBackground) {
+      if (req.files.promotionBackground) {
         const resultBackground = await uploadToCloudinary(req.files.promotionBackground[0].buffer, 'promotion_backgrounds');
         promotionBackground = resultBackground.secure_url;
         promotionBackgroundDeleteUrl = resultBackground.public_id;
@@ -3506,7 +3495,7 @@ app.post(
       // Admin-created/affiliate-promoted public fight cards are LIVE by design.
       // Historical/template records live in Shadow and are created by the rollover job.
       const normalizedLiveMatchType = 'LIVE';
-      const normalizedLiveStatus = req.actorRole === 'affiliate' ? 'Ongoing' : (matchStatus || 'Ongoing');
+      const normalizedLiveStatus = matchStatus || 'Ongoing';
 
       // Create match data object
       const matchData = applyCombatFighterSelectionToMatchPayload({
@@ -3529,9 +3518,6 @@ app.post(
         // measures against. Zero on admin cards and on free cards.
         promoterStake: Math.max(0, Math.round(Number(req.body.promoterStake) || 0)),
         potTarget: Math.max(0, Math.round(Number(req.body.potTarget) || 0)),
-        autoRefundIfShort: req.body.autoRefundIfShort === undefined
-          ? true
-          : ['true', '1', 'yes', true].includes(req.body.autoRefundIfShort),
         matchBy,
         profit,
         amountOverPotBudget,
@@ -3636,7 +3622,7 @@ app.post(
   
   const registeredUserMailPromises = users.map(user => {
     const mailOptions = {
-      from: FMM_MAIL_FROM,
+      from: 'Fantasymmadness2@gmail.com',
       to: user.email,
       subject: 'Fantasy mmadness',
    html: `
@@ -3742,7 +3728,7 @@ const nonRegisteredUsers = await Usernonregistered.find();
 
 const nonRegisteredUserMailPromises = nonRegisteredUsers.map(user => {
   const mailOptions = {
-    from: FMM_MAIL_FROM,
+    from: 'Fantasymmadness2@gmail.com',
     to: user.email, // Assuming you have email field here
     subject: 'Join the Excitement at Fantasy mmadness!',
     html: `
@@ -3800,11 +3786,7 @@ const nonRegisteredUserMailPromises = nonRegisteredUsers.map(user => {
   res.status(200).json({ message: 'Match Added Successfully and Notifications Sent', matchId: savedMatch._id, automation: swarmAutomation || null });
 } catch (error) {
   console.error('Error adding match:', error);
-  const isValidationError = error?.name === 'ValidationError' || error?.name === 'CastError';
-  res.status(isValidationError ? 400 : 500).json({
-    message: isValidationError ? (error.message || 'The fight information is invalid.') : 'The fight could not be published.',
-    code: isValidationError ? 'INVALID_FIGHT_DATA' : 'PUBLISH_FAILED',
-  });
+  res.status(500).json({ message: 'Server error' });
 }
 }
 );
@@ -4701,7 +4683,7 @@ app.post('/admin/add-tokens-won', verifyToken, requireScope(TOKEN_SCOPES.PLAYER)
       // Notify User and Admin
       const emailPromises = [
         transporter.sendMail({
-          from: FMM_MAIL_FROM,
+          from: '"Fantasy Madness" <Fantasymmadness2@gmail.com>',
           to: email,
           subject: '200 Tokens Added!',
           html: `
@@ -4734,8 +4716,8 @@ app.post('/admin/add-tokens-won', verifyToken, requireScope(TOKEN_SCOPES.PLAYER)
         }),
 
         transporter.sendMail({
-          from: FMM_MAIL_FROM,
-          to: ADMIN_ALERT_EMAILS, // Replace with admin email
+          from: '"Fantasy Madness" <Fantasymmadness2@gmail.com>',
+          to: 'Fantasymmadness2@gmail.com', // Replace with admin email
           subject: 'Tokens Added to User',
           html: `
             <table width="100%" cellpadding="0" cellspacing="0" border="0" style="width:100%; max-width:600px; margin:auto;">
@@ -4791,7 +4773,7 @@ app.post('/admin/add-tokens-won', verifyToken, requireScope(TOKEN_SCOPES.PLAYER)
       // Notify the new user and admin in parallel
       const emailPromises = [
         transporter.sendMail({
-          from: FMM_MAIL_FROM,
+          from: '"Fantasy Madness" <Fantasymmadness2@gmail.com>',
           to: email,
           subject: 'Welcome to Fantasy Madness!',
           html: `
@@ -4828,8 +4810,8 @@ app.post('/admin/add-tokens-won', verifyToken, requireScope(TOKEN_SCOPES.PLAYER)
         }),
 
         transporter.sendMail({
-          from: FMM_MAIL_FROM,
-          to: ADMIN_ALERT_EMAILS, // Replace with admin email
+          from: '"Fantasy Madness" <Fantasymmadness2@gmail.com>',
+          to: 'Fantasymmadness2@gmail.com', // Replace with admin email
           subject: 'New User Created and Tokens Added',
           html: `
             <table width="100%" cellpadding="0" cellspacing="0" border="0" style="width:100%; max-width:600px; margin:auto;">
@@ -4926,7 +4908,7 @@ app.post('/admin/add-tokens-won-spin-wheel', verifyToken, requireScope(TOKEN_SCO
       // Notify User and Admin
       const emailPromises = [
         transporter.sendMail({
-          from: FMM_MAIL_FROM,
+          from: '"Fantasy Madness" <Fantasymmadness2@gmail.com>',
           to: email,
           subject: `${prize} Tokens Added!`,
           html: `
@@ -4959,8 +4941,8 @@ app.post('/admin/add-tokens-won-spin-wheel', verifyToken, requireScope(TOKEN_SCO
         }),
 
         transporter.sendMail({
-          from: FMM_MAIL_FROM,
-          to: ADMIN_ALERT_EMAILS, // Replace with admin email
+          from: '"Fantasy Madness" <Fantasymmadness2@gmail.com>',
+          to: 'Fantasymmadness2@gmail.com', // Replace with admin email
           subject: 'Tokens Added to User',
           html: `
             <table width="100%" cellpadding="0" cellspacing="0" border="0" style="width:100%; max-width:600px; margin:auto;">
@@ -5016,7 +4998,7 @@ app.post('/admin/add-tokens-won-spin-wheel', verifyToken, requireScope(TOKEN_SCO
       // Notify the new user and admin in parallel
       const emailPromises = [
         transporter.sendMail({
-          from: FMM_MAIL_FROM,
+          from: '"Fantasy Madness" <Fantasymmadness2@gmail.com>',
           to: email,
           subject: 'Welcome to Fantasy Madness!',
           html: `
@@ -5053,8 +5035,8 @@ app.post('/admin/add-tokens-won-spin-wheel', verifyToken, requireScope(TOKEN_SCO
         }),
 
         transporter.sendMail({
-          from: FMM_MAIL_FROM,
-          to: ADMIN_ALERT_EMAILS, // Replace with admin email
+          from: '"Fantasy Madness" <Fantasymmadness2@gmail.com>',
+          to: 'Fantasymmadness2@gmail.com', // Replace with admin email
           subject: 'New User Created and Tokens Added',
           html: `
             <table width="100%" cellpadding="0" cellspacing="0" border="0" style="width:100%; max-width:600px; margin:auto;">
@@ -5129,7 +5111,7 @@ app.post('/admin/add-user', verifyAdminToken, async (req, res) => {
 
     // Email to the User
     await transporter.sendMail({
-      from: FMM_MAIL_FROM,
+      from: '"Fantasy Madness" <Fantasymmadness2@gmail.com>',
       to: email,
       subject: 'Welcome to Fantasy Madness!',
       html: `
@@ -5188,8 +5170,8 @@ app.post('/admin/add-user', verifyAdminToken, async (req, res) => {
 
     // Email to the admin
     await transporter.sendMail({
-      from: FMM_MAIL_FROM,
-      to: ADMIN_ALERT_EMAILS, // Replace with admin email
+      from: '"Fantasy Madness" <Fantasymmadness2@gmail.com>',
+      to: 'Fantasymmadness2@gmail.com', // Replace with admin email
       subject: 'User Successfully Added',
       html: `
       <table width="100%" cellpadding="0" cellspacing="0" border="0" style="width:100%; max-width:600px; margin:auto;">
@@ -5272,7 +5254,7 @@ app.post('/forgotPassword-user', submitLimiter, async (req, res) => {
 
     const mailOptions = {
       to: user.email,
-      from: FMM_MAIL_FROM,
+      from: process.env.SMTP_USER || 'Fantasymmadness2@gmail.com',
       subject: 'Password Reset Request',
       text: `You are receiving this because you have requested a password reset for your account.\n\n
       Please click the following link to reset your password:\n\n
@@ -5574,7 +5556,7 @@ app.post('/google-login', loginLimiter, async (req, res) => {
     if (redListedUser) {
       // Send email notification if user is on red list
       await transporter.sendMail({
-        from: FMM_MAIL_FROM,
+        from: 'Fantasymmadness2@gmail.com',
         to: email,
         subject: 'Login Blocked',
         html: `
@@ -5663,7 +5645,7 @@ const notification = new Notification({
     
       // Send welcome email to the new user
       await transporter.sendMail({
-        from: FMM_MAIL_FROM,
+        from: 'Fantasymmadness2@gmail.com',
         to: email,
         subject: 'Welcome to Fantasy Madness!',
         html: `
@@ -5696,8 +5678,8 @@ const notification = new Notification({
 
       // Notify admins about the new signup
       await transporter.sendMail({
-        from: FMM_MAIL_FROM,
-        to: ADMIN_ALERT_EMAILS,
+        from: 'Fantasymmadness2@gmail.com',
+        to: 'Fantasymmadness2@gmail.com',
         subject: 'New User Signup Notification',
         html: `
         <p>A new user has signed up on Fantasy Madness:</p>
@@ -5728,8 +5710,8 @@ const notification = new Notification({
 
     // Send error email to admins
     await transporter.sendMail({
-      from: FMM_MAIL_FROM,
-      to: ADMIN_ALERT_EMAILS,
+      from: 'Fantasymmadness2@gmail.com',
+      to: 'Fantasymmadness2@gmail.com',
       subject: 'Google Login Error Notification',
       html: `
       <p>An error occurred during a Google login attempt. Please investigate the issue.</p>
@@ -6008,32 +5990,6 @@ const transporter = nodemailer.createTransport({
     user: process.env.SMTP_USER || 'Fantasymmadness2@gmail.com',
     pass: process.env.SMTP_PASS || process.env.GMAIL_APP_PASSWORD,
   },
-});
-
-// One authenticated path for operational tools (including Jarvis) to surface
-// failures in both the admin inbox and the real support mailbox.
-app.post('/api/admin/alerts', verifyAdminToken, async (req, res) => {
-  try {
-    const source = String(req.body?.source || 'Back office').trim().slice(0, 80);
-    const severity = ['info', 'warning', 'critical'].includes(String(req.body?.severity))
-      ? String(req.body.severity) : 'warning';
-    const message = String(req.body?.message || '').trim().slice(0, 2000);
-    if (!message) return res.status(400).json({ message: 'Alert message is required.' });
-
-    const title = `${severity === 'critical' ? 'CRITICAL' : severity.toUpperCase()}: ${source}`;
-    await new Notification({ title: `${title} — ${message.slice(0, 180)}` }).save();
-    await transporter.sendMail({
-      from: FMM_MAIL_FROM,
-      to: ADMIN_ALERT_EMAILS,
-      replyTo: SUPPORT_EMAIL,
-      subject: `[${severity.toUpperCase()}] ${source}`,
-      html: `<div style="font-family:Arial,sans-serif"><h2>${escapeHtml(title)}</h2><p>${escapeHtml(message)}</p><p>Support: <a href="mailto:${SUPPORT_EMAIL}">${SUPPORT_EMAIL}</a></p></div>`,
-    });
-    return res.status(201).json({ ok: true, deliveredTo: ADMIN_ALERT_EMAILS });
-  } catch (error) {
-    console.error('Admin alert delivery failed:', error);
-    return res.status(500).json({ message: 'Could not deliver the admin alert.' });
-  }
 });
 
 const STATIC_PUBLIC_APPAREL_PRODUCTS = [
@@ -6555,13 +6511,13 @@ app.post('/api/public/apparel-orders', submitLimiter, async (req, res) => {
 
     await Promise.allSettled([
       transporter.sendMail({
-        from: FMM_MAIL_FROM,
-        to: process.env.APPAREL_ORDER_EMAIL || ADMIN_ALERT_EMAILS,
+        from: process.env.SMTP_USER || 'Fantasymmadness2@gmail.com',
+        to: process.env.APPAREL_ORDER_EMAIL || process.env.SMTP_USER || 'Fantasymmadness2@gmail.com',
         subject: `New apparel order ${order.orderNumber}`,
         html: adminHtml,
       }),
       transporter.sendMail({
-        from: FMM_MAIL_FROM,
+        from: process.env.SMTP_USER || 'Fantasymmadness2@gmail.com',
         to: email,
         subject: `Fantasy MMAdness apparel order ${order.orderNumber}`,
         html: customerHtml,
@@ -6690,16 +6646,15 @@ app.post('/contact-us-fantasymmadness', submitLimiter, (req, res) => {
 
   // Admin email options
   const adminMailOptions = {
-    from: FMM_MAIL_FROM,
-    replyTo: email,
-    to: ADMIN_ALERT_EMAILS,
+    from: email,
+    to: 'Fantasymmadness2@gmail.com',
     subject: `Contact Form Submission: ${subject}`,
     html: adminHtml,
   };
 
   // User email options
   const userMailOptions = {
-    from: FMM_MAIL_FROM,
+    from: 'Fantasymmadness2@gmail.com',
     to: email,
     subject: 'Thank You for Contacting Fantasy Madness!',
     html: userHtml,
@@ -6818,7 +6773,7 @@ app.get('/notify', verifyAdminToken, async (req, res) => {
                 `;
 
                 await transporter.sendMail({
-                  from: FMM_MAIL_FROM,
+                  from: '"Fantasy Madness" <Fantasymmadness2@gmail.com>',
                   to: user.email,
                   subject: `Upcoming Match: ${match.matchName}`,
                   html: emailHtml,
@@ -6856,7 +6811,7 @@ app.post('/send-emails-to-all-users', verifyAdminToken, async (req, res) => {
     // Loop through each email and send the message
     for (let email of emails) {
       await transporter.sendMail({
-        from: FMM_MAIL_FROM, // sender address
+        from: '"Fantasy MMAdness" <Fantasymmadness2@gmail.com>', // sender address
         to: email, // receiver email
         subject: subject, // subject line
         text: message, // plain text body
@@ -6920,7 +6875,7 @@ app.post('/register', submitLimiter, async (req, res) => {
       console.log(`Blocked registration for redlisted email: ${email}`);
 
       const mailOptions = {
-        from: FMM_MAIL_FROM,
+        from: 'Fantasymmadness2@gmail.com',
         to: email,
         subject: 'Registration Blocked',
         html: `
@@ -7007,7 +6962,7 @@ app.post('/register', submitLimiter, async (req, res) => {
         if (user && !user.verified) {
           console.log(`Deleting unverified user: ${email}`);
           await transporter.sendMail({
-            from: FMM_MAIL_FROM,
+            from: 'Fantasymmadness2@gmail.com',
             to: email,
             subject: 'Verification Failed',
             html: `<p>Dear ${user.firstName}, your registration was removed due to unverified email.</p>`,
@@ -7028,7 +6983,7 @@ app.post('/register', submitLimiter, async (req, res) => {
     const verificationLink = `https://fantasymmadness-game-server-three.vercel.app/verify-email?token=${verificationToken}`;
     try {
       await transporter.sendMail({
-        from: FMM_MAIL_FROM,
+        from: 'Fantasymmadness2@gmail.com',
         to: email,
         subject: 'Email Verification',
         html: `<p>Click below to verify your email:</p>
@@ -7068,7 +7023,7 @@ app.post('/resend-verification', submitLimiter, async (req, res) => {
     await user.save();
     const verificationLink = `https://fantasymmadness-game-server-three.vercel.app/verify-email?token=${verificationToken}`;
     await transporter.sendMail({
-      from: FMM_MAIL_FROM,
+      from: 'Fantasymmadness2@gmail.com',
       to: email,
       subject: 'Email Verification',
       html: `<p>Click below to verify your email:</p><a href="${verificationLink}">Verify Email</a>`,
@@ -7082,19 +7037,18 @@ app.post('/resend-verification', submitLimiter, async (req, res) => {
 
 app.get('/verify-email', async (req, res) => {
   const { token } = req.query;
-  const frontendOrigin = String(process.env.FRONTEND_URL || process.env.APP_URL || 'https://www.fantasymmadness.com').replace(/\/$/, '');
 
   const user = await User.findOne({ verificationToken: token });
 
   if (!user) {
-    return res.redirect(`${frontendOrigin}/auth?mode=login&role=player&verification=invalid`);
+    return res.status(400).send('Invalid or expired token');
   }
 
   user.verified = true;
   user.verificationToken = null; // Clear the token after verification
   await user.save();
 
-  return res.redirect(`${frontendOrigin}/auth?mode=login&role=player&verified=1`);
+  res.status(200).send('Email verified successfully!');
 });
 
 
@@ -7367,35 +7321,43 @@ function buildShadowTemplatePayloadFromLiveMatch(match = {}) {
 async function convertPastLiveFightsToShadowTemplates({ notifyAffiliates = false } = {}) {
   const now = new Date();
   const liveMatches = await Match.find(applyFightPublicVisibilityFilter({ matchType: 'LIVE' }, { includeDrafts: 'false' }));
-  const expiredUnresolved = liveMatches.filter((match) => {
+  const matchesToConvert = liveMatches.filter((match) => {
     const fightDate = parseFightDateTime(match);
-    const status = String(match.matchStatus || '').trim().toLowerCase();
-    const completed = ['finished', 'completed', 'closed', 'settled'].includes(status) || Boolean(match.prizesSettledAt);
-    return Boolean(fightDate && fightDate.getTime() < now.getTime() && !completed);
+    return Boolean(fightDate && fightDate.getTime() < now.getTime());
   });
 
-  // Never convert a production fight merely because its scheduled time passed.
-  // It may be delayed, awaiting official scoring, or need an admin to close it.
-  // Shadow creation must be an explicit admin action after the result is known.
-  return {
-    processedAt: now.toISOString(),
-    converted: [],
-    skipped: expiredUnresolved.map((match) => ({
-      sourceMatchId: String(match._id),
-      matchName: match.matchName,
-      reason: 'expired-live-fight-requires-admin-review',
-    })),
-    requiresAdminReview: expiredUnresolved.length,
-    checked: liveMatches.length,
-    notifyAffiliates: Boolean(notifyAffiliates),
-  };
+  const converted = [];
+  const skipped = [];
+
+  for (const match of matchesToConvert) {
+    let shadowMatch = await Shadow.findOne({ sourceMatchId: match._id });
+    if (!shadowMatch) {
+      shadowMatch = new Shadow(buildShadowTemplatePayloadFromLiveMatch(match));
+      await shadowMatch.save();
+      converted.push({ sourceMatchId: String(match._id), shadowId: String(shadowMatch._id), matchName: match.matchName });
+    } else {
+      skipped.push({ sourceMatchId: String(match._id), shadowId: String(shadowMatch._id), reason: 'shadow-template-already-exists' });
+    }
+
+    match.matchType = 'SHADOW';
+    match.matchStatus = match.matchStatus === 'Draft' ? 'Draft' : 'Finished';
+    match.matchShadowOpenStatus = 'closed';
+    match.shadowTemplatesAdditionStatus = true;
+    match.homepagePromoted = false;
+    match.homepagePromotionUpdatedAt = new Date();
+    match.homepagePromotionUpdatedBy = 'live-to-shadow-rollover';
+    await match.save();
+  }
+
+  if (converted.length || skipped.length) clearPublicResponseCache();
+  return { processedAt: now.toISOString(), converted, skipped, checked: liveMatches.length };
 }
 
 app.get('/api/cron-job', verifyCronSecret, async (req, res) => {
   try {
     const notifyAffiliates = ['true', '1', 'yes'].includes(String(req.query.notifyAffiliates || '').toLowerCase());
     const result = await convertPastLiveFightsToShadowTemplates({ notifyAffiliates });
-    res.status(200).json({ ok: true, message: 'Expired live-fight review completed. No fights were converted automatically.', ...result });
+    res.status(200).json({ ok: true, message: 'Live fight rollover completed.', ...result });
   } catch (error) {
     console.error('Error in cron job:', error);
     res.status(500).json({ ok: false, error: 'Cron job failed.' });
@@ -7937,7 +7899,7 @@ async function sendCoinCheckoutAccountEmail({ user, resetToken, order }) {
   const appOrigin = String(process.env.PUBLIC_APP_URL || 'https://www.fantasymmadness.com').replace(/\/$/, '');
   const passwordUrl = `${appOrigin}/resetPassword-user/${resetToken}`;
   await transporter.sendMail({
-    from: FMM_MAIL_FROM,
+    from: process.env.SMTP_USER || 'Fantasymmadness2@gmail.com',
     to: user.email,
     subject: 'Set your Fantasy MMAdness player password',
     text: `Your payment was confirmed and your player wallet was created. Set your password using this single-use link within 24 hours: ${passwordUrl}\n\nOrder: ${order.orderNumber}\nWallet credit: ${order.creditedCoins} FM`,
@@ -8980,7 +8942,7 @@ app.post('/admin/add-affiliate', verifyAdminToken, async (req, res) => {
 
     // Email to the affiliate
     await transporter.sendMail({
-      from: FMM_MAIL_FROM,
+      from: '"Fantasy Madness" <Fantasymmadness2@gmail.com>',
       to: email,
       subject: 'Welcome to Fantasy Madness Affiliate Program!',
       html: `
@@ -9039,8 +9001,8 @@ app.post('/admin/add-affiliate', verifyAdminToken, async (req, res) => {
 
     // Email to the admin
     await transporter.sendMail({
-      from: FMM_MAIL_FROM,
-      to: ADMIN_ALERT_EMAILS, // Replace with admin email
+      from: '"Fantasy Madness" <Fantasymmadness2@gmail.com>',
+      to: 'Fantasymmadness2@gmail.com', // Replace with admin email
       subject: 'Affiliate Successfully Added',
       html: `
       <table width="100%" cellpadding="0" cellspacing="0" border="0" style="width:100%; max-width:600px; margin:auto;">
@@ -9137,7 +9099,7 @@ const notification = new Notification({
 
       // Send welcome email to the affiliate
       await transporter.sendMail({
-        from: FMM_MAIL_FROM,
+        from: '"Fantasy Madness" <Fantasymmadness2@gmail.com>',
         to: email, // Affiliate's email
         subject: 'Welcome to Fantasy Madness Affiliate Program!',
         html: `
@@ -9178,8 +9140,8 @@ const notification = new Notification({
       sendAdminPush({ title: 'New affiliate sign-up', body: `${affiliate.firstName} needs approval.`, url: '/administration/AffiliateUsers' }).catch(() => null);
 
       await transporter.sendMail({
-        from: FMM_MAIL_FROM,
-        to: ADMIN_ALERT_EMAILS, // Admin email
+        from: '"Fantasy Madness" <Fantasymmadness2@gmail.com>',
+        to: 'Fantasymmadness2@gmail.com', // Admin email
         subject: 'New Affiliate Registration - Approval Needed',
         html: `
           <table width="100%" cellpadding="0" cellspacing="0" border="0" style="width:100%; max-width:600px; margin:auto;">
@@ -9247,8 +9209,8 @@ const notification = new Notification({
 
     // Send email notification about login failure
     await transporter.sendMail({
-      from: FMM_MAIL_FROM,
-      to: ADMIN_ALERT_EMAILS,
+      from: '"Fantasy Madness" <Fantasymmadness2@gmail.com>',
+      to: 'Fantasymmadness2@gmail.com',
       subject: 'Affiliate Google Login Failed',
       html: `
         <table width="100%" cellpadding="0" cellspacing="0" border="0" style="width:100%; max-width:600px; margin:auto;">
@@ -9340,7 +9302,7 @@ app.post('/forgotPassword', submitLimiter, async (req, res) => {
 
     const mailOptions = {
       to: affiliate.email,
-      from: FMM_MAIL_FROM,
+      from: process.env.SMTP_USER || 'Fantasymmadness2@gmail.com',
       subject: 'Password Reset Request',
       text: `You are receiving this because you have requested a password reset for your account.\n\n
       Please click the following link to reset your password:\n\n
@@ -9495,8 +9457,8 @@ app.post('/affiliate/:id/payout', verifyToken, requireScope(TOKEN_SCOPES.AFFILIA
 
     // Send email notification
     const mailOptions = {
-      from: FMM_MAIL_FROM,
-      to: ADMIN_ALERT_EMAILS, // Admin email
+      from: 'Fantasymmadness2@gmail.com',
+      to: 'Fantasymmadness2@gmail.com', // Admin email
       subject: 'New Payout Request',
       text: `
         Hello Admin,
@@ -9651,7 +9613,7 @@ app.post('/affiliate/:affiliateId/remove-user', verifyToken, requireScope(TOKEN_
     `;
 
     await transporter.sendMail({
-      from: FMM_MAIL_FROM,
+      from: '"Fantasy MMA Madness" <Fantasymmadness2@gmail.com>',
       to: affiliate.email,
       subject: 'A User Has Left Your League',
       html: emailHtml,
@@ -9806,7 +9768,7 @@ app.post('/affiliate/updatePayment/:id', verifyToken, requireScope(TOKEN_SCOPES.
 
 const sendUserEmail = async (user, affiliate) => {
   const mailOptions = {
-    from: FMM_MAIL_FROM,
+    from: '"Fantasy Madness" <Fantasymmadness2@gmail.com>',
     to: user.email,
     subject: `Thank You for Joining ${affiliate.firstName}'s League!`,
     html: `
@@ -9860,7 +9822,7 @@ const sendUserEmail = async (user, affiliate) => {
 
 const sendAffiliateEmail = async (affiliate, user) => {
   const mailOptions = {
-    from: FMM_MAIL_FROM,
+    from: '"Fantasy Madness" <Fantasymmadness2@gmail.com>',
     to: affiliate.email,
     subject: `${user.firstName} ${user.lastName} has joined your league!`,
     html: `
@@ -10085,7 +10047,6 @@ app.get('/api/public/affiliates', async (req, res) => {
 app.get('/affiliates', verifyAdminToken, async (req, res) => {
   try {
     const affiliates = await Affiliate.find().select(AFFILIATE_SAFE_SELECT).sort({ createdAt: -1 }).lean();
-    return res.json(sanitizeAccountList(affiliates));
   } catch (error) {
     console.error('Error fetching affiliates:', error);
     res.status(500).json({ message: 'Error fetching affiliates' });
@@ -10141,7 +10102,7 @@ app.post('/send-email-affiliate', verifyAdminToken, async (req, res) => {
   try {
       // Send mail with the defined transport object
       await transporter.sendMail({
-          from: FMM_MAIL_FROM, // sender address
+          from: '"Fantasy mmadnress Team" <Fantasymmadness2@gmail.com>', // sender address
           to: email, // list of receivers
           subject: subject, // Subject line
           text: message, // plain text body
@@ -10299,8 +10260,8 @@ const notification = new Notification({
 
     // Send email notification to the admin
     await transporter.sendMail({
-      from: FMM_MAIL_FROM,
-      to: ADMIN_ALERT_EMAILS, // Admin email
+      from: '"Fantasy Madness" <Fantasymmadness2@gmail.com>',
+      to: 'Fantasymmadness2@gmail.com', // Admin email
       subject: 'New Affiliate Registration - Approval Needed',
       html: `
         <table width="100%" cellpadding="0" cellspacing="0" border="0" style="width:100%; max-width:600px; margin:auto;">
@@ -11688,7 +11649,7 @@ app.post('/addShadow', verifyAdminToken, upload.fields([
 
       const mailPromises = users.map((user) => {
         const mailOptions = {
-          from: FMM_MAIL_FROM,
+          from: 'Fantasymmadness2@gmail.com',
           to: user.email,
           subject: 'Fantasy MMAdness - New Fight Announcement',
           html: `
@@ -12478,7 +12439,7 @@ app.post('/redusers', verifyAdminToken, async (req, res) => {
 
 
     const mailOptions = {
-      from: FMM_MAIL_FROM,
+      from: '"Fantasy Madness" <Fantasymmadness2@gmail.com>',
       to: user.email,
       subject: 'Account Flagged Due to Violation',
       html: `
@@ -13014,7 +12975,7 @@ app.post('/news', verifyAdminToken, async (req, res) => {
         const emailPromises = subscribedUsers.map(user => {
           const unsubscribeUrl = `https://fantasymmadness-game-server-three.vercel.app/unsubscribe-user/${user._id}?t=${signActionToken('unsubscribe', user._id)}`;
           const mailOptions = {
-            from: FMM_MAIL_FROM,
+            from: 'Fantasymmadness2@gmail.com',
             to: user.email,
             subject: 'Fantasy mmadness - New Update!',
             html: `
@@ -13108,1081 +13069,9 @@ app.get('/unsubscribe-user/:userId', async (req, res) => {
     const user = await User.findByIdAndUpdate(userId, { isSubscribed: false }, { new: true });
 
     if (!user) {
-      return res.status(404).json({ success: false, message: 'User not found' });
-    }
-
-    res.send(`
-      <div style="text-align: center; font-family: Arial, sans-serif; margin-top: 50px;">
-        <h1 style="color: #d20a0a;">Unsubscribed Successfully</h1>
-        <p style="font-size: 16px; color: #333;">You will no longer receive notifications from Fantasy Madness.</p>
-        <a href="https://fantasymmadness.com" style="text-decoration: none; color: #191164; font-weight: bold;">Return to Fantasy Madness</a>
-      </div>
-    `);
-  } catch (error) {
-    console.error('Error unsubscribing user:', error);
-    res.status(500).json({ success: false, message: 'An error occurred while unsubscribing the user.' });
-  }
-});
-
-
-
-app.get('/news', async (req, res) => {
-  try {
-    // Fetch from database
-    const dbArticles = await News.find().sort({ createdAt: -1 }).lean();
-
-    // Fetch UFC-focused Google News RSS.
-    const feed = await parser.parseURL(process.env.UFC_NEWS_RSS_URL || GOOGLE_NEWS_UFC_RSS_FEED_URL);
-    const rssArticles = ufcEventDiscoveryPrivate.formatRssItemsAsNewsArticles(feed.items || []);
-
-    // Optionally add a source flag to DB articles too
-    const formattedDbArticles = dbArticles.map(article => ({
-      _id: article._id,
-      title: article.title,
-      description: article.description,
-      link: article.link,
-      pubDate: article.pubDate,
-      image: article.image,
-      creator: article.creator,
-      source: 'database'
-    }));
-
-    // Combine both
-    const allArticles = [...formattedDbArticles, ...rssArticles];
-
-    // Optional: Sort by date (descending)
-    allArticles.sort((a, b) => new Date(b.pubDate) - new Date(a.pubDate));
-
-    res.status(200).json({ success: true, data: allArticles });
-  } catch (error) {
-    console.error('Error loading news:', error.message);
-    res.status(500).json({ success: false, message: 'Failed to load news.' });
-  }
-});
-
-app.get('/api/public/fight-news-calendar', async (req, res) => {
-  try {
-    const { payload, cacheState } = await readThroughPublicCache(
-      getPublicCacheKey(req, 'public-fight-news-calendar'),
-      async () => {
-        const limit = parsePositiveInteger(req.query.limit, 40, 120);
-        const now = new Date();
-        const [dbArticles, feed] = await Promise.all([
-          News.find().sort({ dateCreated: -1, createdAt: -1 }).limit(limit * 2).lean(),
-          parser.parseURL(process.env.UFC_NEWS_RSS_URL || GOOGLE_NEWS_UFC_RSS_FEED_URL).catch((error) => {
-            console.warn('Fight-news calendar RSS unavailable:', error.message);
-            return { items: [] };
-          }),
-        ]);
-
-        const dbItems = dbArticles.map((article) => ({
-          _id: article._id,
-          title: article.title,
-          description: article.description,
-          contentSnippet: article.description,
-          link: article.link,
-          pubDate: article.pubDate || article.dateCreated || article.createdAt,
-          isoDate: article.pubDate || article.dateCreated || article.createdAt,
-          source: article.source || 'database',
-        }));
-
-        const seen = new Set();
-        const items = [...dbItems, ...(feed.items || [])]
-          .map((article, index) => {
-            const candidate = ufcEventDiscoveryPrivate.parseUfcEventCandidateFromRssItem(article, { now });
-            if (!candidate || !candidate.eventDate) return null;
-
-            const sufficiency = ufcEventDiscoveryPrivate.hasSufficientEventData(candidate, { now });
-            const tooOld = candidate.eventDate.getTime() < now.getTime() - (48 * 60 * 60 * 1000);
-            if (tooOld || (!sufficiency.ok && Number(candidate.confidence || 0) < 45)) return null;
-
-            const dedupeKey = candidate.discoveryKey || candidate.articleUrl || `${candidate.eventName}-${candidate.eventDate.toISOString().slice(0, 10)}`;
-            if (seen.has(dedupeKey)) return null;
-            seen.add(dedupeKey);
-
-            return {
-              _id: `fight-news-${dedupeKey || index}`.replace(/[^a-zA-Z0-9:_-]/g, '-'),
-              sourceType: 'fight-news',
-              title: candidate.eventName || candidate.title || 'Upcoming fight news event',
-              matchName: candidate.eventName || candidate.title || 'Upcoming fight news event',
-              description: candidate.description || candidate.title || '',
-              matchDescription: candidate.description || candidate.title || '',
-              eventDate: candidate.eventDate.toISOString(),
-              matchDate: candidate.eventDate.toISOString(),
-              eventTime: candidate.matchTime || '',
-              matchTime: candidate.matchTime || '',
-              venue: candidate.venue || candidate.city || 'News event',
-              city: candidate.city || '',
-              fighterA: candidate.fighterA || '',
-              fighterB: candidate.fighterB || '',
-              matchFighterA: candidate.fighterA || '',
-              matchFighterB: candidate.fighterB || '',
-              eventName: candidate.eventName || '',
-              eventType: candidate.eventType || '',
-              eventNumber: candidate.eventNumber || null,
-              confidence: candidate.confidence || 0,
-              discoveryKey: candidate.discoveryKey || '',
-              source: candidate.articleSource || 'Google News',
-              articleSource: candidate.articleSource || '',
-              link: candidate.articleUrl || candidate.officialEventUrl || '',
-              officialEventUrl: candidate.officialEventUrl || '',
-              provider: candidate.provider || 'google-news-ufc-rss',
-              calendarEligible: true,
-              isCalendarEvent: true,
-              eventDiscovered: true,
-              pubDate: candidate.publishedAt ? candidate.publishedAt.toISOString() : null,
-            };
-          })
-          .filter(Boolean)
-          .sort((a, b) => new Date(a.matchDate).getTime() - new Date(b.matchDate).getTime())
-          .slice(0, limit);
-
-        return {
-          ok: true,
-          success: true,
-          data: items,
-          items,
-          count: items.length,
-          generatedAt: new Date().toISOString(),
-        };
-      }
-    );
-
-    setPublicCacheHeaders(res, PUBLIC_CACHE_TTL_SECONDS, cacheState);
-    res.status(200).json(payload);
-  } catch (error) {
-    console.error('Error loading fight-news calendar:', error.message);
-    res.status(500).json({ ok: false, success: false, message: 'Failed to load fight-news calendar.' });
-  }
-});
-// Update a News article by ID
-app.put('/news/:id', verifyAdminToken, async (req, res) => {
-  try {
-    const news = await News.findByIdAndUpdate(req.params.id, req.body, {
-      new: true,
-      runValidators: true,
-    });
-    if (!news) return res.status(404).json({ success: false, message: 'News article not found' });
-
-    const notification = new Notification({
-      title: `News Updated: ${news.title}`,
-    });
-    await notification.save();
-
-    res.status(200).json({ success: true, data: news });
-  } catch (error) {
-    res.status(400).json({ success: false, message: error.message });
-  }
-});
-
-// Delete a News article by ID
-app.delete('/news/:id', verifyAdminToken, async (req, res) => {
-  try {
-    const news = await News.findByIdAndDelete(req.params.id);
-    if (!news) return res.status(404).json({ success: false, message: 'News article not found' });
-    
-    const notification = new Notification({
-      title: `News Deleted: ${news.title}`,
-    });
-    await notification.save();
-    res.status(200).json({ success: true, message: 'News article deleted successfully' });
-  } catch (error) {
-    res.status(400).json({ success: false, message: error.message });
-  }
-});
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-const sponsorSchema = new mongoose.Schema({
-  name: String,
-  email: String,
-  description: String,
-  image: String,
-  imageDeleteUrl: String,
-  websiteLink: String,
-  instaLink: String,
-  dateCreated: { type: Date, default: Date.now }, // Automatically set the creation date
-});
-
-sponsorSchema.index({ email: 1 });
-sponsorSchema.index({ dateCreated: -1 });
-const Sponsors = mongoose.models.Sponsors || mongoose.model('Sponsors', sponsorSchema);
-
-// Get all sponsors by email
-// --------------------------------------------------------------------------
-// SPONSOR LOGIN
-// The old flow was: GET /sponsors/email/<address> -> if a sponsor exists, the
-// browser set isSponsorAuthenticated=true in localStorage. Knowing (or guessing)
-// a sponsor's email address was the entire credential, and the "session" was a
-// client-side string. Replaced with an emailed one-time code and a real JWT.
-// --------------------------------------------------------------------------
-const sponsorLoginCodeSchema = new mongoose.Schema({
-  normalizedEmail: { type: String, required: true, index: true },
-  codeHash: { type: String, required: true },
-  attempts: { type: Number, default: 0 },
-  expiresAt: { type: Date, required: true },
-}, { timestamps: true });
-
-const SponsorLoginCode = mongoose.models.SponsorLoginCode
-  || mongoose.model('SponsorLoginCode', sponsorLoginCodeSchema);
-
-const SPONSOR_CODE_TTL_MS = 10 * 60 * 1000;
-const SPONSOR_CODE_MAX_ATTEMPTS = 5;
-const hashSponsorCode = (code) => crypto.createHash('sha256').update(String(code)).digest('hex');
-
-app.post('/api/sponsor/login/request', submitLimiter, async (req, res) => {
-  const normalizedEmail = String(req.body?.email || '').trim().toLowerCase();
-  // Always answer the same way: this endpoint must not confirm who is a sponsor.
-  const genericResponse = { ok: true, message: 'If that address belongs to a sponsor, a sign-in code is on its way.' };
-  try {
-    if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(normalizedEmail)) {
-      return res.status(400).json({ ok: false, message: 'Enter a valid email address.' });
-    }
-    const sponsor = await Sponsors.findOne({ email: new RegExp(`^${normalizedEmail.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`, 'i') })
-      .select('_id email name')
-      .lean();
-    if (!sponsor) return res.json(genericResponse);
-
-    const code = String(crypto.randomInt(100000, 1000000));
-    await SponsorLoginCode.deleteMany({ normalizedEmail });
-    await SponsorLoginCode.create({
-      normalizedEmail,
-      codeHash: hashSponsorCode(code),
-      expiresAt: new Date(Date.now() + SPONSOR_CODE_TTL_MS),
-    });
-
-    await transporter.sendMail({
-      from: FMM_MAIL_FROM,
-      to: sponsor.email,
-      subject: 'Your Fantasy MMAdness sponsor sign-in code',
-      html: `<div style="font-family:Georgia,'Times New Roman',serif;color:#201f1d">
-        <p>Hello ${sponsor.name || 'there'},</p>
-        <p>Your sponsor sign-in code is:</p>
-        <p style="font-size:30px;letter-spacing:6px;font-variant-numeric:tabular-nums"><strong>${code}</strong></p>
-        <p>It expires in 10 minutes. If you did not request it, you can ignore this email.</p>
-      </div>`,
-    });
-    return res.json(genericResponse);
-  } catch (error) {
-    console.error('Sponsor login code error:', error);
-    return res.json(genericResponse);
-  }
-});
-
-app.post('/api/sponsor/login/verify', loginLimiter, async (req, res) => {
-  try {
-    const normalizedEmail = String(req.body?.email || '').trim().toLowerCase();
-    const code = String(req.body?.code || '').trim();
-    if (!normalizedEmail || !/^\d{6}$/.test(code)) {
-      return res.status(400).json({ ok: false, message: 'Enter the 6-digit code from your email.' });
-    }
-    const record = await SponsorLoginCode.findOne({ normalizedEmail }).sort({ createdAt: -1 });
-    if (!record || record.expiresAt.getTime() < Date.now()) {
-      return res.status(400).json({ ok: false, message: 'That code has expired. Request a new one.' });
-    }
-    if (record.attempts >= SPONSOR_CODE_MAX_ATTEMPTS) {
-      return res.status(429).json({ ok: false, message: 'Too many attempts. Request a new code.' });
-    }
-    const supplied = Buffer.from(hashSponsorCode(code));
-    const expected = Buffer.from(record.codeHash);
-    if (supplied.length !== expected.length || !crypto.timingSafeEqual(supplied, expected)) {
-      record.attempts += 1;
-      await record.save();
-      return res.status(400).json({ ok: false, message: 'That code is not correct.' });
-    }
-    const sponsor = await Sponsors.findOne({ email: new RegExp(`^${normalizedEmail.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`, 'i') }).lean();
-    if (!sponsor) return res.status(404).json({ ok: false, message: 'Sponsor account not found.' });
-    await SponsorLoginCode.deleteMany({ normalizedEmail });
-
-    const token = jwt.sign({ id: sponsor._id, scope: TOKEN_SCOPES.SPONSOR }, process.env.JWT_SECRET, { expiresIn: SESSION_TOKEN_TTL });
-    return res.json({ ok: true, token, sponsor });
-  } catch (error) {
-    console.error('Sponsor login verify error:', error);
-    return res.status(500).json({ ok: false, message: 'Sign-in is temporarily unavailable.' });
-  }
-});
-
-app.get('/api/sponsor/me', verifyToken, async (req, res) => {
-  try {
-    if (req.user?.scope !== TOKEN_SCOPES.SPONSOR) return res.status(403).json({ ok: false, message: 'Not a sponsor session.' });
-    const sponsor = await Sponsors.findById(req.user.id).lean();
-    if (!sponsor) return res.status(404).json({ ok: false, message: 'Sponsor account not found.' });
-    return res.json({ ok: true, sponsor });
-  } catch (error) {
-    return res.status(500).json({ ok: false, message: 'Unable to load sponsor profile.' });
-  }
-});
-
-app.get('/sponsors/email/:email', verifyAdminToken, async (req, res) => {
-  try {
-    const { email } = req.params; // Extract email from the request parameters
-
-    // Find all sponsors with the given email
-    const sponsors = await Sponsors.find({ email }).lean();
-
-    if (sponsors.length === 0) {
-      return res.status(404).json({ success: false, message: 'No sponsors found for the given email' });
-    }
-
-    res.status(200).json({ success: true, data: sponsors });
-  } catch (error) {
-    console.error('Error fetching sponsors by email:', error);
-    res.status(500).json({ success: false, message: 'An error occurred while fetching sponsors' });
-  }
-});
-
-
-app.delete('/all/delete/sponsors', verifyAdminToken, requireBulkConfirmation('SPONSORS'), async (req, res) => {
-  try {
-    const result = await Sponsors.deleteMany({});
-    res.status(200).json({
-      message: 'All Sponsors articles deleted successfully.',
-      deletedCount: result.deletedCount,
-    });
-  } catch (error) {
-    console.error('Error deleting Sponsors:', error);
-    res.status(500).json({ error: 'Failed to delete Sponsors articles from the database.' });
-  }
-});
-
-
-
-// POST route to upload sponsor
-app.post('/upload-sponsor', verifyAdminToken, upload.single('image'), async (req, res) => {
-  try {
-    const { name, description, websiteLink, instaLink, email } = req.body; // Extract sponsor data
-
-    // Check if the sponsor already exists
-    const existingSponsor = await Sponsors.findOne({ email });
-    if (existingSponsor) {
-      return res.status(400).json({ message: 'Sponsor with this email already exists.' });
-    }
-
-    // Ensure image is provided
-    if (!req.file) {
-      return res.status(400).json({ error: 'Image is required' });
-    }
-
-    // Upload image to Cloudinary
-    let imageUrl = '';
-    let imageDeleteUrl = '';
-    const result = await new Promise((resolve, reject) => {
-      cloudinary.uploader.upload_stream(
-        { folder: 'sponsors' },
-        (error, result) => {
-          if (error) return reject(error);
-          resolve(result);
-        }
-      ).end(req.file.buffer);
-    });
-
-    imageUrl = result.secure_url;
-    imageDeleteUrl = result.public_id;
-
-    // Save sponsor details in the database
-    const newSponsor = new Sponsors({
-      name,
-      description,
-      email,
-      image: imageUrl,
-      imageDeleteUrl: imageDeleteUrl,
-      websiteLink,
-      instaLink,
-    });
-
-    await newSponsor.save();
-  
-    const notification = new Notification({
-      title: `New Sponsor added: ${newSponsor.name}`,
-    });
-    await notification.save();
-  
-    const emailContent = `
-      <table width="100%" cellpadding="0" cellspacing="0" border="0" style="width:100%; max-width:600px; margin:auto;">
-        <tr>
-          <td align="center" style="padding: 15px 0;">
-            <img src="https://res.cloudinary.com/daflot6fo/image/upload/v1736068036/bywcrrcqmcyczdyhjmdv.png" alt="Fantasy Madness Logo" style="width:100px;" />
-            <h2 style="margin: 0; color: #191164; font-family: 'New York', Charter, Georgia, serif;">Fantasy Madness</h2>
-          </td>
-        </tr>
-        <tr>
-          <td style="padding: 10px 0;">
-            <p style="font-size: 16px; font-family: Arial, sans-serif; color: #333;">Dear ${name},</p>
-            <p style="font-size: 16px; font-family: Arial, sans-serif; color: #333;">
-              Thank you for supporting Fantasy Madness! We have successfully added the following information to our website:
-            </p>
-            <ul style="font-size: 16px; font-family: Arial, sans-serif; color: #333;">
-              <li><strong>Name:</strong> ${name}</li>
-              <li><strong>Description:</strong> ${description}</li>
-              <li><strong>Website Link:</strong> <a href="${websiteLink}" style="color: #191164; text-decoration: none;">${websiteLink}</a></li>
-              <li><strong>Instagram Link:</strong> <a href="${instaLink}" style="color: #191164; text-decoration: none;">${instaLink}</a></li>
-              <li>You can use this email:<strong>${email}</strong> to access the sponsor dashboard </li>
-           
-              </ul>
-            <p style="font-size: 16px; font-family: Arial, sans-serif; color: #333;">
-              If you have any questions or updates, feel free to contact us.
-            </p>
-          </td>
-        </tr>
-        <tr>
-          <td align="center" style="padding: 20px 0;">
-            <img src="https://res.cloudinary.com/daflot6fo/image/upload/v1736068036/bywcrrcqmcyczdyhjmdv.png" alt="Fantasy Madness Logo" style="width:70px;" />
-            <p><a href="https://fantasymmadness.com" style="font-family: Arial, sans-serif; color: #191164; text-decoration: none;">https://fantasymmadness.com</a></p>   
-            <div style="padding-top: 10px;">
-              <a href="https://www.facebook.com/share/2pzYV9XdQpAU7n6p/?mibextid=LQQJ4d" style="margin: 0 5px;">
-                <img src="https://i.ibb.co/G9wVH2g/facebook-removebg-preview-two.png" alt="Facebook" style="width:35px; height:35px; border-radius:50%;" />
-              </a>
-              <a href="https://www.instagram.com/fantasymmadness" style="margin: 0 5px;">
-                <img src="https://i.ibb.co/tKj4px0/insta-removebg-preview-two.png" alt="Instagram" style="width:35px; height:35px; border-radius:50%;" />
-              </a>
-              <a href="https://x.com/davis_kell51697" style="margin: 0 5px;">
-                <img src="https://i.ibb.co/T0cvy2Q/twitter-removebg-preview-two.png" alt="Twitter" style="width:35px; height:35px; border-radius:50%;" />
-              </a>
-            </div>
-          </td>
-        </tr>
-      </table>
-    `;
-
-    await transporter.sendMail({
-      from: FMM_MAIL_FROM,
-      to: email,
-      subject: 'Welcome to Fantasy Madness!',
-      html: emailContent,
-    });
-
-    res.status(200).json({ message: 'Sponsor uploaded, saved successfully, and email sent', sponsor: newSponsor });
-  } catch (error) {
-    console.error('Error uploading sponsor:', error);
-    res.status(500).json({ error: 'An error occurred while uploading the sponsor' });
-  }
-});
-
-
-// Get all News articles
-app.get('/sponsors', async (req, res) => {
-  try {
-    const sponsorArticles = await Sponsors.find().lean();
-    res.status(200).json({ success: true, data: sponsorArticles });
-  } catch (error) {
-    res.status(500).json({ success: false, message: 'Something went wrong on our side. Please try again.' });
-  }
-});
-// PUT route to update a sponsor by ID
-app.put('/sponsor/:id', verifyAdminToken, upload.single('image'), async (req, res) => {
-  try {
-    const { name, description, websiteLink, instaLink, email } = req.body; // Extract sponsor data
-
-    // Find the existing sponsor
-    const sponsor = await Sponsors.findById(req.params.id);
-    if (!sponsor) {
-      return res.status(404).json({ success: false, message: 'Sponsor not found' });
-    }
-
-    let updatedData = { name, description, websiteLink, instaLink, email };
-
-    // Check if a new image is uploaded
-    if (req.file) {
-      // Upload the new image to Cloudinary
-      const result = await new Promise((resolve, reject) => {
-        cloudinary.uploader.upload_stream(
-          { folder: 'sponsors' },
-          (error, result) => {
-            if (error) return reject(error);
-            resolve(result);
-          }
-        ).end(req.file.buffer);
-      });
-
-      const newImageUrl = result.secure_url;
-      const newPublicId = result.public_id;
-
-      // Delete the old image from Cloudinary if it exists
-      if (sponsor.imageDeleteUrl) {
-        await cloudinary.uploader.destroy(sponsor.imageDeleteUrl);
-      }
-
-      // Add new image details to the update data
-      updatedData.image = newImageUrl;
-      updatedData.imageDeleteUrl = newPublicId;
-    }
-
-    // Update the sponsor in the database
-    const updatedSponsor = await Sponsors.findByIdAndUpdate(req.params.id, updatedData, {
-      new: true,
-      runValidators: true,
-    });
-    
-    const notification = new Notification({
-      title: `Sponsor updated: ${updatedSponsor.name}`,
-    });
-    await notification.save();
-
-    res.status(200).json({ success: true, data: updatedSponsor });
-  } catch (error) {
-    console.error('Error updating sponsor:', error);
-    res.status(400).json({ success: false, message: error.message });
-  }
-});
-app.delete('/sponsor/:id', verifyAdminToken, async (req, res) => {
-  try {
-    const sponsor = await Sponsors.findByIdAndDelete(req.params.id);
-    if (!sponsor) return res.status(404).json({ success: false, message: 'Sponsor not found' });
-
-    // Delete the image from Cloudinary using public_id
-    if (sponsor.imageDeleteUrl) {
-      try {
-        await cloudinary.uploader.destroy(sponsor.imageDeleteUrl);
-      } catch (err) {
-        console.warn('Failed to delete image from Cloudinary:', err.message);
-      }
-    }
-
-    // Save notification
-    const notification = new Notification({
-      title: `Sponsor deleted: ${sponsor.name}`,
-    });
-    await notification.save();
-
-    res.status(200).json({ success: true, message: 'Sponsor deleted successfully' });
-  } catch (error) {
-    console.error('Error deleting sponsor:', error);
-    res.status(400).json({ success: false, message: error.message });
-  }
-});
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-// Blogs of fantasy mmadness
-const blogSchema = new mongoose.Schema({
-  metaTitle: String,
-  metaDescription: String,
-  header: String,
-  blogHeaderImage: String,
-  blogHeaderImagePublicId: String, // For deletion
-
-  sections: [
-    {
-      title: String,
-      content: String,
-      image: String,
-      imagePublicId: String, // For deletion
-      headings: [
-        {
-          title: String,
-          content: String
-        }
-      ]
-    }
-  ]
-}, { timestamps: true });
-blogSchema.index({ createdAt: -1 });
-blogSchema.index({ metaTitle: 1 });
-
-
-const Blog = mongoose.models.Blog || mongoose.model('Blog', blogSchema);
-
-app.post('/api/create-blog', verifyAdminToken, upload.fields([
-  { name: 'blogHeaderImage', maxCount: 1 },
-  { name: 'sectionImages' } // multiple section images
-]), async (req, res) => {
-  try {
-    const {
-      metaTitle,
-      metaDescription,
-      header,
-      sections // stringified JSON array
-    } = req.body;
-
-    // Parse sections safely
-    let parsedSections = [];
-    try {
-      parsedSections = JSON.parse(sections || '[]');
-    } catch (e) {
-      console.error('Invalid JSON in sections:', sections);
-      return res.status(400).json({ error: 'Invalid sections format.' });
-    }
-
-    console.log('Parsed Sections:', parsedSections.length);
-    const sectionImages = req.files['sectionImages'] || [];
-    console.log('Received sectionImages:', sectionImages.length);
-
-    let blogHeaderImage = '';
-let blogHeaderImagePublicId = ''; // ✅ Declare this at the top
-if (req.files['blogHeaderImage']) {
-  const result = await new Promise((resolve, reject) => {
-    cloudinary.uploader.upload_stream(
-      { folder: 'blogs/header' },
-      (error, result) => {
-        if (error) return reject(error);
-        resolve(result);
-      }
-    ).end(req.files['blogHeaderImage'][0].buffer);
-  });
-  blogHeaderImage = result.secure_url;
-  blogHeaderImagePublicId = result.public_id;
-}
-
-    // Upload section images and map them to parsedSections
-    for (let i = 0; i < parsedSections.length; i++) {
-      if (sectionImages[i]?.buffer) {
-        const imageUpload = await new Promise((resolve, reject) => {
-          cloudinary.uploader.upload_stream(
-            { folder: 'blogs/sections' },
-            (error, result) => {
-              if (error) return reject(error);
-              resolve(result);
-            }
-          ).end(sectionImages[i].buffer);
-        });
-        parsedSections[i].image = imageUpload.secure_url;
-        parsedSections[i].imagePublicId = imageUpload.public_id;
-      } else {
-        console.warn(`No image found for section index ${i}`);
-      }
-    }
-
-    // Check if blog exists
-    let blog = await Blog.findOne({ metaTitle });
-
-    if (blog) {
-      blog.sections.push(...parsedSections);
-      await blog.save();
-    } else {
-      blog = new Blog({
-        metaTitle,
-        metaDescription,
-        header,
-        blogHeaderImage,
-        blogHeaderImagePublicId,
-        sections: parsedSections
-      });
-      await blog.save();
-    }
-
- const notification = new Notification({
-      title: `Blog Added: ${metaTitle}`,
-    });
-    await notification.save();
-    const swarmAutomation = await app.locals.swarmPhase2?.triggerAutomationEvent?.({
-      trigger: 'blog_approved',
-      vertical: 'combat',
-      sourceEntity: { type: 'blog', id: String(blog._id), label: blog.metaTitle || metaTitle },
-      input: {
-        blogId: String(blog._id),
-        blogTitle: blog.metaTitle || metaTitle,
-        title: blog.header || metaTitle,
-        metaDescription: blog.metaDescription,
-      },
-      metadata: { route: '/api/create-blog', action: 'manual-blog-created-or-updated' },
-      reason: 'blog-created-or-updated-in-backend',
-    }).catch((error) => ({ ok: false, warning: 'Blog was saved but blog_approved automation failed.', error: error.message }));
-    res.status(201).json({ message: 'Blog created/updated successfully', blog, automation: swarmAutomation || null });
-
-  } catch (error) {
-    console.error('Error creating blog:', error.message);
-    console.error(error.stack);
-    res.status(500).json({ error: 'Internal server error while creating blog.' });
-  }
-});
-
-
-app.get('/api/blogs', async (req, res) => {
-  try {
-    const blogs = await Blog.find().sort({ createdAt: -1 }).lean();
-    res.status(200).json(blogs);
-  } catch (err) {
-    console.error('Error fetching blogs:', err);
-    res.status(500).json({ error: 'Internal server error while fetching blogs.' });
-  }
-});
-
-app.get('/api/blogs/:id', async (req, res) => {
-  try {
-    const blogId = req.params.id;
-    const blog = await Blog.findById(blogId).lean();
-
-    if (!blog) {
-      return res.status(404).json({ error: 'Blog not found.' });
-    }
-
-    res.status(200).json(blog);
-  } catch (err) {
-    console.error('Error fetching blog by ID:', err);
-    res.status(500).json({ error: 'Internal server error while fetching the blog.' });
-  }
-});
-
-
-app.delete('/api/blogs/:id', verifyAdminToken, async (req, res) => {
-  try {
-    const blog = await Blog.findById(req.params.id);
-    if (!blog) return res.status(404).json({ error: 'Blog not found.' });
-
-    if (blog.blogHeaderImagePublicId) {
-      await cloudinary.uploader.destroy(blog.blogHeaderImagePublicId);
-    }
-
-    for (const section of blog.sections) {
-      if (section.imagePublicId) {
-        await cloudinary.uploader.destroy(section.imagePublicId);
-      }
-    }
-
- const notification = new Notification({
-      title: `Blog Deleted: ${blog.metaTitle}`,
-    });
-    await notification.save();
-
-    await Blog.findByIdAndDelete(req.params.id);
-    res.status(200).json({ message: 'Blog deleted successfully.' });
-  } catch (err) {
-    console.error('Error deleting blog:', err);
-    res.status(500).json({ error: 'Internal server error while deleting blog.' });
-  }
-});
-
-app.delete('/api/delete/blogs', verifyAdminToken, async (req, res) => {
-  try {
-    const blogs = await Blog.find();
-
-    const deletedHeaderImages = [];
-    const deletedSectionImages = [];
-
-    for (const blog of blogs) {
-      if (blog.blogHeaderImagePublicId) {
-        await cloudinary.uploader.destroy(blog.blogHeaderImagePublicId);
-        deletedHeaderImages.push(blog.blogHeaderImagePublicId);
-      }
-
-      for (const section of blog.sections) {
-        if (section.imagePublicId) {
-          await cloudinary.uploader.destroy(section.imagePublicId);
-          deletedSectionImages.push(section.imagePublicId);
-        }
-      }
-    }
-
-    await Blog.deleteMany();
-
-    res.status(200).json({
-      message: 'All blogs and associated images deleted successfully.',
-      deletedHeaderImages,
-      deletedSectionImages
-    });
-  } catch (err) {
-    console.error('Error deleting all blogs:', err);
-    res.status(500).json({ error: 'Internal server error while deleting blogs.' });
-  }
-});
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-const referralSchema = new mongoose.Schema({
-  referrer: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true },
-  referredUser: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true },
-  rewarded: { type: Boolean, default: false },
-  createdAt: { type: Date, default: Date.now }
-});
-referralSchema.index({ referrer: 1, createdAt: -1 });
-referralSchema.index({ referredUser: 1 });
-
-const Referral = mongoose.models.Referral || mongoose.model('Referral', referralSchema);
-
-app.get('/api/referrals', async (req, res) => {
-  try {
-    const leaderboard = await Referral.aggregate([
-      {
-        $group: {
-          _id: "$referrer",
-          referralsCount: { $sum: 1 },
-          referredUserIds: { $push: "$referredUser" }
-        }
-      },
-      {
-        $sort: { referralsCount: -1 }
-      },
-      {
-        $lookup: {
-          from: "users",
-          localField: "_id",
-          foreignField: "_id",
-          as: "referrerDetails"
-        }
-      },
-      { $unwind: "$referrerDetails" },
-      {
-        $lookup: {
-          from: "users",
-          localField: "referredUserIds",
-          foreignField: "_id",
-          as: "referredUsers"
-        }
-      },
-      {
-        $project: {
-          _id: 0,
-          referrer: {
-            _id: "$referrerDetails._id",
-            firstName: "$referrerDetails.firstName",
-            lastName: "$referrerDetails.lastName"
-          },
-          referralsCount: 1
-          // referredUsers deliberately omitted: a public leaderboard should not
-          // disclose which accounts each referrer brought in.
-        }
-      }
-    ]);
-
-    res.status(200).json(leaderboard);
-  } catch (err) {
-    console.error(err);
-    res.status(500).json({ error: 'Failed to fetch leaderboard' });
-  }
-});
-
-app.get('/api/referrals/:id', async (req, res) => {
-  try {
-    const referral = await Referral.findById(req.params.id).populate('referrer referredUser');
-    if (!referral) return res.status(404).send('Referral not found');
-    res.status(200).json(referral);
-  } catch (err) {
-    res.status(500).json({ error: 'Failed to fetch referral' });
-  }
-});
-
-app.delete('/api/referrals/:id', verifyAdminToken, async (req, res) => {
-  try {
-    await Referral.findByIdAndDelete(req.params.id);
-    res.status(204).send();
-  } catch (err) {
-    res.status(500).json({ error: 'Failed to delete referral' });
-  }
-});
-
-
-
-
-
-
-
-// admin notifications
-const notificationSchema = new mongoose.Schema({
-  title: { type: String, required: true },
-  read: { type: Boolean, default: false },
-}, { timestamps: true });
-
-notificationSchema.index({ read: 1, createdAt: -1 });
-const Notification = mongoose.models.Notification || mongoose.model('Notification', notificationSchema);
-
-// GET all notifications
-app.get('/api/notifications', verifyAdminToken, async (req, res) => {
-  try {
-    const notifications = await Notification.find().sort({ createdAt: -1 }).lean();
-    res.status(200).json(notifications);
-  } catch (error) {
-    res.status(500).json({ message: 'Error fetching notifications' });
-  }
-});
-
-// DELETE a notification by ID
-app.delete('/api/notifications/:id', verifyAdminToken, async (req, res) => {
-  try {
-    const { id } = req.params;
-    const deleted = await Notification.findByIdAndDelete(id);
-    if (!deleted) return res.status(404).json({ message: 'Notification not found' });
-    res.status(200).json({ message: 'Notification deleted' });
-  } catch (error) {
-    res.status(500).json({ message: 'Error deleting notification' });
-  }
-});
-
-// PATCH - mark notification as read (automatically sets read to true)
-app.patch('/api/notifications/:id/read', verifyToken, async (req, res) => {
-  try {
-    const { id } = req.params;
-
-    const updated = await Notification.findByIdAndUpdate(
-      id,
-      { read: true },
-      { new: true }
-    );
-
-    if (!updated) return res.status(404).json({ message: 'Notification not found' });
-    res.status(200).json(updated);
-  } catch (error) {
-    res.status(500).json({ message: 'Error updating read status' });
-  }
-});
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-const messageSchema = new mongoose.Schema({
-  senderId: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
-  senderName: String,
-  text: String,
-  time: String, // e.g., '10:45 AM'
-  date: String, // e.g., '2025-05-28'
-  profileUrl: String,
-}, { timestamps: true });
-
-const Message = mongoose.models.Message || mongoose.model('Message', messageSchema);
-
-
-// --- Pusher config ---
-const pusher = new Pusher({
-  appId: process.env.PUSHER_APP_ID,
-  key: process.env.PUSHER_KEY,
-  secret: process.env.PUSHER_SECRET,
-  cluster: process.env.PUSHER_CLUSTER,
-  useTLS: true,
-});
-app.post('/api/messages/send', verifyToken, async (req, res) => {
-  const {
-    senderId,
-    senderName,
-    text,
-    profileUrl,
-    time = moment().format('hh:mm A'),
-    date = moment().format('YYYY-MM-DD'),
-  } = req.body;
-
-  try {
-    const newMessage = await Message.create({
-      senderId,
-      senderName,
-      text,
-      time,
-      date,
-      profileUrl
-    });
-
-    const triggerResponse = await pusher.trigger('Fantasy-mmadness', 'new-message', {
-      message: newMessage,
-    });
-
-    res.status(201).json({
-      message: newMessage,
-      pusherTriggered: triggerResponse === null, // Pusher returns null on success
-    });
-  } catch (err) {
-    res.status(500).json({ error: 'Message send failed' });
-  }
-});
-
-app.get('/api/messages/get', verifyAdminToken, async (req, res) => {
-  try {
-    const messages = await Message.find({}).sort({ createdAt: 1 }).lean();
-
-    // Group messages by 'date'
-    const messagesByDate = messages.reduce((acc, msg) => {
-      const date = msg.date;
-      if (!acc[date]) acc[date] = [];
-      acc[date].push(msg);
-      return acc;
-    }, {});
-
-    res.status(200).json(messagesByDate); // <- Return grouped structure
-  } catch (err) {
-    res.status(500).json({ error: 'Fetch failed' });
-  }
-});
-
-
-app.put('/api/messages/:id', verifyToken, async (req, res) => {
-  // Only the sender may edit a message.
-  {
-    const existing = await Message.findById(req.params.id).select('senderId userId').lean().catch(() => null);
-    const callerId = String(req.user?.id || req.user?._id || '');
-    if (existing && ![String(existing.senderId || ''), String(existing.userId || '')].includes(callerId)) {
-      return res.status(403).json({ message: 'You can only edit your own messages.', code: 'NOT_OWNER' });
-    }
-  }
-  try {
-    const { id } = req.params;
-    const { text } = req.body;
-
-    if (!text || text.trim() === '') {
-      return res.status(400).json({ error: 'Text is required for update' });
-    }
-
-    const updatedMessage = await Message.findByIdAndUpdate(
-      id,
-      { text },
-      { new: true }
-    );
-
-    if (!updatedMessage) {
-      return res.status(404).json({ error: 'Message not found' });
-    }
-
-    await pusher.trigger('Fantasy-mmadness', 'message-updated', {
-      message: updatedMessage,
-    });
-
-    res.status(200).json({ message: 'Message updated successfully', updatedMessage });
-  } catch (err) {
-    res.status(500).json({ error: 'Failed to update message' });
+      return res.status(404).json({ success: false, m
+... 36532 bytes omitted ...
+on({ error: 'Failed to update message' });
   }
 });
 
@@ -18117,6 +17006,8 @@ app.post('/api/auth/refresh', verifyToken, async (req, res) => {
 // Failures are logged, never thrown — an email problem must not roll back or
 // block a completed money operation.
 // --------------------------------------------------------------------------
+const FMM_MAIL_FROM = process.env.SMTP_USER || 'Fantasymmadness2@gmail.com';
+
 const sendMoneyNotice = async ({ to, subject, heading, lines = [], footer }) => {
   if (!to) return;
   try {
@@ -18752,7 +17643,7 @@ app.post('/api/feedback', submitLimiter, optionalVerifyToken, async (req, res) =
     if (ticket.severity === 'blocker') {
       try {
         await transporter.sendMail({
-          from: FMM_MAIL_FROM,
+          from: process.env.SMTP_USER || 'Fantasymmadness2@gmail.com',
           to: OWNER_EMAIL,
           subject: `BLOCKER from testing — ${ticket.reference}`,
           html: `<div style="font-family:Arial,sans-serif">
@@ -18922,7 +17813,7 @@ app.post('/api/support/tickets', submitLimiter, optionalVerifyToken, async (req,
     });
 
     await sendMoneyNotice({
-      to: SUPPORT_EMAIL,
+      to: FMM_MAIL_FROM,
       subject: `[${category.toUpperCase()}] ${ticketNumber} — ${subject}`,
       heading: 'NEW SUPPORT TICKET',
       lines: [`From: ${email}`, `Category: ${category}`, message],
@@ -19000,7 +17891,7 @@ const recordPaymentFailure = (context = {}) => {
   paymentFailureState.lastAlertAt = now;
   const minutes = Math.round(PAYMENT_FAILURE_WINDOW_MS / 60000);
   sendMoneyNotice({
-    to: ADMIN_ALERT_EMAILS,
+    to: FMM_MAIL_FROM,
     subject: `[ALERT] ${paymentFailureState.count} payment failures in ${minutes} minutes`,
     heading: 'PAYMENT FAILURES DETECTED',
     lines: [
@@ -20826,7 +19717,7 @@ app.post('/api/affiliates/me/promotions/:fightId/announce', submitLimiter, verif
 
       const appUrl = String(process.env.PUBLIC_APP_URL || 'https://www.fantasymmadness.com').replace(/\/$/, '');
       await Promise.allSettled(recipients.filter((r) => r.email).map((recipient) => transporter.sendMail({
-        from: FMM_MAIL_FROM,
+        from: process.env.SMTP_USER || 'Fantasymmadness2@gmail.com',
         to: recipient.email,
         subject: headline,
         html: `<div style="font-family:Arial,Helvetica,sans-serif;color:#201f1d;max-width:600px;margin:auto">
@@ -22311,108 +21202,9 @@ const settleFightChallenges = async (fightId) => {
   return { settled, voided, total: open.length };
 };
 
-// Activate a reusable Shadow template as a new live contest. The source
-// template is never modified, so it remains available for future quiet weeks.
-app.post('/api/admin/shadow/:shadowId/activate', verifyAdminToken, async (req, res) => {
-  try {
-    const shadowId = String(req.params.shadowId || '').trim();
-    const shadow = await Shadow.findById(shadowId).lean();
-    if (!shadow) return res.status(404).json({ ok: false, message: 'Shadow fight not found.' });
-
-    const {
-      _id, __v, createdAt, updatedAt, sourceMatchId, convertedFromLiveAt,
-      matchShadowStatus, matchShadowOpenStatus, shadowIdentityHidden,
-      shadowAutoPublished, shadowPublishedAt, shadowExpiresAt, shadowLastUsedAt,
-      shadowOriginalMatchDate, userPredictions, collectedFees, prizesSettledAt,
-      voidedAt, voidReason, shortfallPromoterWarnedAt, shortfallPlayersWarnedAt,
-      ...template
-    } = shadow;
-
-    const numberOrTemplate = (key) => req.body?.[key] !== undefined
-      ? Math.max(0, Math.round(Number(req.body[key]) || 0))
-      : Math.max(0, Math.round(Number(shadow[key]) || 0));
-    const requestedStatus = String(req.body?.matchStatus || 'Draft');
-    const matchStatus = ['Draft', 'Scheduled', 'Open'].includes(requestedStatus) ? requestedStatus : 'Draft';
-
-    const liveFight = await Match.create({
-      ...template,
-      sourceShadowId: shadow._id,
-      activatedFromShadowAt: new Date(),
-      matchType: 'LIVE',
-      matchStatus,
-      matchDate: req.body?.matchDate || shadow.matchDate || new Date(),
-      matchTime: req.body?.matchTime ?? shadow.matchTime,
-      matchTokens: numberOrTemplate('matchTokens'),
-      pot: numberOrTemplate('pot'),
-      promoterStake: numberOrTemplate('promoterStake'),
-      platformContribution: numberOrTemplate('platformContribution'),
-      projectedEntrants: numberOrTemplate('projectedEntrants'),
-      minimumEntrants: numberOrTemplate('minimumEntrants'),
-      autoRefundIfShort: req.body?.autoRefundIfShort !== false,
-      homepagePromoted: Boolean(req.body?.homepagePromoted),
-      featuredThisWeek: Boolean(req.body?.featuredThisWeek),
-      featuredFight: Boolean(req.body?.featuredFight),
-      notify: false,
-      addToShadow: false,
-      userPredictions: [],
-      collectedFees: 0,
-      profitZoneReachedAt: null,
-    });
-
-    clearPublicResponseCache();
-    return res.status(201).json({
-      ok: true,
-      message: 'Shadow template activated as a new live contest.',
-      sourceShadowId: shadowId,
-      fight: liveFight.toObject(),
-    });
-  } catch (error) {
-    console.error('Shadow activation failed:', error);
-    return res.status(500).json({ ok: false, message: 'Could not activate that Shadow fight.' });
-  }
-});
-
 // Lets an admin set or waive the house-risk guard for one fight. Waiving it means
 // the platform covers any shortfall itself, so it is recorded explicitly rather
 // than being an accident of a blank field.
-async function sendFightPublishedNotices(fight) {
-  const label = fightLabelOf(fight);
-  const fightUrl = `${APP_ORIGIN}/fight/${fight._id}`;
-  const [players, affiliates] = await Promise.all([
-    User.find({ isSubscribed: { $ne: false }, isNotificationsEnabled: { $ne: false } })
-      .select('email firstName').limit(20000).lean(),
-    Affiliate.find({ verified: true }).select('email fullName leagueName').limit(10000).lean(),
-  ]);
-  const deliveries = [
-    ...players.filter((row) => row.email).map((player) => sendMoneyNotice({
-      to: player.email,
-      subject: `New fight card: ${label}`,
-      heading: 'A NEW FIGHT CARD IS OPEN',
-      lines: [
-        `${player.firstName ? `${player.firstName}, ` : ''}<strong>${label}</strong> is ready for predictions.`,
-        `<a href="${fightUrl}" style="color:#f2b544;">Open the fight card</a>`,
-      ],
-      footer: `Questions? ${SUPPORT_EMAIL}`,
-    })),
-    ...affiliates.filter((row) => row.email).map((affiliate) => sendMoneyNotice({
-      to: affiliate.email,
-      subject: `New card available to promote: ${label}`,
-      heading: 'NEW AFFILIATE FIGHT OPPORTUNITY',
-      lines: [
-        `<strong>${label}</strong> is now available in the fight system.`,
-        `<a href="${APP_ORIGIN}/AffiliateDashboard" style="color:#f2b544;">Open Affiliate Command</a>`,
-      ],
-      footer: `Affiliate support: ${SUPPORT_EMAIL}`,
-    })),
-  ];
-  const results = await Promise.allSettled(deliveries);
-  return {
-    attempted: deliveries.length,
-    delivered: results.filter((row) => row.status === 'fulfilled').length,
-    failed: results.filter((row) => row.status === 'rejected').length,
-  };
-}
-
 app.post('/api/admin/fights/:fightId/prize-guard', verifyAdminToken, async (req, res) => {
   try {
     const fightId = String(req.params.fightId || '').trim();
@@ -22431,7 +21223,9 @@ app.post('/api/admin/fights/:fightId/prize-guard', verifyAdminToken, async (req,
       update.pot = Math.max(0, Math.round(Number(req.body.pot) || 0));
     }
     ['promoterStake', 'platformContribution', 'projectedEntrants'].forEach((key) => {
-      if (req.body?.[key] !== undefined) update[key] = Math.max(0, Math.round(Number(req.body[key]) || 0));
+      if (req.body?.[key] !== undefined) {
+        update[key] = Math.max(0, Math.round(Number(req.body[key]) || 0));
+      }
     });
     if (req.body?.maxRounds !== undefined) {
       update.maxRounds = Math.max(1, Math.min(30, Math.round(Number(req.body.maxRounds) || 12)));
@@ -22447,33 +21241,29 @@ app.post('/api/admin/fights/:fightId/prize-guard', verifyAdminToken, async (req,
     });
     if (req.body?.matchStatus !== undefined) {
       const allowedStatuses = ['Draft', 'Scheduled', 'Open', 'Live', 'Closed', 'Finished'];
-      if (!allowedStatuses.includes(req.body.matchStatus)) return res.status(400).json({ ok: false, message: 'Invalid publishing status.' });
+      if (!allowedStatuses.includes(req.body.matchStatus)) {
+        return res.status(400).json({ ok: false, message: 'Invalid publishing status.' });
+      }
       update.matchStatus = req.body.matchStatus;
     }
     if (!Object.keys(update).length) {
       return res.status(400).json({ ok: false, message: 'Nothing to change.' });
     }
 
-    const [previousMatch, previousShadow] = await Promise.all([
-      Match.findById(fightId).select('notify').lean(),
-      Shadow.findById(fightId).select('notify').lean(),
-    ]);
     const [matchResult, shadowResult] = await Promise.all([
       Match.findOneAndUpdate({ _id: fightId }, { $set: update }, { new: true })
-        .select('matchName matchFighterA matchFighterB pot matchTokens promoterStake platformContribution projectedEntrants minimumEntrants autoRefundIfShort maxRounds matchDate matchTime matchStatus notify addToShadow homepagePromoted featuredThisWeek featuredFight').lean(),
+        .select('pot matchTokens promoterStake platformContribution projectedEntrants minimumEntrants autoRefundIfShort maxRounds matchDate matchTime matchStatus notify addToShadow homepagePromoted featuredThisWeek featuredFight').lean(),
       Shadow.findOneAndUpdate({ _id: fightId }, { $set: update }, { new: true })
-        .select('matchName matchFighterA matchFighterB pot matchTokens promoterStake platformContribution projectedEntrants minimumEntrants autoRefundIfShort maxRounds matchDate matchTime matchStatus notify addToShadow homepagePromoted featuredThisWeek featuredFight').lean(),
+        .select('pot matchTokens promoterStake platformContribution projectedEntrants minimumEntrants autoRefundIfShort maxRounds matchDate matchTime matchStatus notify addToShadow homepagePromoted featuredThisWeek featuredFight').lean(),
     ]);
     const fight = matchResult || shadowResult;
     if (!fight) return res.status(404).json({ ok: false, message: 'Fight not found.' });
-    const previouslyNotified = Boolean((previousMatch || previousShadow)?.notify);
-    const notificationDelivery = update.notify === true && !previouslyNotified
-      ? await sendFightPublishedNotices(fight)
-      : null;
 
     const entryFee = Math.max(0, Math.round(Number(fight.matchTokens) || 0));
     const declaredPot = Math.max(0, Math.round(Number(fight.pot) || 0));
-    const committedFunding = Math.min(declaredPot, Math.max(0, Number(fight.promoterStake) || 0) + Math.max(0, Number(fight.platformContribution) || 0));
+    const committedFunding = Math.min(declaredPot,
+      Math.max(0, Math.round(Number(fight.promoterStake) || 0))
+      + Math.max(0, Math.round(Number(fight.platformContribution) || 0)));
     const breakEven = entryFee > 0 ? Math.ceil(Math.max(0, declaredPot - committedFunding) / entryFee) : 0;
     return res.json({
       ok: true,
@@ -22495,7 +21285,6 @@ app.post('/api/admin/fights/:fightId/prize-guard', verifyAdminToken, async (req,
       minimumEntrants: fight.minimumEntrants || breakEven,
       breakEvenEntrants: breakEven,
       autoRefundIfShort: fight.autoRefundIfShort !== false,
-      notificationDelivery,
       warning: fight.autoRefundIfShort === false
         ? 'Auto-refund is OFF for this fight. Any shortfall between entries and the declared prize is paid by the platform.'
         : undefined,
@@ -24329,7 +23118,7 @@ app.get('/api/public/awards/:userId', async (req, res) => {
 // Separate secret from admin (JWT_SECRET_OWNER) so neither role's compromise
 // includes the other. Short session — you are checking, not living here.
 // ==========================================================================
-const OWNER_EMAIL = String(process.env.OWNER_EMAIL || SUPPORT_EMAIL).trim().toLowerCase();
+const OWNER_EMAIL = String(process.env.OWNER_EMAIL || 'fantasymmadness2@gmail.com').trim().toLowerCase();
 const OWNER_CODE_TTL_MS = 10 * 60 * 1000;
 const OWNER_SESSION_TTL = process.env.OWNER_SESSION_TTL || '1h';
 const OWNER_CODE_MAX_ATTEMPTS = 5;
@@ -25147,7 +23936,7 @@ app.post('/api/admin/fights/:fightId/scorers', verifyAdminToken, async (req, res
     if (assignment.scorerEmail) {
       try {
         await transporter.sendMail({
-          from: FMM_MAIL_FROM,
+          from: process.env.SMTP_USER || 'Fantasymmadness2@gmail.com',
           to: assignment.scorerEmail,
           subject: `You are scoring ${fightLabel}`,
           html: `<p>You have been asked to score <strong>${fightLabel}</strong>.</p>
