@@ -73,12 +73,10 @@ async function runLocalJob({ axios, mongoose, models, normalized, localJob, subm
   await localJob.save();
 
   try {
-    const response = await axios({
-      method: 'POST',
-      url: config.endpoint,
-      headers: { Authorization: `Bearer ${authToken}`, 'Content-Type': 'application/json' },
-      timeout: config.timeoutMs,
-      validateStatus: () => true,
+    const response = await requestGenerationWithRetry({
+      axios,
+      config,
+      authToken,
       data: {
         model: config.model,
         instructions: buildInstructions(normalized),
@@ -144,6 +142,46 @@ async function runLocalJob({ axios, mongoose, models, normalized, localJob, subm
     throw error;
   }
 }
+
+async function requestGenerationWithRetry({ axios, config, authToken, data }) {
+  const attempts = 2;
+  const attemptTimeoutMs = Math.min(config.timeoutMs, 18000);
+  let lastError;
+
+  for (let attempt = 1; attempt <= attempts; attempt += 1) {
+    try {
+      const response = await axios({
+        method: 'POST',
+        url: config.endpoint,
+        headers: { Authorization: `Bearer ${authToken}`, 'Content-Type': 'application/json' },
+        timeout: attemptTimeoutMs,
+        validateStatus: () => true,
+        data,
+      });
+      const retryableStatus = response.status === 429 || response.status >= 500;
+      if (!retryableStatus || attempt === attempts) return response;
+      lastError = new Error(`AI worker returned transient HTTP ${response.status}.`);
+    } catch (error) {
+      lastError = error;
+      if (!isTransientGenerationError(error) || attempt === attempts) throw error;
+    }
+    await delay(250 * attempt);
+  }
+
+  throw lastError || new Error('AI worker request failed after retry.');
+}
+
+function isTransientGenerationError(error) {
+  const code = String(error?.code || '').toUpperCase();
+  const message = String(error?.message || '').toLowerCase();
+  return ['ECONNRESET', 'ETIMEDOUT', 'ECONNABORTED', 'EAI_AGAIN', 'EPROTO'].includes(code)
+    || message.includes('ssl')
+    || message.includes('tls')
+    || message.includes('socket hang up')
+    || message.includes('network');
+}
+
+const delay = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
 function buildInstructions(normalized) {
   return `You are one specialist worker inside Fantasy MMAdness, a combat-sports fantasy platform. Complete the requested automation accurately and conservatively. Job type: ${normalized.jobType}. Vertical: ${normalized.vertical}. Sport: ${normalized.sport}. Return one valid JSON object with: title, summary, content, recommendations (array), actions (array), metadata (object). For social jobs, create drafts only. Never claim that anything was published, emailed, paid, deleted, or changed. For data or analytics jobs, clearly label estimates and missing live data. For SEO jobs, provide implementation-ready recommendations. For fight content, do not invent results, records, dates, odds, or injuries not present in the input. Human approval is required.`;
