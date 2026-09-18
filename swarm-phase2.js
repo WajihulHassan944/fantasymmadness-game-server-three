@@ -3065,9 +3065,10 @@ async function createLocalCampaign({ config, axios, crypto, mongoose, models, no
     idempotencyKey: normalized.idempotencyKey,
     metadata: { ...(normalized.metadata || {}), executionEngine: 'local_openai', fallbackFromIonos: Boolean(fallbackError), fallbackError },
   });
-  const jobs = [];
-  const errors = [];
-  for (const jobType of jobTypes) {
+  // Campaign jobs are independent drafts. Run them together so a multi-agent
+  // campaign does not multiply the AI timeout by the number of selected jobs
+  // and exceed the Vercel request window.
+  const results = await Promise.all(jobTypes.map(async (jobType) => {
     try {
       const rawJob = {
         vertical: normalized.vertical,
@@ -3084,11 +3085,13 @@ async function createLocalCampaign({ config, axios, crypto, mongoose, models, no
       const backendCorrelationId = String(localId);
       const idempotencyKey = createIdempotencyKey({ crypto, normalized: job, backendCorrelationId });
       const submitted = await submitNormalizedJobToSwarm({ config: { ...config, enabled: false }, axios, crypto, mongoose, models, normalized: job, localId, backendCorrelationId, idempotencyKey, submitReason: 'local-campaign-job' });
-      jobs.push(serializeLocalJob(submitted.localJob));
+      return { job: serializeLocalJob(submitted.localJob) };
     } catch (error) {
-      errors.push({ jobType, error: summarizeError(error) });
+      return { error: { jobType, error: summarizeError(error) } };
     }
-  }
+  }));
+  const jobs = results.map((result) => result.job).filter(Boolean);
+  const errors = results.map((result) => result.error).filter(Boolean);
   campaign.jobIds = jobs.map((job) => job.jobId).filter(Boolean);
   campaign.counts = { requested: jobTypes.length, completed: jobs.length, failed: errors.length };
   campaign.status = errors.length && !jobs.length ? 'failed' : (errors.length ? 'partial' : 'awaiting_review');
