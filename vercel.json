@@ -1,9 +1,9 @@
 {
   "version": 2,
   "name": "backend-for-share-experiences",
-  "builds": [{ "src": "full-card-bootstrap.js", "use": "@vercel/node" }],
+  "builds": [{ "src": "server.js", "use": "@vercel/node" }],
   "routes": [
-    { "src": "/(.*)", "dest": "/full-card-bootstrap.js" }
+    { "src": "/(.*)", "dest": "/server.js" }
   ],
   "crons": [
     {
@@ -13,6 +13,18 @@
     {
       "path": "/api/update-shadow-open-status",
       "schedule": "0 0 * * *"
+    },
+    {
+      "path": "/api/cron/swarm/daily",
+      "schedule": "0 5 * * *"
+    },
+    {
+      "path": "/api/cron/swarm/weekly",
+      "schedule": "0 6 * * 1"
+    },
+    {
+      "path": "/api/cron/swarm/recover",
+      "schedule": "30 */6 * * *"
     }
   ]
 }

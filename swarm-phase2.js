@@ -1,5 +1,7 @@
 'use strict';
 
+const { getLocalWorkerConfig, localWorkerHealth, runLocalJob } = require('./swarm-local-worker');
+
 /**
  * Phase 2 Swarm Gateway for FantasyMMAdness backend.
  *
@@ -424,11 +426,11 @@ function registerSwarmPhase2Routes(options) {
 
   const requireSwarmEnabled = (req, res, next) => {
     const config = getSwarmConfig();
-    if (!config.enabled) {
+    if (!config.enabled && !config.localWorkerEnabled) {
       return res.status(503).json({
         ok: false,
         code: 'SWARM_DISABLED',
-        message: 'Swarm integration is disabled or SWARM_BASE_URL is not configured.',
+        message: 'Neither the IONOS Swarm nor the self-contained OpenAI worker is configured.',
       });
     }
     return next();
@@ -439,6 +441,9 @@ function registerSwarmPhase2Routes(options) {
     res.json({
       ok: true,
       enabled: config.enabled,
+      localWorkerEnabled: config.localWorkerEnabled,
+      workerMode: config.workerMode,
+      localWorker: localWorkerHealth(),
       baseUrlConfigured: Boolean(config.baseUrl),
       hmacConfigured: Boolean(config.hmacSecret),
       apiKeyConfigured: Boolean(config.apiKey),
@@ -471,17 +476,21 @@ function registerSwarmPhase2Routes(options) {
   app.get('/api/admin/swarm/health', verifyAdminToken, asyncHandler(async (req, res) => {
     const config = getSwarmConfig();
     const cacheStats = await getCacheStats(models);
-    if (!config.enabled) {
+    if (!config.enabled && !config.localWorkerEnabled) {
       return res.status(200).json({
         ok: true,
         swarmReachable: false,
         enabled: false,
-        message: 'Backend swarm gateway is installed, but SWARM_BASE_URL/SWARM_ENABLED are not active yet.',
+        localWorker: localWorkerHealth(),
+        message: 'No automation worker is configured. Add the IONOS connection or OPENAI_API_KEY for the self-contained worker.',
         cache: cacheStats,
       });
     }
 
     const startedAt = Date.now();
+    if (!config.enabled && config.localWorkerEnabled) {
+      return res.json({ ok: true, enabled: true, swarmReachable: false, localWorkerReachable: true, workerMode: config.workerMode, localWorker: localWorkerHealth(), latencyMs: Date.now() - startedAt, cache: cacheStats });
+    }
     try {
       const health = await callSwarm(config, axios, crypto, 'GET', '/health');
       const readiness = await callSwarm(config, axios, crypto, 'GET', '/readiness').catch((error) => ({ ok: false, error: summarizeError(error) }));
@@ -489,6 +498,9 @@ function registerSwarmPhase2Routes(options) {
         ok: true,
         enabled: true,
         swarmReachable: true,
+        localWorkerReachable: config.localWorkerEnabled,
+        workerMode: config.workerMode,
+        localWorker: localWorkerHealth(),
         latencyMs: Date.now() - startedAt,
         health,
         readiness,
@@ -698,6 +710,46 @@ function registerSwarmPhase2Routes(options) {
 
   app.post('/api/admin/swarm/schedules/daily/july-growth', verifyAdminToken, requireSwarmEnabled, runJulyGrowthDailyHandler);
   app.post('/api/admin/swarm/growth/july-10000/run', verifyAdminToken, requireSwarmEnabled, runJulyGrowthDailyHandler);
+
+  const verifySwarmCron = (req, res, next) => {
+    const expected = cleanString(process.env.CRON_SECRET);
+    const provided = cleanString(req.headers['x-cron-secret'])
+      || cleanString(String(req.headers.authorization || '').replace(/^Bearer\s+/i, ''))
+      || cleanString(req.query?.secret);
+    if (!expected) return res.status(503).json({ ok: false, code: 'CRON_SECRET_MISSING', message: 'CRON_SECRET is not configured.' });
+    if (!provided || !safeSecretEqual(crypto, expected, provided)) return res.status(401).json({ ok: false, code: 'INVALID_CRON_SECRET', message: 'Invalid scheduler credentials.' });
+    req.admin = { id: null, email: 'scheduler@fantasymmadness.com', role: 'system', source: 'vercel-cron' };
+    return next();
+  };
+
+  app.get('/api/cron/swarm/daily', verifySwarmCron, requireSwarmEnabled, asyncHandler(async (req, res) => {
+    const result = await runAutomationPreset({ config: getSwarmConfig(), axios, crypto, mongoose, models, admin: req.admin, preset: 'daily', body: { mode: 'APPROVAL_REQUIRED', reason: 'vercel-daily-swarm-schedule' } });
+    res.status(result.createdJobs?.length ? 202 : 200).json({ ok: true, schedule: 'daily', workerMode: getSwarmConfig().workerMode, result });
+  }));
+
+  app.get('/api/cron/swarm/weekly', verifySwarmCron, requireSwarmEnabled, asyncHandler(async (req, res) => {
+    const result = await runAutomationPreset({ config: getSwarmConfig(), axios, crypto, mongoose, models, admin: req.admin, preset: 'weekly', body: { mode: 'APPROVAL_REQUIRED', reason: 'vercel-weekly-swarm-schedule' } });
+    res.status(result.createdJobs?.length ? 202 : 200).json({ ok: true, schedule: 'weekly', workerMode: getSwarmConfig().workerMode, result });
+  }));
+
+  app.get('/api/cron/swarm/recover', verifySwarmCron, requireSwarmEnabled, asyncHandler(async (req, res) => {
+    const failed = await models.SwarmBackendJob.find({ status: { $in: ['failed', 'failed_to_submit', 'dead_letter'] } }).sort({ updatedAt: 1 }).limit(5);
+    const recovered = [];
+    const errors = [];
+    for (const previous of failed) {
+      try {
+        const normalized = normalizeCreateJobBody({ vertical: previous.vertical, jobType: previous.jobType, mode: 'APPROVAL_REQUIRED', priority: previous.priority, sourceEntity: previous.sourceEntity, input: previous.input, metadata: { ...(previous.metadata || {}), recoveryOf: String(previous._id), recoveredByCron: true } }, req.admin, getSwarmConfig(), mongoose);
+        const localId = new mongoose.Types.ObjectId();
+        const backendCorrelationId = String(localId);
+        const idempotencyKey = createIdempotencyKey({ crypto, normalized, backendCorrelationId });
+        const submitted = await submitNormalizedJobToSwarm({ config: getSwarmConfig(), axios, crypto, mongoose, models, normalized, localId, backendCorrelationId, idempotencyKey, submitReason: 'scheduled-failed-job-recovery' });
+        recovered.push({ previousJobId: previous.jobId || String(previous._id), job: serializeLocalJob(submitted.localJob) });
+      } catch (error) {
+        errors.push({ previousJobId: previous.jobId || String(previous._id), error: summarizeError(error) });
+      }
+    }
+    res.status(errors.length && !recovered.length ? 502 : 200).json({ ok: !errors.length || Boolean(recovered.length), attempted: failed.length, recovered, errors, workerMode: getSwarmConfig().workerMode });
+  }));
 
   app.get('/api/admin/swarm/growth/july-10000/dashboard', verifyAdminToken, asyncHandler(async (req, res) => {
     const growthFilter = {
@@ -928,58 +980,20 @@ function registerSwarmPhase2Routes(options) {
     const localId = new mongoose.Types.ObjectId();
     const backendCorrelationId = String(req.body?.backendCorrelationId || localId);
     const idempotencyKey = normalized.idempotencyKey || createIdempotencyKey({ crypto, normalized, backendCorrelationId });
-    const localJob = await models.SwarmBackendJob.create({
-      _id: localId,
-      backendCorrelationId,
-      idempotencyKey,
-      vertical: normalized.vertical,
-      jobType: normalized.jobType,
-      mode: normalized.mode,
-      priority: normalized.priority,
-      status: 'submitting',
-      requestedBy: normalized.requestedBy,
-      sourceEntity: normalized.sourceEntity,
-      input: normalized.input,
-      metadata: normalized.metadata,
-      statusHistory: [{ status: 'submitting', at: new Date(), reason: 'backend-submit-started' }],
-    });
-
-    const swarmPayload = {
-      ...normalized,
-      idempotencyKey,
-      backendCorrelationId,
-    };
-
     try {
-      const result = await callSwarm(config, axios, crypto, 'POST', '/internal/v1/jobs', swarmPayload);
-      const swarmJob = result.job || result.data?.job || result;
-      await upsertJobFromSwarm(models, swarmJob, {
-        localId,
-        idempotencyKey,
-        backendCorrelationId,
-        requestedBy: normalized.requestedBy,
-        sourceEntity: normalized.sourceEntity,
-        input: normalized.input,
-        metadata: normalized.metadata,
-      });
-      const updated = await models.SwarmBackendJob.findById(localId).lean();
-      return res.status(result.created === false ? 200 : 202).json({
+      const submitted = await submitNormalizedJobToSwarm({ config, axios, crypto, mongoose, models, normalized, localId, backendCorrelationId, idempotencyKey, submitReason: 'manual-job-submit' });
+      return res.status(202).json({
         ok: true,
-        created: result.created !== false,
-        job: serializeLocalJob(updated),
-        swarm: sanitizeSwarmEnvelope(result),
+        created: true,
+        job: serializeLocalJob(submitted.localJob),
+        swarm: sanitizeSwarmEnvelope(submitted.swarmResult),
       });
     } catch (error) {
-      localJob.status = 'failed_to_submit';
-      localJob.error = summarizeError(error);
-      localJob.statusHistory.push({ status: 'failed_to_submit', at: new Date(), reason: 'swarm-submit-failed' });
-      await localJob.save();
       return res.status(error.httpStatus || 502).json({
         ok: false,
         code: 'SWARM_JOB_SUBMIT_FAILED',
-        message: 'Could not submit job to the IONOS swarm.',
+        message: 'Neither automation worker could complete the job.',
         error: summarizeError(error),
-        localJob: serializeLocalJob(localJob),
       });
     }
   }));
@@ -1704,8 +1718,13 @@ function parseExternalFightSources() {
 function getSwarmConfig() {
   const baseUrl = stripTrailingSlash(process.env.SWARM_BASE_URL || process.env.IONOS_SWARM_URL || '');
   const enabledFromEnv = String(process.env.SWARM_ENABLED || (baseUrl ? 'true' : 'false')).toLowerCase() !== 'false';
+  const localWorker = getLocalWorkerConfig();
   return {
     enabled: enabledFromEnv && Boolean(baseUrl),
+    localWorkerEnabled: localWorker.enabled,
+    workerMode: enabledFromEnv && Boolean(baseUrl)
+      ? (localWorker.enabled ? 'ionos_primary_local_failover' : 'ionos_only')
+      : (localWorker.enabled ? 'local_only' : 'disabled'),
     baseUrl,
     timeoutMs: toInt(process.env.SWARM_REQUEST_TIMEOUT_MS, 45000),
     apiKey: cleanString(process.env.SWARM_API_KEY),
@@ -2913,7 +2932,7 @@ function buildCampaignBodyFromEvent({ trigger, body, admin }) {
 }
 
 async function createSwarmCampaign({ config, axios, crypto, mongoose, models, body, admin, reason }) {
-  if (!config.enabled) throw httpError(503, 'SWARM_DISABLED', 'Swarm integration is disabled.');
+  if (!config.enabled && !config.localWorkerEnabled) throw httpError(503, 'SWARM_DISABLED', 'Neither automation worker is configured.');
   const normalized = normalizeCreateCampaignBody(body || {}, admin, config, crypto);
   const localEventId = `campaign_event_${new mongoose.Types.ObjectId().toString()}`;
   let eventDoc = null;
@@ -2938,6 +2957,9 @@ async function createSwarmCampaign({ config, axios, crypto, mongoose, models, bo
   }
 
   try {
+    if (!config.enabled) {
+      return createLocalCampaign({ config, axios, crypto, mongoose, models, normalized, admin, eventDoc, fallbackError: null });
+    }
     const result = await callSwarm(config, axios, crypto, 'POST', '/internal/v1/campaigns', normalized);
     const campaign = result.campaign || result.data?.campaign || null;
     const jobs = Array.isArray(result.jobs) ? result.jobs : [];
@@ -2996,6 +3018,9 @@ async function createSwarmCampaign({ config, axios, crypto, mongoose, models, bo
       swarm: sanitizeSwarmEnvelope(result),
     };
   } catch (error) {
+    if (config.localWorkerEnabled) {
+      return createLocalCampaign({ config, axios, crypto, mongoose, models, normalized, admin, eventDoc, fallbackError: summarizeError(error) });
+    }
     if (eventDoc) {
       eventDoc.status = 'failed';
       eventDoc.errors = [summarizeError(error)];
@@ -3004,6 +3029,87 @@ async function createSwarmCampaign({ config, axios, crypto, mongoose, models, bo
     }
     throw error;
   }
+}
+
+async function createLocalCampaign({ config, axios, crypto, mongoose, models, normalized, admin, eventDoc, fallbackError }) {
+  const campaignId = `campaign_local_${new mongoose.Types.ObjectId()}`;
+  const jobTypes = resolveLocalCampaignJobTypes(normalized);
+  const campaign = await models.SwarmBackendCampaign.create({
+    campaignId,
+    campaignType: normalized.campaignType,
+    title: normalized.title,
+    vertical: normalized.vertical,
+    sport: normalized.sport,
+    mode: normalized.mode,
+    status: 'running',
+    priority: normalized.priority,
+    requestedBy: normalized.requestedBy,
+    sourceEntity: normalized.sourceEntity,
+    input: normalized.input,
+    sections: normalized.sections,
+    automationKeys: normalized.automationKeys,
+    jobIds: [],
+    counts: { requested: jobTypes.length, completed: 0, failed: 0 },
+    backendCorrelationId: normalized.backendCorrelationId,
+    idempotencyKey: normalized.idempotencyKey,
+    metadata: { ...(normalized.metadata || {}), executionEngine: 'local_openai', fallbackFromIonos: Boolean(fallbackError), fallbackError },
+  });
+  const jobs = [];
+  const errors = [];
+  for (const jobType of jobTypes) {
+    try {
+      const rawJob = {
+        vertical: normalized.vertical,
+        sport: normalized.sport,
+        jobType,
+        mode: normalized.mode,
+        priority: normalized.priority,
+        sourceEntity: normalized.sourceEntity,
+        input: { ...(normalized.input || {}), campaignId, campaignType: normalized.campaignType, title: normalized.title },
+        metadata: { ...(normalized.metadata || {}), campaignId, campaignType: normalized.campaignType, localCampaign: true },
+      };
+      const job = normalizeCreateJobBody(rawJob, admin || normalized.requestedBy, config, mongoose);
+      const localId = new mongoose.Types.ObjectId();
+      const backendCorrelationId = String(localId);
+      const idempotencyKey = createIdempotencyKey({ crypto, normalized: job, backendCorrelationId });
+      const submitted = await submitNormalizedJobToSwarm({ config: { ...config, enabled: false }, axios, crypto, mongoose, models, normalized: job, localId, backendCorrelationId, idempotencyKey, submitReason: 'local-campaign-job' });
+      jobs.push(serializeLocalJob(submitted.localJob));
+    } catch (error) {
+      errors.push({ jobType, error: summarizeError(error) });
+    }
+  }
+  campaign.jobIds = jobs.map((job) => job.jobId).filter(Boolean);
+  campaign.counts = { requested: jobTypes.length, completed: jobs.length, failed: errors.length };
+  campaign.status = errors.length && !jobs.length ? 'failed' : (errors.length ? 'partial' : 'awaiting_review');
+  campaign.error = errors.length ? errors : undefined;
+  await campaign.save();
+  if (eventDoc) {
+    eventDoc.status = campaign.status;
+    eventDoc.selectedJobTypes = jobTypes;
+    eventDoc.createdJobs = jobs;
+    eventDoc.errors = errors;
+    eventDoc.metadata = { ...(eventDoc.metadata || {}), campaignId, executionEngine: 'local_openai' };
+    eventDoc.completedAt = new Date();
+    await eventDoc.save();
+  }
+  return { source: 'local_openai', campaign: serializeLocalCampaign(campaign), jobs, skipped: [], errors, localEvent: serializeAutomationEvent(eventDoc), fallbackFromIonos: Boolean(fallbackError) };
+}
+
+function resolveLocalCampaignJobTypes(normalized) {
+  if (normalized.campaignType === 'july_10000_signup_growth_system') return [...JULY_10000_GROWTH_JOB_TYPES];
+  const triggerByCampaign = {
+    fight_full_campaign: 'fight_published',
+    fight_tonight_campaign: 'upcoming_event',
+    fight_result_campaign: 'fight_result_updated',
+    boxing_fight_campaign: 'fight_published',
+    pro_wrestling_match_campaign: 'pro_wrestling_match_published',
+    blog_promotion_campaign: 'blog_approved',
+    contest_promotion_campaign: 'contest_completed',
+  };
+  const trigger = triggerByCampaign[normalized.campaignType];
+  if (trigger && AUTOMATION_TRIGGER_DEFAULTS[trigger]) return [...new Set(AUTOMATION_TRIGGER_DEFAULTS[trigger])];
+  const sections = new Set(normalized.sections || []);
+  return DEFAULT_JOB_TYPE_ARRAY.filter((jobType) => sections.has(jobType.split('.')[0])).slice(0, 12);
 }
 
 function normalizeCreateCampaignBody(rawBody, admin, config, crypto) {
@@ -3285,7 +3391,7 @@ async function applySeoArtifact({ artifact, Blog, admin, options }) {
 }
 
 async function triggerAutomationEvent({ config, axios, crypto, mongoose, models, admin, trigger, vertical, sport, mode, sourceEntity, input, metadata, requestedJobTypes, reason }) {
-  if (!config.enabled) throw httpError(503, 'SWARM_DISABLED', 'Swarm integration is disabled.');
+  if (!config.enabled && !config.localWorkerEnabled) throw httpError(503, 'SWARM_DISABLED', 'Neither automation worker is configured.');
   const normalizedTrigger = normalizeAutomationTrigger(trigger);
   const normalizedSport = normalizeSport(sport || input?.sport || input?.discipline || vertical || inferVerticalForTrigger(normalizedTrigger));
   const normalizedVertical = normalizeVertical(vertical || normalizedSport || inferVerticalForTrigger(normalizedTrigger));
@@ -3324,7 +3430,9 @@ async function triggerAutomationEvent({ config, axios, crypto, mongoose, models,
 
   let settingsEnvelope;
   try {
-    settingsEnvelope = await callSwarm(config, axios, crypto, 'GET', '/internal/v1/automations');
+    settingsEnvelope = config.enabled
+      ? await callSwarm(config, axios, crypto, 'GET', '/internal/v1/automations')
+      : { ok: true, settings: buildDefaultAutomationSettings(), source: 'local-defaults' };
   } catch (error) {
     settingsEnvelope = { ok: false, settings: buildDefaultAutomationSettings(), fallbackReason: summarizeError(error) };
   }
@@ -3414,7 +3522,8 @@ async function submitNormalizedJobToSwarm({ config, axios, crypto, mongoose, mod
     statusHistory: [{ status: 'submitting', at: new Date(), reason: submitReason || 'backend-submit-started' }],
   });
 
-  try {
+  let externalError = null;
+  if (config.enabled) try {
     const swarmResult = await callSwarm(config, axios, crypto, 'POST', '/internal/v1/jobs', {
       ...normalized,
       idempotencyKey,
@@ -3433,12 +3542,19 @@ async function submitNormalizedJobToSwarm({ config, axios, crypto, mongoose, mod
     const updated = await models.SwarmBackendJob.findById(localId).lean();
     return { localJob: updated || localJob, swarmResult };
   } catch (error) {
-    localJob.status = 'failed_to_submit';
-    localJob.error = summarizeError(error);
-    localJob.statusHistory.push({ status: 'failed_to_submit', at: new Date(), reason: 'swarm-submit-failed' });
-    await localJob.save();
-    throw error;
+    externalError = summarizeError(error);
+    localJob.statusHistory.push({ status: 'external_unavailable', at: new Date(), reason: 'ionos-submit-failed-local-failover-starting' });
   }
+
+  if (config.localWorkerEnabled) {
+    return runLocalJob({ axios, mongoose, models, normalized, localJob, submitReason, fallbackError: externalError });
+  }
+
+  localJob.status = 'failed_to_submit';
+  localJob.error = externalError || { code: 'NO_WORKER_CONFIGURED', message: 'No automation worker is configured.' };
+  localJob.statusHistory.push({ status: 'failed_to_submit', at: new Date(), reason: 'all-worker-submit-failed' });
+  await localJob.save();
+  throw httpError(503, 'ALL_SWARM_WORKERS_UNAVAILABLE', 'Neither the IONOS worker nor the local worker could accept the job.', localJob.error);
 }
 
 function resolveEventJobTypes({ trigger, settings, requestedJobTypes }) {
@@ -3931,6 +4047,12 @@ function cleanString(value) {
   if (value === undefined || value === null) return '';
   const text = String(value).trim();
   return text.length ? text : '';
+}
+
+function safeSecretEqual(crypto, expected, provided) {
+  const expectedBuffer = Buffer.from(String(expected));
+  const providedBuffer = Buffer.from(String(provided));
+  return expectedBuffer.length === providedBuffer.length && crypto.timingSafeEqual(expectedBuffer, providedBuffer);
 }
 
 function toInt(value, fallback) {

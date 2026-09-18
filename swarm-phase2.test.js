@@ -129,6 +129,10 @@ assert(serverSource.includes('req.rawBody = buf ? buf.toString'), 'server.js mus
 assert(serverSource.includes('registerSwarmPhase2Routes({'), 'server.js must register swarm phase 2 routes.');
 
 const gatewaySource = fs.readFileSync(path.join(__dirname, 'swarm-phase2.js'), 'utf8');
+const localWorkerSource = fs.readFileSync(path.join(__dirname, 'swarm-local-worker.js'), 'utf8');
+assert(gatewaySource.includes("require('./swarm-local-worker')"), 'Swarm gateway must load the self-contained worker.');
+assert(localWorkerSource.includes('https://api.openai.com/v1/responses'), 'Local worker must use the OpenAI Responses API.');
+assert(localWorkerSource.includes("reviewStatus: 'AWAITING_REVIEW'"), 'Local worker output must require human review.');
 for (const route of [
   '/api/admin/swarm/config',
   '/api/admin/swarm/health',
@@ -153,6 +157,9 @@ for (const route of [
   '/api/admin/swarm/campaigns',
   '/api/admin/swarm/campaigns/:campaignId',
   '/api/admin/swarm/campaigns/fight',
+  '/api/cron/swarm/daily',
+  '/api/cron/swarm/weekly',
+  '/api/cron/swarm/recover',
   '/api/internal/swarm/webhooks/job-completed',
   '/api/internal/swarm/webhooks/job-failed',
 ]) {
