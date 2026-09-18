@@ -211,6 +211,12 @@ const databaseCapability = {
 
 const detectDatabaseCapability = async () => {
   try {
+    if (mongoose.connection.readyState !== 1 || !mongoose.connection.db) {
+      databaseCapability.checked = false;
+      databaseCapability.topology = 'connecting';
+      databaseCapability.detail = 'MongoDB connection is not ready yet.';
+      return false;
+    }
     const hello = await mongoose.connection.db.admin().command({ hello: 1 });
     const setName = hello?.setName || '';
     const isMongos = hello?.msg === 'isdbgrid';
@@ -221,15 +227,18 @@ const detectDatabaseCapability = async () => {
     databaseCapability.topology = setName ? 'replicaSet' : isMongos ? 'sharded' : 'standalone';
     databaseCapability.detail = setName ? `replica set "${setName}"` : databaseCapability.topology;
   } catch (error) {
-    databaseCapability.checked = true;
+    // A cold serverless request can arrive before Mongoose finishes opening.
+    // Do not permanently cache that transient state as "standalone".
+    databaseCapability.checked = false;
+    databaseCapability.topology = mongoose.connection.readyState === 1 ? 'unknown' : 'connecting';
     databaseCapability.detail = `could not determine topology: ${error.message}`;
     console.error('WARNING: could not determine MongoDB topology.', error.message);
-    return;
+    return false;
   }
 
   if (databaseCapability.transactionsSupported) {
     console.log(`MongoDB topology OK — ${databaseCapability.detail}. Transactions available.`);
-    return;
+    return true;
   }
 
   const message = [
@@ -244,6 +253,22 @@ const detectDatabaseCapability = async () => {
     process.exit(1);
   }
   console.warn(`WARNING: ${message}`);
+  return false;
+};
+
+const ensureDatabaseCapability = async () => {
+  if (mongoose.connection.readyState !== 1) {
+    await Promise.race([
+      mongoose.connection.asPromise(),
+      new Promise((_, reject) => setTimeout(() => reject(new Error('MongoDB connection timed out.')), 8000)),
+    ]).catch((error) => {
+      databaseCapability.checked = false;
+      databaseCapability.topology = 'connecting';
+      databaseCapability.detail = error.message;
+    });
+  }
+  if (!databaseCapability.checked && mongoose.connection.readyState === 1) await detectDatabaseCapability();
+  return databaseCapability;
 };
 
 mongoose.connection.once('open', () => { detectDatabaseCapability(); });
@@ -22545,7 +22570,7 @@ app.get('/api/cron/challenges/expire', verifyCronSecret, async (req, res) => {
 // Readiness probe. Answers the one question that decides whether money paths
 // work at all, without needing shell access to the database.
 app.get('/api/health/db', async (_req, res) => {
-  if (!databaseCapability.checked) await detectDatabaseCapability();
+  await ensureDatabaseCapability();
   const ready = databaseCapability.transactionsSupported;
   return res.status(ready ? 200 : 503).json({
     ok: ready,
@@ -24637,7 +24662,7 @@ const verifyOwnerToken = (req, res, next) => {
 // --------------------------------------------------------------------------
 app.get('/api/owner/overview', verifyOwnerToken, async (req, res) => {
   try {
-    if (!databaseCapability.checked) await detectDatabaseCapability();
+    await ensureDatabaseCapability();
     const anet = getAuthorizeNetEnvironment();
     const set = (name) => Boolean(String(process.env[name] || '').trim());
 
