@@ -133,7 +133,8 @@ const localWorkerSource = fs.readFileSync(path.join(__dirname, 'swarm-local-work
 assert(gatewaySource.includes("require('./swarm-local-worker')"), 'Swarm gateway must load the self-contained worker.');
 assert(localWorkerSource.includes('https://api.openai.com/v1/responses'), 'Local worker must use the OpenAI Responses API.');
 assert(localWorkerSource.includes('https://ai-gateway.vercel.sh/v1/responses'), 'Local worker must support the Vercel AI Gateway fallback.');
-assert(localWorkerSource.includes('process.env.VERCEL_OIDC_TOKEN'), 'Local worker must accept Vercel-managed OIDC authentication.');
+assert(localWorkerSource.includes("require('@vercel/oidc')"), 'Local worker must use the supported Vercel OIDC helper.');
+assert(localWorkerSource.includes('await getVercelOidcToken()'), 'Local worker must request its managed identity at runtime.');
 assert(localWorkerSource.includes("reviewStatus: 'AWAITING_REVIEW'"), 'Local worker output must require human review.');
 assert(gatewaySource.includes('IONOS is unavailable, but the self-contained worker is ready'), 'Health must remain successful while local failover can accept jobs.');
 for (const route of [
