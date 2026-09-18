@@ -6044,13 +6044,32 @@ app.get('/users', verifyAdminToken, async (req, res) => {
 
 // Create reusable transporter object using the default SMTP transport.
 // Credentials must come from environment variables; do not commit mailbox app passwords.
-const transporter = nodemailer.createTransport({
+const SMTP_USER = String(process.env.SMTP_USER || 'Fantasymmadness2@gmail.com').trim();
+const SMTP_PASS = String(process.env.SMTP_PASS || process.env.GMAIL_APP_PASSWORD || '').trim();
+const SMTP_HOST = String(process.env.SMTP_HOST || '').trim();
+const SMTP_PORT = Number.parseInt(process.env.SMTP_PORT || (String(process.env.SMTP_SECURE).toLowerCase() === 'true' ? '465' : '587'), 10);
+const SMTP_SECURE = String(process.env.SMTP_SECURE || (SMTP_PORT === 465 ? 'true' : 'false')).toLowerCase() === 'true';
+const SMTP_POOL = String(process.env.SMTP_POOL || 'false').toLowerCase() === 'true';
+const transporter = nodemailer.createTransport(SMTP_HOST ? {
+  host: SMTP_HOST,
+  port: Number.isFinite(SMTP_PORT) ? SMTP_PORT : 587,
+  secure: SMTP_SECURE,
+  pool: SMTP_POOL,
+  auth: { user: SMTP_USER, pass: SMTP_PASS },
+} : {
   service: process.env.SMTP_SERVICE || 'Gmail',
-  auth: {
-    user: process.env.SMTP_USER || 'Fantasymmadness2@gmail.com',
-    pass: process.env.SMTP_PASS || process.env.GMAIL_APP_PASSWORD,
-  },
+  auth: { user: SMTP_USER, pass: SMTP_PASS },
 });
+
+const mailFailureMessage = (error) => {
+  const code = String(error?.code || '').toUpperCase();
+  const responseCode = Number(error?.responseCode || 0);
+  if (!SMTP_PASS) return 'Email delivery is not configured. Add the SMTP password in the backend production environment.';
+  if (code === 'EAUTH' || responseCode === 535) return 'The email provider rejected the SMTP login. Update the backend SMTP username or app password.';
+  if (['ECONNECTION', 'ETIMEDOUT', 'ESOCKET', 'ECONNREFUSED'].includes(code)) return 'The email provider could not be reached. Check the backend SMTP host, port, and secure setting.';
+  if (code === 'EENVELOPE' || responseCode === 550 || responseCode === 553) return 'The email provider rejected the sender or recipient address.';
+  return 'The email provider could not deliver this message. Check the backend mail configuration and try again.';
+};
 
 // One authenticated path for operational tools (including Jarvis) to surface
 // failures in both the admin inbox and the real support mailbox.
@@ -10173,12 +10192,17 @@ app.get('/api/public/leagues', async (req, res) => {
 });
 
 app.post('/send-email-affiliate', verifyAdminToken, async (req, res) => {
-  const { email, subject, message } = req.body;
+  const email = String(req.body?.email || '').trim().toLowerCase();
+  const subject = String(req.body?.subject || '').trim().slice(0, 180);
+  const message = String(req.body?.message || '').trim().slice(0, 20000);
 
   // Check if email, subject, and message are provided
   if (!email || !subject || !message) {
-      return res.status(400).json({ message: 'Email, subject, and message are required' });
+      return res.status(400).json({ message: 'Email, subject, and message are required.' });
   }
+
+  if (!/^\S+@\S+\.\S+$/.test(email)) return res.status(400).json({ message: 'Enter a valid affiliate email address.' });
+  if (!SMTP_PASS) return res.status(503).json({ message: mailFailureMessage(), code: 'SMTP_NOT_CONFIGURED' });
 
   try {
       // Send mail with the defined transport object
@@ -10192,7 +10216,7 @@ app.post('/send-email-affiliate', verifyAdminToken, async (req, res) => {
       res.status(200).json({ message: 'Email sent successfully' });
   } catch (error) {
       console.error('Error sending email:', error);
-      res.status(500).json({ message: 'Internal server error' });
+      res.status(502).json({ message: mailFailureMessage(error), code: String(error?.code || 'SMTP_DELIVERY_FAILED') });
   }
 });
 
