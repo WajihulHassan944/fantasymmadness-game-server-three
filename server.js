@@ -1086,6 +1086,14 @@ function hasExpiredMonthDayText(match = {}, now = new Date()) {
 
 function isPublicHomeActiveFightRecord(match = {}, now = new Date()) {
   if (!match || isDraftFightRecord(match)) return false;
+  // Discovery creates review candidates, not published contests. Keep those
+  // candidates out of every public/home feed until an admin explicitly marks
+  // one for a homepage surface. This also quarantines candidates created by
+  // older deployments that saved them as Scheduled/Open.
+  if (match.autoDiscovered === true
+    && !match.homepagePromoted
+    && !match.featuredThisWeek
+    && !match.featuredFight) return false;
   if (getFightTimelineBucket(match, now) === 'past') return false;
   if (hasExpiredMonthDayText(match, now)) return false;
   return true;
@@ -10225,8 +10233,20 @@ app.post('/send-email-affiliate', verifyAdminToken, async (req, res) => {
 
       res.status(200).json({ message: 'Email sent successfully' });
   } catch (error) {
-      console.error('Error sending email:', error);
-      res.status(502).json({ message: mailFailureMessage(error), code: String(error?.code || 'SMTP_DELIVERY_FAILED') });
+      const diagnostics = {
+        code: String(error?.code || 'SMTP_DELIVERY_FAILED'),
+        command: String(error?.command || ''),
+        responseCode: Number(error?.responseCode || 0) || null,
+        rejectedRecipient: Array.isArray(error?.rejected) && error.rejected.length > 0,
+      };
+      console.error('Affiliate email delivery failed:', {
+        ...diagnostics,
+        response: String(error?.response || '').slice(0, 500),
+        rejectedErrors: Array.isArray(error?.rejectedErrors)
+          ? error.rejectedErrors.map((item) => ({ code: item?.code, command: item?.command, responseCode: item?.responseCode, response: String(item?.response || '').slice(0, 300) }))
+          : [],
+      });
+      res.status(502).json({ message: mailFailureMessage(error), ...diagnostics });
   }
 });
 
