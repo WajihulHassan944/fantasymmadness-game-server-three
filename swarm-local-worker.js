@@ -23,7 +23,9 @@ function getLocalWorkerConfig() {
     model: provider === 'vercel_ai_gateway'
       ? String(process.env.AI_GATEWAY_SWARM_MODEL || 'openai/gpt-5.4').trim()
       : String(process.env.OPENAI_SWARM_MODEL || process.env.OPENAI_JARVIS_MODEL || process.env.OPENAI_MODEL || DEFAULT_MODEL).trim(),
-    timeoutMs: positiveInt(process.env.SWARM_LOCAL_WORKER_TIMEOUT_MS, 55000),
+    // Leave enough time for campaign aggregation and the frontend proxy to
+    // return a structured error instead of a Vercel function-timeout page.
+    timeoutMs: positiveInt(process.env.SWARM_LOCAL_WORKER_TIMEOUT_MS, 40000),
   };
 }
 
