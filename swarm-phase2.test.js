@@ -137,6 +137,7 @@ assert(localWorkerSource.includes("require('@vercel/oidc')"), 'Local worker must
 assert(localWorkerSource.includes('await getVercelOidcToken()'), 'Local worker must request its managed identity at runtime.');
 assert(gatewaySource.includes('await Promise.all(jobTypes.map(async (jobType) =>'), 'Local campaigns must execute independent jobs concurrently to stay inside the function window.');
 assert(localWorkerSource.includes('SWARM_LOCAL_WORKER_TIMEOUT_MS, 40000'), 'Local worker timeout must leave room for a structured campaign response.');
+assert(gatewaySource.match(/Math\.min\(config\.timeoutMs, 3500\)/g)?.length >= 2, 'IONOS job and campaign submissions must fail over quickly when the local worker is ready.');
 assert(localWorkerSource.includes("reviewStatus: 'AWAITING_REVIEW'"), 'Local worker output must require human review.');
 assert(gatewaySource.includes('IONOS is unavailable, but the self-contained worker is ready'), 'Health must remain successful while local failover can accept jobs.');
 for (const route of [
