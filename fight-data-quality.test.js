@@ -66,6 +66,9 @@ assert(serverSource.includes("require('./fight-data-quality')"), 'server.js must
 assert(serverSource.includes('fighterAId: { type: mongoose.Schema.Types.ObjectId'), 'Match schema must include fighterAId.');
 assert(serverSource.includes('Shadow,\n});'), 'server.js must pass Shadow model into fight data-quality routes.');
 assert(serverSource.includes('registerFightDataQualityRoutes({'), 'server.js must register fight data-quality routes.');
+assert(serverSource.includes('function hasOfficialShadowScores'), 'Affiliate Shadow templates must require official scoring.');
+assert(serverSource.includes('matches.filter(hasOfficialShadowScores)'), 'The promotion Shadow endpoint must hide unscored records.');
+assert(serverSource.includes('sourceLiveMatchId'), 'Affiliate live-fight campaigns must retain their live source id.');
 
 const routeSource = fs.readFileSync(path.join(__dirname, 'fight-data-quality.js'), 'utf8');
 for (const route of [

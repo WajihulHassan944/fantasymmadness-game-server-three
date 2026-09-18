@@ -1025,6 +1025,14 @@ function isShadowFightRecord(match = {}) {
   return source === 'shadow' || type === 'shadow';
 }
 
+function hasOfficialShadowScores(match = {}) {
+  const hasCompleteStats = (container) => Array.isArray(container?.fighterOneStats)
+    && container.fighterOneStats.length > 0
+    && Array.isArray(container?.fighterTwoStats)
+    && container.fighterTwoStats.length > 0;
+  return hasCompleteStats(match.BoxingMatch) || hasCompleteStats(match.MMAMatch);
+}
+
 function isLiveFightRecord(match = {}) {
   const type = String(match.matchType || match.type || '').trim().toLowerCase();
   return type === 'live' && !isShadowFightRecord({ ...match, sourceType: match.sourceType || '' });
@@ -2459,7 +2467,11 @@ app.get('/shadow', async (req, res) => {
     shadowQuery = shadowQuery.populate('fighterAId fighterBId').sort({ _id: -1 });
     if (requestedLimit) shadowQuery = shadowQuery.limit(requestedLimit);
     const matches = await shadowQuery.lean(); // Sort by _id in descending order
-    res.send(matches.map((item) => attachCombatFighterReadFallbacks(item, 'shadow')));
+    const scoredOnly = compact === 'promotion'
+      || compact === 'card'
+      || ['true', '1', 'yes'].includes(String(req.query.scoredOnly || '').toLowerCase());
+    const eligibleMatches = scoredOnly ? matches.filter(hasOfficialShadowScores) : matches;
+    res.send(eligibleMatches.map((item) => attachCombatFighterReadFallbacks(item, 'shadow')));
   } catch (err) {
     res.status(500).send({ message: 'Error fetching matches' });
   }
@@ -2479,6 +2491,7 @@ const matchSchema = new mongoose.Schema({
   affiliateId: String,
   shadowFightId: String,
   sourceShadowId: { type: mongoose.Schema.Types.ObjectId, ref: 'Shadow' },
+  sourceLiveMatchId: { type: mongoose.Schema.Types.ObjectId, ref: 'Match', index: true },
   promotedShadowFightId: { type: mongoose.Schema.Types.ObjectId, ref: 'Shadow' },
   matchName: String,
   matchFighterA: String,
@@ -3436,6 +3449,7 @@ app.post(
         MMAMatch,
         matchCategoryTwo,
         shadowFightId,
+        sourceLiveMatchId,
         maxRounds,
         affiliateId,
         matchBy,
@@ -3574,6 +3588,9 @@ app.post(
       if (mongoose.Types.ObjectId.isValid(String(shadowFightId || ''))) {
         matchData.sourceShadowId = shadowFightId;
         matchData.promotedShadowFightId = shadowFightId;
+      }
+      if (mongoose.Types.ObjectId.isValid(String(sourceLiveMatchId || ''))) {
+        matchData.sourceLiveMatchId = sourceLiveMatchId;
       }
       // NOT clearing matchFighterA/matchFighterB here anymore: this used to wipe
       // them immediately on creation, relying entirely on fighterAId/fighterBId
@@ -17170,7 +17187,7 @@ app.get('/api/affiliate/:affiliateId/promoted-fights', async (req, res) => {
 
     const promotedShadowIds = new Set(promotedShadowTemplates.map((shadow) => String(shadow._id)));
     const availableShadowTemplates = allShadowTemplates
-      .filter((shadow) => !isDraftFightRecord(shadow))
+      .filter((shadow) => !isDraftFightRecord(shadow) && hasOfficialShadowScores(shadow))
       .map((shadow) => ({
         ...pickPublicFightFields(shadow, 'shadow'),
         affiliatePromotion: {
@@ -17208,7 +17225,7 @@ app.get('/api/affiliate/:affiliateId/shadow-fights', async (req, res) => {
     res.json({
       ok: true,
       affiliateId,
-      items: shadows.filter((shadow) => !isDraftFightRecord(shadow)).map((shadow) => ({
+      items: shadows.filter((shadow) => !isDraftFightRecord(shadow) && hasOfficialShadowScores(shadow)).map((shadow) => ({
         ...pickPublicFightFields(shadow, 'shadow'),
         affiliatePromotion: { isPromoted: promotedIds.has(String(shadow._id)), affiliateId, sourceType: 'shadow' },
       })),
