@@ -133,6 +133,7 @@ const localWorkerSource = fs.readFileSync(path.join(__dirname, 'swarm-local-work
 assert(gatewaySource.includes("require('./swarm-local-worker')"), 'Swarm gateway must load the self-contained worker.');
 assert(localWorkerSource.includes('https://api.openai.com/v1/responses'), 'Local worker must use the OpenAI Responses API.');
 assert(localWorkerSource.includes("reviewStatus: 'AWAITING_REVIEW'"), 'Local worker output must require human review.');
+assert(gatewaySource.includes('IONOS is unavailable, but the self-contained worker is ready'), 'Health must remain successful while local failover can accept jobs.');
 for (const route of [
   '/api/admin/swarm/config',
   '/api/admin/swarm/health',

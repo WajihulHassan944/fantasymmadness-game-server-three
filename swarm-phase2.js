@@ -507,12 +507,20 @@ function registerSwarmPhase2Routes(options) {
         cache: cacheStats,
       });
     } catch (error) {
-      return res.status(502).json({
-        ok: false,
+      const localWorker = localWorkerHealth();
+      const localWorkerReachable = Boolean(config.localWorkerEnabled);
+      return res.status(localWorkerReachable ? 200 : 502).json({
+        ok: localWorkerReachable,
         enabled: true,
         swarmReachable: false,
-        message: 'Backend could not reach the IONOS swarm service.',
+        localWorkerReachable,
+        workerMode: config.workerMode,
+        localWorker,
+        message: localWorkerReachable
+          ? 'IONOS is unavailable, but the self-contained worker is ready and will accept jobs automatically.'
+          : 'Backend could not reach the IONOS swarm service and no self-contained worker is configured.',
         error: summarizeError(error),
+        latencyMs: Date.now() - startedAt,
         cache: cacheStats,
       });
     }
