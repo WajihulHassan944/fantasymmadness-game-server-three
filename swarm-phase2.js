@@ -1730,12 +1730,15 @@ function getSwarmConfig() {
   const baseUrl = stripTrailingSlash(process.env.SWARM_BASE_URL || process.env.IONOS_SWARM_URL || '');
   const enabledFromEnv = String(process.env.SWARM_ENABLED || (baseUrl ? 'true' : 'false')).toLowerCase() !== 'false';
   const localWorker = getLocalWorkerConfig();
+  // Free mode must have no paid or external dependency. Do not spend the
+  // serverless request window probing IONOS before local template generation.
+  const ionosEnabled = enabledFromEnv && Boolean(baseUrl) && !localWorker.freeOnlyMode;
   return {
-    enabled: enabledFromEnv && Boolean(baseUrl),
+    enabled: ionosEnabled,
     localWorkerEnabled: localWorker.enabled,
-    workerMode: enabledFromEnv && Boolean(baseUrl)
+    workerMode: ionosEnabled
       ? (localWorker.enabled ? 'ionos_primary_local_failover' : 'ionos_only')
-      : (localWorker.enabled ? 'local_only' : 'disabled'),
+      : (localWorker.enabled ? (localWorker.freeOnlyMode ? 'free_local_only' : 'local_only') : 'disabled'),
     baseUrl,
     timeoutMs: toInt(process.env.SWARM_REQUEST_TIMEOUT_MS, 45000),
     apiKey: cleanString(process.env.SWARM_API_KEY),

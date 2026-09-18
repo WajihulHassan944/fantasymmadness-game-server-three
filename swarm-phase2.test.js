@@ -144,6 +144,9 @@ assert(localWorkerSource.includes("SWARM_FREE_FALLBACK_ENABLED || 'true'"), 'Fre
 assert(localWorkerSource.includes("SWARM_PAID_AI_ENABLED || 'false'"), 'Paid AI must remain opt-in so free mode never requires billing by default.');
 assert(localWorkerSource.includes("activeMode: config.freeFallbackEnabled && !config.paidAiEnabled ? 'free_rule_based'"), 'Worker health must report free mode clearly.');
 assert(localWorkerSource.includes("const authToken = freeOnlyMode ? ''"), 'Free mode must bypass OIDC and AI Gateway authentication entirely.');
+assert(localWorkerSource.includes('freeOnlyMode: freeFallbackEnabled && !paidAiEnabled'), 'Local worker config must expose direct free-only mode.');
+assert(gatewaySource.includes('&& !localWorker.freeOnlyMode'), 'Free mode must bypass IONOS instead of probing an external worker.');
+assert(gatewaySource.includes("localWorker.freeOnlyMode ? 'free_local_only'"), 'Health must report the direct free worker mode.');
 assert(localWorkerSource.includes('buildFreeFallbackPayload'), 'Worker must create useful drafts when paid Gateway access is unavailable.');
 assert(localWorkerSource.includes("executionEngine = freePayload"), 'Free artifacts must be labeled with their actual execution engine.');
 assert(gatewaySource.match(/Math\.min\(config\.timeoutMs, 3500\)/g)?.length >= 2, 'IONOS job and campaign submissions must fail over quickly when the local worker is ready.');
