@@ -30,6 +30,7 @@ function getLocalWorkerConfig() {
     timeoutMs: positiveInt(process.env.SWARM_LOCAL_WORKER_TIMEOUT_MS, 40000),
     freeFallbackEnabled,
     paidAiEnabled,
+    freeOnlyMode: freeFallbackEnabled && !paidAiEnabled,
   };
 }
 
