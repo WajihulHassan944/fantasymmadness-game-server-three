@@ -6061,7 +6061,14 @@ const SMTP_HOST = String(process.env.SMTP_HOST || '').trim();
 const SMTP_PORT = Number.parseInt(process.env.SMTP_PORT || (String(process.env.SMTP_SECURE).toLowerCase() === 'true' ? '465' : '587'), 10);
 const SMTP_SECURE = String(process.env.SMTP_SECURE || (SMTP_PORT === 465 ? 'true' : 'false')).toLowerCase() === 'true';
 const SMTP_POOL = String(process.env.SMTP_POOL || 'false').toLowerCase() === 'true';
-const transporter = nodemailer.createTransport(SMTP_HOST ? {
+const SMTP_IS_GMAIL_ACCOUNT = /@gmail\.com$/i.test(SMTP_USER);
+// A stale IONOS/custom SMTP_HOST combined with the Gmail mailbox authenticates
+// inconsistently and is rejected at MAIL FROM/RCPT TO time. The mailbox domain
+// is the source of truth: Gmail credentials must travel through Gmail SMTP.
+const transporter = nodemailer.createTransport(SMTP_IS_GMAIL_ACCOUNT ? {
+  service: 'Gmail',
+  auth: { user: SMTP_USER, pass: SMTP_PASS },
+} : SMTP_HOST ? {
   host: SMTP_HOST,
   port: Number.isFinite(SMTP_PORT) ? SMTP_PORT : 587,
   secure: SMTP_SECURE,
