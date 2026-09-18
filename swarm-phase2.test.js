@@ -141,6 +141,9 @@ assert(localWorkerSource.includes('requestGenerationWithRetry'), 'Local worker m
 assert(localWorkerSource.includes("message.includes('tls')"), 'Local worker must recognize transient TLS failures.');
 assert(localWorkerSource.includes('Math.min(config.timeoutMs, 18000)'), 'AI retries must remain inside the campaign request window.');
 assert(localWorkerSource.includes("SWARM_FREE_FALLBACK_ENABLED || 'true'"), 'Free rule-based fallback must be enabled by default.');
+assert(localWorkerSource.includes("SWARM_PAID_AI_ENABLED || 'false'"), 'Paid AI must remain opt-in so free mode never requires billing by default.');
+assert(localWorkerSource.includes("activeMode: config.freeFallbackEnabled && !config.paidAiEnabled ? 'free_rule_based'"), 'Worker health must report free mode clearly.');
+assert(localWorkerSource.includes("const authToken = freeOnlyMode ? ''"), 'Free mode must bypass OIDC and AI Gateway authentication entirely.');
 assert(localWorkerSource.includes('buildFreeFallbackPayload'), 'Worker must create useful drafts when paid Gateway access is unavailable.');
 assert(localWorkerSource.includes("executionEngine = freePayload"), 'Free artifacts must be labeled with their actual execution engine.');
 assert(gatewaySource.match(/Math\.min\(config\.timeoutMs, 3500\)/g)?.length >= 2, 'IONOS job and campaign submissions must fail over quickly when the local worker is ready.');
