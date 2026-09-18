@@ -25,6 +25,10 @@
     {
       "path": "/api/cron/swarm/recover",
       "schedule": "30 7 * * *"
+    },
+    {
+      "path": "/api/cron/ufc-event-discovery",
+      "schedule": "17 4 * * *"
     }
   ]
 }
