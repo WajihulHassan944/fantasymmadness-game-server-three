@@ -6079,15 +6079,27 @@ const transporter = nodemailer.createTransport(SMTP_IS_GMAIL_ACCOUNT ? {
   auth: { user: SMTP_USER, pass: SMTP_PASS },
 });
 
+const safeMailProviderResponse = (error) => String(error?.response || '')
+  .replace(/[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/gi, '[email redacted]')
+  .replace(/https?:\/\/\S+/gi, '[provider help link]')
+  .replace(/\s+/g, ' ')
+  .trim()
+  .slice(0, 420);
+
 const mailFailureMessage = (error) => {
   const code = String(error?.code || '').toUpperCase();
   const command = String(error?.command || '').toUpperCase();
   const responseCode = Number(error?.responseCode || 0);
+  const providerResponse = safeMailProviderResponse(error).toLowerCase();
   if (!SMTP_PASS) return 'Email delivery is not configured. Add the SMTP password in the backend production environment.';
   if (code === 'EAUTH' || responseCode === 535) return 'The email provider rejected the SMTP login. Update the backend SMTP username or app password.';
   if (['ECONNECTION', 'ETIMEDOUT', 'ESOCKET', 'ECONNREFUSED'].includes(code)) return 'The email provider could not be reached. Check the backend SMTP host, port, and secure setting.';
   if (command.includes('MAIL FROM')) return `The email provider rejected the sender address ${FMM_MAIL_FROM}. Verify SMTP_FROM or remove it to use the authenticated mailbox.`;
   if (command.includes('RCPT TO') || (Array.isArray(error?.rejected) && error.rejected.length)) return 'The email provider rejected the affiliate recipient address. Confirm the affiliate email is spelled correctly and can receive mail.';
+  if (command === 'DATA' && /quota|limit|too many|5\.4\.5/.test(providerResponse)) return 'Gmail accepted the addresses but the sending account has reached a provider sending limit. Wait for Gmail to reset the limit or use another verified mailbox.';
+  if (command === 'DATA' && /5\.7\.26|unauthenticated|spf|dkim|dmarc/.test(providerResponse)) return 'Gmail accepted the addresses but rejected sender authentication. The sending domain must pass SPF or DKIM alignment.';
+  if (command === 'DATA' && /spam|policy|5\.7\.1|message rejected/.test(providerResponse)) return 'Gmail accepted the addresses but rejected this message under its email policy. Review the provider explanation below.';
+  if (command === 'DATA') return 'Gmail accepted the sender and recipient but rejected the completed message. Review the provider explanation below.';
   if (code === 'EENVELOPE' || responseCode === 550 || responseCode === 553) return 'The email provider rejected the message envelope. Verify the sender domain and affiliate email address.';
   return 'The email provider could not deliver this message. Check the backend mail configuration and try again.';
 };
@@ -10245,6 +10257,7 @@ app.post('/send-email-affiliate', verifyAdminToken, async (req, res) => {
         command: String(error?.command || ''),
         responseCode: Number(error?.responseCode || 0) || null,
         rejectedRecipient: Array.isArray(error?.rejected) && error.rejected.length > 0,
+        providerResponse: safeMailProviderResponse(error),
       };
       console.error('Affiliate email delivery failed:', {
         ...diagnostics,
