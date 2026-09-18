@@ -613,9 +613,11 @@ function buildNewMatchPayloadFromCandidate(candidate = {}, now = new Date()) {
     matchTime: candidate.matchTime || '',
     venue: candidate.venue || candidate.city || '',
     matchType: 'LIVE',
-    matchStatus: 'Scheduled',
-    matchShadowStatus: 'active',
-    matchShadowOpenStatus: 'open',
+    // Discovery is an editorial lead. An admin must review and publish it
+    // before players can see or enter it.
+    matchStatus: 'Draft',
+    matchShadowStatus: 'inactive',
+    matchShadowOpenStatus: 'closed',
     matchReward: 'NotRewarded',
     maxRounds: candidate.eventType === 'numbered' || candidate.fighterA ? 5 : undefined,
     matchTokens: 0,
@@ -657,8 +659,8 @@ function applyCandidateToExistingMatch(match, candidate = {}, now = new Date()) 
   if (!cleanString(match.matchCategory)) match.matchCategory = 'mma';
   if (!cleanString(match.matchCategoryTwo)) match.matchCategoryTwo = 'MMA';
   if (!cleanString(match.matchType)) match.matchType = 'LIVE';
-  if (!cleanString(match.matchStatus) || String(match.matchStatus).toLowerCase() === 'draft') match.matchStatus = 'Scheduled';
-  if (!cleanString(match.matchShadowOpenStatus)) match.matchShadowOpenStatus = 'open';
+  if (!existingWasAutoDiscovered && !cleanString(match.matchStatus)) match.matchStatus = 'Scheduled';
+  if (!existingWasAutoDiscovered && !cleanString(match.matchShadowOpenStatus)) match.matchShadowOpenStatus = 'open';
   if (!cleanString(match.matchDescription) || shouldOverwriteCurated) match.matchDescription = buildMatchDescription(candidate);
 
   match.autoDiscovered = match.autoDiscovered || false;
