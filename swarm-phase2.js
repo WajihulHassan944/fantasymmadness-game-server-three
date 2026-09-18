@@ -2947,7 +2947,30 @@ function buildCampaignBodyFromEvent({ trigger, body, admin }) {
 
 async function createSwarmCampaign({ config, axios, crypto, mongoose, models, body, admin, reason }) {
   if (!config.enabled && !config.localWorkerEnabled) throw httpError(503, 'SWARM_DISABLED', 'Neither automation worker is configured.');
-  const normalized = normalizeCreateCampaignBody(body || {}, admin, config, crypto);
+  let normalized = normalizeCreateCampaignBody(body || {}, admin, config, crypto);
+  const existingCampaign = normalized.idempotencyKey
+    ? await models.SwarmBackendCampaign.findOne({ idempotencyKey: normalized.idempotencyKey }).lean()
+    : null;
+  if (existingCampaign) {
+    const ageMs = Date.now() - new Date(existingCampaign.createdAt || existingCampaign.updatedAt || 0).getTime();
+    const retryableStatus = ['failed', 'partial', 'failed_to_submit', 'cancelled', 'canceled'].includes(String(existingCampaign.status || '').toLowerCase());
+    if (!normalized.force && !retryableStatus && ageMs >= 0 && ageMs < 120000) {
+      return {
+        source: 'idempotent_replay',
+        campaign: serializeLocalCampaign(existingCampaign),
+        jobs: [],
+        skipped: [],
+        errors: [],
+        reused: true,
+      };
+    }
+    const originalIdempotencyKey = normalized.idempotencyKey;
+    normalized = {
+      ...normalized,
+      idempotencyKey: `${originalIdempotencyKey.slice(0, 180)}:retry:${crypto.randomBytes(6).toString('hex')}`,
+      metadata: { ...(normalized.metadata || {}), originalIdempotencyKey, campaignRerun: true },
+    };
+  }
   const localEventId = `campaign_event_${new mongoose.Types.ObjectId().toString()}`;
   let eventDoc = null;
   try {
