@@ -10213,8 +10213,12 @@ app.post('/send-email-affiliate', verifyAdminToken, async (req, res) => {
   try {
       // Send mail with the defined transport object
       await transporter.sendMail({
-          from: FMM_MAIL_FROM, // sender address
-          to: email, // list of receivers
+          // This operational route must use the authenticated mailbox for both
+          // the visible header and SMTP envelope. Some providers reject even a
+          // configured alias until its domain has been separately verified.
+          from: SMTP_USER,
+          to: email,
+          envelope: { from: SMTP_USER, to: [email] },
           subject: subject, // Subject line
           text: message, // plain text body
       });
