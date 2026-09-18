@@ -135,6 +135,8 @@ assert(localWorkerSource.includes('https://api.openai.com/v1/responses'), 'Local
 assert(localWorkerSource.includes('https://ai-gateway.vercel.sh/v1/responses'), 'Local worker must support the Vercel AI Gateway fallback.');
 assert(localWorkerSource.includes("require('@vercel/oidc')"), 'Local worker must use the supported Vercel OIDC helper.');
 assert(localWorkerSource.includes('await getVercelOidcToken()'), 'Local worker must request its managed identity at runtime.');
+assert(gatewaySource.includes('await Promise.all(jobTypes.map(async (jobType) =>'), 'Local campaigns must execute independent jobs concurrently to stay inside the function window.');
+assert(localWorkerSource.includes('SWARM_LOCAL_WORKER_TIMEOUT_MS, 40000'), 'Local worker timeout must leave room for a structured campaign response.');
 assert(localWorkerSource.includes("reviewStatus: 'AWAITING_REVIEW'"), 'Local worker output must require human review.');
 assert(gatewaySource.includes('IONOS is unavailable, but the self-contained worker is ready'), 'Health must remain successful while local failover can accept jobs.');
 for (const route of [
