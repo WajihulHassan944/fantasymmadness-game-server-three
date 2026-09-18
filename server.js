@@ -29,7 +29,10 @@ const crypto = require('crypto'); // For generating the verification token
 const nodemailer = require('nodemailer'); // For sending emails
 const SUPPORT_EMAIL = String(process.env.SUPPORT_EMAIL || 'contact@fantasymmadness.com').trim().toLowerCase();
 const ADMIN_ALERT_EMAILS = String(process.env.ADMIN_ALERT_EMAILS || SUPPORT_EMAIL).trim();
-const FMM_MAIL_FROM = process.env.SMTP_FROM || 'Fantasy MMAdness <no-reply@fantasymmadness.com>';
+const SMTP_ACCOUNT_EMAIL = String(process.env.SMTP_USER || 'Fantasymmadness2@gmail.com').trim();
+// Most SMTP providers reject an unverified From domain. Use the authenticated
+// mailbox by default; SMTP_FROM remains available for a verified domain/alias.
+const FMM_MAIL_FROM = String(process.env.SMTP_FROM || `Fantasy MMAdness <${SMTP_ACCOUNT_EMAIL}>`).trim();
 const jwt = require('jsonwebtoken');
 const { OAuth2Client } = require('google-auth-library');
 const client = new OAuth2Client(process.env.GOOGLE_CLIENT_ID);
@@ -6044,7 +6047,7 @@ app.get('/users', verifyAdminToken, async (req, res) => {
 
 // Create reusable transporter object using the default SMTP transport.
 // Credentials must come from environment variables; do not commit mailbox app passwords.
-const SMTP_USER = String(process.env.SMTP_USER || 'Fantasymmadness2@gmail.com').trim();
+const SMTP_USER = SMTP_ACCOUNT_EMAIL;
 const SMTP_PASS = String(process.env.SMTP_PASS || process.env.GMAIL_APP_PASSWORD || '').trim();
 const SMTP_HOST = String(process.env.SMTP_HOST || '').trim();
 const SMTP_PORT = Number.parseInt(process.env.SMTP_PORT || (String(process.env.SMTP_SECURE).toLowerCase() === 'true' ? '465' : '587'), 10);
@@ -6063,11 +6066,14 @@ const transporter = nodemailer.createTransport(SMTP_HOST ? {
 
 const mailFailureMessage = (error) => {
   const code = String(error?.code || '').toUpperCase();
+  const command = String(error?.command || '').toUpperCase();
   const responseCode = Number(error?.responseCode || 0);
   if (!SMTP_PASS) return 'Email delivery is not configured. Add the SMTP password in the backend production environment.';
   if (code === 'EAUTH' || responseCode === 535) return 'The email provider rejected the SMTP login. Update the backend SMTP username or app password.';
   if (['ECONNECTION', 'ETIMEDOUT', 'ESOCKET', 'ECONNREFUSED'].includes(code)) return 'The email provider could not be reached. Check the backend SMTP host, port, and secure setting.';
-  if (code === 'EENVELOPE' || responseCode === 550 || responseCode === 553) return 'The email provider rejected the sender or recipient address.';
+  if (command.includes('MAIL FROM')) return `The email provider rejected the sender address ${FMM_MAIL_FROM}. Verify SMTP_FROM or remove it to use the authenticated mailbox.`;
+  if (command.includes('RCPT TO') || (Array.isArray(error?.rejected) && error.rejected.length)) return 'The email provider rejected the affiliate recipient address. Confirm the affiliate email is spelled correctly and can receive mail.';
+  if (code === 'EENVELOPE' || responseCode === 550 || responseCode === 553) return 'The email provider rejected the message envelope. Verify the sender domain and affiliate email address.';
   return 'The email provider could not deliver this message. Check the backend mail configuration and try again.';
 };
 
