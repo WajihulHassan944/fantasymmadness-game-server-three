@@ -147,6 +147,9 @@ assert(localWorkerSource.includes("const authToken = freeOnlyMode ? ''"), 'Free 
 assert(localWorkerSource.includes('freeOnlyMode: freeFallbackEnabled && !paidAiEnabled'), 'Local worker config must expose direct free-only mode.');
 assert(gatewaySource.includes('&& !localWorker.freeOnlyMode'), 'Free mode must bypass IONOS instead of probing an external worker.');
 assert(gatewaySource.includes("localWorker.freeOnlyMode ? 'free_local_only'"), 'Health must report the direct free worker mode.');
+assert(gatewaySource.includes("source: 'idempotent_replay'"), 'Immediate duplicate campaign submissions must reuse the active campaign safely.');
+assert(gatewaySource.includes('originalIdempotencyKey.slice(0, 180)'), 'Older or failed campaign reruns must receive a unique bounded retry key.');
+assert(gatewaySource.includes('campaignRerun: true'), 'Campaign reruns must retain provenance metadata.');
 assert(localWorkerSource.includes('buildFreeFallbackPayload'), 'Worker must create useful drafts when paid Gateway access is unavailable.');
 assert(localWorkerSource.includes("executionEngine = freePayload"), 'Free artifacts must be labeled with their actual execution engine.');
 assert(gatewaySource.match(/Math\.min\(config\.timeoutMs, 3500\)/g)?.length >= 2, 'IONOS job and campaign submissions must fail over quickly when the local worker is ready.');
