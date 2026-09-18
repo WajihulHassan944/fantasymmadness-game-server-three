@@ -121,7 +121,9 @@ const payload = _private.buildNewMatchPayloadFromCandidate(numbered, new Date('2
 assert.strictEqual(payload.matchCategory, 'mma');
 assert.strictEqual(payload.matchCategoryTwo, 'MMA');
 assert.strictEqual(payload.matchType, 'LIVE');
-assert.strictEqual(payload.matchStatus, 'Scheduled');
+assert.strictEqual(payload.matchStatus, 'Draft');
+assert.strictEqual(payload.matchShadowStatus, 'inactive');
+assert.strictEqual(payload.matchShadowOpenStatus, 'closed');
 assert.strictEqual(payload.autoDiscovered, true);
 assert.strictEqual(payload.ufcEventNumber, 330);
 
