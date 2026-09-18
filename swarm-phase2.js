@@ -474,7 +474,10 @@ function registerSwarmPhase2Routes(options) {
   }));
 
   app.get('/api/admin/swarm/health', verifyAdminToken, asyncHandler(async (req, res) => {
-    const config = getSwarmConfig();
+    // Health is rendered during the initial Back Office load. A dead remote
+    // gateway must not hold every browser request open for the full job-submit
+    // timeout before the local worker can be reported as ready.
+    const config = { ...getSwarmConfig(), timeoutMs: Math.min(getSwarmConfig().timeoutMs, 2500) };
     const cacheStats = await getCacheStats(models);
     if (!config.enabled && !config.localWorkerEnabled) {
       return res.status(200).json({
