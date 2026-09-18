@@ -24,7 +24,7 @@
     },
     {
       "path": "/api/cron/swarm/recover",
-      "schedule": "30 */6 * * *"
+      "schedule": "30 7 * * *"
     }
   ]
 }
