@@ -3,13 +3,22 @@
 const DEFAULT_MODEL = 'gpt-5';
 
 function getLocalWorkerConfig() {
-  const apiKey = String(process.env.OPENAI_API_KEY || '').trim();
+  const openAiApiKey = String(process.env.OPENAI_API_KEY || '').trim();
+  const gatewayToken = String(process.env.AI_GATEWAY_API_KEY || process.env.VERCEL_OIDC_TOKEN || '').trim();
+  const apiKey = openAiApiKey || gatewayToken;
+  const provider = openAiApiKey ? 'openai' : (gatewayToken ? 'vercel_ai_gateway' : 'unconfigured');
   const enabled = String(process.env.SWARM_LOCAL_WORKER_ENABLED || 'true').toLowerCase() !== 'false';
   return {
     enabled: enabled && Boolean(apiKey),
     requested: enabled,
     apiKey,
-    model: String(process.env.OPENAI_SWARM_MODEL || process.env.OPENAI_JARVIS_MODEL || process.env.OPENAI_MODEL || DEFAULT_MODEL).trim(),
+    provider,
+    endpoint: provider === 'vercel_ai_gateway'
+      ? 'https://ai-gateway.vercel.sh/v1/responses'
+      : 'https://api.openai.com/v1/responses',
+    model: provider === 'vercel_ai_gateway'
+      ? String(process.env.AI_GATEWAY_SWARM_MODEL || 'openai/gpt-5.4').trim()
+      : String(process.env.OPENAI_SWARM_MODEL || process.env.OPENAI_JARVIS_MODEL || process.env.OPENAI_MODEL || DEFAULT_MODEL).trim(),
     timeoutMs: positiveInt(process.env.SWARM_LOCAL_WORKER_TIMEOUT_MS, 55000),
   };
 }
@@ -19,7 +28,10 @@ function localWorkerHealth() {
   return {
     enabled: config.enabled,
     requested: config.requested,
-    openAiConfigured: Boolean(config.apiKey),
+    provider: config.provider,
+    authenticationConfigured: Boolean(config.apiKey),
+    openAiConfigured: config.provider === 'openai',
+    vercelAiGatewayConfigured: config.provider === 'vercel_ai_gateway',
     model: config.model,
   };
 }
@@ -27,7 +39,7 @@ function localWorkerHealth() {
 async function runLocalJob({ axios, mongoose, models, normalized, localJob, submitReason, fallbackError }) {
   const config = getLocalWorkerConfig();
   if (!config.enabled) {
-    const error = new Error(config.requested ? 'OPENAI_API_KEY is not configured for the local Swarm worker.' : 'The local Swarm worker is disabled.');
+    const error = new Error(config.requested ? 'No OpenAI key or Vercel AI Gateway identity is available for the local Swarm worker.' : 'The local Swarm worker is disabled.');
     error.code = 'LOCAL_SWARM_DISABLED';
     error.httpStatus = 503;
     throw error;
@@ -39,7 +51,7 @@ async function runLocalJob({ axios, mongoose, models, normalized, localJob, subm
   localJob.jobId = localJob.jobId || `local_${localJob._id}`;
   localJob.metadata = {
     ...(localJob.metadata || {}),
-    executionEngine: 'local_openai',
+      executionEngine: config.provider === 'vercel_ai_gateway' ? 'vercel_ai_gateway' : 'local_openai',
     externalFallbackUsed: Boolean(fallbackError),
     externalFallbackError: fallbackError || undefined,
   };
@@ -49,7 +61,7 @@ async function runLocalJob({ axios, mongoose, models, normalized, localJob, subm
   try {
     const response = await axios({
       method: 'POST',
-      url: 'https://api.openai.com/v1/responses',
+      url: config.endpoint,
       headers: { Authorization: `Bearer ${config.apiKey}`, 'Content-Type': 'application/json' },
       timeout: config.timeoutMs,
       validateStatus: () => true,
@@ -84,7 +96,7 @@ async function runLocalJob({ axios, mongoose, models, normalized, localJob, subm
       summary: parsed.summary || String(text).slice(0, 300),
       reviewStatus: 'AWAITING_REVIEW',
       payload: { ...parsed, content: parsed.content || parsed.text || text, rawText: text },
-      provenance: { engine: 'local_openai', model: config.model, generatedAt: completedAt.toISOString(), fallbackFromIonos: Boolean(fallbackError) },
+      provenance: { engine: config.provider === 'vercel_ai_gateway' ? 'vercel_ai_gateway' : 'local_openai', model: config.model, generatedAt: completedAt.toISOString(), fallbackFromIonos: Boolean(fallbackError) },
       quality: { requiresHumanReview: true, automaticallyPublished: false },
       metadata: { ...(normalized.metadata || {}), executionEngine: 'local_openai' },
     });
@@ -102,8 +114,8 @@ async function runLocalJob({ axios, mongoose, models, normalized, localJob, subm
       swarmResult: {
         ok: true,
         created: true,
-        source: 'local_openai',
-        engine: 'local_openai',
+        source: config.provider === 'vercel_ai_gateway' ? 'vercel_ai_gateway' : 'local_openai',
+        engine: config.provider === 'vercel_ai_gateway' ? 'vercel_ai_gateway' : 'local_openai',
         fallbackFromIonos: Boolean(fallbackError),
         job: { jobId: localJob.jobId, artifactId, status: 'awaiting_review', jobType: normalized.jobType, vertical: normalized.vertical },
         artifact: { artifactId, reviewStatus: 'AWAITING_REVIEW' },
