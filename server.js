@@ -21078,17 +21078,17 @@ app.get('/api/affiliates/me/promotions/:fightId/share', verifyToken, requireScop
   try {
     const affiliateId = String(req.user?.id || req.user?._id || '').trim();
     const fightId = String(req.params.fightId || '').trim();
-    const affiliate = await Affiliate.findById(affiliateId).select('leagueName playerName profileUrl').lean();
+    const affiliate = await Affiliate.findById(affiliateId).select('leagueName playerName profileUrl firstName lastName').lean();
     if (!affiliate) return res.status(404).json({ ok: false, message: 'Affiliate account not found.' });
 
     const fight = mongoose.isValidObjectId(fightId)
-      ? await Match.findById(fightId).select('matchFighterA matchFighterB matchDate matchTokens matchCategory').lean()
+      ? await Match.findById(fightId).select('matchFighterA matchFighterB matchDate matchTokens matchCategory promotionBackground fighterAImage fighterBImage').lean()
       : null;
 
     const appUrl = String(process.env.PUBLIC_APP_URL || 'https://www.fantasymmadness.com').replace(/\/$/, '');
     // The ref parameter is what ties a signup back to this promoter.
     const joinLink = `${appUrl}/?ref=${encodeURIComponent(affiliateId)}`;
-    const fightLink = fight ? `${appUrl}/?ref=${encodeURIComponent(affiliateId)}&fight=${encodeURIComponent(fightId)}` : joinLink;
+    const fightLink = fight ? `${appUrl}/fight/${encodeURIComponent(fightId)}?ref=${encodeURIComponent(affiliateId)}` : joinLink;
     const pair = fight ? [fight.matchFighterA, fight.matchFighterB].filter(Boolean).join(' vs ') : '';
     const fee = fight ? Math.max(0, Math.round(Number(fight.matchTokens) || 0)) : 0;
     const league = [affiliate.leagueName, affiliate.playerName].map((v) => String(v || '').trim()).find(Boolean) || 'my league';
@@ -21097,6 +21097,16 @@ app.get('/api/affiliates/me/promotions/:fightId/share', verifyToken, requireScop
       ok: true,
       joinLink,
       fightLink,
+      attribution: { affiliateId, leagueName: league },
+      creative: {
+        brandLogo: 'https://res.cloudinary.com/daflot6fo/image/upload/v1736068036/bywcrrcqmcyczdyhjmdv.png',
+        fightPoster: fight?.promotionBackground || '',
+        affiliateCover: affiliate.profileUrl || '',
+        fighterAImage: fight?.fighterAImage || '',
+        fighterBImage: fight?.fighterBImage || '',
+        headline: pair || 'Join my Fantasy MMAdness league',
+        promotedBy: [affiliate.firstName, affiliate.lastName].filter(Boolean).join(' ') || league,
+      },
       // Per platform, because a post that works on X reads wrong on Facebook.
       share: {
         short: pair ? `${pair} — predict it with ${league}. ${fightLink}` : `Play fight predictions with ${league}. ${joinLink}`,
