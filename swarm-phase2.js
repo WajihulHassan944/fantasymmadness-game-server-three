@@ -1347,9 +1347,20 @@ function registerSwarmPhase2Routes(options) {
     latest.reviewReason = req.body?.reason;
 
     let published = null;
+    let socialPublication = null;
     let automationEvent = null;
     let seoApplication = null;
-    if (publish && isSeoArtifact(latest)) {
+    if (publish && isSocialArtifact(latest)) {
+      socialPublication = await publishSocialArtifact({ artifact: latest, axios, crypto, platforms: req.body?.platforms });
+      const posted = socialPublication.results.filter((item) => item.ok);
+      latest.reviewStatus = posted.length ? 'PUBLISHED' : 'APPROVED';
+      latest.publishedAt = posted.length ? new Date() : latest.publishedAt;
+      latest.publishedEntity = { type: 'social-publication', results: socialPublication.results };
+      await models.SwarmBackendJob.updateOne(
+        { jobId: latest.jobId },
+        { $set: { status: posted.length ? 'published' : 'approved', artifactId: latest.artifactId, publishedEntity: latest.publishedEntity, updatedAt: new Date() }, $push: { statusHistory: { status: posted.length ? 'published' : 'approved', at: new Date(), reason: posted.length ? 'approved-social-post-published' : 'social-platform-not-connected' } } },
+      );
+    } else if (publish && isSeoArtifact(latest)) {
       seoApplication = await applySeoArtifact({ artifact: latest, Blog, admin, options: { targetBlogId: req.body?.targetBlogId, applyToBlog: req.body?.applyToBlog !== false } });
       latest.reviewStatus = seoApplication.applied ? 'PUBLISHED' : 'APPROVED';
       latest.publishedEntity = seoApplication.entity || latest.publishedEntity;
@@ -1398,7 +1409,7 @@ function registerSwarmPhase2Routes(options) {
     }
 
     await latest.save();
-    res.json({ ok: true, artifact: serializeLocalArtifact(latest), published, seoApplication, automationEvent, remoteReview: sanitizeSwarmEnvelope(remoteReview) });
+    res.json({ ok: true, artifact: serializeLocalArtifact(latest), published, socialPublication, seoApplication, automationEvent, remoteReview: sanitizeSwarmEnvelope(remoteReview) });
   }));
 
   app.post('/api/admin/swarm/artifacts/:artifactId/reject', verifyAdminToken, asyncHandler(async (req, res) => {
@@ -3390,6 +3401,81 @@ function isSeoArtifact(artifact) {
   const type = String(artifact?.artifactType || '');
   const jobType = String(artifact?.jobType || '');
   return type.startsWith('seo.') || jobType.startsWith('seo.');
+}
+
+function isSocialArtifact(artifact) {
+  return String(artifact?.artifactType || '').startsWith('social.')
+    || String(artifact?.jobType || '').startsWith('social.');
+}
+
+function socialArtifactContent(artifact) {
+  const payload = artifact?.payload || {};
+  return cleanString(payload.content || payload.text || payload.caption || payload.post || artifact?.summary || artifact?.title);
+}
+
+async function publishSocialArtifact({ artifact, axios, crypto, platforms }) {
+  const requested = (Array.isArray(platforms) && platforms.length ? platforms : artifact?.payload?.platforms || getSwarmConfig().socialDefaultPlatforms)
+    .map((item) => cleanString(item).toLowerCase()).filter(Boolean);
+  const unique = [...new Set(requested.map((item) => item === 'twitter' ? 'x' : item))];
+  const content = socialArtifactContent(artifact);
+  if (!content) throw httpError(400, 'SOCIAL_CONTENT_MISSING', 'The approved social artifact has no publishable text.');
+  const imageUrl = cleanString(artifact?.payload?.imageUrl || artifact?.payload?.mediaUrl || artifact?.payload?.blogHeaderImage);
+  const results = [];
+  for (const platform of unique) {
+    try {
+      if (platform === 'x') results.push(await publishToX({ axios, crypto, content: content.slice(0, 280) }));
+      else if (platform === 'facebook') results.push(await publishToFacebook({ axios, content, imageUrl }));
+      else if (platform === 'instagram') results.push(await publishToInstagram({ axios, content, imageUrl }));
+      else results.push({ platform, ok: false, skipped: true, code: 'PLATFORM_NOT_CONNECTED', message: `${platform} publishing requires an approved platform connection.` });
+    } catch (error) {
+      results.push({ platform, ok: false, code: error.code || 'PUBLISH_FAILED', message: cleanString(error.response?.data?.error?.message || error.message).slice(0, 500) });
+    }
+  }
+  return { ok: results.some((item) => item.ok), results };
+}
+
+async function publishToFacebook({ axios, content, imageUrl }) {
+  const pageId = cleanString(process.env.FACEBOOK_PAGE_ID);
+  const token = cleanString(process.env.FACEBOOK_PAGE_ACCESS_TOKEN || process.env.META_PAGE_ACCESS_TOKEN);
+  if (!pageId || !token) return { platform: 'facebook', ok: false, skipped: true, code: 'FACEBOOK_NOT_CONNECTED' };
+  const graphVersion = cleanString(process.env.META_GRAPH_VERSION) || 'v23.0';
+  const endpoint = imageUrl ? `/${pageId}/photos` : `/${pageId}/feed`;
+  const data = imageUrl ? { url: imageUrl, caption: content, access_token: token } : { message: content, access_token: token };
+  const response = await axios.post(`https://graph.facebook.com/${graphVersion}${endpoint}`, data, { timeout: 20000 });
+  return { platform: 'facebook', ok: true, id: response.data?.post_id || response.data?.id };
+}
+
+async function publishToInstagram({ axios, content, imageUrl }) {
+  const accountId = cleanString(process.env.INSTAGRAM_BUSINESS_ACCOUNT_ID);
+  const token = cleanString(process.env.INSTAGRAM_ACCESS_TOKEN || process.env.FACEBOOK_PAGE_ACCESS_TOKEN || process.env.META_PAGE_ACCESS_TOKEN);
+  if (!accountId || !token) return { platform: 'instagram', ok: false, skipped: true, code: 'INSTAGRAM_NOT_CONNECTED' };
+  if (!/^https:\/\//i.test(imageUrl)) return { platform: 'instagram', ok: false, skipped: true, code: 'INSTAGRAM_PUBLIC_IMAGE_REQUIRED', message: 'Instagram requires a public HTTPS image URL.' };
+  const graphVersion = cleanString(process.env.META_GRAPH_VERSION) || 'v23.0';
+  const created = await axios.post(`https://graph.facebook.com/${graphVersion}/${accountId}/media`, { image_url: imageUrl, caption: content, access_token: token }, { timeout: 20000 });
+  const creationId = created.data?.id;
+  const published = await axios.post(`https://graph.facebook.com/${graphVersion}/${accountId}/media_publish`, { creation_id: creationId, access_token: token }, { timeout: 20000 });
+  return { platform: 'instagram', ok: true, id: published.data?.id };
+}
+
+async function publishToX({ axios, crypto, content }) {
+  const consumerKey = cleanString(process.env.TWITTER_API_KEY || process.env.X_API_KEY);
+  const consumerSecret = cleanString(process.env.TWITTER_API_SECRET || process.env.X_API_SECRET);
+  const accessToken = cleanString(process.env.TWITTER_ACCESS_TOKEN || process.env.X_ACCESS_TOKEN);
+  const accessSecret = cleanString(process.env.TWITTER_ACCESS_SECRET || process.env.X_ACCESS_SECRET);
+  if (![consumerKey, consumerSecret, accessToken, accessSecret].every(Boolean)) return { platform: 'x', ok: false, skipped: true, code: 'X_NOT_CONNECTED' };
+  const url = 'https://api.twitter.com/2/tweets';
+  const oauth = {
+    oauth_consumer_key: consumerKey, oauth_nonce: crypto.randomBytes(18).toString('hex'),
+    oauth_signature_method: 'HMAC-SHA1', oauth_timestamp: String(Math.floor(Date.now() / 1000)),
+    oauth_token: accessToken, oauth_version: '1.0',
+  };
+  const enc = (value) => encodeURIComponent(String(value)).replace(/[!'()*]/g, (char) => `%${char.charCodeAt(0).toString(16).toUpperCase()}`);
+  const normalized = Object.keys(oauth).sort().map((key) => `${enc(key)}=${enc(oauth[key])}`).join('&');
+  const base = `POST&${enc(url)}&${enc(normalized)}`;
+  oauth.oauth_signature = crypto.createHmac('sha1', `${enc(consumerSecret)}&${enc(accessSecret)}`).update(base).digest('base64');
+  const authorization = `OAuth ${Object.keys(oauth).sort().map((key) => `${enc(key)}="${enc(oauth[key])}"`).join(', ')}`;
+  const response = await axios.post(url, { text: content }, { headers: { Authorization: authorization, 'Content-Type': 'application/json' }, timeout: 20000 });
+  return { platform: 'x', ok: true, id: response.data?.data?.id };
 }
 
 async function applySeoArtifact({ artifact, Blog, admin, options }) {

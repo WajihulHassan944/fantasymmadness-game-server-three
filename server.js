@@ -52,6 +52,7 @@ const { registerPlayerPushRoutes } = require('./player-push');
 // signup handlers further up the file can close over it safely (they only
 // call it at request time, long after the server has finished booting).
 let sendAdminPush = async () => ({ sent: 0, failed: 0, skipped: true });
+let sendPlayerPush = async () => ({ sent: 0, failed: 0, skipped: true });
 const { registerUfcEventDiscovery, GOOGLE_NEWS_UFC_RSS_FEED_URL, _private: ufcEventDiscoveryPrivate } = require('./ufc-event-discovery');
 const {
   FM_COIN_PRODUCTS,
@@ -2539,6 +2540,11 @@ matchReward: { type: String, enum: ['Rewarded', 'NotRewarded'], default: 'NotRew
   autoDiscoverySourceUrl: String,
   autoDiscoveryPayload: mongoose.Schema.Types.Mixed,
   autoDiscoveryLastSeenAt: Date,
+  liveDataProvider: String,
+  liveDataExternalId: { type: String, index: true },
+  liveDataSourceUrl: String,
+  liveDataLastUpdatedAt: Date,
+  liveDataSequence: Number,
   ufcEventNumber: Number,
   ufcEventType: String,
   officialEventUrl: String,
@@ -7619,6 +7625,7 @@ const fmPlusOrderSchema = new mongoose.Schema({
   status: { type: String, enum: ['CREATED', 'PROCESSING', 'CREDITED', 'FAILED', 'CANCELLED'], default: 'CREATED', index: true },
   provider: { type: String, default: 'authorize-net' },
   providerReference: String,
+  subscriptionId: { type: String, index: true, sparse: true },
   providerEventId: String,
   providerInvoiceNumber: { type: String, index: true },
   checkoutUrl: String,
@@ -7976,6 +7983,61 @@ async function authorizeNetChargeOpaqueData(order, opaqueData) {
     throw error;
   }
   return { transactionId: txn.transId, invoiceNumber };
+}
+
+// Authorize.Net ARB keeps the recurring agreement at the payment processor.
+// The browser supplies a one-use Accept.js token, so card data never reaches
+// this server. Access is credited only when Authorize.Net reports a successful
+// payment through the existing signed webhook flow.
+async function authorizeNetCreateMonthlySubscription(order, opaqueData) {
+  if (!hasAuthorizeNetCredentials()) {
+    const error = new Error('Secure recurring payment is awaiting merchant gateway configuration.');
+    error.status = 503;
+    throw error;
+  }
+  if (!opaqueData?.dataDescriptor || !opaqueData?.dataValue) {
+    const error = new Error('A secure payment token is required for monthly auto-renew.');
+    error.status = 400;
+    throw error;
+  }
+  const start = new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
+  const invoiceNumber = order.providerInvoiceNumber || buildAuthorizeNetInvoiceNumber(order);
+  const requestBody = {
+    ARBCreateSubscriptionRequest: {
+      merchantAuthentication: authorizeNetMerchantAuthentication(),
+      refId: String(order.orderNumber).slice(-20),
+      subscription: {
+        name: `FM+ Monthly ${String(order.orderNumber).slice(-12)}`,
+        paymentSchedule: {
+          interval: { length: 1, unit: 'months' },
+          startDate: start,
+          totalOccurrences: 9999,
+          trialOccurrences: 0,
+        },
+        amount: (Number(order.subtotalCents || 0) / 100).toFixed(2),
+        trialAmount: '0.00',
+        payment: { opaqueData: { dataDescriptor: String(opaqueData.dataDescriptor), dataValue: String(opaqueData.dataValue) } },
+        order: { invoiceNumber, description: 'FM+ monthly membership' },
+        customer: { email: order.email },
+        billTo: {
+          firstName: order.firstName || '', lastName: order.lastName || '',
+          address: order.billing?.address || '', city: order.billing?.city || '',
+          state: order.billing?.state || '', zip: order.billing?.zipCode || '', country: order.billing?.country || 'US',
+        },
+      },
+    },
+  };
+  const response = await axios.post(getAuthorizeNetEnvironment().apiUrl, requestBody, {
+    headers: { 'Content-Type': 'application/json', Accept: 'application/json' }, timeout: 15000,
+  });
+  const payload = response.data || {};
+  const subscriptionId = String(payload.subscriptionId || '').trim();
+  if (String(payload?.messages?.resultCode || '').toLowerCase() !== 'ok' || !subscriptionId) {
+    const error = new Error(getAuthorizeNetMessage(payload) || 'The recurring subscription could not be created.');
+    error.status = 402;
+    throw error;
+  }
+  return { subscriptionId, startDate: start };
 }
 
 function getAuthorizeNetClientConfig() {
@@ -8460,13 +8522,6 @@ app.post('/api/checkout/fm-plus-orders', optionalVerifyToken, async (req, res) =
       return res.status(503).json({ ok: false, code: 'AUTHORIZE_NET_NOT_CONFIGURED', message: 'Secure FM+ checkout is awaiting merchant gateway configuration.' });
     }
     const plan = resolveFmPlusPlan(req.body?.plan);
-    if (plan.recurring) {
-      return res.status(409).json({
-        ok: false,
-        code: 'AUTHORIZE_NET_RECURRING_NOT_ENABLED',
-        message: 'Monthly auto-renew requires a separate recurring-billing setup. Choose the 30-day pass to continue today.',
-      });
-    }
     const idempotencyKey = String(req.headers['idempotency-key'] || req.body?.idempotencyKey || '').trim();
     if (!idempotencyKey || idempotencyKey.length < 12 || idempotencyKey.length > 160) {
       return res.status(400).json({ ok: false, message: 'A valid idempotency key is required.' });
@@ -8518,6 +8573,18 @@ app.post('/api/checkout/fm-plus-orders', optionalVerifyToken, async (req, res) =
 
     if (req.body?.opaqueData?.dataValue) {
       try {
+        if (order.recurring) {
+          const recurring = await authorizeNetCreateMonthlySubscription(order, req.body.opaqueData);
+          order.subscriptionId = recurring.subscriptionId;
+          order.providerReference = recurring.subscriptionId;
+          order.status = 'PROCESSING';
+          await order.save();
+          return res.status(201).json({
+            ok: true, orderNumber: order.orderNumber, subscribed: true,
+            subscriptionId: recurring.subscriptionId, firstPaymentDate: recurring.startDate,
+            plan: order.plan, message: 'Monthly auto-renew is active. FM+ unlocks after the first successful payment confirmation.',
+          });
+        }
         const charge = await authorizeNetChargeOpaqueData(order, req.body.opaqueData);
         await FmPlusOrder.updateOne({ orderNumber: order.orderNumber }, { $set: { provider: 'authorize-net', providerReference: charge.transactionId } });
         const result = await settlePaidFmPlusOrder(order.orderNumber, charge.transactionId);
@@ -8527,6 +8594,9 @@ app.post('/api/checkout/fm-plus-orders', optionalVerifyToken, async (req, res) =
       }
     }
 
+    if (order.recurring) {
+      return res.status(400).json({ ok: false, code: 'SECURE_TOKEN_REQUIRED', message: 'Monthly auto-renew requires the secure card form.' });
+    }
     const hosted = await attachAuthorizeNetHostedCheckout(order);
     return res.status(201).json({
       ok: true,
@@ -17382,7 +17452,8 @@ registerFightDataQualityRoutes({
 // PHASE: Admin push alerts — lets an admin install the back office to their
 // phone home screen and get a real push (not just email) on new signups.
 ({ sendAdminPush } = registerAdminPushRoutes({ app, mongoose, verifyAdminToken }));
-app.locals.playerPush = registerPlayerPushRoutes({ app, mongoose, verifyToken, User });
+({ sendPlayerPush } = registerPlayerPushRoutes({ app, mongoose, verifyToken, User }));
+app.locals.playerPush = { sendPlayerPush };
 
 // ==========================================================================
 // ATOMIC FIGHT ENTRY — charges the entry fee and saves the prediction together
@@ -21815,12 +21886,12 @@ app.get('/api/affiliates/me/shadow-fights/:fightId/status', verifyToken, require
 // expire — plus a tie rule, which matters here because a tie between two players
 // is common where a tie across a 40-player pot is not.
 //
-// SHIPPED OFF. HEAD_TO_HEAD_ENABLED must be 'true' to expose any of it. Peer-to-
-// peer staking is classified differently from pooled fantasy contests in some
-// states, so this stays dark until the RESTRICTED_STATES legal review lands.
+// Enabled by default now that the escrow/settlement pipeline is complete. An
+// operator can still stop it immediately with HEAD_TO_HEAD_DISABLED=true;
+// state restrictions and responsible-play checks continue to apply.
 // ==========================================================================
-const HEAD_TO_HEAD_ENABLED = ['true', '1', 'yes', 'on']
-  .includes(String(process.env.HEAD_TO_HEAD_ENABLED || 'false').trim().toLowerCase());
+const HEAD_TO_HEAD_ENABLED = !['true', '1', 'yes', 'on']
+  .includes(String(process.env.HEAD_TO_HEAD_DISABLED || 'false').trim().toLowerCase());
 
 // Stricter than the platform list when set, because this is the product most
 // likely to be restricted where pooled contests are not.
@@ -22088,6 +22159,11 @@ app.post('/api/challenges', requireHeadToHead, submitLimiter, verifyToken, requi
         'Submit your scorecard for this fight, then accept the challenge before predictions lock.',
       ],
     });
+    sendPlayerPush(result.opponent._id, {
+      title: 'New head-to-head challenge',
+      body: `${result.challenger?.playerName || 'A player'} challenged you for ${result.challenge.stake.toLocaleString()} FM.`,
+      url: '/YourFights',
+    }).catch((error) => console.error('Challenge push failed:', error.message));
 
     return res.status(201).json({
       ok: true,
@@ -22182,6 +22258,11 @@ app.post('/api/challenges/:id/accept', requireHeadToHead, verifyToken, requireSc
         `Winner takes <strong>${(result.challenge.stake * 2).toLocaleString()} FM</strong> once the fight is scored.`,
       ],
     });
+    sendPlayerPush(result.challenge.challengerId, {
+      title: 'Challenge accepted',
+      body: `${result.me?.playerName || 'Your opponent'} accepted your ${result.challenge.stake.toLocaleString()} FM challenge.`,
+      url: '/YourFights',
+    }).catch((error) => console.error('Challenge acceptance push failed:', error.message));
 
     return res.status(200).json({
       ok: true,
@@ -22471,6 +22552,13 @@ const settleFightChallenges = async (fightId) => {
                     : `Your ${row.stake.toLocaleString()} FM stake goes to your opponent.`,
               ],
             });
+            sendPlayerPush(person._id, {
+              title: tie ? 'Your challenge was a draw' : won ? 'You won your challenge' : 'Challenge result ready',
+              body: tie
+                ? `Scores were level. Your ${row.stake.toLocaleString()} FM stake was returned.`
+                : won ? `${netPayout.toLocaleString()} FM was added to your wallet.` : `${label} has been scored.`,
+              url: '/YourFights',
+            }).catch((error) => console.error('Challenge result push failed:', error.message));
           });
       });
     } catch (error) {
@@ -25486,6 +25574,83 @@ app.post('/api/scorer/fight/finalize', verifyScorerToken, (_req, res) => res.sta
   message: 'Scorers cannot finalize a fight. The promoter finalizes and pays out.',
   code: 'FINALIZE_IS_ADMIN_ONLY',
 }));
+
+// Licensed data-feed intake for CompuBox, DAZN partners, UFC/ALT Sports Data,
+// or another approved provider. This is deliberately push-based: it avoids
+// brittle/high-frequency scraping and gives providers one stable normalized
+// contract for schedules, status changes, and round statistics.
+const verifyFightDataFeed = (req, res, next) => {
+  const secret = String(process.env.FIGHT_DATA_INGEST_SECRET || '').trim();
+  if (!secret) return res.status(503).json({ ok: false, code: 'FIGHT_DATA_FEED_NOT_CONFIGURED' });
+  const bearer = String(req.headers.authorization || '').replace(/^Bearer\s+/i, '');
+  const supplied = bearer || String(req.headers['x-fight-data-secret'] || '');
+  const expectedBuffer = Buffer.from(secret);
+  const suppliedBuffer = Buffer.from(supplied);
+  if (expectedBuffer.length !== suppliedBuffer.length || !crypto.timingSafeEqual(expectedBuffer, suppliedBuffer)) {
+    return res.status(401).json({ ok: false, code: 'INVALID_FIGHT_DATA_CREDENTIAL' });
+  }
+  return next();
+};
+
+app.get('/api/integrations/fight-data/status', verifyAdminToken, (_req, res) => {
+  res.json({
+    ok: true,
+    configured: Boolean(String(process.env.FIGHT_DATA_INGEST_SECRET || '').trim()),
+    supportedProviders: ['compubox', 'dazn', 'ufcstats', 'alt-sports-data', 'fight-analytics', 'custom'],
+    accepts: ['event', 'status', 'round-stats', 'final-result'],
+  });
+});
+
+app.post('/api/integrations/fight-data/:provider', verifyFightDataFeed, async (req, res) => {
+  try {
+    const provider = String(req.params.provider || 'custom').trim().toLowerCase().slice(0, 80);
+    const body = req.body || {};
+    const externalId = String(body.externalId || body.eventId || body.boutId || '').trim().slice(0, 180);
+    let fight = body.fightId && mongoose.isValidObjectId(body.fightId) ? await Match.findById(body.fightId) : null;
+    if (!fight && externalId) fight = await Match.findOne({ liveDataProvider: provider, liveDataExternalId: externalId });
+    if (!fight && body.event && body.event.fighterA && body.event.fighterB) {
+      const event = body.event;
+      fight = new Match({
+        matchName: String(event.name || `${event.fighterA} vs ${event.fighterB}`).slice(0, 240),
+        matchFighterA: String(event.fighterA).slice(0, 160), matchFighterB: String(event.fighterB).slice(0, 160),
+        matchCategory: String(event.category || 'boxing').toLowerCase() === 'mma' ? 'mma' : 'boxing',
+        matchDate: event.date ? new Date(event.date) : undefined,
+        matchTime: String(event.time || '').slice(0, 40), venue: String(event.venue || '').slice(0, 200),
+        matchStatus: 'Scheduled', matchType: 'LIVE', matchShadowOpenStatus: 'open',
+      });
+    }
+    if (!fight) return res.status(404).json({ ok: false, code: 'FIGHT_NOT_FOUND', message: 'Supply a valid fightId or enough event data to create the fight.' });
+
+    const sequence = Number(body.sequence || 0);
+    if (sequence && Number(fight.liveDataSequence || 0) >= sequence) {
+      return res.status(200).json({ ok: true, ignored: true, reason: 'duplicate-or-out-of-order', fightId: String(fight._id) });
+    }
+    const statusMap = { scheduled: 'Scheduled', open: 'Open', live: 'Live', ongoing: 'Ongoing', finished: 'Finished', completed: 'Finished', closed: 'Closed' };
+    const nextStatus = statusMap[String(body.status || '').toLowerCase()];
+    if (nextStatus) fight.matchStatus = nextStatus;
+    if (body.fighterOneStats || body.fighterTwoStats) {
+      applyRoundResultsToMatch(fight, { fighterOneStats: body.fighterOneStats, fighterTwoStats: body.fighterTwoStats });
+    }
+    fight.liveDataProvider = provider;
+    fight.liveDataExternalId = externalId || fight.liveDataExternalId;
+    fight.liveDataSourceUrl = /^https:\/\//i.test(String(body.sourceUrl || '')) ? String(body.sourceUrl).slice(0, 1000) : fight.liveDataSourceUrl;
+    fight.liveDataLastUpdatedAt = new Date();
+    if (sequence) fight.liveDataSequence = sequence;
+    await fight.save();
+    clearPublicResponseCache();
+
+    const entrants = await Score.find({ matchId: String(fight._id), refunded: { $ne: true } }).distinct('playerId');
+    if (nextStatus === 'Live') {
+      await Promise.all(entrants.map((playerId) => sendPlayerPush(playerId, {
+        title: 'Your fight is live', body: `${fight.matchFighterA} vs ${fight.matchFighterB} has started.`, url: `/fight/${fight._id}`,
+      }).catch(() => null)));
+    }
+    return res.json({ ok: true, fightId: String(fight._id), provider, status: fight.matchStatus, notifiedPlayers: nextStatus === 'Live' ? entrants.length : 0 });
+  } catch (error) {
+    console.error('Fight data ingestion failed:', error);
+    return res.status(error.statusCode || 500).json({ ok: false, code: 'FIGHT_DATA_INGEST_FAILED', message: error.message || 'The fight update could not be applied.' });
+  }
+});
 
 
 // ==========================================================================
