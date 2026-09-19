@@ -18990,6 +18990,9 @@ const supportTicketSchema = new mongoose.Schema({
   message: { type: String, required: true },
   status: { type: String, enum: ['open', 'in_progress', 'resolved', 'closed'], default: 'open', index: true },
   priority: { type: String, enum: ['low', 'normal', 'high'], default: 'normal' },
+  assignedTo: { type: String, trim: true, default: '' },
+  assignedAt: Date,
+  lastResponseAt: Date,
   relatedOrderNumber: String,
   relatedFightId: String,
   responses: [{ body: String, fromAdmin: Boolean, createdAt: { type: Date, default: Date.now } }],
@@ -19055,8 +19058,24 @@ app.get('/api/admin/support/tickets', verifyAdminToken, async (req, res) => {
   try {
     const status = String(req.query.status || 'open');
     const query = status === 'all' ? {} : { status };
+    const search = String(req.query.search || '').trim().slice(0, 120);
+    if (search) {
+      const safeSearch = search.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+      query.$or = [
+        { ticketNumber: { $regex: safeSearch, $options: 'i' } },
+        { email: { $regex: safeSearch, $options: 'i' } },
+        { name: { $regex: safeSearch, $options: 'i' } },
+        { subject: { $regex: safeSearch, $options: 'i' } },
+      ];
+    }
     const tickets = await SupportTicket.find(query).sort({ priority: -1, createdAt: -1 }).limit(200).lean();
-    return res.status(200).json({ count: tickets.length, tickets });
+    const counts = await SupportTicket.aggregate([{ $group: { _id: '$status', count: { $sum: 1 } } }]);
+    const summary = { all: 0, open: 0, in_progress: 0, resolved: 0, closed: 0 };
+    counts.forEach((row) => {
+      if (Object.prototype.hasOwnProperty.call(summary, row._id)) summary[row._id] = row.count;
+      summary.all += row.count;
+    });
+    return res.status(200).json({ count: tickets.length, summary, tickets });
   } catch (error) {
     return res.status(500).json({ message: 'Could not load tickets.' });
   }
@@ -19069,9 +19088,13 @@ app.patch('/api/admin/support/tickets/:id', verifyAdminToken, async (req, res) =
 
     const reply = String(req.body?.reply || '').trim();
     const nextStatus = String(req.body?.status || '').toLowerCase();
+    const nextPriority = String(req.body?.priority || '').toLowerCase();
+    const hasAssignment = Object.prototype.hasOwnProperty.call(req.body || {}, 'assignedTo');
+    const assignedTo = String(req.body?.assignedTo || '').trim().slice(0, 120);
 
     if (reply) {
       ticket.responses.push({ body: reply, fromAdmin: true });
+      ticket.lastResponseAt = new Date();
       await sendMoneyNotice({
         to: ticket.email,
         subject: `Re: ${ticket.subject} — ${ticket.ticketNumber}`,
@@ -19082,9 +19105,22 @@ app.patch('/api/admin/support/tickets/:id', verifyAdminToken, async (req, res) =
     if (['open', 'in_progress', 'resolved', 'closed'].includes(nextStatus)) {
       ticket.status = nextStatus;
       if (nextStatus === 'resolved') ticket.resolvedAt = new Date();
+      if (nextStatus !== 'resolved') ticket.resolvedAt = undefined;
+    }
+    if (['low', 'normal', 'high'].includes(nextPriority)) ticket.priority = nextPriority;
+    if (hasAssignment) {
+      ticket.assignedTo = assignedTo;
+      ticket.assignedAt = assignedTo ? new Date() : undefined;
+      if (assignedTo && ticket.status === 'open') ticket.status = 'in_progress';
     }
     await ticket.save();
-    return res.status(200).json({ ticketNumber: ticket.ticketNumber, status: ticket.status });
+    return res.status(200).json({
+      ticketNumber: ticket.ticketNumber,
+      status: ticket.status,
+      priority: ticket.priority,
+      assignedTo: ticket.assignedTo,
+      responses: ticket.responses,
+    });
   } catch (error) {
     return res.status(500).json({ message: 'Could not update that ticket.' });
   }
