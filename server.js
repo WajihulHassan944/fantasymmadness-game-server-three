@@ -47,6 +47,7 @@ const { registerSwarmPhase2Routes } = require('./swarm-phase2');
 const { registerSeoPerformancePhase2Routes } = require('./seo-performance-phase2');
 const { registerFightDataQualityRoutes } = require('./fight-data-quality');
 const { registerAdminPushRoutes } = require('./admin-push');
+const { registerPlayerPushRoutes } = require('./player-push');
 // Populated once registerAdminPushRoutes runs below; declared early so the
 // signup handlers further up the file can close over it safely (they only
 // call it at request time, long after the server has finished booting).
@@ -17381,6 +17382,7 @@ registerFightDataQualityRoutes({
 // PHASE: Admin push alerts — lets an admin install the back office to their
 // phone home screen and get a real push (not just email) on new signups.
 ({ sendAdminPush } = registerAdminPushRoutes({ app, mongoose, verifyAdminToken }));
+app.locals.playerPush = registerPlayerPushRoutes({ app, mongoose, verifyToken, User });
 
 // ==========================================================================
 // ATOMIC FIGHT ENTRY — charges the entry fee and saves the prediction together
