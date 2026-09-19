@@ -535,6 +535,8 @@ async function loadFightDocs(Model, query = {}, source = 'match') {
 
 function filterPublicFightDocs(docs = [], query = {}) {
   return docs.filter((fight) => {
+    if (String(query.includeTest || '').toLowerCase() !== 'true' && isPlaceholderFight(fight)) return false;
+    if (isStaleOngoingFight(fight)) return false;
     if (!shouldIncludeDraftFights(query) && isDraftFightRecord(fight)) return false;
     if (shouldRequestPredictionEligibleFights(query) && !isPredictionEligibleFightRecord(fight)) return false;
     return fightMatchesRequestedSport(fight, query)
@@ -553,7 +555,7 @@ async function listFights({ req, Match, Shadow }) {
   if (!sources.length) sources.push(loadFightDocs(Match, req.query, 'match'));
 
   const docs = (await Promise.all(sources)).flat();
-  const publicDocs = filterPublicFightDocs(docs, req.query).sort(compareFightsFresh);
+  const publicDocs = deduplicatePublicFights(filterPublicFightDocs(docs, req.query).sort(compareFightsFresh));
   const start = (page - 1) * limit;
   const pageDocs = publicDocs.slice(start, start + limit);
   return { items: pageDocs.map((fight) => serializeFight(fight, req)), pagination: paginationMeta({ page, limit, total: publicDocs.length }) };
@@ -722,14 +724,50 @@ async function listProWrestlingMatches({ req, ProWrestlingMatch }) {
   if (!ProWrestlingMatch) return emptyPaginated(req);
   const page = safePage(req.query.page);
   const limit = safeLimit(req.query.limit, 20);
-  const filter = {};
+  const filter = { publicVisible: true };
   if (req.query.status) filter.status = req.query.status;
   if (req.query.publicVisible !== undefined) filter.publicVisible = String(req.query.publicVisible) !== 'false';
   const searchFilter = buildSearchFilter(req.query.search, ['eventName', 'promotionName', 'matchTitle', 'description', 'competitorA.displayName', 'competitorB.displayName']);
   if (searchFilter) Object.assign(filter, searchFilter);
-  const total = await ProWrestlingMatch.countDocuments(filter);
-  const docs = await ProWrestlingMatch.find(filter).sort({ featured: -1, matchDate: -1, updatedAt: -1 }).skip((page - 1) * limit).limit(limit).lean();
+  const candidates = await ProWrestlingMatch.find(filter).sort({ featured: -1, matchDate: -1, updatedAt: -1 }).limit(500).lean();
+  const clean = candidates.filter((match) => !isPlaceholderWrestlingMatch(match));
+  const total = clean.length;
+  const docs = clean.slice((page - 1) * limit, page * limit);
   return { items: docs.map((m) => ({ id: String(m._id), slug: m.slug, title: m.matchTitle, eventName: m.eventName, promotionName: m.promotionName, competitorA: m.competitorA, competitorB: m.competitorB, status: m.status, matchDate: m.matchDate, matchTime: m.matchTime, featured: m.featured, publicVisible: m.publicVisible, bannerImage: m.bannerImage, seo: m.seo, updatedAt: m.updatedAt })), pagination: paginationMeta({ page, limit, total }) };
+}
+
+function normalizedPublicValue(value) {
+  return cleanString(value).toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
+}
+
+function isPlaceholderFight(fight = {}) {
+  const values = [fight.matchName, fight.matchFighterA, fight.matchFighterB].map(normalizedPublicValue);
+  return values.some((value) => /^(test|test fight|fighter a|fighter b|placeholder|tbd)$/.test(value))
+    || values.some((value) => value.startsWith('test '));
+}
+
+function isStaleOngoingFight(fight = {}) {
+  if (!/ongoing|live/i.test(cleanString(fight.matchStatus))) return false;
+  const date = new Date(fight.matchDate);
+  return Number.isFinite(date.getTime()) && date.getTime() < Date.now() - 36 * 60 * 60 * 1000;
+}
+
+function deduplicatePublicFights(fights = []) {
+  const seen = new Set();
+  return fights.filter((fight) => {
+    const pair = [normalizedPublicValue(fight.matchFighterA), normalizedPublicValue(fight.matchFighterB)].sort().join('|');
+    const date = new Date(fight.matchDate);
+    const day = Number.isFinite(date.getTime()) ? date.toISOString().slice(0, 10) : '';
+    const key = [pair, day, normalizedPublicValue(fight.matchCategoryTwo || fight.matchCategory)].join('|');
+    if (!pair.replace(/\|/g, '') || seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+}
+
+function isPlaceholderWrestlingMatch(match = {}) {
+  const values = [match.matchTitle, match.eventName, match.competitorA?.displayName, match.competitorB?.displayName].map(normalizedPublicValue);
+  return values.some((value) => /^(test|test event|test match|a|b|t1|t2)$/.test(value) || value.startsWith('test '));
 }
 
 async function listVideos({ req, YoutubeVideos }) {
