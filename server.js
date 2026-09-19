@@ -7639,6 +7639,18 @@ const fmPlusOrderSchema = new mongoose.Schema({
 }, { timestamps: true });
 fmPlusOrderSchema.index({ email: 1, createdAt: -1 });
 const FmPlusOrder = mongoose.models.FmPlusOrder || mongoose.model('FmPlusOrder', fmPlusOrderSchema);
+const fmPlusRenewalSchema = new mongoose.Schema({
+  subscriptionId: { type: String, required: true, index: true },
+  providerEventId: { type: String, required: true, unique: true, index: true },
+  transactionId: { type: String, required: true, unique: true, index: true },
+  orderNumber: { type: String, required: true, index: true },
+  userId: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true, index: true },
+  amountCents: { type: Number, required: true },
+  benefitStartsAt: Date,
+  benefitExpiresAt: Date,
+  bonusCoins: { type: Number, default: 0 },
+}, { timestamps: true });
+const FmPlusRenewal = mongoose.models.FmPlusRenewal || mongoose.model('FmPlusRenewal', fmPlusRenewalSchema);
 
 function normalizeCheckoutEmail(value) {
   return String(value || '').trim().toLowerCase();
@@ -8300,6 +8312,38 @@ async function settlePaidFmPlusOrder(orderNumber, providerEventId = '') {
   return settled;
 }
 
+async function settleRecurringFmPlusRenewal(order, transactionId, providerEventId) {
+  return mongoose.connection.transaction(async (session) => {
+    const eventId = String(providerEventId || transactionId);
+    const existing = await FmPlusRenewal.findOne({ providerEventId: eventId }).session(session).lean();
+    if (existing) return { renewal: existing, alreadyCredited: true };
+    const user = await User.findById(order.userId).session(session);
+    if (!user) throw Object.assign(new Error('FM+ subscriber account was not found.'), { status: 404 });
+    const now = new Date();
+    const startsAt = user.fmPlusExpiresAt && new Date(user.fmPlusExpiresAt) > now ? new Date(user.fmPlusExpiresAt) : now;
+    const expiresAt = new Date(startsAt.getTime() + Number(order.durationDays || 30) * 86400000);
+    const balanceBefore = Number.parseInt(String(user.tokens || '0'), 10) || 0;
+    user.tokens = addWalletTokens(user.tokens, order.bonusCoins);
+    user.isSubscribed = true;
+    user.currentPlan = 'FM+';
+    user.fmPlusPlan = 'monthly';
+    user.fmPlusExpiresAt = expiresAt;
+    user.fmPlusLastCoinCreditAt = now;
+    await user.save({ session });
+    await recordWalletMove({
+      userId: user._id, amount: order.bonusCoins, balanceBefore,
+      balanceAfter: Number.parseInt(String(user.tokens || '0'), 10) || 0,
+      reason: 'fm_plus_monthly_renewal_bonus', reference: `renewal:${transactionId}`, session,
+    });
+    const [renewal] = await FmPlusRenewal.create([{
+      subscriptionId: order.subscriptionId, providerEventId: eventId, transactionId,
+      orderNumber: order.orderNumber, userId: user._id, amountCents: order.subtotalCents,
+      benefitStartsAt: startsAt, benefitExpiresAt: expiresAt, bonusCoins: order.bonusCoins,
+    }], { session });
+    return { renewal, user, alreadyCredited: false };
+  });
+}
+
 // A signed-in player is checked against their stored state. A guest checkout has
 // no account yet, so the state they type at checkout is used; it is re-checked
 // once the account exists.
@@ -8686,8 +8730,11 @@ app.post('/api/webhooks/authorize-net', async (req, res) => {
         providerEventId: String(req.body?.notificationId || transactionId),
       },
     });
+    const eventId = String(req.body?.notificationId || transactionId);
     const result = invoiceNumber.startsWith('FP')
-      ? await settlePaidFmPlusOrder(order.orderNumber, String(req.body?.notificationId || transactionId))
+      ? (order.recurring && order.status === 'CREDITED'
+        ? await settleRecurringFmPlusRenewal(order, transactionId, eventId)
+        : await settlePaidFmPlusOrder(order.orderNumber, eventId))
       : await settlePaidCoinOrder(order.orderNumber, String(req.body?.notificationId || transactionId));
     return res.status(200).json({
       ok: true,
