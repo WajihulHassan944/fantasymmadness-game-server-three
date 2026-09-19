@@ -20969,6 +20969,13 @@ app.post('/api/affiliates/me/promotions/:fightId/announce', submitLimiter, verif
       emailSkippedReason,
     });
 
+    // Keep the Back Office informed without using the legacy platform-wide
+    // player blast. LeagueNotice powers the promoter/member feeds; this global
+    // Notification row is only the existing admin audit stream.
+    await new Notification({
+      title: `Affiliate Promotion: ${promoterName} announced ${pair || 'a new fight'} to ${members.length} league member${members.length === 1 ? '' : 's'}`,
+    }).save();
+
     return res.status(201).json({
       ok: true,
       noticeId: notice._id,
