@@ -1,6 +1,3 @@
-Warning: truncated output (original token count: 275207)
-... 52250 bytes omitted ...
-
 const express = require('express');
 const mongoose = require('mongoose');
 const bodyParser = require('body-parser');
@@ -2467,7 +2464,21235 @@ app.get('/shadow', async (req, res) => {
     const requestedLimit = Math.max(0, Math.min(500, Number(req.query.limit) || 0));
     const compact = String(req.query.compact || '').toLowerCase();
     let shadowQuery = Shadow.find();
-   …212152 tokens truncated…onst allowed = SEASON_CALL_CATEGORIES[family] || {};
+    if (compact === 'promotion' || compact === 'card' || compact === 'true') {
+      shadowQuery = shadowQuery.select([
+        'matchCategory', 'matchCategoryTwo', 'matchName', 'matchFighterA', 'matchFighterB',
+        'fighterAId', 'fighterBId', 'fighterAImage', 'fighterBImage',
+        'fighterAImageDeleteUrl', 'fighterBImageDeleteUrl', 'promotionBackground',
+        'promotionBackgroundDeleteUrl', 'matchDescription', 'matchVideoUrl', 'matchDate',
+        'matchTime', 'matchTokens', 'matchStatus', 'matchShadowStatus', 'matchShadowOpenStatus',
+        'pot', 'profit', 'amountOverPotBudget', 'maxRounds', 'BoxingMatch', 'MMAMatch',
+        'AffiliateIds', 'createdAt', 'updatedAt',
+      ].join(' '));
+    }
+    shadowQuery = shadowQuery.populate('fighterAId fighterBId').sort({ _id: -1 });
+    if (requestedLimit) shadowQuery = shadowQuery.limit(requestedLimit);
+    const matches = await shadowQuery.lean(); // Sort by _id in descending order
+    const scoredOnly = compact === 'promotion'
+      || compact === 'card'
+      || ['true', '1', 'yes'].includes(String(req.query.scoredOnly || '').toLowerCase());
+    const eligibleMatches = scoredOnly ? matches.filter(hasOfficialShadowScores) : matches;
+    res.send(eligibleMatches.map((item) => attachCombatFighterReadFallbacks(item, 'shadow')));
+  } catch (err) {
+    res.status(500).send({ message: 'Error fetching matches' });
+  }
+});
+
+
+
+
+
+const matchSchema = new mongoose.Schema({
+  // Optional game-mode metadata. Existing records and APIs remain fully compatible.
+  gameMode: String,
+  predictionFormat: String,
+  scoringRuleVersion: String,
+  matchCategory: String, // 'boxing' or 'mma'
+  matchCategoryTwo: String,
+  affiliateId: String,
+  shadowFightId: String,
+  sourceShadowId: { type: mongoose.Schema.Types.ObjectId, ref: 'Shadow' },
+  sourceLiveMatchId: { type: mongoose.Schema.Types.ObjectId, ref: 'Match', index: true },
+  promotedShadowFightId: { type: mongoose.Schema.Types.ObjectId, ref: 'Shadow' },
+  matchName: String,
+  matchFighterA: String,
+  matchFighterB: String,
+  // Optional normalized fighter references. Existing string/image fields remain authoritative
+  // until admin links or migrates data safely from the new combat fighter library.
+  fighterAId: { type: mongoose.Schema.Types.ObjectId, ref: 'CombatFighter' },
+  fighterBId: { type: mongoose.Schema.Types.ObjectId, ref: 'CombatFighter' },
+  matchDescription: String,
+  shadowTemplatesAdditionStatus: { type: Boolean, default: false },
+  notificationSent: { type: Boolean, default: false },
+  matchBy: { type: String, enum: ['admin', 'affiliate'], default: 'admin' },
+  matchShadowStatus: { type: String, enum: ['active', 'inactive', 'draft'], default: 'active' },
+  matchStatus: { type: String, enum: ['Finished', 'Ongoing', 'Draft', 'Scheduled', 'Live', 'Open', 'Closed'], default: 'Ongoing' },
+  aiScoutingReport: mongoose.Schema.Types.Mixed,
+matchShadowOpenStatus: { type: String, enum: ['open', 'closed'], default: 'open' },
+matchReward: { type: String, enum: ['Rewarded', 'NotRewarded'], default: 'NotRewarded' },
+  matchVideoUrl: String,
+  matchPromotionalVideoUrl: String,
+  matchDate: Date,
+  matchDateKey: { type: String, index: true },
+  eventTimeZone: String,
+  matchTime: String,  // Store the match time as a string in 'HH:MM' format
+  venue: String,
+  // Auto-discovered UFC/upcoming-event metadata. These fields are additive and
+  // keep manually created fight records backward-compatible while allowing
+  // Google News/official UFC enrichment to dedupe and update calendar entries.
+  autoDiscovered: { type: Boolean, default: false, index: true },
+  autoDiscoveryProvider: String,
+  autoDiscoveryKey: String,
+  autoDiscoveryConfidence: Number,
+  autoDiscoverySource: String,
+  autoDiscoverySourceUrl: String,
+  autoDiscoveryPayload: mongoose.Schema.Types.Mixed,
+  autoDiscoveryLastSeenAt: Date,
+  ufcEventNumber: Number,
+  ufcEventType: String,
+  officialEventUrl: String,
+  eventCity: String,
+  homepagePromoted: { type: Boolean, default: false, index: true },
+  featuredThisWeek: { type: Boolean, default: false, index: true },
+  featuredFight: { type: Boolean, default: false, index: true },
+  featuredThisWeekImage: String,
+  featuredFightBackgroundImage: String,
+  featuredFightFighterAImage: String,
+  featuredFightFighterBImage: String,
+  division: String,
+  weightClass: String,
+  homepagePromotionRank: { type: Number, default: 0 },
+  homepageSlot: { type: Number, default: 0 },
+  homepagePromotionTitle: String,
+  homepagePromotionSubtitle: String,
+  homepagePromotionCtaLabel: String,
+  homepagePromotionStartsAt: Date,
+  homepagePromotionEndsAt: Date,
+  homepagePromotionCalendarSource: String,
+  homepagePromotionExternalSourceUrl: String,
+  homepagePromotionUpdatedAt: Date,
+  homepagePromotionUpdatedBy: String,
+  matchTokens: Number,
+  pot: Number,
+  // See shadowSchema: declared prize + minimum entrants is what removes house risk.
+  minimumEntrants: { type: Number, min: 0, default: 0 },
+  autoRefundIfShort: { type: Boolean, default: true },
+  // Set by the shortfall sweep so a warning is sent once, not on every pass.
+  shortfallPromoterWarnedAt: Date,
+  shortfallPlayersWarnedAt: Date,
+  voidedAt: Date,
+  voidReason: String,
+  collectedFees: { type: Number, min: 0, default: 0 },
+  projectedEntrants: { type: Number, min: 0, default: 0 },
+  platformContribution: { type: Number, min: 0, default: 0 },
+  profit: Number,
+  amountOverPotBudget: Number,
+  fighterAImage: String,  // URL of Fighter A's image
+  fighterBImage: String,  // URL of Fighter B's image
+  matchType: String,      // LIVE or SHADOW
+  sourceShadowId: { type: mongoose.Schema.Types.ObjectId, ref: 'Shadow', index: true },
+  activatedFromShadowAt: Date,
+  maxRounds: Number,
+  fighterAImageDeleteUrl: String,
+  fighterBImageDeleteUrl: String,
+
+  promotionBackgroundDeleteUrl:String,
+  promotionBackground:String,
+  fightPosterImage:String,
+  fightPosterMobileImage:String,
+  fightPosterImageDeleteUrl:String,
+  fightPosterMobileImageDeleteUrl:String,
+
+  // Boxing-specific stats
+  BoxingMatch: {
+    fighterOneStats: [{
+      roundNumber: Number,
+      HP: Number,
+      BP: Number,
+      TP: Number,
+      RW: Number,
+      RL: Number,
+      KO: Number,
+      SP: Number,
+    }],
+    fighterTwoStats: [{
+      roundNumber: Number,
+      HP: Number,
+      BP: Number,
+      TP: Number,
+      RW: Number,
+      RL: Number,
+      KO: Number,
+      SP: Number,
+    }],
+  },
+
+  // MMA-specific stats
+  MMAMatch: {
+    fighterOneStats: [{
+      roundNumber: Number,
+      ST: Number,
+      KI: Number,
+      KN: Number,
+      EL: Number,
+      RW: Number,
+      RL: Number,
+      KO: Number,
+      SP: Number,
+   }],
+    fighterTwoStats: [{
+      roundNumber: Number,
+      ST: Number,
+      KI: Number,
+      KN: Number,
+      EL: Number,
+      RW: Number,
+      RL: Number,
+      KO: Number,
+      SP: Number,
+   }],
+  },
+
+  // Prize settlement bookkeeping
+  prizesSettledAt: Date,
+  prizePoolPaid: Number,
+  houseCutTaken: Number,
+  // Shadow Fight pot target — the promoter stakes a pot and only earns once
+  // entries have covered it (owner's rule: he waits for the pot to fill first).
+  potTarget: { type: Number, default: 0 },
+  promoterStake: { type: Number, default: 0 },
+  profitZoneReachedAt: Date,
+  userPredictions: [{
+    userId: { type: mongoose.Schema.Types.ObjectId, ref: 'User' }, // Reference to the user
+    predictionStatus: { type: String, enum: ['submitted', 'notSubmitted'], default: 'notSubmitted' }
+  }],
+  
+  __v: Number
+} , { timestamps: true });
+matchSchema.index({ matchStatus: 1, matchShadowOpenStatus: 1, updatedAt: -1 });
+matchSchema.index({ matchDate: -1, updatedAt: -1 });
+matchSchema.index({ homepagePromoted: 1, homepagePromotionRank: -1, matchDate: 1, updatedAt: -1 });
+matchSchema.index({ featuredThisWeek: 1, matchDate: 1 });
+matchSchema.index({ featuredFight: 1, matchDate: 1 });
+matchSchema.index({ affiliateId: 1, updatedAt: -1 });
+matchSchema.index({ autoDiscoveryKey: 1 }, { sparse: true });
+matchSchema.index({ ufcEventNumber: 1 }, { sparse: true });
+matchSchema.index({ autoDiscovered: 1, matchDate: 1 });
+matchSchema.pre('save', function cacheInitialMatchScoutingReport(next) {
+  if (!this.aiScoutingReport) {
+    const report = buildTemplateScoutingReport(buildScoutingPayload(this.toObject ? this.toObject() : this, []));
+    if (report) this.aiScoutingReport = report;
+  }
+  next();
+});
+
+
+const Match = mongoose.models.Match || mongoose.model('Match', matchSchema);
+
+function buildUpcomingEventAutomationPayload(match, context = {}) {
+  const item = toPlainObject(match) || {};
+  const contextInput = context.input && typeof context.input === 'object' ? context.input : {};
+  const contextMetadata = context.metadata && typeof context.metadata === 'object' ? context.metadata : {};
+  const title = item.matchName || `${item.matchFighterA || ''} vs ${item.matchFighterB || ''}`.trim() || contextInput.eventName || contextInput.title;
+  return {
+    trigger: context.trigger || 'upcoming_event',
+    vertical: 'combat',
+    sport: context.sport || item.matchCategoryTwo || item.matchCategory || contextInput.sport || 'mma',
+    sourceEntity: {
+      type: 'combat_match',
+      id: String(item._id || item.id || contextInput.matchId || ''),
+      label: title,
+    },
+    input: {
+      matchId: String(item._id || item.id || contextInput.matchId || ''),
+      matchName: item.matchName,
+      title,
+      eventName: contextInput.eventName || item.matchName,
+      eventNumber: contextInput.eventNumber || item.ufcEventNumber,
+      eventType: contextInput.eventType || item.ufcEventType,
+      fighterA: item.matchFighterA,
+      fighterB: item.matchFighterB,
+      fighters: [item.matchFighterA, item.matchFighterB].filter(Boolean),
+      matchDate: item.matchDate,
+      matchTime: item.matchTime,
+      matchType: item.matchType,
+      maxRounds: item.maxRounds,
+      description: item.matchDescription,
+      venue: contextInput.venue || item.venue,
+      city: contextInput.city || item.eventCity,
+      articleSource: contextInput.articleSource || item.autoDiscoverySource,
+      articleUrl: contextInput.articleUrl || item.autoDiscoverySourceUrl,
+      officialEventUrl: contextInput.officialEventUrl || item.officialEventUrl,
+      discoveryConfidence: contextInput.discoveryConfidence || item.autoDiscoveryConfidence,
+      discoveryProvider: contextInput.discoveryProvider || item.autoDiscoveryProvider,
+      ...contextInput,
+    },
+    metadata: {
+      route: context.route || 'backend-upcoming-event-hook',
+      action: context.action || 'upcoming-event-created',
+      matchId: String(item._id || item.id || contextInput.matchId || ''),
+      eventNumber: item.ufcEventNumber,
+      discoveryProvider: item.autoDiscoveryProvider,
+      discoveryKey: item.autoDiscoveryKey,
+      source: context.source || 'fantasymmadness-backend',
+      ...contextMetadata,
+    },
+    reason: context.reason || 'upcoming-event-created-in-backend',
+  };
+}
+
+async function triggerUpcomingEventAutomationForMatch(match, context = {}) {
+  if (!match || !app.locals.swarmPhase2?.triggerAutomationEvent) return null;
+  try {
+    return await app.locals.swarmPhase2.triggerAutomationEvent(buildUpcomingEventAutomationPayload(match, context));
+  } catch (error) {
+    return {
+      ok: false,
+      warning: context.warning || 'Fight was saved but upcoming-event automation failed.',
+      error: error.message,
+    };
+  }
+}
+
+app.get('/api/update-shadow-open-status', verifyCronSecret, async (req, res) => {
+  console.log('Cron job to update matchShadowOpenStatus started.');
+
+  try {
+    const sevenDaysAgo = new Date();
+    sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 7);
+
+    // Update only if `createdAt` exists and is older than 7 days
+    const result = await Match.updateMany(
+      { 
+        $or: [
+          { createdAt: { $exists: true, $lte: sevenDaysAgo } }, // If createdAt exists and is old
+          { createdAt: { $exists: false } } // If createdAt doesn't exist, update just in case
+        ],
+        matchShadowOpenStatus: 'open'
+      },
+      { $set: { matchShadowOpenStatus: 'closed' } }
+    );
+
+    console.log(`Updated ${result.modifiedCount} matches to closed`);
+    res.status(200).json({ message: `Updated ${result.modifiedCount} matches to closed` });
+  } catch (error) {
+    console.error('Error running cron job:', error);
+    res.status(500).json({ error: 'Internal Server Error' });
+  }
+});
+
+app.post("/update-match-shadow-open-status/:matchId", verifyAdminToken, async (req, res) => {
+  const { matchId } = req.params;
+  const { status } = req.body; // Expecting "open" or "closed" from frontend
+
+  if (!["open", "closed"].includes(status)) {
+    return res.status(400).json({ message: "Invalid status. Use 'open' or 'closed'." });
+  }
+
+  try {
+    const match = await Match.findById(matchId);
+    if (!match) {
+      return res.status(404).json({ message: "Match not found" });
+    }
+
+    // Update match shadow open status
+    match.matchShadowOpenStatus = status;
+    await match.save();
+
+    console.log(`Match ${matchId} shadow open status set to ${status}.`);
+    res.status(200).json({ message: `Match shadow open status successfully set to ${status}.` });
+  } catch (error) {
+    console.error("Error updating match shadow open status:", error);
+    res.status(500).json({ message: "Internal server error" });
+  }
+});
+
+
+
+app.post("/update-match-status-shadow/:matchId", verifyAdminOrAffiliateToken, requireAdminOrFightOwner((req) => req.params.matchId), async (req, res) => {
+  const { matchId } = req.params;
+  const { status } = req.body; // Expecting "active" or "inactive" from frontend
+
+  if (!["active", "inactive"].includes(status)) {
+    return res.status(400).json({ message: "Invalid status. Use 'active' or 'inactive'." });
+  }
+
+  try {
+    const match = await Match.findById(matchId);
+    if (!match) {
+      return res.status(404).json({ message: "Match not found" });
+    }
+
+    // Update match status
+    match.matchShadowStatus = status;
+    await match.save();
+
+    console.log(`Match ${matchId} status set to ${status}.`);
+    res.status(200).json({ message: `Match successfully set to ${status}.` });
+  } catch (error) {
+    console.error("Error updating match status:", error);
+    res.status(500).json({ message: "Internal server error" });
+  }
+});
+
+
+
+app.post("/activate-match/:matchId", verifyAdminOrAffiliateToken, requireAdminOrFightOwner((req) => req.params.matchId), async (req, res) => {
+  const { matchId } = req.params;
+
+  try {
+    const match = await Match.findById(matchId);
+    if (!match) {
+      return res.status(404).json({ message: "Match not found" });
+    }
+
+    // Activate match
+    match.matchShadowStatus = "active";
+    await match.save();
+
+    console.log(`Match ${matchId} status set to active.`);
+
+    // EMAIL IS FOR FEATURED FIGHTS ONLY.
+    // This used to mail every user and every guest on every activation. Players
+    // now receive all fights through the in-app bell
+    // (GET /api/users/me/notifications), so the inbox is reserved for cards you
+    // have actually marked as featured. An admin can force a send with
+    // { "notify": true } in the body for a one-off.
+    const isFeatured = Boolean(match.featuredThisWeek || match.featuredFight);
+    const forceNotify = req.body?.notify === true;
+    const shouldEmail = isFeatured || forceNotify;
+
+    if (!shouldEmail) {
+      console.log(`Match ${matchId} activated without email — not featured.`);
+      clearPublicResponseCache();
+      return res.status(200).json({
+        message: "Fight activated. No email sent — mark it Featured This Week (or send notify:true) to email your list.",
+        emailed: false,
+        reason: 'NOT_FEATURED',
+        inAppNotified: true,
+      });
+    }
+
+    // Fetch users. Respect the two opt-outs that already exist on the account —
+    // mailing someone who unsubscribed is the fastest route to a spam complaint.
+    const users = await User.find({
+      isSubscribed: { $ne: false },
+      isNotificationsEnabled: { $ne: false },
+    }).select('email firstName isSubscribed isNotificationsEnabled').limit(20000).lean();
+    const nonRegisteredUsers = await Usernonregistered.find();
+
+    // Match details for email
+    const {
+      matchName,
+      matchFighterA,
+      matchFighterB,
+      fighterAImage,
+      fighterBImage,
+      matchDate,
+      matchTime,
+      maxRounds,
+      matchType,
+    } = match;
+
+    // Prepare email function
+    const sendEmail = (user, isRegistered) => {
+      return {
+        from: FMM_MAIL_FROM,
+        to: user.email,
+        subject: isRegistered ? "Fantasy MMA Madness - New Fight Alert!" : "Join Fantasy MMA Madness!",
+        html: `
+          <table width="100%" cellpadding="0" cellspacing="0" border="0" style="width:100%; max-width:600px; margin:auto;">
+            <tr>
+              <td align="center" style="padding: 15px 0;">
+                <img src="https://res.cloudinary.com/daflot6fo/image/upload/v1736068036/bywcrrcqmcyczdyhjmdv.png" alt="Fantasy MMA Madness Logo" style="width:100px;" />
+                <h2 style="margin: 0; color: #191164; font-family: 'New York', Charter, Georgia, serif;">Fantasy MMA Madness</h2>
+              </td>
+            </tr>
+            <tr>
+              <td style="padding: 10px 0;">
+                <p style="font-size: 16px; font-family: Arial, sans-serif; color: #333;">Dear ${user.firstName || user.fullName},</p>
+                <p style="font-size: 16px; font-family: Arial, sans-serif; color: #333;">
+                  ${isRegistered ? "A new fight has been added!" : "We noticed you haven’t registered yet. Join now and don’t miss out!"}
+                </p>
+                <p style="font-size: 16px; font-family: Arial, sans-serif; color: #333;">
+                  <strong>Fight:</strong> ${matchFighterA} vs ${matchFighterB}
+                </p>
+              </td>
+            </tr>
+            <tr>
+              <td align="center" style="padding: 20px; background-color:#f8f8f8;">
+                <h2 style="color: #191164; font-family: 'Impact', fantasy, sans-serif;">Get Ready for Battle!</h2>
+                <p style="font-size: 17px; font-family: 'Comic Sans MS', fantasy, sans-serif; color: #555;">
+                  Your next adrenaline-pumping challenge awaits. Enter the arena and put your prediction skills to the test!
+                </p>
+              </td>
+            </tr>
+            <tr>
+              <td>
+                <table width="100%" cellpadding="0" cellspacing="0" border="0" style="width:100%; margin:auto;">
+                  <tr>
+                    <td align="center" style="padding: 10px;">
+                      <div style="width:60px; height:60px; border-radius:50%; border:3px solid red; background-color:#fff;">
+                        <img src="${fighterAImage}" alt="${matchFighterA}" style="width:100%; height:100%; object-fit:cover; border-radius:50%;" />
+                      </div>
+                      <p style="font-size: 16px; font-family: Arial, sans-serif; color: #333; text-align:center;">${matchFighterA}</p>
+                    </td>
+                    <td align="center" style="padding: 10px;">
+                      <h1 style="margin:0; font-family: Arial, sans-serif; color: #333;">Vs</h1>
+                    </td>
+                    <td align="center" style="padding: 10px;">
+                      <div style="width:60px; height:60px; border-radius:50%; border:3px solid blue; background-color:#fff;">
+                        <img src="${fighterBImage}" alt="${matchFighterB}" style="width:100%; height:100%; object-fit:cover; border-radius:50%;" />
+                      </div>
+                      <p style="font-size: 16px; font-family: Arial, sans-serif; color: #333; text-align:center;">${matchFighterB}</p>
+                    </td>
+                  </tr>
+                </table>
+              </td>
+            </tr>
+            <tr>
+              <td style="padding: 10px;">
+                <p style="font-size: 16px; font-family: Arial, sans-serif; color: #333;"><strong>Date:</strong> ${matchDate}</p>
+                <p style="font-size: 16px; font-family: Arial, sans-serif; color: #333;">
+                  <strong>Time:</strong> ${new Date(`1970-01-01T${matchTime}:00`).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: true })} EST
+                </p>
+                <p style="font-size: 16px; font-family: Arial, sans-serif; color: #333;"><strong>Max Rounds:</strong> ${maxRounds}</p>
+                <p style="font-size: 16px; font-family: Arial, sans-serif; color: #333;"><strong>Fight Type:</strong> ${matchType}</p>
+                <p><a href="https://fantasymmadness.com/${isRegistered ? 'upcomingfights' : 'CreateAccount'}" style="font-family: Arial, sans-serif; color: #191164; text-decoration: none;">
+                  ${isRegistered ? "View Fight Details" : "Register Now"}
+                </a></p>
+              </td>
+            </tr>
+            <tr>
+              <td align="center" style="padding: 15px 0;">
+                <img src="https://res.cloudinary.com/daflot6fo/image/upload/v1736068036/bywcrrcqmcyczdyhjmdv.png" alt="Fantasy MMA Madness Logo" style="width:70px;" />
+                <p><a href="https://fantasymmadness.com" style="font-family: Arial, sans-serif; color: #191164; text-decoration: none;">fantasymmadness.com</a></p>
+              </td>
+            </tr>
+          </table>
+        `,
+      };
+    };
+
+    // Send emails
+    const registeredEmails = users.map((user) => transporter.sendMail(sendEmail(user, true)));
+    const nonRegisteredEmails = nonRegisteredUsers.map((user) => transporter.sendMail(sendEmail(user, false)));
+
+    await Promise.all([...registeredEmails, ...nonRegisteredEmails]);
+
+    console.log("Emails sent successfully to all users.");
+    const swarmAutomation = await app.locals.swarmPhase2?.triggerAutomationEvent?.({
+      trigger: 'fight_published',
+      vertical: 'combat',
+      sourceEntity: {
+        type: 'combat_match',
+        id: String(match._id),
+        label: match.matchName || `${match.matchFighterA || ''} vs ${match.matchFighterB || ''}`.trim(),
+      },
+      input: {
+        matchId: String(match._id),
+        matchName: match.matchName,
+        title: match.matchName,
+        fighterA: match.matchFighterA,
+        fighterB: match.matchFighterB,
+        matchDate: match.matchDate,
+        matchTime: match.matchTime,
+        matchType: match.matchType,
+        maxRounds: match.maxRounds,
+        description: match.matchDescription,
+      },
+      metadata: { route: '/activate-match/:matchId', action: 'legacy-fight-published' },
+      reason: 'fight-activated-in-backend',
+    }).catch((error) => ({ ok: false, warning: 'Fight activated but swarm automation event failed.', error: error.message }));
+    return res.status(200).json({ message: "Match activated & emails sent successfully", automation: swarmAutomation || null });
+  } catch (error) {
+    console.error("Error updating match status:", error);
+    return res.status(500).json({ message: "Internal server error" });
+  }
+});
+
+
+app.post('/api/matches/:matchId/promotional-video', verifyAdminOrAffiliateToken, requireAdminOrFightOwner((req) => req.params.matchId), async (req, res) => {
+  const { matchId } = req.params;
+  const { promotionalVideoUrl } = req.body;
+
+  try {
+    // Find the match by ID and update the promotional video URL
+    const updatedMatch = await Match.findByIdAndUpdate(
+      matchId,
+      { matchPromotionalVideoUrl: promotionalVideoUrl },
+      { new: true } // Return the updated document
+    );
+
+    if (!updatedMatch) {
+      return res.status(404).json({ message: 'Match not found' });
+    }
+
+    res.json({
+      message: 'Promotional video URL updated successfully',
+      match: updatedMatch,
+    });
+  } catch (error) {
+    console.error('Error updating promotional video URL:', error);
+    res.status(500).json({ message: 'Internal server error' });
+  }
+});
+
+// POST API to update match reward status by matchId
+app.post('/api/update-match-reward', verifyAdminToken, async (req, res) => {
+  try {
+    const { matchId, matchReward } = req.body;
+
+    // Validate matchReward value
+    if (!['Rewarded', 'NotRewarded'].includes(matchReward)) {
+      return res.status(400).json({ success: false, message: 'Invalid matchReward value' });
+    }
+
+    // Find the match by matchId and update the matchReward status
+    const match = await Match.findByIdAndUpdate(
+      matchId, 
+      { matchReward },
+      { new: true }
+    );
+
+    if (!match) {
+      return res.status(404).json({ success: false, message: 'Match not found' });
+    }
+
+    res.status(200).json({ success: true, message: 'Match reward status updated successfully', match });
+  } catch (error) {
+    console.error('Request failed:', error);
+    res.status(500).json({ success: false, message: 'Server error' });
+  }
+});
+
+
+app.get('/matchByName', async (req, res) => {
+  const { matchName } = req.query;
+
+  if (!matchName) {
+      return res.status(400).json({ error: 'Match name is required.' });
+  }
+
+  try {
+      const match = await Match.findOne(applyFightPublicVisibilityFilter({ matchName }, req.query)).populate('fighterAId fighterBId').lean();
+
+      if (!match) {
+          return res.status(404).json({ message: 'Match not found' });
+      }
+
+      res.status(200).json(attachCombatFighterReadFallbacks(match, 'match'));
+  } catch (error) {
+      console.error('Error fetching match details:', error);
+      res.status(500).json({ message: 'Server error' });
+  }
+});
+
+
+
+
+// POST API to receive matchId and matchVideoUrl
+app.post('/updateMatchVideo', verifyAdminToken, async (req, res) => {
+  const { matchId, matchVideoUrl } = req.body;
+
+  // Basic validation
+  if (!matchId || !matchVideoUrl) {
+    return res.status(400).json({ message: 'matchId and matchVideoUrl are required' });
+  }
+
+  try {
+    // Find the match by matchId and update the matchVideoUrl if it exists, otherwise create a new one
+    const updatedMatch = await Match.findOneAndUpdate(
+      { _id: matchId }, 
+      { matchVideoUrl }, // Update the matchVideoUrl
+      { new: true, upsert: true } // new: return the updated document, upsert: create if not found
+    );
+
+    res.status(200).json({
+      message: 'Match video URL updated successfully',
+      updatedMatch,
+    });
+  } catch (error) {
+    console.error('Error updating match:', error);
+    res.status(500).json({ message: 'An error occurred while updating the match' });
+  }
+});
+
+
+
+app.post('/finishMatch/:matchId', verifyAdminToken, async (req, res) => {
+  try {
+    const { matchId } = req.params;
+
+    // Find the match by ID and update the status to 'Finished'
+    const match = await Match.findByIdAndUpdate(
+      matchId, 
+      { matchStatus: 'Finished' }, 
+      { new: true } // This option returns the updated document
+    );
+
+    if (!match) {
+      return res.status(404).json({ message: 'Match not found' });
+    }
+
+    res.json({ message: 'Match status updated to Finished', match });
+  } catch (error) {
+    console.error('Error finishing match:', error);
+    res.status(500).json({ message: 'Internal server error' });
+  }
+});
+// GET API to retrieve a match by ID
+app.get('/api/matches/:id', async (req, res) => {
+  try {
+    const { id } = req.params;
+
+    // Find the match by ID
+    const match = await Match.findById(id).populate('fighterAId fighterBId').lean();
+
+    if (!match) {
+      return res.status(404).json({ message: 'Match not found' });
+    }
+
+    res.status(200).json(attachCombatFighterReadFallbacks(match, 'match'));
+  } catch (error) {
+    console.error('Request failed:', error);
+    res.status(500).json({ message: 'Server error' });
+  }
+});
+
+
+// Admin-friendly fight edit helpers used by the updated frontend.
+// These endpoints are additive aliases over the existing legacy routes.
+app.get('/api/shadow/:id', async (req, res) => {
+  try {
+    const shadowFight = await Shadow.findById(req.params.id).populate('fighterAId fighterBId').lean();
+    if (!shadowFight) return res.status(404).json({ message: 'Shadow fight not found' });
+    res.status(200).json(attachCombatFighterReadFallbacks(shadowFight, 'shadow'));
+  } catch (error) {
+    console.error('Request failed:', error);
+    res.status(500).json({ message: 'Server error' });
+  }
+});
+
+app.put('/api/admin/matches/:id/video', verifyAdminToken, async (req, res) => {
+  try {
+    const updatedMatch = await updateFightVideoFields(Match, req.params.id, req.body);
+    res.status(200).json({ message: 'Fight video updated successfully', match: updatedMatch });
+  } catch (error) {
+    res.status(error.statusCode || 500).json({ message: error.message || 'Failed to update fight video' });
+  }
+});
+
+app.post('/api/admin/matches/:id/video', verifyAdminToken, async (req, res) => {
+  try {
+    const updatedMatch = await updateFightVideoFields(Match, req.params.id, req.body);
+    res.status(200).json({ message: 'Fight video updated successfully', match: updatedMatch });
+  } catch (error) {
+    res.status(error.statusCode || 500).json({ message: error.message || 'Failed to update fight video' });
+  }
+});
+
+app.put('/api/admin/shadow/:id/video', verifyAdminToken, async (req, res) => {
+  try {
+    const updatedMatch = await updateFightVideoFields(Shadow, req.params.id, req.body);
+    res.status(200).json({ message: 'Shadow fight video updated successfully', match: updatedMatch });
+  } catch (error) {
+    res.status(error.statusCode || 500).json({ message: error.message || 'Failed to update shadow fight video' });
+  }
+});
+
+app.post('/api/admin/shadow/:id/video', verifyAdminToken, async (req, res) => {
+  try {
+    const updatedMatch = await updateFightVideoFields(Shadow, req.params.id, req.body);
+    res.status(200).json({ message: 'Shadow fight video updated successfully', match: updatedMatch });
+  } catch (error) {
+    res.status(error.statusCode || 500).json({ message: error.message || 'Failed to update shadow fight video' });
+  }
+});
+
+app.put('/api/admin/matches/:id/scoring', verifyAdminToken, async (req, res) => {
+  try {
+    const updatedMatch = await updateFightScoringFields(Match, req.params.id, req.body);
+    res.status(200).json({ message: 'Fight scoring updated successfully', match: updatedMatch, manualTotalPunches: true });
+  } catch (error) {
+    res.status(error.statusCode || 500).json({ message: error.message || 'Failed to update fight scoring' });
+  }
+});
+
+app.post('/api/admin/matches/:id/scoring', verifyAdminToken, async (req, res) => {
+  try {
+    const updatedMatch = await updateFightScoringFields(Match, req.params.id, req.body);
+    res.status(200).json({ message: 'Fight scoring updated successfully', match: updatedMatch, manualTotalPunches: true });
+  } catch (error) {
+    res.status(error.statusCode || 500).json({ message: error.message || 'Failed to update fight scoring' });
+  }
+});
+
+app.put('/api/admin/shadow/:id/scoring', verifyAdminToken, async (req, res) => {
+  try {
+    const updatedMatch = await updateFightScoringFields(Shadow, req.params.id, req.body);
+    res.status(200).json({ message: 'Shadow fight scoring updated successfully', match: updatedMatch, manualTotalPunches: true });
+  } catch (error) {
+    res.status(error.statusCode || 500).json({ message: error.message || 'Failed to update shadow fight scoring' });
+  }
+});
+
+app.post('/api/admin/shadow/:id/scoring', verifyAdminToken, async (req, res) => {
+  try {
+    const updatedMatch = await updateFightScoringFields(Shadow, req.params.id, req.body);
+    res.status(200).json({ message: 'Shadow fight scoring updated successfully', match: updatedMatch, manualTotalPunches: true });
+  } catch (error) {
+    res.status(error.statusCode || 500).json({ message: error.message || 'Failed to update shadow fight scoring' });
+  }
+});
+
+async function safelyDeleteFightImages(fight) {
+  const deleteFromCloudinary = async (publicId) => {
+    if (!publicId) return;
+    try {
+      await cloudinary.uploader.destroy(publicId);
+    } catch (imageError) {
+      console.warn('Fight image delete skipped:', imageError.message);
+    }
+  };
+
+  await Promise.all([
+    deleteFromCloudinary(fight?.fighterAImageDeleteUrl),
+    deleteFromCloudinary(fight?.fighterBImageDeleteUrl),
+    deleteFromCloudinary(fight?.promotionBackgroundDeleteUrl),
+  ]);
+}
+
+async function refundMatchScoresIfRequested(match, matchId, updateWallet) {
+  if (updateWallet !== 'true') return { refundedUsers: 0 };
+
+  const scores = await Score.find({ matchId });
+  const matchTokens = Number(match?.matchTokens || 0);
+  let refundedUsers = 0;
+
+  await Promise.all(scores.map(async (score) => {
+    const user = await User.findById(score.playerId);
+    if (user) {
+      const balanceBefore = Number.parseInt(String(user.tokens || '0'), 10) || 0;
+      user.tokens = addWalletTokens(user.tokens, matchTokens);
+      await user.save();
+      await recordWalletMove({
+        userId: user._id,
+        amount: matchTokens,
+        balanceBefore,
+        balanceAfter: Number.parseInt(String(user.tokens || '0'), 10) || 0,
+        reason: 'fight_removed_refund',
+        reference: String(score.matchId || ''),
+      });
+      refundedUsers += 1;
+    }
+  }));
+
+  return { refundedUsers };
+}
+
+function isValidMongoObjectId(id) {
+  return Boolean(id && mongoose.Types.ObjectId.isValid(String(id)));
+}
+
+function normalizeFightDeleteItems(payload = {}) {
+  const rawItems = Array.isArray(payload.items) ? payload.items
+    : Array.isArray(payload.ids) ? payload.ids
+      : Array.isArray(payload.fightIds) ? payload.fightIds
+        : Array.isArray(payload.matchIds) ? payload.matchIds
+          : [];
+
+  return rawItems
+    .map((item) => {
+      if (typeof item === 'string') return { id: item };
+      if (!item || typeof item !== 'object') return null;
+      return {
+        id: item.id || item._id || item.matchId || item.fightId,
+        sourceType: item.sourceType || item.source || item.type,
+      };
+    })
+    .filter((item) => item && isValidMongoObjectId(item.id));
+}
+
+async function deleteFightAcrossCollections(id, options = {}) {
+  const { sourceType, affiliateId, updateWallet } = options;
+  // Public reads are cached, so a delete that does not invalidate leaves the
+  // fight on the website and in the app until the cache ages out. That is the
+  // "I deleted it and nothing happened" report — cleared at every exit below.
+  const done = (result) => { clearPublicResponseCache(); return result; };
+
+  if (!isValidMongoObjectId(id)) {
+    return { ok: false, id, code: 'INVALID_ID', message: 'Invalid fight id.' };
+  }
+
+  const normalizedSource = String(sourceType || '').trim().toLowerCase();
+  const shouldTryShadowFirst = ['shadow', 'shadowfight', 'template'].includes(normalizedSource);
+  const lookupOrder = shouldTryShadowFirst
+    ? [{ model: Shadow, sourceType: 'shadow' }, { model: Match, sourceType: 'match' }]
+    : [{ model: Match, sourceType: 'match' }, { model: Shadow, sourceType: 'shadow' }];
+
+  let found = null;
+  for (const candidate of lookupOrder) {
+    const fight = await candidate.model.findById(id);
+    if (fight) {
+      found = { ...candidate, fight };
+      break;
+    }
+  }
+
+  if (!found) {
+    return { ok: false, id, code: 'FIGHT_NOT_FOUND', message: 'Fight not found in Match or Shadow collections.' };
+  }
+
+  const { fight, model, sourceType: resolvedSourceType } = found;
+  await safelyDeleteFightImages(fight);
+
+  let refundResult = { refundedUsers: 0 };
+  if (resolvedSourceType === 'match') {
+    refundResult = await refundMatchScoresIfRequested(fight, id, updateWallet);
+  }
+
+  await model.findByIdAndDelete(id);
+  const scoreDeleteResult = await Score.deleteMany({ matchId: id });
+
+  await Shadow.updateMany(
+    { 'AffiliateIds.matchId': id },
+    { $pull: { AffiliateIds: affiliateId
+      ? { AffiliateId: affiliateId, matchId: id }
+      : { matchId: id }
+    } }
+  );
+
+  try {
+    const notification = new Notification({
+      title: `${resolvedSourceType === 'shadow' ? 'Shadow Fight' : 'Fight'} Deleted: ${fight.matchName || 'Untitled Fight'}`,
+    });
+    await notification.save();
+  } catch (notificationError) {
+    console.warn('Fight delete notification skipped:', notificationError.message);
+  }
+
+  return done({
+    ok: true,
+    id,
+    sourceType: resolvedSourceType,
+    title: fight.matchName,
+    deletedScores: scoreDeleteResult?.deletedCount || 0,
+    refundedUsers: refundResult.refundedUsers || 0,
+  });
+}
+
+async function handleBulkFightDelete(req, res) {
+  try {
+    const items = normalizeFightDeleteItems(req.body);
+
+    if (!items.length) {
+      return res.status(400).json({
+        ok: false,
+        message: 'Please provide fight ids in ids, fightIds, matchIds, or items.',
+      });
+    }
+
+    const results = [];
+    for (const item of items) {
+      const result = await deleteFightAcrossCollections(item.id, {
+        sourceType: item.sourceType,
+        affiliateId: req.query.affiliateId || req.body.affiliateId,
+        updateWallet: String(req.query.updateWallet || req.body.updateWallet || 'false'),
+      });
+      results.push(result);
+    }
+
+    const deletedCount = results.filter((item) => item.ok).length;
+    const failedCount = results.length - deletedCount;
+
+    return res.status(failedCount && !deletedCount ? 404 : 200).json({
+      ok: failedCount === 0,
+      message: `${deletedCount} fight(s) deleted${failedCount ? `, ${failedCount} failed` : ''}.`,
+      deletedCount,
+      failedCount,
+      results,
+    });
+  } catch (error) {
+    console.error('Bulk fight delete failed:', error);
+    return res.status(500).json({ ok: false, message: 'Server error' });
+  }
+}
+
+// SECURITY: admin-only. Deleting fights destroys the entries attached to them.
+app.post('/api/admin/fights/bulk-delete', verifyAdminToken, handleBulkFightDelete);
+app.delete('/api/admin/fights/bulk-delete', verifyAdminToken, handleBulkFightDelete);
+app.post('/api/matches/bulk-delete', verifyAdminToken, handleBulkFightDelete);
+app.delete('/api/matches/bulk-delete', verifyAdminToken, handleBulkFightDelete);
+
+app.delete('/api/matches/:id', verifyAdminOrAffiliateToken, requireAdminOrFightOwner((req) => req.params.id), async (req, res) => {
+  try {
+    const result = await deleteFightAcrossCollections(req.params.id, {
+      sourceType: req.query.sourceType || req.query.source,
+      affiliateId: req.query.affiliateId,
+      updateWallet: String(req.query.updateWallet || 'false'),
+    });
+
+    if (!result.ok) {
+      return res.status(result.code === 'INVALID_ID' ? 400 : 404).json({
+        message: result.message,
+        code: result.code,
+        id: result.id,
+      });
+    }
+
+    return res.status(200).json({
+      message: `${result.sourceType === 'shadow' ? 'Shadow fight' : 'Match'} deleted successfully.`,
+      result,
+    });
+  } catch (error) {
+    console.error('Fight delete failed:', error);
+    res.status(500).json({ message: 'Server error' });
+  }
+});
+
+
+app.post(
+  '/addMatch',
+  verifyAdminOrAffiliateToken,
+  upload.fields([
+    { name: 'fighterAImage' },
+    { name: 'fighterBImage' },
+    { name: 'promotionBackground' }
+  ]),
+  async (req, res) => {
+    // Declared out here because the shadow-template linkage below runs OUTSIDE
+    // the try block and still needs the pinned promoter id.
+    let effectiveAffiliateId = null;
+    try {
+      const {
+        BoxingMatch,
+        MMAMatch,
+        matchCategoryTwo,
+        shadowFightId,
+        sourceLiveMatchId,
+        maxRounds,
+        affiliateId,
+        matchBy,
+        profit,
+        amountOverPotBudget,
+        matchCategory,
+        matchName,
+        matchFighterA,
+        matchFighterB,
+        matchDescription,
+        matchVideoUrl,
+        matchDate,
+        matchTime,
+        matchTokens,
+        matchStatus,
+        pot,
+        matchType,
+        fighterAId,
+        fighterBId,
+        fighterAImageUrl,
+        fighterAImageDeleteUrlFromReq,
+        fighterBImageUrl,
+        fighterBImageDeleteUrlFromReq,
+        promotionBackgroundUrl,
+        promotionBackgroundDeleteUrlFromReq
+      } = req.body;
+
+      // An affiliate promoting a card is pinned to their own id: the body value
+      // is ignored so nobody can post a fight in another promoter's name (and
+      // collect their rake). Admin posts keep whatever affiliateId they set.
+      effectiveAffiliateId = affiliateId;
+      if (req.actorRole === 'affiliate') {
+        effectiveAffiliateId = req.affiliateActorId;
+        if (!effectiveAffiliateId) {
+          return res.status(403).json({ message: 'Affiliate session is missing an account id.', code: 'NO_AFFILIATE_ID' });
+        }
+
+        // Promoter staking is optional. Unstaked paid cards use the existing
+        // minimum-entrant/auto-refund settlement guard; fully staked cards are
+        // guaranteed. A previous route-level rejection contradicted that
+        // settlement model and prevented ordinary affiliates from publishing.
+      }
+
+      // Upload images to Cloudinary if files are provided; otherwise, use URLs from req.body
+      const uploadToCloudinary = (fileBuffer, folder) =>
+        new Promise((resolve, reject) => {
+          cloudinary.uploader.upload_stream(
+            { folder },
+            (error, result) => {
+              if (error) return reject(error);
+              resolve(result);
+            }
+          ).end(fileBuffer);
+        });
+
+      let fighterAImage = fighterAImageUrl || null;
+      let fighterBImage = fighterBImageUrl || null;
+      let promotionBackground = promotionBackgroundUrl || null;
+
+      let fighterAImageDeleteUrl = fighterAImageDeleteUrlFromReq || null;
+      let fighterBImageDeleteUrl = fighterBImageDeleteUrlFromReq || null;
+      let promotionBackgroundDeleteUrl = promotionBackgroundDeleteUrlFromReq || null;
+
+      if (req.files?.fighterAImage) {
+        const resultA = await uploadToCloudinary(req.files.fighterAImage[0].buffer, 'fighter_images');
+        fighterAImage = resultA.secure_url;
+        fighterAImageDeleteUrl = resultA.public_id;
+      }
+
+      if (req.files?.fighterBImage) {
+        const resultB = await uploadToCloudinary(req.files.fighterBImage[0].buffer, 'fighter_images');
+        fighterBImage = resultB.secure_url;
+        fighterBImageDeleteUrl = resultB.public_id;
+      }
+
+      if (req.files?.promotionBackground) {
+        const resultBackground = await uploadToCloudinary(req.files.promotionBackground[0].buffer, 'promotion_backgrounds');
+        promotionBackground = resultBackground.secure_url;
+        promotionBackgroundDeleteUrl = resultBackground.public_id;
+      }
+
+      const fighterSelection = await resolveCombatFighterSelectionForMatchInput({
+        fighterAId, fighterBId, matchFighterA, matchFighterB, fighterAImage, fighterBImage,
+        fighterAImagePublicId: fighterAImageDeleteUrl, fighterBImagePublicId: fighterBImageDeleteUrl, matchCategory: matchCategoryTwo || matchCategory,
+      });
+      const requestedMatchDate = matchDate || req.body?.fightDate || req.body?.scheduledDate;
+      const requestedMatchTime = matchTime || req.body?.fightTime || req.body?.scheduledTime;
+      const normalizedRequestedDate = normalizeCalendarDateInput(requestedMatchDate);
+      if (requestedMatchDate && !normalizedRequestedDate.date) {
+        return res.status(400).json({ message: 'A valid match date is required.' });
+      }
+
+      // Admin-created/affiliate-promoted public fight cards are LIVE by design.
+      // Historical/template records live in Shadow and are created by the rollover job.
+      const normalizedLiveMatchType = 'LIVE';
+      const normalizedLiveStatus = req.actorRole === 'affiliate' ? 'Ongoing' : (matchStatus || 'Ongoing');
+
+      // Create match data object
+      const matchData = applyCombatFighterSelectionToMatchPayload({
+        matchCategory,
+        matchName,
+        matchFighterA,
+        matchFighterB,
+        matchDescription,
+        matchVideoUrl,
+        matchDate: normalizedRequestedDate.date || requestedMatchDate,
+        matchDateKey: normalizedRequestedDate.key || undefined,
+        eventTimeZone: req.body?.eventTimeZone || req.body?.timezone || undefined,
+        matchTime: requestedMatchTime,
+        matchTokens,
+        matchStatus: normalizedLiveStatus,
+        pot,
+        matchType: normalizedLiveMatchType,
+        affiliateId: effectiveAffiliateId,
+        // What the promoter has behind the prize, and the pot the fill gauge
+        // measures against. Zero on admin cards and on free cards.
+        promoterStake: Math.max(0, Math.round(Number(req.body.promoterStake) || 0)),
+        potTarget: Math.max(0, Math.round(Number(req.body.potTarget) || 0)),
+        autoRefundIfShort: req.body.autoRefundIfShort === undefined
+          ? true
+          : ['true', '1', 'yes', true].includes(req.body.autoRefundIfShort),
+        matchBy,
+        profit,
+        amountOverPotBudget,
+        maxRounds,
+        shadowFightId,
+        matchCategoryTwo,
+        fighterAImage,
+        fighterBImage,
+        fighterAImageDeleteUrl,
+        fighterBImageDeleteUrl,
+        promotionBackground,
+        promotionBackgroundDeleteUrl
+      }, fighterSelection);
+
+      if (mongoose.Types.ObjectId.isValid(String(shadowFightId || ''))) {
+        matchData.sourceShadowId = shadowFightId;
+        matchData.promotedShadowFightId = shadowFightId;
+      }
+      if (mongoose.Types.ObjectId.isValid(String(sourceLiveMatchId || ''))) {
+        matchData.sourceLiveMatchId = sourceLiveMatchId;
+      }
+      // NOT clearing matchFighterA/matchFighterB here anymore: this used to wipe
+      // them immediately on creation, relying entirely on fighterAId/fighterBId
+      // populating correctly on every future read. When that population ever
+      // came back empty (deleted fighter, ref mismatch, etc.) the fight had no
+      // name left at all — "FIGHTER A VS FIGHTER B" placeholders forever, with
+      // real photos. The name string is now kept as a permanent fallback;
+      // attachCombatFighterReadFallbacks still prefers the live fighter-library
+      // name whenever population succeeds.
+      Object.assign(matchData, buildAutoHomepagePromotionFields({
+        body: req.body,
+        admin: req.admin,
+        actor: matchBy || effectiveAffiliateId || 'addMatch',
+      }));
+
+      // Conditionally append BoxingMatch and MMAMatch only if they have values
+      if (BoxingMatch) {
+        matchData.BoxingMatch = JSON.parse(BoxingMatch);
+      }
+
+      if (MMAMatch) {
+        matchData.MMAMatch = JSON.parse(MMAMatch);
+      }
+      if (req.body.addToShadow === 'true' || req.body.addToShadow === true) {
+        matchData.shadowTemplatesAdditionStatus = true;
+    }
+      // Save the match details to the database
+      const newMatch = new Match(matchData);
+      const savedMatch = await newMatch.save();
+      clearPublicResponseCache();
+
+  // Roster upkeep: make sure both fighters exist as profiles and their
+  // appearance counts are current. Wrapped so a roster problem can never stop a
+  // fight from being published.
+  try {
+    for (const [name, image] of [
+      [savedMatch.matchFighterA, savedMatch.fighterAImage],
+      [savedMatch.matchFighterB, savedMatch.fighterBImage],
+    ]) {
+      if (!fighterKeyOf(name)) continue;
+      await upsertFighterProfile({
+        name,
+        sport: String(savedMatch.matchCategory || '').toLowerCase(),
+        imageUrl: image || '',
+      });
+      await recountFighterAppearances(fighterKeyOf(name));
+    }
+  } catch (rosterError) {
+    console.error('Fight saved but roster upkeep failed:', rosterError.message);
+  }
+
+  // Admin-console record only. Players get this through
+  // GET /api/users/me/notifications, which derives from the fight itself — a row
+  // per user per fight would be tens of thousands of writes per publish.
+  const notification = new Notification({
+      title: `New Fight Added: ${savedMatch.matchName}`,
+    });
+    await notification.save();
+ 
+
+  // Now that match is saved, store affiliateId and matchId in the Shadow schema
+  const shadowFight = await Shadow.findById(shadowFightId);
+  if (shadowFight) {
+    const affiliateExists = shadowFight.AffiliateIds.some(item => item.AffiliateId.toString() === String(effectiveAffiliateId) && item.matchId.toString() === savedMatch._id.toString());
+
+    if (!affiliateExists) {
+      shadowFight.AffiliateIds.push({
+        AffiliateId: effectiveAffiliateId,
+        matchId: savedMatch._id,
+      });
+      await shadowFight.save();
+    }
+  }
+  
+
+  if (req.body.notify === 'true' || req.body.notify === true) {
+
+  // Opt-in already, but it was mailing people who had unsubscribed and loading
+  // whole user documents (password hashes included) to do it.
+  const users = await User.find({
+    isSubscribed: { $ne: false },
+    isNotificationsEnabled: { $ne: false },
+  }).select('email firstName lastName').limit(20000).lean();
+  
+  
+  const registeredUserMailPromises = users.map(user => {
+    const mailOptions = {
+      from: FMM_MAIL_FROM,
+      to: user.email,
+      subject: 'Fantasy mmadness',
+   html: `
+  <table width="100%" cellpadding="0" cellspacing="0" border="0" style="width:100%; max-width:600px; margin:auto;">
+    <!-- Logo Section -->
+    <tr>
+      <td align="center" style="padding: 15px 0;">
+        <img src="https://res.cloudinary.com/daflot6fo/image/upload/v1736068036/bywcrrcqmcyczdyhjmdv.png" alt="Fantasy mmadness Logo" style="width:100px;" />
+        <h2 style="margin: 0; color: #191164; font-family: 'New York', Charter, Georgia, serif;">Fantasy mmadness</h2>
+      </td>
+    </tr>
+    
+    <!-- Greeting Section -->
+    <tr>
+      <td style="padding: 10px 0;">
+        <p style="font-size: 16px; font-family: Arial, sans-serif; color: #333;">Dear ${user.firstName} ${user.lastName},</p>
+        <p style="font-size: 16px; font-family: Arial, sans-serif; color: #333;">We are excited to announce a new fight has been added:</p>
+        <p style="font-size: 16px; font-family: Arial, sans-serif; color: #333;"><strong>Fight Added:</strong> ${matchName}</p>
+      </td>
+    </tr>
+    
+    <!-- New Captivating Section -->
+    <tr>
+      <td align="center" style="padding: 20px; background-color:#f8f8f8;">
+        <h2 style="color: #191164; font-family: 'Impact', fantasy, sans-serif;">Gear Up for Battle!</h2>
+        <p style="font-size: 17px; font-family: 'Comic Sans MS', fantasy, sans-serif; color: #555;">
+          Your next adrenaline-pumping challenge awaits. Enter the arena and put your prediction skills to the test.
+          Every punch, kick, and knockout is a step closer to victory!
+        </p>
+      </td>
+    </tr>
+    
+    <!-- Fighter Section -->
+    <tr>
+      <td>
+        <table width="100%" cellpadding="0" cellspacing="0" border="0" style="width:100%; margin:auto;">
+          <tr>
+            <!-- Fighter A -->
+            <td align="center" style="padding: 10px;">
+              <div style="width:60px; height:60px; border-radius:50%; border:3px solid red; background-color:#fff;">
+                <img src="${fighterAImage}" alt="Fighter A" style="width:100%; height:100%; object-fit:cover; border-radius:50%;" />
+              </div>
+              <p style="font-size: 16px; font-family: Arial, sans-serif; color: #333; text-align:center;">${matchFighterA}</p>
+            </td>
+
+            <!-- VS -->
+            <td align="center" style="padding: 10px;">
+              <h1 style="margin:0; font-family: Arial, sans-serif; color: #333;">Vs</h1>
+            </td>
+
+            <!-- Fighter B -->
+            <td align="center" style="padding: 10px;">
+              <div style="width:60px; height:60px; border-radius:50%; border:3px solid blue; background-color:#fff;">
+                <img src="${fighterBImage}" alt="Fighter B" style="width:100%; height:100%; object-fit:cover; border-radius:50%;" />
+              </div>
+              <p style="font-size: 16px; font-family: Arial, sans-serif; color: #333; text-align:center;">${matchFighterB}</p>
+            </td>
+          </tr>
+        </table>
+      </td>
+    </tr>
+
+    <!-- Match Details Section -->
+    <tr>
+      <td style="padding: 10px;">
+        <p style="font-size: 16px; font-family: Arial, sans-serif; color: #333;"><strong>Date:</strong> ${matchDate}</p>
+       <p style="font-size: 16px; font-family: Arial, sans-serif; color: #333;">
+  <strong>Time:</strong> ${new Date(`1970-01-01T${matchTime}:00`).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: true })} EST</p>
+ <p style="font-size: 16px; font-family: Arial, sans-serif; color: #333;"><strong>Max Rounds:</strong> ${maxRounds}</p>
+        <p style="font-size: 16px; font-family: Arial, sans-serif; color: #333;"><strong>Fight Type:</strong> ${matchType}</p>
+        <p><a href="https://fantasymmadness.com/upcomingfights" style="font-family: Arial, sans-serif; color: #191164; text-decoration: none;">Click here</a> to get more details</p>
+      </td>
+    </tr>
+
+    <!-- Footer Section -->
+    <tr>
+      <td align="center" style="padding: 15px 0;">
+        <img src="https://res.cloudinary.com/daflot6fo/image/upload/v1736068036/bywcrrcqmcyczdyhjmdv.png" alt="Fantasy mmadness Logo" style="width:70px;" />
+        <p><a href="https://fantasymmadness.com" style="font-family: Arial, sans-serif; color: #191164; text-decoration: none;">https://fantasymmadness.com</a></p>
+      </td>
+    </tr>
+  </table>
+`
+
+,
+    };
+
+    return transporter.sendMail(mailOptions);
+  });
+
+  // Wait for all emails to be sent
+  try {
+    await Promise.all(mailPromises);
+    console.log('Emails sent successfully');
+  } catch (error) {
+    console.error('Error sending emails:', error);
+  }
+
+
+
+  // Fetch non-registered users
+const nonRegisteredUsers = await Usernonregistered.find();
+
+const nonRegisteredUserMailPromises = nonRegisteredUsers.map(user => {
+  const mailOptions = {
+    from: FMM_MAIL_FROM,
+    to: user.email, // Assuming you have email field here
+    subject: 'Join the Excitement at Fantasy mmadness!',
+    html: `
+      <table width="100%" cellpadding="0" cellspacing="0" border="0" style="width:100%; max-width:600px; margin:auto;">
+        <tr>
+          <td align="center" style="padding: 15px 0;">
+            <img src="https://res.cloudinary.com/daflot6fo/image/upload/v1736068036/bywcrrcqmcyczdyhjmdv.png" alt="Fantasy mmadness Logo" style="width:100px;" />
+            <h2 style="margin: 0; color: #191164; font-family: 'New York', Charter, Georgia, serif;">Fantasy mmadness</h2>
+          </td>
+        </tr>
+        <tr>
+          <td style="padding: 10px 0;">
+            <p style="font-size: 16px; font-family: Arial, sans-serif; color: #333;">Dear ${user.fullName},</p>
+            <p style="font-size: 16px; font-family: Arial, sans-serif; color: #333;">We noticed you haven't registered yet, and we want to invite you to join the Fantasy mmadness community!</p>
+            <p style="font-size: 16px; font-family: Arial, sans-serif; color: #333;">Sign up now to unleash your prediction skills and be part of the action!</p>
+            <p style="font-size: 16px; font-family: Arial, sans-serif; color: #333;">Don't miss out on the next thrilling fight between <strong>${matchFighterA}</strong> and <strong>${matchFighterB}</strong>!</p>
+            <p style="font-size: 16px; font-family: Arial, sans-serif; color: #333;">Date: <strong>${matchDate}</strong>, Time: <strong>${matchTime}</strong>.</p>
+            <p><a href="https://fantasymmadness.com/CreateAccount" style="font-family: Arial, sans-serif; color: #191164; text-decoration: none;">Register Now</a></p>
+          </td>
+        </tr>
+        <tr>
+          <td align="center" style="padding: 15px 0;">
+            <img src="https://res.cloudinary.com/daflot6fo/image/upload/v1736068036/bywcrrcqmcyczdyhjmdv.png" alt="Fantasy mmadness Logo" style="width:70px;" />
+            <p><a href="https://fantasymmadness.com" style="font-family: Arial, sans-serif; color: #191164; text-decoration: none;">https://fantasymmadness.com</a></p>
+          </td>
+        </tr>
+      </table>
+    `,
+  };
+
+  return transporter.sendMail(mailOptions);
+});
+
+  // Wait for all emails to be sent
+  try {
+    await Promise.all([...registeredUserMailPromises, ...nonRegisteredUserMailPromises]);
+    console.log('Emails sent successfully to all users');
+  } catch (error) {
+    console.error('Error sending emails:', error);
+  } 
+  
+  
+} else {
+    console.log('Notification skipped because notify is set to false');
+  }
+
+  const swarmAutomation = await triggerUpcomingEventAutomationForMatch(savedMatch, {
+    route: '/addMatch',
+    action: 'legacy-upcoming-event-created',
+    reason: 'combat-match-added-in-backend',
+    warning: 'Fight was added but upcoming-event automation failed.',
+  });
+
+  // Respond with success and the saved match ID
+  res.status(200).json({ message: 'Match Added Successfully and Notifications Sent', matchId: savedMatch._id, automation: swarmAutomation || null });
+} catch (error) {
+  console.error('Error adding match:', error);
+  const isValidationError = error?.name === 'ValidationError' || error?.name === 'CastError';
+  res.status(isValidationError ? 400 : 500).json({
+    message: isValidationError ? (error.message || 'The fight information is invalid.') : 'The fight could not be published.',
+    code: isValidationError ? 'INVALID_FIGHT_DATA' : 'PUBLISH_FAILED',
+  });
+}
+}
+);
+app.post(
+  '/editMatch',
+  verifyAdminToken,
+  upload.fields([
+    { name: 'fighterAImage' },
+    { name: 'fighterBImage' },
+    { name: 'promotionBackground' },
+  ]),
+  async (req, res) => {
+    const {
+      matchId,
+      matchCategoryTwo,
+      maxRounds,
+      profit,
+      matchCategory,
+      matchName,
+      matchFighterA,
+      matchFighterB,
+      matchDescription,
+      matchDate,
+      matchTime,
+      matchTokens,
+      pot,
+      matchType,
+      fighterAId,
+      fighterBId,
+      fighterAImageUrl,
+      fighterBImageUrl,
+      promotionBackgroundUrl,
+      addToShadow,
+      matchVideoUrl,
+      matchPromotionalVideoUrl,
+      matchStatus,
+      matchShadowStatus,
+      matchShadowOpenStatus,
+      BoxingMatch,
+      MMAMatch,
+    } = req.body;
+
+    let fighterAImage,
+      fighterBImage,
+      fighterAImageDeleteUrl,
+      fighterBImageDeleteUrl,
+      promotionBackground,
+      promotionBackgroundDeleteUrl;
+
+    try {
+      // Check if matchId is provided and valid
+      if (!matchId) {
+        return res.status(400).json({ error: 'matchId is required' });
+      }
+
+      // Fetch the existing match by matchId
+      const existingMatch = await Match.findById(matchId);
+      if (!existingMatch) {
+        return res.status(404).json({ error: 'Match not found' });
+      }
+
+      // Use the image URLs directly if they are provided
+      if (fighterAImageUrl) fighterAImage = fighterAImageUrl;
+      if (fighterBImageUrl) fighterBImage = fighterBImageUrl;
+
+      // Handle image uploads for Fighter A
+      if (req.files.fighterAImage) {
+        const resultA = await new Promise((resolve, reject) => {
+          cloudinary.uploader.upload_stream(
+            { folder: 'fighterAImages' },
+            (error, result) => {
+              if (error) return reject(error);
+              resolve(result);
+            }
+          ).end(req.files.fighterAImage[0].buffer);
+        });
+
+        fighterAImage = resultA.secure_url;
+        fighterAImageDeleteUrl = resultA.public_id;
+      }
+
+      // Handle image uploads for Fighter B
+      if (req.files.fighterBImage) {
+        const resultB = await new Promise((resolve, reject) => {
+          cloudinary.uploader.upload_stream(
+            { folder: 'fighterBImages' },
+            (error, result) => {
+              if (error) return reject(error);
+              resolve(result);
+            }
+          ).end(req.files.fighterBImage[0].buffer);
+        });
+
+        fighterBImage = resultB.secure_url;
+        fighterBImageDeleteUrl = resultB.public_id;
+      }
+
+      // Handle promotion background upload
+      if (req.files.promotionBackground) {
+        const resultBackground = await new Promise((resolve, reject) => {
+          cloudinary.uploader.upload_stream(
+            { folder: 'promotionBackgrounds' },
+            (error, result) => {
+              if (error) return reject(error);
+              resolve(result);
+            }
+          ).end(req.files.promotionBackground[0].buffer);
+        });
+
+        promotionBackground = resultBackground.secure_url;
+        promotionBackgroundDeleteUrl = resultBackground.public_id;
+      } else if (promotionBackgroundUrl) {
+        // Use the existing promotion background URL if provided
+        promotionBackground = promotionBackgroundUrl;
+      }
+
+      const fighterSelection = await resolveCombatFighterSelectionForMatchInput({
+        fighterAId, fighterBId, matchFighterA, matchFighterB, fighterAImage, fighterBImage,
+        fighterAImagePublicId: fighterAImageDeleteUrl, fighterBImagePublicId: fighterBImageDeleteUrl, matchCategory: matchCategoryTwo || matchCategory,
+      });
+      const selectedFighterPatch = applyCombatFighterSelectionToMatchPayload({}, fighterSelection);
+
+      // Update the match object. Use explicit provided-value checks so 0 remains valid.
+      assignIfProvided(existingMatch, 'fighterAId', selectedFighterPatch.fighterAId);
+      assignIfProvided(existingMatch, 'fighterBId', selectedFighterPatch.fighterBId);
+      assignIfProvided(existingMatch, 'matchCategory', matchCategory);
+      if (addToShadow === 'true' || addToShadow === true) existingMatch.shadowTemplatesAdditionStatus = true;
+      assignIfProvided(existingMatch, 'matchName', matchName);
+      assignIfProvided(existingMatch, 'matchFighterA', matchFighterA);
+      assignIfProvided(existingMatch, 'matchFighterB', matchFighterB);
+      assignIfProvided(existingMatch, 'matchDescription', matchDescription);
+      if (matchDate !== undefined && matchDate !== null && matchDate !== '') {
+        const normalizedDate = normalizeCalendarDateInput(matchDate);
+        if (!normalizedDate.date) return res.status(400).json({ error: 'A valid match date is required.' });
+        existingMatch.matchDate = normalizedDate.date;
+        existingMatch.matchDateKey = normalizedDate.key;
+      }
+      assignIfProvided(existingMatch, 'eventTimeZone', req.body?.eventTimeZone || req.body?.timezone);
+      assignIfProvided(existingMatch, 'matchTime', matchTime);
+      assignIfProvided(existingMatch, 'matchTokens', matchTokens);
+      assignIfProvided(existingMatch, 'pot', pot);
+      assignIfProvided(existingMatch, 'matchType', matchType);
+      assignIfProvided(existingMatch, 'profit', profit);
+      assignIfProvided(existingMatch, 'maxRounds', maxRounds);
+      assignIfProvided(existingMatch, 'matchCategoryTwo', matchCategoryTwo);
+      assignIfProvided(existingMatch, 'matchVideoUrl', matchVideoUrl);
+      assignIfProvided(existingMatch, 'matchPromotionalVideoUrl', matchPromotionalVideoUrl);
+      assignIfProvided(existingMatch, 'matchStatus', matchStatus);
+      assignIfProvided(existingMatch, 'matchShadowStatus', matchShadowStatus);
+      assignIfProvided(existingMatch, 'matchShadowOpenStatus', matchShadowOpenStatus);
+
+      const parsedBoxingMatch = parseMaybeJson(BoxingMatch);
+      const parsedMMAMatch = parseMaybeJson(MMAMatch);
+      if (parsedBoxingMatch) existingMatch.BoxingMatch = parsedBoxingMatch;
+      if (parsedMMAMatch) existingMatch.MMAMatch = parsedMMAMatch;
+
+      if (!fighterAImage && selectedFighterPatch.fighterAImage) fighterAImage = selectedFighterPatch.fighterAImage;
+      if (!fighterBImage && selectedFighterPatch.fighterBImage) fighterBImage = selectedFighterPatch.fighterBImage;
+      if (!fighterAImageDeleteUrl && selectedFighterPatch.fighterAImageDeleteUrl) fighterAImageDeleteUrl = selectedFighterPatch.fighterAImageDeleteUrl;
+      if (!fighterBImageDeleteUrl && selectedFighterPatch.fighterBImageDeleteUrl) fighterBImageDeleteUrl = selectedFighterPatch.fighterBImageDeleteUrl;
+
+      if (fighterAImage) existingMatch.fighterAImage = fighterAImage;
+      if (fighterBImage) existingMatch.fighterBImage = fighterBImage;
+      if (fighterAImageDeleteUrl)
+        existingMatch.fighterAImageDeleteUrl = fighterAImageDeleteUrl;
+      if (fighterBImageDeleteUrl)
+        existingMatch.fighterBImageDeleteUrl = fighterBImageDeleteUrl;
+
+      if (promotionBackground)
+        existingMatch.promotionBackground = promotionBackground;
+      if (promotionBackgroundDeleteUrl)
+        existingMatch.promotionBackgroundDeleteUrl = promotionBackgroundDeleteUrl;
+
+      // NOTE: previously called clearLegacyFighterFieldsForLibraryRefs(existingMatch)
+      // here, which wiped matchFighterA/matchFighterB back to blank on every save
+      // whenever the record had a fighterAId/fighterBId ref — undoing the admin's
+      // just-typed name edit in the same request, and blanking names on any fight
+      // linked to the fighter library (now the normal case). The name the admin
+      // submits (assignIfProvided above) is the one that should stick.
+
+      // Save the updated match to the database
+      const updatedMatch = await existingMatch.save();
+
+  const notification = new Notification({
+      title: `Fight Updated: ${updatedMatch.matchName}`,
+    });
+    await notification.save();
+ 
+      // Public reads are cached; without this an edited fight keeps showing
+      // its old pot, date or images on the website and in the app.
+      clearPublicResponseCache();
+
+      // Respond with success and the updated match data
+      res.status(200).json({
+        message: 'Match updated successfully',
+        matchId: updatedMatch._id,
+      });
+    } catch (error) {
+      console.error('Error updating match:', error);
+      res
+        .status(500)
+        .json({ error: 'An error occurred while updating the match' });
+    }
+  }
+);
+
+
+
+
+
+// Get Matches API
+app.get('/match', async (req, res) => {
+  try {
+    let query = {};
+
+    if (!isAllFilterValue(req.query.status)) {
+      const statusValue = String(req.query.status || '').trim().toLowerCase();
+      const now = new Date();
+      if (['playable', 'prediction', 'predictions', 'can-predict', 'open-for-predictions', 'active-contests'].includes(statusValue)) {
+        // By default, keep all non-draft fights visible to users. If the frontend
+        // explicitly asks for strict/open-only fights, apply the old open-status filter.
+        if (shouldUseStrictPlayableFightFilter(req.query)) {
+          query = appendAndFilter(query, buildPredictionEligibleFightFilter());
+        }
+      } else if (['past', 'previous', 'completed', 'complete', 'finished'].includes(statusValue)) {
+        query.$or = [
+          ...(query.$or || []),
+          { matchStatus: { $in: ['Finished', 'Closed', 'finished', 'closed', 'Completed', 'completed'] } },
+          { matchShadowOpenStatus: { $in: ['closed', 'Closed'] } },
+          { matchDate: { $lt: now } },
+        ];
+      } else if (['upcoming', 'future', 'scheduled'].includes(statusValue)) {
+        query.$or = [
+          ...(query.$or || []),
+          { matchStatus: { $in: ['Scheduled', 'Open', 'Live', 'Ongoing', 'scheduled', 'open', 'live', 'ongoing'] } },
+          { matchShadowOpenStatus: { $in: ['open', 'Open'] } },
+          { matchDate: { $gte: now } },
+        ];
+      } else {
+        const statusRegex = exactTextRegex(req.query.status);
+        if (statusRegex) query.matchStatus = statusRegex;
+      }
+    }
+
+    if (!isAllFilterValue(req.query.category)) {
+      query = appendAndFilter(query, buildEffectiveFightCategoryFilter(req.query.category));
+    }
+
+    if (!isAllFilterValue(req.query.shadowStatus)) query.matchShadowStatus = exactTextRegex(req.query.shadowStatus) || req.query.shadowStatus;
+    if (!isAllFilterValue(req.query.openStatus)) query.matchShadowOpenStatus = exactTextRegex(req.query.openStatus) || req.query.openStatus;
+    if (!isAllFilterValue(req.query.matchType || req.query.type)) {
+      const matchTypeRegex = exactTextRegex(req.query.matchType || req.query.type);
+      if (matchTypeRegex) query.matchType = matchTypeRegex;
+    }
+
+    if (shouldUseStrictPlayableFightFilter(req.query) && shouldRequestPredictionEligibleFights(req.query)) {
+      query = appendAndFilter(query, buildPredictionEligibleFightFilter());
+    }
+
+    const visibleQuery = applyFightPublicVisibilityFilter(query, req.query);
+    let matchRows = await applyFightFreshSortLean(Match.find(visibleQuery).populate('fighterAId fighterBId'));
+    let shadowRows = [];
+
+    // Safety fallback for legacy records: if the stricter public query produces no
+    // results, keep the same base filters and remove only explicit Draft fights in
+    // memory. This prevents public fight pages from going blank while still hiding drafts.
+    if (!matchRows.length && !shouldIncludeDraftFights(req.query)) {
+      const fallback = await applyFightFreshSortLean(Match.find(query).populate('fighterAId fighterBId'));
+      matchRows = fallback.filter((item) => !isDraftFightRecord(item));
+    }
+
+    // Always include Shadow rows in the legacy match feed. Previously Shadow rows
+    // were only used when Match returned empty, which made calendars/affiliate
+    // dashboards miss most template fights once any live match existed.
+    try {
+      const rawShadowRows = await applyFightFreshSortLean(Shadow.find(visibleQuery).populate('fighterAId fighterBId'));
+      shadowRows = shouldIncludeDraftFights(req.query)
+        ? rawShadowRows
+        : rawShadowRows.filter((item) => !isDraftFightRecord(item));
+    } catch (fallbackError) {
+      console.warn('Legacy /match shadow merge failed:', fallbackError.message);
+    }
+
+    let match = [
+      ...matchRows.map((item) => ({ ...item, sourceType: 'match' })),
+      ...shadowRows.map((item) => ({ ...item, sourceType: 'shadow' })),
+    ];
+
+    if (shouldUseStrictPlayableFightFilter(req.query) && shouldRequestPredictionEligibleFights(req.query)) {
+      match = match.filter((item) => isPredictionEligibleFightRecord(item));
+    }
+
+    if (!isAllFilterValue(req.query.category)) {
+      match = match.filter((item) => isFightRecordInEffectiveCategory(item, req.query.category));
+    }
+
+    let responseItems = match.map((item) => attachCombatFighterReadFallbacks(item, item.sourceType || 'match'));
+    responseItems = await attachPlayerPredictionStateToFightItems(responseItems, req.query);
+    responseItems = applyPublicFightStatusIntent(responseItems, req.query);
+    const requestedTimeline = String(req.query.status || req.query.bucket || req.query.view || '').trim().toLowerCase();
+    if (!requestedTimeline || ['upcoming', 'future', 'scheduled', 'active-contests', 'playable', 'prediction', 'predictions', 'all'].includes(requestedTimeline)) {
+      responseItems = responseItems.filter((item) => isPublicHomeActiveFightRecord(item));
+    }
+
+    // Fight-operations economics: live entrant counts alongside the pot/entry
+    // fee the admin declared on creation, so the back office can see whether a
+    // fight is covered without opening it. Only meaningful for real Match rows
+    // (Shadow templates never take entries) — skip the aggregate otherwise.
+    if (shouldIncludeDraftFights(req.query)) {
+      const matchIds = responseItems
+        .filter((item) => item.sourceType !== 'shadow' && item._id)
+        .map((item) => item._id);
+      let entrantCounts = {};
+      if (matchIds.length) {
+        try {
+          const rows = await Score.aggregate([
+            { $match: { matchId: { $in: matchIds }, entryStatus: { $ne: 'refunded' } } },
+            { $group: { _id: '$matchId', count: { $sum: 1 } } },
+          ]);
+          entrantCounts = Object.fromEntries(rows.map((row) => [String(row._id), row.count]));
+        } catch (aggregateError) {
+          console.warn('Entrant-count aggregate failed:', aggregateError.message);
+        }
+      }
+      responseItems = responseItems.map((item) => {
+        const declaredPot = Math.max(0, Math.round(Number(item.pot) || 0));
+        const entryFee = Math.max(0, Math.round(Number(item.matchTokens) || 0));
+        const committedFunding = Math.min(declaredPot,
+          Math.max(0, Math.round(Number(item.promoterStake) || 0))
+          + Math.max(0, Math.round(Number(item.platformContribution) || 0)));
+        const uncoveredPrize = Math.max(0, declaredPot - committedFunding);
+        const breakEvenEntrants = entryFee > 0 ? Math.ceil(uncoveredPrize / entryFee) : 0;
+        const minimumEntrants = Math.max(0, Math.round(Number(item.minimumEntrants) || 0)) || breakEvenEntrants;
+        const entrants = item.sourceType === 'shadow' ? null : (entrantCounts[String(item._id)] || 0);
+        return { ...item, entrants, breakEvenEntrants, minimumEntrants };
+      });
+    }
+
+    res.setHeader('Cache-Control', 'private, no-store, no-cache, max-age=0, must-revalidate');
+    res.setHeader('Pragma', 'no-cache');
+    res.setHeader('Expires', '0');
+    res.setHeader('X-Backend-Cache', 'BYPASS');
+    res.send(responseItems);
+  } catch (error) {
+    console.error('Error fetching matches:', error);
+    res.status(500).json({ message: 'Error fetching matches' });
+  }
+});
+
+// Public/user-facing fight feed. It intentionally reads both regular Match and
+// Shadow fight records because the site supports both paths for fight cards and
+// promotional/affiliate contests. Only explicit Draft records are hidden by
+// default. If a player/user id is passed, records already predicted by that user
+// are marked for completed cards; the rest stay playable.
+app.get('/api/public/prediction-fights', async (req, res) => {
+  try {
+    const loadPredictionFightPayload = async () => {
+      const limit = Math.min(Math.max(parseInt(req.query.limit, 10) || 20, 1), 100);
+      // Mirrors /api/admin/fights (source=all): draft-exclusion only, no
+      // timeline/eligibility heuristics — those were silently dropping real
+      // LIVE fights from the public feed while the admin registry, which
+      // skips them, showed everything. If the admin list can show a fight,
+      // the public list must be able to show it too.
+      let baseFilter = {};
+      baseFilter = appendAndFilter(baseFilter, buildEffectiveFightCategoryFilter(req.query.category));
+      const visibleFilter = applyFightPublicVisibilityFilter(baseFilter, req.query);
+      const [matches, shadows] = await Promise.all([
+        applyFightFreshSortLean(Match.find(visibleFilter).populate('fighterAId fighterBId')).limit(500),
+        applyFightFreshSortLean(Shadow.find(visibleFilter).populate('fighterAId fighterBId')).limit(500).catch(() => []),
+      ]);
+      let items = [
+        ...matches.map((item) => ({ ...item, sourceType: 'match' })),
+        ...shadows.map((item) => ({ ...item, sourceType: 'shadow' })),
+      ].filter((item) => !isDraftFightRecord(item));
+
+      if (!isAllFilterValue(req.query.category)) {
+        items = items.filter((item) => isFightRecordInEffectiveCategory(item, req.query.category));
+      }
+
+      items = items.sort((a, b) => {
+        const toTime = (value) => {
+          const date = value ? new Date(value) : null;
+          return date && !Number.isNaN(date.getTime()) ? date.getTime() : 0;
+        };
+        return Math.max(toTime(b.updatedAt), toTime(b.createdAt), toTime(b.matchDate), toTime(b._id?.getTimestamp?.()))
+          - Math.max(toTime(a.updatedAt), toTime(a.createdAt), toTime(a.matchDate), toTime(a._id?.getTimestamp?.()));
+      }).map((item) => attachCombatFighterReadFallbacks(item, item.sourceType || 'match'));
+
+      items = await attachPlayerPredictionStateToFightItems(items, req.query);
+      items = items.slice(0, limit);
+
+      return {
+        ok: true,
+        items,
+        count: items.length,
+        categoryMode: 'matchCategoryTwo-preferred',
+        generatedAt: new Date().toISOString(),
+      };
+    };
+
+    const payload = await loadPredictionFightPayload();
+    res.setHeader('Cache-Control', 'private, no-store, no-cache, max-age=0, must-revalidate');
+    res.setHeader('Pragma', 'no-cache');
+    res.setHeader('Expires', '0');
+    res.setHeader('X-Backend-Cache', 'BYPASS');
+    return res.json(payload);
+  } catch (error) {
+    console.error('Error loading prediction-ready fights:', error);
+    return res.status(500).json({ ok: false, message: 'Failed to load prediction-ready fights.' });
+  }
+});
+
+// Update user prediction status
+// SECURITY: authenticated. The user is taken from the verified token so a caller
+// cannot flip another player's prediction status by passing their id.
+app.post('/api/matches/:matchId/updatePredictionStatus', verifyToken, async (req, res) => {
+  try {
+    const { matchId } = req.params;
+    const userId = String(req.user?.id || req.user?._id || '').trim();
+    const predictionStatus = req.body?.predictionStatus || req.body?.status || 'submitted';
+
+    if (!userId) {
+      return res.status(401).json({ message: 'Authentication is required.' });
+    }
+
+    const result = await updateClassicFightPredictionStatus(matchId, userId, predictionStatus);
+
+    if (!result) {
+      return res.status(404).json({ message: 'Match not found' });
+    }
+
+    return res.status(200).json({
+      message: 'Prediction status updated successfully',
+      matchId,
+      userId,
+      sourceType: result.sourceType,
+      predictionStatus: result.predictionStatus,
+    });
+  } catch (error) {
+    console.error('Error updating prediction status:', error);
+    return res.status(500).json({ message: 'Failed to update prediction status' });
+  }
+});
+
+
+
+app.post('/match/addRoundResults/:id', verifyAdminToken, async (req, res) => {
+  const { id } = req.params;
+  const { fighterOneStats, fighterTwoStats } = req.body;
+
+  try {
+    // Find the match document
+    const match = await Match.findById(id);
+
+    if (!match) {
+      return res.status(404).json({ message: 'Match not found' });
+    }
+
+    // Apply round results without deriving TP/total punches from HP/BP.
+    try {
+      applyRoundResultsToMatch(match, { fighterOneStats, fighterTwoStats });
+    } catch (scoringError) {
+      return res.status(scoringError.statusCode || 400).json({ message: scoringError.message });
+    }
+
+    // Save the updated match document
+    await match.save();
+
+    res.status(200).json({ message: 'Round results added successfully', match });
+  } catch (error) {
+    console.error('Error adding round results:', error);
+    res.status(500).json({ message: 'Internal server error' });
+  }
+});
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+// Function to encrypt card details
+const encrypt = (text) => {
+  try {
+
+    const iv = crypto.randomBytes(IV_LENGTH);
+    const cipher = crypto.createCipheriv(ALGORITHM, Buffer.from(ENCRYPTION_KEY), iv);
+
+    let encrypted = Buffer.concat([
+      cipher.update(text, 'utf8'),
+      cipher.final(),
+    ]);
+
+    // Return IV and encrypted data as a single string
+    return `${iv.toString('hex')}:${encrypted.toString('hex')}`;
+  } catch (error) {
+    console.error('Error encrypting data:', error);
+    throw new Error('Encryption failed');
+  }
+};
+
+
+
+
+
+// Function to decrypt card details
+function decrypt(text) {
+  const parts = text.split(':');
+  const iv = Buffer.from(parts.shift(), 'hex');
+  const encryptedText = Buffer.from(parts.join(':'), 'hex');
+  const decipher = crypto.createDecipheriv(ALGORITHM, Buffer.from(ENCRYPTION_KEY), iv);
+  let decrypted = decipher.update(encryptedText);
+  decrypted = Buffer.concat([decrypted, decipher.final()]);
+  return decrypted.toString();
+}
+
+
+
+
+const SALT_ROUNDS = 10;
+
+const DeviceInfoSchema = new mongoose.Schema({
+  email: { type: String, required: false },
+  deviceId: { type: String, required: true },
+}, { timestamps: true });
+DeviceInfoSchema.index({ deviceId: 1 });
+DeviceInfoSchema.index({ email: 1, createdAt: -1 });
+
+const DeviceInfo = mongoose.models.DeviceInfo || mongoose.model('DeviceInfo', DeviceInfoSchema);
+app.post('/admin/add-device', verifyAdminToken, async (req, res) => {
+  try {
+    const { deviceId, email } = req.body;
+
+    if (!deviceId) {
+      return res.status(400).json({ error: 'Device ID is required' });
+    }
+
+    // Create a new DeviceInfo record with deviceId (and optionally email)
+    const newDeviceInfo = new DeviceInfo({
+      deviceId,
+      email: email || null,  // If email is provided, use it, otherwise set to null
+    });
+
+    await newDeviceInfo.save();
+
+    res.status(201).json({ message: 'Device info added successfully', data: newDeviceInfo });
+  } catch (error) {
+    console.error('Error saving device info:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+app.get('/admin/device-info', verifyAdminToken, async (req, res) => {
+  try {
+    const devices = await DeviceInfo.find().sort({ _id: -1 }).limit(5000).lean();
+    res.status(200).json(devices);
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ message: 'Failed to fetch device info.' });
+  }
+});
+app.delete('/admin/device-info', verifyAdminToken, async (req, res) => {
+  const { email, deviceId } = req.body;
+
+  if (!deviceId) {
+    return res.status(400).json({ message: 'Device ID is required.' });
+  }
+
+  try {
+    // If email is provided, delete based on both email and deviceId
+    if (email) {
+      const result = await DeviceInfo.findOneAndDelete({ email, deviceId });
+      
+      if (result) {
+        return res.status(200).json({ message: 'Device info deleted successfully.' });
+      }
+    }
+
+    // If email is not provided, delete based only on deviceId
+    const result = await DeviceInfo.findOneAndDelete({ deviceId });
+
+    if (result) {
+      return res.status(200).json({ message: 'Device info deleted successfully.' });
+    } else {
+      return res.status(404).json({ message: 'Device info not found.' });
+    }
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ message: 'Failed to delete device info.' });
+  }
+});
+
+
+
+
+
+
+
+
+
+
+
+
+const DeviceInfoSchemaForSpinWheel = new mongoose.Schema({
+  email: { type: String, required: false },
+  deviceId: { type: String, required: true },
+}, { timestamps: true });
+DeviceInfoSchemaForSpinWheel.index({ deviceId: 1 });
+DeviceInfoSchemaForSpinWheel.index({ email: 1, createdAt: -1 });
+
+const DeviceInfoSpinWheel = mongoose.models.DeviceInfoSpinWheel || mongoose.model('DeviceInfoSpinWheel', DeviceInfoSchemaForSpinWheel);
+app.post('/admin/add-device-spin-wheel', verifyAdminToken, async (req, res) => {
+  try {
+    const { deviceId, email } = req.body;
+
+    if (!deviceId) {
+      return res.status(400).json({ error: 'Device ID is required' });
+    }
+
+    const newDeviceInfo = new DeviceInfoSpinWheel({
+      deviceId,
+      email: email || null,  // If email is provided, use it, otherwise set to null
+    });
+
+    await newDeviceInfo.save();
+
+    res.status(201).json({ message: 'Device info added successfully', data: newDeviceInfo });
+  } catch (error) {
+    console.error('Error saving device info:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+app.get('/admin/device-info-spin-wheel', verifyAdminToken, async (req, res) => {
+  try {
+    const devices = await DeviceInfoSpinWheel.find().sort({ _id: -1 }).limit(5000).lean();
+    res.status(200).json(devices);
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ message: 'Failed to fetch device info.' });
+  }
+});
+// The spin wheel used to download every device row (with player emails) just to
+// decide whether THIS device had already spun. Scoped answer instead.
+app.get('/api/spin-wheel/eligibility', async (req, res) => {
+  try {
+    const deviceId = String(req.query.deviceId || '').trim().slice(0, 128);
+    if (!deviceId) return res.status(400).json({ ok: false, message: 'deviceId is required.' });
+    const email = String(req.query.email || '').trim().toLowerCase();
+
+    // Same two checks the claim makes. Without the email check the wheel would
+    // appear for a player who already spun elsewhere, then refuse the spin.
+    const [byDevice, byAccount] = await Promise.all([
+      DeviceInfoSpinWheel.findOne({ deviceId }).select('_id createdAt').lean(),
+      email
+        ? DeviceInfoSpinWheel.findOne({ email: new RegExp(`^${email.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`, 'i') }).select('_id createdAt').lean()
+        : null,
+    ]);
+    const existing = byDevice || byAccount;
+    res.json({
+      ok: true,
+      deviceId,
+      alreadySpun: Boolean(existing),
+      reason: byDevice ? 'DEVICE' : byAccount ? 'ACCOUNT' : null,
+      lastSpinAt: existing?.createdAt || null,
+    });
+  } catch (error) {
+    res.status(500).json({ ok: false, message: 'Spin eligibility is temporarily unavailable.' });
+  }
+});
+
+app.get('/api/guest-coins/eligibility', async (req, res) => {
+  try {
+    const deviceId = String(req.query.deviceId || '').trim().slice(0, 128);
+    if (!deviceId) return res.status(400).json({ ok: false, message: 'deviceId is required.' });
+    const existing = await DeviceInfo.findOne({ deviceId }).select('_id createdAt').lean();
+    res.json({ ok: true, deviceId, alreadyClaimed: Boolean(existing), claimedAt: existing?.createdAt || null });
+  } catch (error) {
+    res.status(500).json({ ok: false, message: 'Claim eligibility is temporarily unavailable.' });
+  }
+});
+
+app.delete('/admin/device-info-spin-wheel', verifyAdminToken, async (req, res) => {
+  const { email, deviceId } = req.body;
+
+  if (!deviceId) {
+    return res.status(400).json({ message: 'Device ID is required.' });
+  }
+
+  try {
+    // If email is provided, delete based on both email and deviceId
+    if (email) {
+      const result = await DeviceInfoSpinWheel.findOneAndDelete({ email, deviceId });
+      
+      if (result) {
+        return res.status(200).json({ message: 'Device info deleted successfully.' });
+      }
+    }
+
+    // If email is not provided, delete based only on deviceId
+    const result = await DeviceInfoSpinWheel.findOneAndDelete({ deviceId });
+
+    if (result) {
+      return res.status(200).json({ message: 'Device info deleted successfully.' });
+    } else {
+      return res.status(404).json({ message: 'Device info not found.' });
+    }
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ message: 'Failed to delete device info.' });
+  }
+});
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+const userSchema = new mongoose.Schema({
+  firstName: String,
+  lastName: String,
+  playerName: String,
+  zipCode: String,
+  tokens: { type: String, default: '0' },
+  email: { type: String, required: true, unique: true },
+  phone: String,
+  shortBio: String,
+  password: { type: String, select: false },
+  isNotificationsEnabled: Boolean,
+  isSubscribed: Boolean,
+  isUSCitizen: Boolean,
+  isAgreed: Boolean,
+  // --- Notifications -------------------------------------------------------
+  notificationsReadAt: Date,
+  // --- Daily reward --------------------------------------------------------
+  lastDailyRewardAt: Date,
+  dailyRewardStreak: { type: Number, default: 0 },
+  // --- Eligibility & responsible play -------------------------------------
+  dateOfBirth: Date,                       // required for real age verification
+  ageVerifiedAt: Date,
+  residenceState: { type: String, uppercase: true, trim: true }, // 2-letter code
+  eligibilityCheckedAt: Date,
+  selfExcludedUntil: Date,                 // set = blocked from paid entries
+  selfExclusionReason: String,
+  dailyDepositLimitCents: { type: Number, min: 0, default: 0 },   // 0 = no limit
+  monthlyDepositLimitCents: { type: Number, min: 0, default: 0 },
+  verificationToken: { type: String, select: false },
+  verified: { type: Boolean, default: false },
+  profileUrl: String,
+  profileDeleteUrl: { type: String, select: false },
+  currentPlan: { type: String, default: 'None' }, // Current subscription plan
+  fmPlusPlan: { type: String, enum: ['monthly', 'pass', 'none'], default: 'none' },
+  fmPlusExpiresAt: Date,
+  fmPlusLastCoinCreditAt: Date,
+  skillTier: { type: String, enum: ['rookie', 'regular', 'expert'], default: 'rookie', index: true },
+  skillTierUpdatedAt: Date,
+  rollingPerformancePercentile: { type: Number, min: 0, max: 100 },
+  loginStreak: { type: Number, min: 0, max: 3650, default: 0 },
+  streakExpiresAt: Date,
+  dailyRewardClaimedAt: Date,
+  streakSkipUnlockedAt: Date,
+  freePlanExpiryDate: Date, // Date when the free plan expires
+  hasAvailedFreePlan: { type: Boolean, default: false }, // Indicates if the user has availed the free plan
+  preferredPaymentMethod: String,
+  preferredPaymentMethodValue: { type: String, select: false },
+  resetPasswordToken: { type: String, select: false },
+  resetPasswordExpires: { type: Date, select: false },
+  hasSubmittedTestimonial: { type: Boolean, default: false },
+  signupBonusGranted: { type: Boolean, default: false },
+  hasReceivedFirstPurchaseBonus: { type: Boolean, default: false },
+  billing: {
+    address: String,
+    city: String,
+    state: String,
+    zip: String,
+    country: String
+  },
+  // Set only by POST /api/admin/test-accounts. Lets test data be excluded from
+  // public numbers and purged in one call without ever touching a real account.
+  isTestAccount: { type: Boolean, default: false, index: true },
+
+}, { timestamps: true });
+userSchema.index({ playerName: 1 });
+userSchema.index({ createdAt: -1 });
+userSchema.pre('save', function normalizeUserWalletTokens(next) {
+  this.tokens = normalizeWalletTokenString(this.tokens);
+  next();
+});
+attachSafeAccountJsonTransform(userSchema);
+
+const User = mongoose.models.User || mongoose.model('User', userSchema);
+// SECURITY: this was behind verifyToken only, and updateMany({}) has no filter —
+// so ANY signed-in player could overwrite the profile image of every user and
+// every affiliate on the platform with one request. Mass defacement in a single
+// call. It is a bulk migration tool, so it is admin-only and now requires an
+// explicit confirmation flag so it cannot be fired by accident either.
+app.put('/update-profile-url', verifyAdminToken, async (req, res) => {
+  try {
+      const { profileUrl } = req.body;
+      if (!profileUrl) {
+          return res.status(400).json({ message: 'profileUrl is required' });
+      }
+      if (req.body?.confirmBulkOverwrite !== 'YES-OVERWRITE-EVERY-ACCOUNT') {
+        return res.status(400).json({
+          message: 'This overwrites the profile image of every user and affiliate. Send confirmBulkOverwrite="YES-OVERWRITE-EVERY-ACCOUNT" to proceed.',
+          code: 'CONFIRMATION_REQUIRED',
+        });
+      }
+      console.warn('[bulk] profileUrl overwrite for ALL accounts by admin', req.admin?.id || 'unknown');
+
+      // Update all users' profileUrl
+      const result = await User.updateMany({}, { $set: { profileUrl } });
+      const result2 = await Affiliate.updateMany({}, { $set: { profileUrl } });
+
+      res.json({ message: 'Profile URLs updated successfully', modifiedCount: result.modifiedCount ,  modifiedCount2: result2.modifiedCount });
+  } catch (error) {
+      console.error('Request failed:', error);
+      res.status(500).json({ message: 'Internal Server Error' });
+  }
+});
+// SECURITY: authenticated, and bound to the signed-in account. The email used
+// to come from the request body, so a spoofed device id could credit anyone.
+app.post('/admin/add-tokens-won', verifyToken, requireScope(TOKEN_SCOPES.PLAYER), async (req, res) => {
+  const { deviceId } = req.body;
+  // The session token carries { id, scope } and NO email, so req.user.email was
+  // always undefined and this fell through to req.body.email every time — any
+  // player could credit 200 coins to any address they typed. The email is now
+  // resolved from the account the token belongs to, and the body is ignored.
+  const tokenUser = await User.findById(req.user?.id || req.user?._id).select('email').lean();
+  const email = String(tokenUser?.email || '').trim();
+
+  if (!email) {
+    return res.status(403).json({ message: 'You can only claim coins for your own account.' });
+  }
+  if (!deviceId) {
+    return res.status(400).json({ message: 'deviceId is required.' });
+  }
+
+  try {
+    const existingDevice = await DeviceInfo.findOne({ deviceId });
+
+    if (existingDevice) {
+      return res.status(400).json({ message: 'Device ID already registered.' });
+    }
+    
+    await new DeviceInfo({ email, deviceId }).save();
+    
+    // Check if User already exists
+    const existingUser = await User.findOne({ email });
+
+    if (existingUser) {
+      // User found, add 200 tokens
+      existingUser.tokens = addWalletTokens(existingUser.tokens, 200);
+      await existingUser.save();
+
+      // Notify User and Admin
+      const emailPromises = [
+        transporter.sendMail({
+          from: FMM_MAIL_FROM,
+          to: email,
+          subject: '200 Tokens Added!',
+          html: `
+            <table width="100%" cellpadding="0" cellspacing="0" border="0" style="width:100%; max-width:600px; margin:auto;">
+              <tr>
+                <td align="center" style="padding: 15px 0;">
+                  <img src="https://res.cloudinary.com/daflot6fo/image/upload/v1736068036/bywcrrcqmcyczdyhjmdv.png" alt="Fantasy Madness Logo" style="width:100px;" />
+                  <h2 style="margin: 0; color: #191164; font-family: 'New York', Charter, Georgia, serif;">Fantasy Madness</h2>
+                </td>
+              </tr>
+              <tr>
+                <td style="padding: 10px 0;">
+                  <p style="font-size: 16px; font-family: Arial, sans-serif; color: #333;">Dear User,</p>
+                  <p style="font-size: 16px; font-family: Arial, sans-serif; color: #333;">
+                    You have received 200 tokens added to your account! Your new token balance is ${existingUser.tokens}.
+                  </p>
+                  <p style="font-size: 16px; font-family: Arial, sans-serif; color: #333;">
+                    If you have any questions, feel free to reach out to us!
+                  </p>
+                </td>
+              </tr>
+              <tr>
+                <td align="center" style="padding: 20px 0;">
+                  <img src="https://res.cloudinary.com/daflot6fo/image/upload/v1736068036/bywcrrcqmcyczdyhjmdv.png" alt="Fantasy Madness Logo" style="width:70px;" />
+                  <p><a href="https://fantasymmadness.com" style="font-family: Arial, sans-serif; color: #191164; text-decoration: none;">https://fantasymmadness.com</a></p>
+                </td>
+              </tr>
+            </table>
+          `,
+        }),
+
+        transporter.sendMail({
+          from: FMM_MAIL_FROM,
+          to: ADMIN_ALERT_EMAILS, // Replace with admin email
+          subject: 'Tokens Added to User',
+          html: `
+            <table width="100%" cellpadding="0" cellspacing="0" border="0" style="width:100%; max-width:600px; margin:auto;">
+              <tr>
+                <td align="center" style="padding: 15px 0;">
+                  <img src="https://res.cloudinary.com/daflot6fo/image/upload/v1736068036/bywcrrcqmcyczdyhjmdv.png" alt="Fantasy Madness Logo" style="width:100px;" />
+                  <h2 style="margin: 0; color: #191164; font-family: 'New York', Charter, Georgia, serif;">Fantasy Madness</h2>
+                </td>
+              </tr>
+              <tr>
+                <td style="padding: 10px 0;">
+                  <p style="font-size: 16px; font-family: Arial, sans-serif; color: #333;">
+                    200 tokens have been successfully added to the user with the email: ${email}.
+                  </p>
+                </td>
+              </tr>
+              <tr>
+                <td align="center" style="padding: 20px 0;">
+                  <img src="https://res.cloudinary.com/daflot6fo/image/upload/v1736068036/bywcrrcqmcyczdyhjmdv.png" alt="Fantasy Madness Logo" style="width:70px;" />
+                  <p><a href="https://fantasymmadness.com" style="font-family: Arial, sans-serif; color: #191164; text-decoration: none;">https://fantasymmadness.com</a></p>
+                </td>
+              </tr>
+            </table>
+          `,
+        })
+      ];
+
+      // Wait for all emails to be sent
+      await Promise.all(emailPromises);
+
+      return res.status(200).json({ message: 'Tokens added successfully, emails sent.' });
+    } else {
+      // User not found, create new user with 200 tokens
+      const firstName = email.split('@')[0]; // Extract the first part of the email for the name
+      const password = firstName; // Use the first part of the email as the password
+      const hashedPassword = await bcrypt.hash(password, 10);
+
+      const newUser = new User({
+        firstName,
+        email,
+        password: hashedPassword,
+        tokens: '200',
+        currentPlan: 'Free',
+        verified: true,
+        isNotificationsEnabled: true,
+        isSubscribed: true,
+        isAgreed: true,
+        profileUrl: "https://res.cloudinary.com/daflot6fo/image/upload/v1736068036/bywcrrcqmcyczdyhjmdv.png",
+      });
+
+      await newUser.save();
+
+      // Notify the new user and admin in parallel
+      const emailPromises = [
+        transporter.sendMail({
+          from: FMM_MAIL_FROM,
+          to: email,
+          subject: 'Welcome to Fantasy Madness!',
+          html: `
+            <table width="100%" cellpadding="0" cellspacing="0" border="0" style="width:100%; max-width:600px; margin:auto;">
+              <tr>
+                <td align="center" style="padding: 15px 0;">
+                  <img src="https://res.cloudinary.com/daflot6fo/image/upload/v1736068036/bywcrrcqmcyczdyhjmdv.png" alt="Fantasy Madness Logo" style="width:100px;" />
+                  <h2 style="margin: 0; color: #191164; font-family: 'New York', Charter, Georgia, serif;">Fantasy Madness</h2>
+                </td>
+              </tr>
+              <tr>
+                <td style="padding: 10px 0;">
+                  <p style="font-size: 16px; font-family: Arial, sans-serif; color: #333;">Dear ${firstName},</p>
+                  <p style="font-size: 16px; font-family: Arial, sans-serif; color: #333;">
+                    You have been successfully added to Fantasy Madness with 200 tokens. Below are your login credentials:
+                  </p>
+                  <ul style="font-size: 16px; font-family: Arial, sans-serif; color: #333;">
+                    <li><strong>Email:</strong> ${email}</li>
+                    <li><strong>Password:</strong> ${password}</li>
+                  </ul>
+                  <p style="font-size: 16px; font-family: Arial, sans-serif; color: #333;">
+                    Please log in at <a href="https://fantasymmadness.com/login" style="color: #191164; text-decoration: none;">https://fantasymmadness.com/login</a> to explore your account!
+                  </p>
+                </td>
+              </tr>
+              <tr>
+                <td align="center" style="padding: 20px 0;">
+                  <img src="https://res.cloudinary.com/daflot6fo/image/upload/v1736068036/bywcrrcqmcyczdyhjmdv.png" alt="Fantasy Madness Logo" style="width:70px;" />
+                  <p><a href="https://fantasymmadness.com" style="font-family: Arial, sans-serif; color: #191164; text-decoration: none;">https://fantasymmadness.com</a></p>
+                </td>
+              </tr>
+            </table>
+          `,
+        }),
+
+        transporter.sendMail({
+          from: FMM_MAIL_FROM,
+          to: ADMIN_ALERT_EMAILS, // Replace with admin email
+          subject: 'New User Created and Tokens Added',
+          html: `
+            <table width="100%" cellpadding="0" cellspacing="0" border="0" style="width:100%; max-width:600px; margin:auto;">
+              <tr>
+                <td align="center" style="padding: 15px 0;">
+                  <img src="https://res.cloudinary.com/daflot6fo/image/upload/v1736068036/bywcrrcqmcyczdyhjmdv.png" alt="Fantasy Madness Logo" style="width:100px;" />
+                  <h2 style="margin: 0; color: #191164; font-family: 'New York', Charter, Georgia, serif;">Fantasy Madness</h2>
+                </td>
+              </tr>
+              <tr>
+                <td style="padding: 10px 0;">
+                  <p style="font-size: 16px; font-family: Arial, sans-serif; color: #333;">
+                    A new user has been created with the email: ${email} and 200 tokens have been added.
+                  </p>
+                </td>
+              </tr>
+              <tr>
+                <td align="center" style="padding: 20px 0;">
+                  <img src="https://res.cloudinary.com/daflot6fo/image/upload/v1736068036/bywcrrcqmcyczdyhjmdv.png" alt="Fantasy Madness Logo" style="width:70px;" />
+                  <p><a href="https://fantasymmadness.com" style="font-family: Arial, sans-serif; color: #191164; text-decoration: none;">https://fantasymmadness.com</a></p>
+                </td>
+              </tr>
+            </table>
+          `,
+        })
+      ];
+
+      // Wait for all emails to be sent
+      await Promise.all(emailPromises);
+
+      return res.status(201).json({ message: 'User created and tokens added, emails sent.' });
+    }
+
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ message: 'An error occurred while adding tokens or creating the User.' });
+  }
+});
+
+
+// SECURITY: authenticated, and the prize is validated against the server's own
+// wheel segments. Previously the browser named its own prize, so a caller could
+// claim the top value on every spin.
+const SPIN_WHEEL_PRIZES = Object.freeze([0, 1, 2, 3, 4, 5, 7, 10, 200]);
+
+app.post('/admin/add-tokens-won-spin-wheel', verifyToken, requireScope(TOKEN_SCOPES.PLAYER), async (req, res) => {
+  const { deviceId } = req.body;
+  // NOTE: email comes from the body here, but it is verified against the token's
+  // own account a few lines below (see the tokenUser check) before any coins are
+  // credited — so a spoofed address is rejected rather than paid. Do not add a
+  // second lookup here; it shadows that one.
+  const email = String(req.user?.email || req.body?.email || '').trim();
+  const prize = Math.floor(Number(req.body?.results));
+
+  if (!email || !deviceId) {
+    return res.status(400).json({ message: 'Email and deviceId are required.' });
+  }
+
+  if (!Number.isFinite(prize) || !SPIN_WHEEL_PRIZES.includes(prize)) {
+    return res.status(400).json({ message: 'That prize is not a valid wheel segment.', code: 'INVALID_PRIZE' });
+  }
+
+  // The wallet may only be credited for the signed-in user.
+  const tokenUser = await User.findById(String(req.user?.id || req.user?._id || '')).select('email').lean();
+  if (!tokenUser || String(tokenUser.email).toLowerCase() !== email.toLowerCase()) {
+    return res.status(403).json({ message: 'You can only claim a spin for your own account.', code: 'ACCOUNT_MISMATCH' });
+  }
+
+  try {
+    // Once per DEVICE and once per ACCOUNT. The device check alone let the same
+    // player spin again on a second phone, or after clearing app data.
+    const [existingDevice, existingClaim] = await Promise.all([
+      DeviceInfoSpinWheel.findOne({ deviceId }).select('_id').lean(),
+      DeviceInfoSpinWheel.findOne({ email: new RegExp(`^${email.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`, 'i') }).select('_id').lean(),
+    ]);
+
+    if (existingDevice) {
+      return res.status(400).json({ message: 'This device has already had its spin.', code: 'DEVICE_ALREADY_SPUN' });
+    }
+    if (existingClaim) {
+      return res.status(400).json({ message: 'You have already used your welcome spin.', code: 'ALREADY_SPUN' });
+    }
+
+    await new DeviceInfoSpinWheel({ email, deviceId }).save();
+    
+    // Check if User already exists
+    const existingUser = await User.findOne({ email });
+
+    if (existingUser) {
+      // User found, add 200 tokens
+      existingUser.tokens = addWalletTokens(existingUser.tokens, prize);
+      await existingUser.save();
+
+      // Notify User and Admin
+      const emailPromises = [
+        transporter.sendMail({
+          from: FMM_MAIL_FROM,
+          to: email,
+          subject: `${prize} Tokens Added!`,
+          html: `
+            <table width="100%" cellpadding="0" cellspacing="0" border="0" style="width:100%; max-width:600px; margin:auto;">
+              <tr>
+                <td align="center" style="padding: 15px 0;">
+                  <img src="https://res.cloudinary.com/daflot6fo/image/upload/v1736068036/bywcrrcqmcyczdyhjmdv.png" alt="Fantasy Madness Logo" style="width:100px;" />
+                  <h2 style="margin: 0; color: #191164; font-family: 'New York', Charter, Georgia, serif;">Fantasy Madness</h2>
+                </td>
+              </tr>
+              <tr>
+                <td style="padding: 10px 0;">
+                  <p style="font-size: 16px; font-family: Arial, sans-serif; color: #333;">Dear User,</p>
+                  <p style="font-size: 16px; font-family: Arial, sans-serif; color: #333;">
+                    You have received ${prize} tokens added to your account! Your new token balance is ${existingUser.tokens}.
+                  </p>
+                  <p style="font-size: 16px; font-family: Arial, sans-serif; color: #333;">
+                    If you have any questions, feel free to reach out to us!
+                  </p>
+                </td>
+              </tr>
+              <tr>
+                <td align="center" style="padding: 20px 0;">
+                  <img src="https://res.cloudinary.com/daflot6fo/image/upload/v1736068036/bywcrrcqmcyczdyhjmdv.png" alt="Fantasy Madness Logo" style="width:70px;" />
+                  <p><a href="https://fantasymmadness.com" style="font-family: Arial, sans-serif; color: #191164; text-decoration: none;">https://fantasymmadness.com</a></p>
+                </td>
+              </tr>
+            </table>
+          `,
+        }),
+
+        transporter.sendMail({
+          from: FMM_MAIL_FROM,
+          to: ADMIN_ALERT_EMAILS, // Replace with admin email
+          subject: 'Tokens Added to User',
+          html: `
+            <table width="100%" cellpadding="0" cellspacing="0" border="0" style="width:100%; max-width:600px; margin:auto;">
+              <tr>
+                <td align="center" style="padding: 15px 0;">
+                  <img src="https://res.cloudinary.com/daflot6fo/image/upload/v1736068036/bywcrrcqmcyczdyhjmdv.png" alt="Fantasy Madness Logo" style="width:100px;" />
+                  <h2 style="margin: 0; color: #191164; font-family: 'New York', Charter, Georgia, serif;">Fantasy Madness</h2>
+                </td>
+              </tr>
+              <tr>
+                <td style="padding: 10px 0;">
+                  <p style="font-size: 16px; font-family: Arial, sans-serif; color: #333;">
+                    ${prize} tokens have been successfully added to the user with the email: ${email}.
+                  </p>
+                </td>
+              </tr>
+              <tr>
+                <td align="center" style="padding: 20px 0;">
+                  <img src="https://res.cloudinary.com/daflot6fo/image/upload/v1736068036/bywcrrcqmcyczdyhjmdv.png" alt="Fantasy Madness Logo" style="width:70px;" />
+                  <p><a href="https://fantasymmadness.com" style="font-family: Arial, sans-serif; color: #191164; text-decoration: none;">https://fantasymmadness.com</a></p>
+                </td>
+              </tr>
+            </table>
+          `,
+        })
+      ];
+
+      // Wait for all emails to be sent
+      await Promise.all(emailPromises);
+
+      return res.status(200).json({ message: 'Tokens added successfully, emails sent.' });
+    } else {
+      // User not found, create new user with 200 tokens
+      const firstName = email.split('@')[0]; // Extract the first part of the email for the name
+      const password = firstName; // Use the first part of the email as the password
+      const hashedPassword = await bcrypt.hash(password, 10);
+
+      const newUser = new User({
+        firstName,
+        email,
+        password: hashedPassword,
+        tokens: String(prize),
+        currentPlan: 'Free',
+        verified: true,
+        isNotificationsEnabled: true,
+        isSubscribed: true,
+        isAgreed: true,
+        profileUrl: "https://res.cloudinary.com/daflot6fo/image/upload/v1736068036/bywcrrcqmcyczdyhjmdv.png",
+      });
+
+      await newUser.save();
+
+      // Notify the new user and admin in parallel
+      const emailPromises = [
+        transporter.sendMail({
+          from: FMM_MAIL_FROM,
+          to: email,
+          subject: 'Welcome to Fantasy Madness!',
+          html: `
+            <table width="100%" cellpadding="0" cellspacing="0" border="0" style="width:100%; max-width:600px; margin:auto;">
+              <tr>
+                <td align="center" style="padding: 15px 0;">
+                  <img src="https://res.cloudinary.com/daflot6fo/image/upload/v1736068036/bywcrrcqmcyczdyhjmdv.png" alt="Fantasy Madness Logo" style="width:100px;" />
+                  <h2 style="margin: 0; color: #191164; font-family: 'New York', Charter, Georgia, serif;">Fantasy Madness</h2>
+                </td>
+              </tr>
+              <tr>
+                <td style="padding: 10px 0;">
+                  <p style="font-size: 16px; font-family: Arial, sans-serif; color: #333;">Dear ${firstName},</p>
+                  <p style="font-size: 16px; font-family: Arial, sans-serif; color: #333;">
+                    You have been successfully added to Fantasy Madness with ${results} tokens. Below are your login credentials:
+                  </p>
+                  <ul style="font-size: 16px; font-family: Arial, sans-serif; color: #333;">
+                    <li><strong>Email:</strong> ${email}</li>
+                    <li><strong>Password:</strong> ${password}</li>
+                  </ul>
+                  <p style="font-size: 16px; font-family: Arial, sans-serif; color: #333;">
+                    Please log in at <a href="https://fantasymmadness.com/login" style="color: #191164; text-decoration: none;">https://fantasymmadness.com/login</a> to explore your account!
+                  </p>
+                </td>
+              </tr>
+              <tr>
+                <td align="center" style="padding: 20px 0;">
+                  <img src="https://res.cloudinary.com/daflot6fo/image/upload/v1736068036/bywcrrcqmcyczdyhjmdv.png" alt="Fantasy Madness Logo" style="width:70px;" />
+                  <p><a href="https://fantasymmadness.com" style="font-family: Arial, sans-serif; color: #191164; text-decoration: none;">https://fantasymmadness.com</a></p>
+                </td>
+              </tr>
+            </table>
+          `,
+        }),
+
+        transporter.sendMail({
+          from: FMM_MAIL_FROM,
+          to: ADMIN_ALERT_EMAILS, // Replace with admin email
+          subject: 'New User Created and Tokens Added',
+          html: `
+            <table width="100%" cellpadding="0" cellspacing="0" border="0" style="width:100%; max-width:600px; margin:auto;">
+              <tr>
+                <td align="center" style="padding: 15px 0;">
+                  <img src="https://res.cloudinary.com/daflot6fo/image/upload/v1736068036/bywcrrcqmcyczdyhjmdv.png" alt="Fantasy Madness Logo" style="width:100px;" />
+                  <h2 style="margin: 0; color: #191164; font-family: 'New York', Charter, Georgia, serif;">Fantasy Madness</h2>
+                </td>
+              </tr>
+              <tr>
+                <td style="padding: 10px 0;">
+                  <p style="font-size: 16px; font-family: Arial, sans-serif; color: #333;">
+                    A new user has been created with the email: ${email} and ${results} tokens have been added.
+                  </p>
+                </td>
+              </tr>
+              <tr>
+                <td align="center" style="padding: 20px 0;">
+                  <img src="https://res.cloudinary.com/daflot6fo/image/upload/v1736068036/bywcrrcqmcyczdyhjmdv.png" alt="Fantasy Madness Logo" style="width:70px;" />
+                  <p><a href="https://fantasymmadness.com" style="font-family: Arial, sans-serif; color: #191164; text-decoration: none;">https://fantasymmadness.com</a></p>
+                </td>
+              </tr>
+            </table>
+          `,
+        })
+      ];
+
+      // Wait for all emails to be sent
+      await Promise.all(emailPromises);
+
+      return res.status(201).json({ message: 'User created and tokens added, emails sent.' });
+    }
+
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ message: 'An error occurred while adding tokens or creating the User.' });
+  }
+});
+
+
+app.post('/admin/add-user', verifyAdminToken, async (req, res) => {
+  const { firstName, lastName, email, password } = req.body;
+
+  if (!firstName || !lastName || !email || !password) {
+    return res.status(400).json({ message: 'All fields are required.' });
+  }
+
+  try {
+    // Check if User already exists
+    const existingUser = await User.findOne({ email });
+    if (existingUser) {
+      return res.status(400).json({ message: 'User with this email already exists.' });
+    }
+
+    // Hash the password
+    const hashedPassword = await bcrypt.hash(password, 10);
+
+    // Create new User with default values and profileUrl
+    const newUser = new User({
+      firstName,
+      lastName,
+      email,
+      password: hashedPassword,
+      verified: true,
+      isNotificationsEnabled: true,
+      isSubscribed: true,
+      isAgreed: true,
+      profileUrl: "https://res.cloudinary.com/daflot6fo/image/upload/v1736068036/bywcrrcqmcyczdyhjmdv.png",
+    });
+
+    await newUser.save();
+
+    // Email to the User
+    await transporter.sendMail({
+      from: FMM_MAIL_FROM,
+      to: email,
+      subject: 'Welcome to Fantasy Madness!',
+      html: `
+        <table width="100%" cellpadding="0" cellspacing="0" border="0" style="width:100%; max-width:600px; margin:auto;">
+          <tr>
+            <td align="center" style="padding: 15px 0;">
+              <img src="https://res.cloudinary.com/daflot6fo/image/upload/v1736068036/bywcrrcqmcyczdyhjmdv.png" alt="Fantasy Madness Logo" style="width:100px;" />
+              <h2 style="margin: 0; color: #191164; font-family: 'New York', Charter, Georgia, serif;">Fantasy Madness</h2>
+            </td>
+          </tr>
+
+          <tr>
+            <td style="padding: 10px 0;">
+              <p style="font-size: 16px; font-family: Arial, sans-serif; color: #333;">Dear ${firstName},</p>
+              <p style="font-size: 16px; font-family: Arial, sans-serif; color: #333;">
+                You have been successfully added to the Fantasy Madness by our administrators!
+              </p>
+              <p style="font-size: 16px; font-family: Arial, sans-serif; color: #333;">
+                Below are your login credentials:
+              </p>
+              <ul style="font-size: 16px; font-family: Arial, sans-serif; color: #333;">
+                <li><strong>Email:</strong> ${email}</li>
+                <li><strong>Password:</strong> ${password}</li>
+              </ul>
+              <p style="font-size: 16px; font-family: Arial, sans-serif; color: #333;">
+                Please log in at <a href="https://fantasymmadness.com/login" style="color: #191164; text-decoration: none;">https://fantasymmadness.com/login</a> to explore your account and get started!
+              </p>
+              <p style="font-size: 16px; font-family: Arial, sans-serif; color: #333;">
+                If you have any questions, feel free to reach out to us!
+              </p>
+            </td>
+          </tr>
+
+          <tr>
+        <td align="center" style="padding: 20px 0;">
+          <img src="https://res.cloudinary.com/daflot6fo/image/upload/v1736068036/bywcrrcqmcyczdyhjmdv.png" alt="Fantasy Madness Logo" style="width:70px;" />
+          <p><a href="https://fantasymmadness.com" style="font-family: Arial, sans-serif; color: #191164; text-decoration: none;">https://fantasymmadness.com</a></p>   
+          <div style="padding-top: 10px;">
+            <!-- Social Icons -->
+            <a href="https://www.facebook.com/share/2pzYV9XdQpAU7n6p/?mibextid=LQQJ4d" style="margin: 0 5px; width:35px; height:35px; border-radius:50%; background:#fff; background-color:#fff;">
+              <img src="https://i.ibb.co/G9wVH2g/facebook-removebg-preview-two.png" alt="Facebook" style="width:35px; height:35px; border-radius:50%; background-color:#fff; background:#fff;" />
+            </a>
+            <a href="https://www.instagram.com/fantasymmadness" style="margin: 0 5px;">
+              <img src="https://i.ibb.co/tKj4px0/insta-removebg-preview-two.png" alt="Instagram" style="width:35px; height:35px; border-radius:50%; background-color:#fff;" />
+            </a>
+            <a href="https://x.com/davis_kell51697" style="margin: 0 5px;">
+              <img src="https://i.ibb.co/T0cvy2Q/twitter-removebg-preview-two.png" alt="Twitter" style="width:35px; height:35px; border-radius:50%; background-color:#fff;" />
+            </a>
+          </div>
+        </td>
+      </tr>
+    
+        </table>
+      `,
+    });
+
+    // Email to the admin
+    await transporter.sendMail({
+      from: FMM_MAIL_FROM,
+      to: ADMIN_ALERT_EMAILS, // Replace with admin email
+      subject: 'User Successfully Added',
+      html: `
+      <table width="100%" cellpadding="0" cellspacing="0" border="0" style="width:100%; max-width:600px; margin:auto;">
+        <tr>
+          <td align="center" style="padding: 15px 0;">
+            <img src="https://res.cloudinary.com/daflot6fo/image/upload/v1736068036/bywcrrcqmcyczdyhjmdv.png" alt="Fantasy Madness Logo" style="width:100px;" />
+            <h2 style="margin: 0; color: #191164; font-family: 'New York', Charter, Georgia, serif;">Fantasy Madness</h2>
+          </td>
+        </tr>
+  
+        <tr>
+          <td style="padding: 10px 0;">
+            <p style="font-size: 16px; font-family: Arial, sans-serif; color: #333;">
+              You have successfully added a new User to the Fantasy Madness with the following details:
+            </p>
+            <ul style="font-size: 16px; font-family: Arial, sans-serif; color: #333;">
+              <li><strong>First Name:</strong> ${firstName}</li>
+              <li><strong>Last Name:</strong> ${lastName}</li>
+              <li><strong>Email:</strong> ${email}</li>
+            </ul>
+            <p style="font-size: 16px; font-family: Arial, sans-serif; color: #333;">
+              The User has been notified of their login credentials.
+            </p>
+          </td>
+        </tr>
+  
+          <tr>
+        <td align="center" style="padding: 20px 0;">
+          <img src="https://res.cloudinary.com/daflot6fo/image/upload/v1736068036/bywcrrcqmcyczdyhjmdv.png" alt="Fantasy Madness Logo" style="width:70px;" />
+          <p><a href="https://fantasymmadness.com" style="font-family: Arial, sans-serif; color: #191164; text-decoration: none;">https://fantasymmadness.com</a></p>   
+          <div style="padding-top: 10px;">
+            <!-- Social Icons -->
+            <a href="https://www.facebook.com/share/2pzYV9XdQpAU7n6p/?mibextid=LQQJ4d" style="margin: 0 5px; width:35px; height:35px; border-radius:50%; background:#fff; background-color:#fff;">
+              <img src="https://i.ibb.co/G9wVH2g/facebook-removebg-preview-two.png" alt="Facebook" style="width:35px; height:35px; border-radius:50%; background-color:#fff; background:#fff;" />
+            </a>
+            <a href="https://www.instagram.com/fantasymmadness" style="margin: 0 5px;">
+              <img src="https://i.ibb.co/tKj4px0/insta-removebg-preview-two.png" alt="Instagram" style="width:35px; height:35px; border-radius:50%; background-color:#fff;" />
+            </a>
+            <a href="https://x.com/davis_kell51697" style="margin: 0 5px;">
+              <img src="https://i.ibb.co/T0cvy2Q/twitter-removebg-preview-two.png" alt="Twitter" style="width:35px; height:35px; border-radius:50%; background-color:#fff;" />
+            </a>
+          </div>
+        </td>
+      </tr>
+      
+      </table> `,
+    });
+
+    res.status(201).json({ message: 'User added successfully and emails sent.' });
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ message: 'An error occurred while adding the User.' });
+  }
+});
+
+
+
+app.post('/forgotPassword-user', submitLimiter, async (req, res) => {
+  const { email } = req.body;
+
+  try {
+    
+    const user = await User.findOne({ email });
+    if (!user) {
+      return res.status(404).send('User not found');
+    }
+
+    // Generate reset token
+    const resetToken = crypto.randomBytes(32).toString('hex');
+    const resetTokenHash = crypto.createHash('sha256').update(resetToken).digest('hex');
+
+    // Set reset token and expiration time (e.g., 1 hour)
+    user.resetPasswordToken = resetTokenHash;
+    user.resetPasswordExpires = Date.now() + 3600000;
+
+    await user.save();
+
+    // Send email with reset token
+    const resetURL = `https://fantasymmadness.com/resetPassword-user/${resetToken}`;
+
+    const mailOptions = {
+      to: user.email,
+      from: FMM_MAIL_FROM,
+      subject: 'Password Reset Request',
+      text: `You are receiving this because you have requested a password reset for your account.\n\n
+      Please click the following link to reset your password:\n\n
+      ${resetURL}\n\n
+      If you did not request this, please ignore this email.\n`,
+    };
+
+    await transporter.sendMail(mailOptions);
+    
+    res.status(200).send('Password reset email sent');
+  } catch (error) {
+    console.error('Error sending reset password email:', error);
+    res.status(500).send('Server error');
+  }
+});
+
+
+app.post('/resetPassword-user/:token', submitLimiter, async (req, res) => {
+  try {
+    // Hash the token from the URL to match the stored hash
+    const resetTokenHash = crypto.createHash('sha256').update(req.params.token).digest('hex');
+
+    // Find the User by the token and ensure the token hasn't expired
+    const user = await User.findOne({
+      resetPasswordToken: resetTokenHash,
+      resetPasswordExpires: { $gt: Date.now() }, // Ensure token is not expired
+    });
+
+    if (!user) {
+      return res.status(400).send('Invalid or expired token');
+    }
+
+    // Update the password and remove the reset token and expiry
+    user.password = await bcrypt.hash(req.body.password, 10);
+    user.resetPasswordToken = undefined;
+    user.resetPasswordExpires = undefined;
+
+    await user.save();
+
+    res.status(200).send('Password has been reset');
+  } catch (error) {
+    console.error('Error resetting password:', error);
+    res.status(500).send('Server error');
+  }
+});
+
+
+// Permanently block the legacy direct-card routes. They accepted raw PAN/CVV
+// values and are retained below only so older route manifests remain stable;
+// all new purchases must use Accept Hosted through /api/checkout/*.
+app.use('/api/authorize-net', (req, res, next) => {
+  const disabled = req.method === 'POST' && ['/first-payment', '/transaction'].includes(req.path);
+  if (!disabled) return next();
+  return res.status(410).json({
+    ok: false,
+    code: 'LEGACY_CARD_FLOW_DISABLED',
+    message: 'This payment route has been retired. Continue through the secure FM checkout.',
+  });
+});
+
+app.post('/api/authorize-net/first-payment', submitLimiter, async (req, res) => {
+  const { email, amount, cardNumber, expirationDate, cardCode, address, city, state, zip, country } = req.body;
+
+  try {
+    const user = await User.findOne({ email });
+    if (!user) return res.status(404).json({ message: 'User not found' });
+
+    // Construct the XML payload for Authorize.Net
+    const payload = {
+      $: { 'xmlns': 'AnetApi/xml/v1/schema/AnetApiSchema.xsd' }, // Add namespace
+      merchantAuthentication: {
+        name: process.env.AUTHORIZE_NET_API_LOGIN_ID,
+        transactionKey: process.env.AUTHORIZE_NET_TRANSACTION_KEY,
+      },
+      transactionRequest: {
+        transactionType: 'authCaptureTransaction',
+        amount: amount,
+        payment: {
+          creditCard: {
+            cardNumber: cardNumber,
+            expirationDate: expirationDate,
+            cardCode: cardCode,
+          },
+        },
+        order: {
+          invoiceNumber: `INV-${new Date().getTime()}`,
+          description: 'First-time payment',
+        },
+        customer: {
+          email: email,
+        },
+        billTo: {
+          firstName: user.firstName,
+          lastName: user.lastName,
+          address: address,
+          city: city,
+          state: state,
+          zip: zip,
+          country: country,
+        },
+      },
+    };
+
+    const xmlPayload = builder.buildObject(payload);
+
+    // Send the transaction request to Authorize.Net
+    const response = await axios.post('https://api.authorize.net/xml/v1/request.api', xmlPayload, {
+      headers: {
+        'Content-Type': 'application/xml',
+      },
+    });
+
+    // Log the raw response
+    console.log('Authorize.Net raw response:', response.data);
+    xml2js.parseString(response.data, async (err, result) => {
+      if (err) {
+          console.error('Error parsing XML response:', err);
+          return res.status(500).json({ message: 'Error parsing payment response' });
+      }
+  
+      const createTransactionResponse = result.createTransactionResponse;
+      const transactionResponse = createTransactionResponse?.transactionResponse?.[0];
+      const responseCode = transactionResponse?.responseCode?.[0];
+  
+      if (responseCode === '1') {
+          // Transaction was successful
+  
+          // Encrypt card details
+          const encryptedCardNumber = encrypt(cardNumber);
+          const encryptedExpirationDate = encrypt(expirationDate);
+          const encryptedCardCode = encrypt(cardCode);
+  
+          // Store encrypted details in user billing
+          user.billing = {
+              cardNumber: encryptedCardNumber,
+              expirationDate: encryptedExpirationDate,
+              cardCode: encryptedCardCode,
+              address,
+              city,
+              state,
+              zip,
+              country,
+          };
+  
+          // Add tokens to the user's account
+          const anetFirstBefore = Number.parseInt(String(user.tokens || '0'), 10) || 0;
+          user.tokens = addWalletTokens(user.tokens, amount);
+          await recordWalletMove({
+            userId: user._id, amount, balanceBefore: anetFirstBefore,
+            balanceAfter: Number.parseInt(String(user.tokens || '0'), 10) || 0,
+            reason: 'card_payment_credit', reference: String(Date.now()),
+          });
+          user.currentPlan = 'Standard';
+          await user.save();
+  
+          return res.status(200).json({
+              message: 'Payment processed and user updated successfully',
+              transactionId: transactionResponse.transId?.[0],
+              authCode: transactionResponse.authCode?.[0],
+          });
+      } else {
+        // Transaction failed, handle the failure case
+        const errorMessage =
+        transactionResponse?.errors?.[0]?.error?.[0]?.errorText ||
+        transactionResponse?.messages?.[0]?.message?.[0]?.description ||
+        'Unknown error';
+      
+        console.log('Authorize.Net transaction failed:', errorMessage);
+        return res.status(400).json({
+          message: 'Payment failed',
+          details: errorMessage,
+        });
+      }
+    });
+  } catch (error) {
+    console.error('Error processing first payment:', error);
+    return res.status(500).json({ message: 'Error processing payment' });
+  }
+});
+app.post('/api/authorize-net/transaction', submitLimiter, async (req, res) => {
+  const { email, amount } = req.body;
+
+  try {
+    const user = await User.findOne({ email }).select('+billing.cardNumber +billing.expirationDate +billing.cardCode');
+    if (!user) return res.status(404).json({ message: 'User not found' });
+
+    // Decrypt card details
+    const cardNumber = decrypt(user.billing.cardNumber);
+    const expirationDate = decrypt(user.billing.expirationDate);
+    const cardCode = decrypt(user.billing.cardCode);
+
+    // Check if decryption was successful
+    if (!cardNumber || !expirationDate || !cardCode) {
+      return res.status(400).json({ message: 'Invalid card details' });
+    }
+
+    // Construct the payload for Authorize.Net
+    const payload = {
+      $: { 'xmlns': 'AnetApi/xml/v1/schema/AnetApiSchema.xsd' }, // Add namespace
+      merchantAuthentication: {
+        name: process.env.AUTHORIZE_NET_API_LOGIN_ID,
+        transactionKey: process.env.AUTHORIZE_NET_TRANSACTION_KEY,
+      },
+      transactionRequest: {
+        transactionType: 'authCaptureTransaction',
+        amount: amount,
+        payment: {
+          creditCard: {
+            cardNumber: cardNumber,
+            expirationDate: expirationDate,
+            cardCode: cardCode,
+          },
+        },
+        order: {
+          invoiceNumber: `INV-${new Date().getTime()}`,
+          description: 'Purchase description here',
+        },
+        customer: {
+          email: user.email,
+        },
+        billTo: {
+          firstName: user.firstName,
+          lastName: user.lastName,
+          address: user.billing.address,
+          city: user.billing.city,
+          state: user.billing.state,
+          zip: user.billing.zip,
+          country: user.billing.country,
+        },
+      },
+    };
+
+    const xmlPayload = builder.buildObject(payload);
+
+    // Send the transaction request to Authorize.Net
+    const response = await axios.post('https://api.authorize.net/xml/v1/request.api', xmlPayload, {
+      headers: {
+        'Content-Type': 'application/xml',
+      },
+    });
+
+    // Parse XML response
+    xml2js.parseString(response.data, async (err, result) => {
+      if (err) {
+        console.error('Error parsing XML response:', err);
+        return res.status(500).json({ message: 'Error parsing transaction response' });
+      }
+
+      const createTransactionResponse = result.createTransactionResponse;
+      const transactionResponse = createTransactionResponse?.transactionResponse?.[0];
+      const responseCode = transactionResponse?.responseCode?.[0];
+
+      if (responseCode === '1') {
+        // Transaction was successful
+        const anetTxnBefore = Number.parseInt(String(user.tokens || '0'), 10) || 0;
+        user.tokens = addWalletTokens(user.tokens, amount);
+        await user.save();
+        await recordWalletMove({
+          userId: user._id, amount, balanceBefore: anetTxnBefore,
+          balanceAfter: Number.parseInt(String(user.tokens || '0'), 10) || 0,
+          reason: 'card_payment_credit', reference: String(Date.now()),
+        });
+
+        return res.status(200).json({
+          message: 'Transaction successful and tokens added',
+          transactionId: transactionResponse.transId?.[0],
+          authCode: transactionResponse.authCode?.[0],
+        });
+      } else {
+        // Transaction failed
+        const errorMessage = transactionResponse?.messages?.[0]?.message?.[0]?.description || 'Unknown error';
+        console.log('Authorize.Net transaction failed:', errorMessage);
+        return res.status(400).json({
+          message: 'Transaction failed',
+          details: errorMessage,
+        });
+      }
+    });
+  } catch (error) {
+    console.error('Error processing transaction:', error.response?.data || error.message);
+    return res.status(500).json({ message: 'Error processing transaction' });
+  }
+});
+
+// Google Login API
+app.post('/google-login', loginLimiter, async (req, res) => {
+  const { token } = req.body;
+
+  try {
+    // Verify Google token
+    const ticket = await client.verifyIdToken({
+      idToken: token,
+      audience: process.env.GOOGLE_CLIENT_ID,
+    });
+    const { name, email, picture } = ticket.getPayload();
+
+    // Check if the email exists in Redusers
+    const redListedUser = await Redusers.findOne({ email });
+    if (redListedUser) {
+      // Send email notification if user is on red list
+      await transporter.sendMail({
+        from: FMM_MAIL_FROM,
+        to: email,
+        subject: 'Login Blocked',
+        html: `
+        <table width="100%" cellpadding="0" cellspacing="0" border="0" style="width:100%; max-width:600px; margin:auto;">
+          <!-- Logo Section -->
+          <tr>
+            <td align="center" style="padding: 15px 0;">
+              <img src="https://res.cloudinary.com/daflot6fo/image/upload/v1736068036/bywcrrcqmcyczdyhjmdv.png" alt="Fantasy Madness Logo" style="width:100px;" />
+              <h2 style="margin: 0; color: #191164; font-family: 'New York', Charter, Georgia, serif;">Fantasy Madness</h2>
+            </td>
+          </tr>
+          
+          <!-- Greeting Section -->
+          <tr>
+            <td style="padding: 10px 0;">
+              <p style="font-size: 16px; font-family: Arial, sans-serif; color: #333;">Dear User,</p>
+              <p style="font-size: 16px; font-family: Arial, sans-serif; color: #333;">
+                Due to violations of our terms and conditions, your account is flagged, and login is blocked on Fantasy Madness. 
+              </p>
+              <p style="font-size: 16px; font-family: Arial, sans-serif; color: #333;">
+                If you believe this is a mistake, please contact our support team.
+              </p>
+            </td>
+          </tr>
+
+          <!-- Footer Section -->
+          <tr>
+            <td align="center" style="padding: 15px 0;">
+              <img src="https://res.cloudinary.com/daflot6fo/image/upload/v1736068036/bywcrrcqmcyczdyhjmdv.png" alt="Fantasy Madness Logo" style="width:70px;" />
+              <p><a href="https://fantasymmadness.com" style="font-family: Arial, sans-serif; color: #191164; text-decoration: none;">https://fantasymmadness.com</a></p>
+            </td>
+          </tr>
+        </table>
+      `,
+      });
+
+      return res.status(403).json({ message: 'Login blocked due to red list status.' });
+    }
+
+    // Check if the user exists
+    let user = await User.findOne({ email });
+
+    if (!user) {
+      // If user does not exist, create a new user
+      user = new User({
+        firstName: name.split(' ')[0],
+        lastName: name.split(' ')[1] || '',
+        email,
+        profileUrl: picture,
+        verified: true, // Mark as verified for Google login
+        isNotificationsEnabled: true, // Notifications enabled
+        isSubscribed: true, // Subscribed to updates
+        isAgreed: true, // Agreed to terms and conditions
+        tokens: '500',
+        signupBonusGranted: true,
+      });
+
+      await user.save();
+
+// Handle referral if referrerId is present
+if (req.body.referrerId && req.body.referrerId !== user._id.toString()) {
+  try {
+    const referrer = await User.findById(req.body.referrerId);
+    const alreadyReferred = await Referral.findOne({ referredUser: user._id });
+
+    if (referrer && !alreadyReferred) {
+      await Referral.create({
+        referrer: referrer._id,
+        referredUser: user._id,
+        rewarded: true,
+      });
+
+      referrer.tokens = addWalletTokens(referrer.tokens, 3);
+      await referrer.save();
+    }
+  } catch (err) {
+    console.error('Referral processing error (Google Login):', err);
+  }
+}
+
+
+const notification = new Notification({
+      title: `User Signed Up: ${user.firstName}`,
+    });
+    await notification.save();
+    
+      // Send welcome email to the new user
+      await transporter.sendMail({
+        from: FMM_MAIL_FROM,
+        to: email,
+        subject: 'Welcome to Fantasy Madness!',
+        html: `
+        <table width="100%" cellpadding="0" cellspacing="0" border="0" style="width:100%; max-width:600px; margin:auto;">
+          <tr>
+            <td align="center" style="padding: 15px 0;">
+              <img src="https://res.cloudinary.com/daflot6fo/image/upload/v1736068036/bywcrrcqmcyczdyhjmdv.png" alt="Fantasy Madness Logo" style="width:100px;" />
+              <h2 style="margin: 0; color: #191164; font-family: 'New York', Charter, Georgia, serif;">Fantasy Madness</h2>
+            </td>
+          </tr>
+          
+          <tr>
+            <td style="padding: 10px 0;">
+              <p style="font-size: 16px; font-family: Arial, sans-serif; color: #333;">Dear ${user.firstName},</p>
+              <p style="font-size: 16px; font-family: Arial, sans-serif; color: #333;">
+                Welcome to Fantasy Madness! We're thrilled to have you on board. Dive into the excitement and start your journey today!
+              </p>
+            </td>
+          </tr>
+
+          <tr>
+            <td align="center" style="padding: 15px 0;">
+              <img src="https://res.cloudinary.com/daflot6fo/image/upload/v1736068036/bywcrrcqmcyczdyhjmdv.png" alt="Fantasy Madness Logo" style="width:70px;" />
+              <p><a href="https://fantasymmadness.com" style="font-family: Arial, sans-serif; color: #191164; text-decoration: none;">https://fantasymmadness.com</a></p>
+            </td>
+          </tr>
+        </table>
+      `,
+      });
+
+      // Notify admins about the new signup
+      await transporter.sendMail({
+        from: FMM_MAIL_FROM,
+        to: ADMIN_ALERT_EMAILS,
+        subject: 'New User Signup Notification',
+        html: `
+        <p>A new user has signed up on Fantasy Madness:</p>
+        <ul>
+          <li>Name: ${user.firstName} ${user.lastName}</li>
+          <li>Email: ${user.email}</li>
+        </ul>
+      `,
+      });
+    }
+
+    // Generate JWT token
+    const jwtToken = jwt.sign({ id: user._id, scope: TOKEN_SCOPES.PLAYER }, process.env.JWT_SECRET, { expiresIn: SESSION_TOKEN_TTL });
+
+    // Return JWT token and user info
+    res.status(200).json({
+      message: 'Google login successful',
+      token: jwtToken,
+      user: {
+        id: user._id,
+        name: user.firstName + ' ' + user.lastName,
+        email: user.email,
+        profileUrl: user.profileUrl,
+      },
+    });
+  } catch (error) {
+    console.error('Google login error', error);
+
+    // Send error email to admins
+    await transporter.sendMail({
+      from: FMM_MAIL_FROM,
+      to: ADMIN_ALERT_EMAILS,
+      subject: 'Google Login Error Notification',
+      html: `
+      <p>An error occurred during a Google login attempt. Please investigate the issue.</p>
+      <p><strong>Error Details:</strong></p>
+      <pre>${error.message}</pre>
+    `,
+    });
+
+    res.status(500).json({ message: 'Internal server error' });
+  }
+});
+
+
+
+
+app.post('/user/updatePayment/:id', verifyToken, async (req, res) => {
+  // Payment details may only be changed by their owner.
+  if (String(req.user?.id || req.user?._id || '') !== String(req.params.id)) {
+    return res.status(403).json({ message: 'You can only update your own payment details.', code: 'NOT_OWNER' });
+  }
+  const { id } = req.params; // Get the affiliate ID from URL params
+  const { preferredPaymentMethod, preferredPaymentMethodValue } = req.body; // Get data from request body
+
+  try {
+    // Find the affiliate by ID and update the payment method and value
+    const updatedUser = await User.findByIdAndUpdate(
+      id, 
+      {
+        preferredPaymentMethod,
+        preferredPaymentMethodValue
+      }, 
+      { new: true } // Return the updated document
+    );
+
+    if (!updatedUser) {
+      return res.status(404).json({ message: 'User not found' });
+    }
+
+    res.status(200).json({ message: 'Affiliate updated successfully', data: updatedUser });
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ message: 'Server error' });
+  }
+});
+
+// Update Profile API
+// SECURITY: was fully public — any caller could rewrite any player's profile
+// (including their citizenship/eligibility flags) by guessing an id.
+app.put('/update-profile/:userId', verifyToken, requireSelf((req) => req.params.userId), upload.single('image'), async (req, res) => {
+  const { userId } = req.params;
+  const {
+    firstName,
+    lastName,
+    playerName,
+    phone,
+    zipCode,
+    shortBio,
+    isNotificationsEnabled,
+    isSubscribed,
+    isUSCitizen,
+  } = req.body;
+
+  try {
+    // Create an object to hold the fields that should be updated
+    const updateFields = {};
+
+    // Add other fields to be updated
+    if (firstName) updateFields.firstName = firstName;
+    if (lastName) updateFields.lastName = lastName;
+    if (playerName) updateFields.playerName = playerName;
+    if (phone) updateFields.phone = phone;
+    if (zipCode) updateFields.zipCode = zipCode;
+    if (shortBio) updateFields.shortBio = shortBio;
+    if (isNotificationsEnabled !== undefined) updateFields.isNotificationsEnabled = isNotificationsEnabled;
+    if (isSubscribed !== undefined) updateFields.isSubscribed = isSubscribed;
+    if (isUSCitizen !== undefined) updateFields.isUSCitizen = isUSCitizen;
+
+    // Check if a new image is provided
+    if (req.file) {
+      // Find the user to retrieve the previous profile details
+      const user = await User.findById(userId).select('+profileDeleteUrl');
+      if (!user) {
+        return res.status(404).json({ message: 'User not found' });
+      }
+
+      // Delete previous image from Cloudinary if delete URL exists
+      if (user.profileDeleteUrl) {
+        await cloudinary.uploader.destroy(user.profileDeleteUrl);
+      }
+
+      // Upload new image to Cloudinary
+      const result = await new Promise((resolve, reject) => {
+        cloudinary.uploader.upload_stream(
+          { folder: 'profiles' },
+          (error, result) => {
+            if (error) return reject(error);
+            resolve(result);
+          }
+        ).end(req.file.buffer);
+      });
+
+      updateFields.profileUrl = result.secure_url; // URL for accessing the image
+      updateFields.profileDeleteUrl = result.public_id; // Cloudinary public ID for deletion
+    }
+
+    // Update the user document with the specified fields
+    const updatedUser = await User.findByIdAndUpdate(userId, updateFields, { new: true });
+
+    if (!updatedUser) {
+      return res.status(404).json({ message: 'User not found' });
+    }
+
+    res.status(200).json({
+      message: 'Profile updated successfully',
+      user: updatedUser,
+    });
+  } catch (error) {
+    console.error('Error updating profile:', error);
+    res.status(500).json({ message: 'Server error' });
+  }
+});
+
+// POST API to reward tokens to the user and update matchReward status
+// SECURITY: admin-only. Credits a wallet from an amount in the request body,
+// so an unauthenticated caller could mint unlimited coins.
+app.post('/api/reward-tokens/:userId', verifyAdminToken, async (req, res) => {
+  try {
+    const { userId } = req.params;
+    const { tokens, matchId } = req.body;
+
+    // Find the user by ID
+    const user = await User.findById(userId);
+
+    if (!user) {
+      return res.status(404).json({ message: 'User not found' });
+    }
+
+    // Add tokens to the user's account
+    const grantBalanceBefore = Number.parseInt(String(user.tokens || '0'), 10) || 0;
+    user.tokens = addWalletTokens(user.tokens, tokens);
+    await recordWalletMove({
+      userId: user._id,
+      amount: tokens,
+      balanceBefore: grantBalanceBefore,
+      balanceAfter: Number.parseInt(String(user.tokens || '0'), 10) || 0,
+      reason: 'admin_grant',
+      reference: String(req.params.userId || req.body?.matchId || Date.now()),
+      meta: { grantedBy: req.admin?.id || null },
+    });
+
+    // Save the updated user
+    await user.save();
+
+    // Update the match's reward status to "Rewarded"
+    const match = await Match.findById(matchId);
+
+    if (!match) {
+      return res.status(404).json({ message: 'Match not found' });
+    }
+
+    match.matchReward = 'Rewarded';
+
+    // Save the updated match
+    await match.save();
+
+    res.status(200).json({ success: true, message: 'Tokens rewarded and match updated successfully', user, match });
+  } catch (error) {
+    console.error('Request failed:', error);
+    res.status(500).json({ success: false, message: 'Server error' });
+  }
+});
+
+// POST API to reward tokens to the user and update matchReward status
+// SECURITY: admin-only (called from the admin RegisteredUsers screen).
+app.post('/api/reward-tokens-only-forcibly/:userId', verifyAdminToken, async (req, res) => {
+  try {
+    const { userId } = req.params;
+    const { tokens } = req.body;
+
+    // Find the user by ID
+    const user = await User.findById(userId);
+
+    if (!user) {
+      return res.status(404).json({ message: 'User not found' });
+    }
+
+    // Add tokens to the user's account
+    const grantBalanceBefore = Number.parseInt(String(user.tokens || '0'), 10) || 0;
+    user.tokens = addWalletTokens(user.tokens, tokens);
+    await recordWalletMove({
+      userId: user._id,
+      amount: tokens,
+      balanceBefore: grantBalanceBefore,
+      balanceAfter: Number.parseInt(String(user.tokens || '0'), 10) || 0,
+      reason: 'admin_grant',
+      reference: String(req.params.userId || req.body?.matchId || Date.now()),
+      meta: { grantedBy: req.admin?.id || null },
+    });
+
+    // Save the updated user
+    await user.save();
+
+    res.status(200).json({ success: true, message: 'Tokens rewarded successfully', user});
+  } catch (error) {
+    console.error('Request failed:', error);
+    res.status(500).json({ success: false, message: 'Server error' });
+  }
+});
+
+
+// SECURITY: authenticated. userId now comes from the verified token, not the
+// body — otherwise any caller could drain another player's wallet.
+app.post('/api/deduct-tokens', verifyToken, requireScope(TOKEN_SCOPES.PLAYER), async (req, res) => {
+  try {
+    const { matchTokens } = req.body;
+    const userId = String(req.user?.id || req.user?._id || '').trim();
+
+    // Find the user by ID
+    const user = await User.findById(userId);
+
+    if (!user) {
+      return res.status(404).json({ message: 'User not found' });
+    }
+
+    const { balance, deduction, nextBalance } = subtractWalletTokens(user.tokens, matchTokens);
+
+    // Check if the user has enough tokens
+    if (balance < deduction) {
+      return res.status(402).json({ code: 'INSUFFICIENT_FM', message: 'Insufficient tokens', tokensRemaining: String(balance) });
+    }
+
+    // Deduct the tokens
+    user.tokens = String(nextBalance);
+    await user.save();
+
+    return res.status(200).json({ message: 'Tokens deducted successfully', tokensRemaining: user.tokens });
+  } catch (error) {
+    console.error('Error deducting tokens:', error);
+    return res.status(500).json({ message: 'Server error' });
+  }
+});
+
+
+// Get registered users. Kept at the legacy /users path for compatibility,
+// but response payloads are sanitized so credentials, reset tokens, and card data
+// cannot be exposed to public clients.
+// Display names only — what leaderboards need, nothing more.
+app.get('/api/public/user-directory', async (req, res) => {
+  try {
+    const users = await User.find({})
+      .select('_id firstName lastName playerName profileUrl')
+      .limit(parsePositiveInteger(req.query.limit, 500, 5000))
+      .lean();
+    res.status(200).json(users);
+  } catch (error) {
+    res.status(500).json({ message: 'Could not load the directory.' });
+  }
+});
+
+app.get('/users', verifyAdminToken, async (req, res) => {
+  try {
+    const users = await User.find().select(USER_SAFE_SELECT).sort({ createdAt: -1 }).lean();
+    res.send(sanitizeAccountList(users));
+  } catch (error) {
+    console.error('Error fetching users:', error);
+    res.status(500).json({ message: 'Error fetching users' });
+  }
+});
+
+
+// Create reusable transporter object using the default SMTP transport.
+// Credentials must come from environment variables; do not commit mailbox app passwords.
+const SMTP_USER = SMTP_ACCOUNT_EMAIL;
+const SMTP_PASS = String(process.env.SMTP_PASS || process.env.GMAIL_APP_PASSWORD || '').trim();
+const SMTP_HOST = String(process.env.SMTP_HOST || '').trim();
+const SMTP_PORT = Number.parseInt(process.env.SMTP_PORT || (String(process.env.SMTP_SECURE).toLowerCase() === 'true' ? '465' : '587'), 10);
+const SMTP_SECURE = String(process.env.SMTP_SECURE || (SMTP_PORT === 465 ? 'true' : 'false')).toLowerCase() === 'true';
+const SMTP_POOL = String(process.env.SMTP_POOL || 'false').toLowerCase() === 'true';
+const SMTP_IS_GMAIL_ACCOUNT = /@gmail\.com$/i.test(SMTP_USER);
+// A stale IONOS/custom SMTP_HOST combined with the Gmail mailbox authenticates
+// inconsistently and is rejected at MAIL FROM/RCPT TO time. The mailbox domain
+// is the source of truth: Gmail credentials must travel through Gmail SMTP.
+const transporter = nodemailer.createTransport(SMTP_IS_GMAIL_ACCOUNT ? {
+  service: 'Gmail',
+  auth: { user: SMTP_USER, pass: SMTP_PASS },
+} : SMTP_HOST ? {
+  host: SMTP_HOST,
+  port: Number.isFinite(SMTP_PORT) ? SMTP_PORT : 587,
+  secure: SMTP_SECURE,
+  pool: SMTP_POOL,
+  auth: { user: SMTP_USER, pass: SMTP_PASS },
+} : {
+  service: process.env.SMTP_SERVICE || 'Gmail',
+  auth: { user: SMTP_USER, pass: SMTP_PASS },
+});
+
+const safeMailProviderResponse = (error) => String(error?.response || '')
+  .replace(/[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/gi, '[email redacted]')
+  .replace(/https?:\/\/\S+/gi, '[provider help link]')
+  .replace(/\s+/g, ' ')
+  .trim()
+  .slice(0, 420);
+
+const mailFailureMessage = (error) => {
+  const code = String(error?.code || '').toUpperCase();
+  const command = String(error?.command || '').toUpperCase();
+  const responseCode = Number(error?.responseCode || 0);
+  const providerResponse = safeMailProviderResponse(error).toLowerCase();
+  if (!SMTP_PASS) return 'Email delivery is not configured. Add the SMTP password in the backend production environment.';
+  if (code === 'EAUTH' || responseCode === 535) return 'The email provider rejected the SMTP login. Update the backend SMTP username or app password.';
+  if (['ECONNECTION', 'ETIMEDOUT', 'ESOCKET', 'ECONNREFUSED'].includes(code)) return 'The email provider could not be reached. Check the backend SMTP host, port, and secure setting.';
+  if (command.includes('MAIL FROM')) return `The email provider rejected the sender address ${FMM_MAIL_FROM}. Verify SMTP_FROM or remove it to use the authenticated mailbox.`;
+  if (command.includes('RCPT TO') || (Array.isArray(error?.rejected) && error.rejected.length)) return 'The email provider rejected the affiliate recipient address. Confirm the affiliate email is spelled correctly and can receive mail.';
+  if (command === 'DATA' && /quota|limit|too many|5\.4\.5/.test(providerResponse)) return 'Gmail accepted the addresses but the sending account has reached a provider sending limit. Wait for Gmail to reset the limit or use another verified mailbox.';
+  if (command === 'DATA' && /5\.7\.26|unauthenticated|spf|dkim|dmarc/.test(providerResponse)) return 'Gmail accepted the addresses but rejected sender authentication. The sending domain must pass SPF or DKIM alignment.';
+  if (command === 'DATA' && /spam|policy|5\.7\.1|message rejected/.test(providerResponse)) return 'Gmail accepted the addresses but rejected this message under its email policy. Review the provider explanation below.';
+  if (command === 'DATA') return 'Gmail accepted the sender and recipient but rejected the completed message. Review the provider explanation below.';
+  if (code === 'EENVELOPE' || responseCode === 550 || responseCode === 553) return 'The email provider rejected the message envelope. Verify the sender domain and affiliate email address.';
+  return 'The email provider could not deliver this message. Check the backend mail configuration and try again.';
+};
+
+// One authenticated path for operational tools (including Jarvis) to surface
+// failures in both the admin inbox and the real support mailbox.
+app.post('/api/admin/alerts', verifyAdminToken, async (req, res) => {
+  try {
+    const source = String(req.body?.source || 'Back office').trim().slice(0, 80);
+    const severity = ['info', 'warning', 'critical'].includes(String(req.body?.severity))
+      ? String(req.body.severity) : 'warning';
+    const message = String(req.body?.message || '').trim().slice(0, 2000);
+    if (!message) return res.status(400).json({ message: 'Alert message is required.' });
+
+    const title = `${severity === 'critical' ? 'CRITICAL' : severity.toUpperCase()}: ${source}`;
+    await new Notification({ title: `${title} — ${message.slice(0, 180)}` }).save();
+    await transporter.sendMail({
+      from: FMM_MAIL_FROM,
+      to: ADMIN_ALERT_EMAILS,
+      replyTo: SUPPORT_EMAIL,
+      subject: `[${severity.toUpperCase()}] ${source}`,
+      html: `<div style="font-family:Arial,sans-serif"><h2>${escapeHtml(title)}</h2><p>${escapeHtml(message)}</p><p>Support: <a href="mailto:${SUPPORT_EMAIL}">${SUPPORT_EMAIL}</a></p></div>`,
+    });
+    return res.status(201).json({ ok: true, deliveredTo: ADMIN_ALERT_EMAILS });
+  } catch (error) {
+    console.error('Admin alert delivery failed:', error);
+    return res.status(500).json({ message: 'Could not deliver the admin alert.' });
+  }
+});
+
+const STATIC_PUBLIC_APPAREL_PRODUCTS = [
+  { sku: 'FMM-ETSY-4552218538', name: 'Every Fight Has A Formula Tee', price: 49.95, currency: 'USD', image: 'https://i.etsystatic.com/14114660/r/il/6ecaae/8355959330/il_794xN.8355959330_ru4j.jpg', sizes: ['M', 'L', 'XL', '2XL'], source: 'etsy', buyUrl: 'https://www.etsy.com/listing/4552218538/fantasy-mmadness-combat-sports-t-shirt' },
+  { sku: 'FMM-ETSY-4552212559', name: 'Fighting Is In The Bones Tee', price: 49.95, currency: 'USD', image: 'https://i.etsystatic.com/14114660/r/il/e0f448/8403876627/il_794xN.8403876627_fcdb.jpg', sizes: ['M', 'L', 'XL', '2XL'], source: 'etsy', buyUrl: 'https://www.etsy.com/listing/4552212559/fantasy-mmadness-combat-sports-t-shirt' },
+  { sku: 'FMM-ETSY-4552225010', name: 'The Fight Factory Tee', price: 49.95, currency: 'USD', image: 'https://i.etsystatic.com/14114660/r/il/0df5ca/8403887913/il_794xN.8403887913_lics.jpg', sizes: ['M', 'L', 'XL', '2XL'], source: 'etsy', buyUrl: 'https://www.etsy.com/listing/4552225010/fantasy-mmadness-combat-sports-t-shirt' },
+  { sku: 'FMM-ETSY-4549330994', name: 'Raw Dawg Tee', price: 49.95, currency: 'USD', image: 'https://i.etsystatic.com/14114660/r/il/0c238f/8335272402/il_794xN.8335272402_ceu7.jpg', sizes: ['M', 'L', 'XL', '2XL'], source: 'etsy', buyUrl: 'https://www.etsy.com/listing/4549330994/fantasy-mmadness-combat-sports-t-shirt' },
+  { sku: 'FMM-ETSY-4541697432', name: 'The Darkness Walks Tee', price: 49.95, currency: 'USD', image: 'https://i.etsystatic.com/14114660/r/il/c431a4/8328853743/il_794xN.8328853743_efn0.jpg', sizes: ['M', 'L', 'XL', '2XL'], source: 'etsy', buyUrl: 'https://www.etsy.com/listing/4541697432/inspired-by-champions-built-for-the' },
+];
+const PUBLIC_APPAREL_PRODUCTS = STATIC_PUBLIC_APPAREL_PRODUCTS;
+const ETSY_API_BASE_URL = String(process.env.ETSY_API_BASE_URL || 'https://api.etsy.com/v3/application').replace(/\/$/, '');
+const ETSY_DEFAULT_SHOP_NAME = process.env.ETSY_SHOP_NAME || 'FANTASYMMADNESS';
+const ETSY_PRODUCTS_CACHE_TTL_MS = Number(process.env.ETSY_PRODUCTS_CACHE_TTL_MS || 15 * 60 * 1000);
+let etsyApparelCache = { expiresAt: 0, data: null, error: null };
+let etsyShopIdCache = null;
+
+function getEtsyApiKeyHeader() {
+  const keystring = String(process.env.ETSY_API_KEYSTRING || process.env.ETSY_KEYSTRING || process.env.ETSY_API_KEY || '').trim();
+  const sharedSecret = String(process.env.ETSY_SHARED_SECRET || process.env.ETSY_API_SHARED_SECRET || '').trim();
+  return keystring && sharedSecret ? `${keystring}:${sharedSecret}` : '';
+}
+
+function isEtsyCatalogEnabled() {
+  const disabled = ['false', '0', 'off'].includes(String(process.env.ETSY_APPAREL_SYNC_ENABLED || 'true').toLowerCase());
+  return !disabled && Boolean(getEtsyApiKeyHeader());
+}
+
+function buildEtsyUrl(pathname, query = {}) {
+  const url = new URL(`${ETSY_API_BASE_URL}${pathname.startsWith('/') ? pathname : `/${pathname}`}`);
+  Object.entries(query).forEach(([key, value]) => {
+    if (value === undefined || value === null || value === '') return;
+    url.searchParams.set(key, Array.isArray(value) ? value.join(',') : String(value));
+  });
+  return url.toString();
+}
+
+async function fetchEtsyJson(pathname, query = {}) {
+  const apiKey = getEtsyApiKeyHeader();
+  if (!apiKey) {
+    const error = new Error('ETSY_API_KEYSTRING and ETSY_SHARED_SECRET are required for Etsy apparel sync.');
+    error.status = 503;
+    throw error;
+  }
+
+  const timeoutMs = Number(process.env.ETSY_API_TIMEOUT_MS || 12000);
+  const request = fetch(buildEtsyUrl(pathname, query), {
+    headers: {
+      'x-api-key': apiKey,
+      Accept: 'application/json',
+    },
+  });
+  const timeout = new Promise((_, reject) => {
+    setTimeout(() => reject(new Error(`Etsy API request timed out after ${timeoutMs}ms.`)), timeoutMs);
+  });
+  const response = await Promise.race([request, timeout]);
+  const text = await response.text();
+  let payload = null;
+  try {
+    payload = text ? JSON.parse(text) : null;
+  } catch (_error) {
+    payload = { raw: text };
+  }
+  if (!response.ok) {
+    const message = payload?.error || payload?.message || response.statusText || 'Etsy API request failed.';
+    const error = new Error(`Etsy API ${response.status}: ${message}`);
+    error.status = response.status;
+    error.payload = payload;
+    throw error;
+  }
+  return payload;
+}
+
+function extractEtsyResults(payload) {
+  if (Array.isArray(payload)) return payload;
+  if (Array.isArray(payload?.results)) return payload.results;
+  if (Array.isArray(payload?.data)) return payload.data;
+  return [];
+}
+
+async function resolveEtsyShopId() {
+  const configuredShopId = String(process.env.ETSY_SHOP_ID || '').trim();
+  if (configuredShopId) return configuredShopId;
+  if (etsyShopIdCache) return etsyShopIdCache;
+
+  const shopName = String(ETSY_DEFAULT_SHOP_NAME || '').trim();
+  const searchPayload = await fetchEtsyJson('/shops', { shop_name: shopName, limit: 10 });
+  const shops = extractEtsyResults(searchPayload);
+  const matchedShop = shops.find((shop) => String(shop.shop_name || '').toLowerCase() === shopName.toLowerCase()) || shops[0];
+  if (!matchedShop?.shop_id) {
+    throw new Error(`Etsy shop ${shopName || '(missing shop name)'} was not found.`);
+  }
+  etsyShopIdCache = String(matchedShop.shop_id);
+  return etsyShopIdCache;
+}
+
+function normalizeEtsyPrice(price, fallbackCurrency = 'USD') {
+  if (price && typeof price === 'object') {
+    const divisor = Number(price.divisor || 100) || 100;
+    const amount = Number(price.amount ?? price.value ?? price.price ?? 0);
+    return {
+      amount: Number((amount / divisor).toFixed(2)),
+      currency: price.currency_code || price.currency || fallbackCurrency,
+    };
+  }
+  const parsed = Number(String(price || '').replace(/[^0-9.]/g, ''));
+  return {
+    amount: Number.isFinite(parsed) ? Number(parsed.toFixed(2)) : 0,
+    currency: fallbackCurrency,
+  };
+}
+
+const APPAREL_FALLBACK_IMAGES = STATIC_PUBLIC_APPAREL_PRODUCTS.map((product) => product.image);
+
+function getApparelFallbackImage(index = 0) {
+  return APPAREL_FALLBACK_IMAGES[index % APPAREL_FALLBACK_IMAGES.length] || '/images/mobile-home/final-v35/ap2.webp';
+}
+
+function getEtsyImageUrl(image) {
+  if (!image) return '';
+  if (typeof image === 'string') return image.trim();
+  if (typeof image !== 'object') return '';
+  return String(
+    image.url_fullxfull ||
+    image.url_300x300 ||
+    image.url_570xN ||
+    image.url_680x540 ||
+    image.url_340x270 ||
+    image.url_170x135 ||
+    image.url_75x75 ||
+    image.url ||
+    image.src ||
+    ''
+  ).trim();
+}
+
+function collectEtsyListingImages(listing = {}) {
+  const collections = [
+    listing.Images,
+    listing.images,
+    listing.ListingImages,
+    listing.listing_images,
+    listing.listingImages,
+    listing.MainImage ? [listing.MainImage] : null,
+    listing.main_image ? [listing.main_image] : null,
+    listing.primary_image ? [listing.primary_image] : null,
+    listing.image ? [listing.image] : null,
+  ].filter(Array.isArray);
+
+  const directFields = [
+    listing.image_url,
+    listing.imageUrl,
+    listing.url_fullxfull,
+    listing.url_570xN,
+    listing.url_300x300,
+    listing.primary_image_url,
+  ];
+
+  const urls = [...collections.flat().map(getEtsyImageUrl), ...directFields.map(getEtsyImageUrl)]
+    .filter((url) => /^https?:\/\//i.test(url));
+  return Array.from(new Set(urls));
+}
+
+function pickEtsyListingImage(listing = {}, fallbackIndex = 0) {
+  return collectEtsyListingImages(listing)[0] || getApparelFallbackImage(fallbackIndex);
+}
+
+function normalizeEtsyListing(listing = {}, fallbackIndex = 0) {
+  const listingId = String(listing.listing_id || listing.id || '').trim();
+  const price = normalizeEtsyPrice(listing.price || listing.price_money || listing.BuyerPrice, listing.currency_code || 'USD');
+  const title = String(listing.title || listing.name || 'Fantasy MMAdness Apparel').replace(/\s+/g, ' ').trim();
+  const listingUrl = listing.url || listing.listing_url || (listingId ? `https://www.etsy.com/listing/${listingId}` : 'https://www.etsy.com/shop/FANTASYMMADNESS');
+  const quantity = Number(listing.quantity ?? listing.inventory?.quantity ?? 1);
+  const isAvailable = !Number.isFinite(quantity) || quantity > 0;
+  const images = collectEtsyListingImages(listing);
+  const primaryImage = images[0] || getApparelFallbackImage(fallbackIndex);
+  return {
+    sku: `ETSY-${listingId || title.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '')}`,
+    etsyListingId: listingId,
+    source: 'etsy',
+    name: title,
+    tag: 'Official Etsy shop',
+    price: price.amount,
+    currency: price.currency,
+    image: primaryImage,
+    images: images.length ? images : [primaryImage],
+    url: listingUrl,
+    externalUrl: listingUrl,
+    buyUrl: listingUrl,
+    isExternalCheckout: true,
+    available: isAvailable,
+    quantity: Number.isFinite(quantity) ? quantity : undefined,
+    sizes: ['See Etsy options'],
+  };
+}
+
+async function fetchEtsyListingImages(listingId) {
+  if (!listingId) return [];
+  const payload = await fetchEtsyJson(`/listings/${listingId}/images`);
+  return extractEtsyResults(payload).filter(Boolean);
+}
+
+async function hydrateEtsyListingDetails(listings = []) {
+  const ids = listings.map((listing) => listing.listing_id || listing.id).filter(Boolean).slice(0, 100);
+  if (!ids.length) return listings;
+
+  let mergedListings = listings;
+  try {
+    const batchPayload = await fetchEtsyJson('/listings/batch', {
+      listing_ids: ids.join(','),
+      includes: 'Images,BuyerPrice',
+    });
+    const detailedListings = extractEtsyResults(batchPayload);
+    if (detailedListings.length) {
+      const detailsById = new Map(detailedListings.map((listing) => [String(listing.listing_id || listing.id), listing]));
+      mergedListings = listings.map((listing) => {
+        const detail = detailsById.get(String(listing.listing_id || listing.id)) || {};
+        return {
+          ...listing,
+          ...detail,
+          Images: detail.Images || detail.images || listing.Images || listing.images,
+        };
+      });
+    }
+  } catch (error) {
+    console.warn('[etsy] Listing batch hydration failed; trying image endpoints:', error.message);
+  }
+
+  const missingImageListings = mergedListings.filter((listing) => !collectEtsyListingImages(listing).length);
+  if (!missingImageListings.length) return mergedListings;
+
+  const imagesById = new Map();
+  const concurrency = Math.min(5, missingImageListings.length);
+  let cursor = 0;
+  async function worker() {
+    while (cursor < missingImageListings.length) {
+      const listing = missingImageListings[cursor++];
+      const listingId = String(listing.listing_id || listing.id || '').trim();
+      if (!listingId) continue;
+      try {
+        const images = await fetchEtsyListingImages(listingId);
+        if (images.length) imagesById.set(listingId, images);
+      } catch (error) {
+        console.warn(`[etsy] Image hydration failed for listing ${listingId}:`, error.message);
+      }
+    }
+  }
+  await Promise.all(Array.from({ length: concurrency }, () => worker()));
+
+  return mergedListings.map((listing) => {
+    const listingId = String(listing.listing_id || listing.id || '').trim();
+    const images = imagesById.get(listingId);
+    return images?.length ? { ...listing, Images: images } : listing;
+  });
+}
+
+async function fetchEtsyApparelProductsFresh({ limit = 100 } = {}) {
+  const shopId = await resolveEtsyShopId();
+  const perPage = Math.min(Math.max(Number(limit) || 100, 1), 100);
+  const payload = await fetchEtsyJson(`/shops/${shopId}/listings/active`, {
+    limit: perPage,
+    offset: 0,
+    includes: 'Images',
+  });
+  const activeListings = extractEtsyResults(payload);
+  const hydratedListings = await hydrateEtsyListingDetails(activeListings);
+  const products = hydratedListings
+    .map((listing, index) => normalizeEtsyListing(listing, index))
+    .filter((product) => product.etsyListingId && product.available !== false);
+
+  return {
+    source: 'etsy',
+    products,
+    shop: {
+      id: shopId,
+      name: ETSY_DEFAULT_SHOP_NAME,
+      url: `https://www.etsy.com/shop/${ETSY_DEFAULT_SHOP_NAME}`,
+    },
+    syncedAt: new Date().toISOString(),
+  };
+}
+
+async function getPublicApparelProducts({ force = false, limit = 100 } = {}) {
+  if (!isEtsyCatalogEnabled()) {
+    return {
+      source: 'fallback',
+      products: STATIC_PUBLIC_APPAREL_PRODUCTS,
+      shop: { name: 'Fantasy MMAdness', url: 'https://www.etsy.com/shop/FANTASYMMADNESS' },
+      syncedAt: null,
+      reason: 'etsy_not_configured',
+    };
+  }
+
+  const now = Date.now();
+  if (!force && etsyApparelCache.data && etsyApparelCache.expiresAt > now) {
+    return {
+      ...etsyApparelCache.data,
+      products: etsyApparelCache.data.products.slice(0, limit),
+      cached: true,
+    };
+  }
+
+  try {
+    const data = await fetchEtsyApparelProductsFresh({ limit });
+    const fallbackSafeData = data.products.length ? data : {
+      ...data,
+      source: 'fallback',
+      products: STATIC_PUBLIC_APPAREL_PRODUCTS,
+      reason: 'etsy_empty_catalog',
+    };
+    etsyApparelCache = {
+      data: fallbackSafeData,
+      error: null,
+      expiresAt: now + ETSY_PRODUCTS_CACHE_TTL_MS,
+    };
+    return fallbackSafeData;
+  } catch (error) {
+    console.warn('[etsy] Falling back to local apparel products:', error.message);
+    etsyApparelCache.error = error.message;
+    return {
+      source: 'fallback',
+      products: STATIC_PUBLIC_APPAREL_PRODUCTS,
+      shop: { name: 'Fantasy MMAdness', url: 'https://www.etsy.com/shop/FANTASYMMADNESS' },
+      syncedAt: null,
+      reason: 'etsy_fetch_failed',
+      error: error.message,
+    };
+  }
+}
+
+const apparelOrderItemSchema = new mongoose.Schema({
+  sku: { type: String, required: true, trim: true },
+  name: { type: String, required: true, trim: true },
+  size: { type: String, required: true, trim: true },
+  quantity: { type: Number, min: 1, max: 20, required: true },
+  unitPrice: { type: Number, min: 0, required: true },
+  lineTotal: { type: Number, min: 0, required: true },
+}, { _id: false });
+
+const apparelOrderSchema = new mongoose.Schema({
+  orderNumber: { type: String, required: true, unique: true, index: true },
+  userId: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
+  customerName: { type: String, required: true, trim: true },
+  email: { type: String, required: true, trim: true, lowercase: true },
+  phone: { type: String, trim: true },
+  shippingAddress: { type: String, required: true, trim: true },
+  city: { type: String, required: true, trim: true },
+  state: { type: String, trim: true },
+  zipCode: { type: String, required: true, trim: true },
+  country: { type: String, required: true, trim: true, default: 'United States' },
+  notes: { type: String, trim: true },
+  items: { type: [apparelOrderItemSchema], default: [] },
+  subtotal: { type: Number, min: 0, required: true },
+  currency: { type: String, default: 'USD' },
+  status: { type: String, enum: ['PENDING', 'CONFIRMED', 'FULFILLING', 'SHIPPED', 'CANCELLED'], default: 'PENDING', index: true },
+  source: { type: String, default: 'public-apparel-page' },
+}, { timestamps: true });
+apparelOrderSchema.index({ email: 1, createdAt: -1 });
+const ApparelOrder = mongoose.models.ApparelOrder || mongoose.model('ApparelOrder', apparelOrderSchema);
+
+function escapeHtml(value = '') {
+  return String(value ?? '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+
+function normalizeApparelQuantity(value) {
+  const parsed = Number.parseInt(value, 10);
+  if (!Number.isFinite(parsed) || parsed < 1) return 1;
+  return Math.min(parsed, 20);
+}
+
+function buildApparelOrderNumber() {
+  return `FMM-${Date.now()}-${Math.random().toString(36).slice(2, 7).toUpperCase()}`;
+}
+
+async function resolveApparelOrderItems(rawItems = []) {
+  if (!Array.isArray(rawItems) || !rawItems.length) {
+    const error = new Error('At least one apparel item is required.');
+    error.status = 400;
+    throw error;
+  }
+
+  const catalog = await getPublicApparelProducts({ force: false, limit: 100 });
+  const products = Array.isArray(catalog?.products) && catalog.products.length
+    ? catalog.products
+    : PUBLIC_APPAREL_PRODUCTS;
+
+  return rawItems.map((rawItem) => {
+    const sku = String(rawItem?.sku || '').trim();
+    const product = products.find((item) => item.sku === sku) || PUBLIC_APPAREL_PRODUCTS.find((item) => item.sku === sku);
+    if (!product) {
+      const error = new Error(`Unknown apparel product: ${sku || 'missing sku'}.`);
+      error.status = 400;
+      throw error;
+    }
+
+    const productSizes = Array.isArray(product.sizes) && product.sizes.length ? product.sizes : ['One Size'];
+    const requestedSize = String(rawItem?.size || productSizes[0] || 'One Size').trim();
+    const size = productSizes.includes(requestedSize) ? requestedSize : productSizes[0];
+    const quantity = normalizeApparelQuantity(rawItem?.quantity);
+    const unitPrice = Number(product.price || 0);
+    const lineTotal = Number((unitPrice * quantity).toFixed(2));
+
+    return {
+      sku: product.sku,
+      name: product.name,
+      size,
+      quantity,
+      unitPrice,
+      lineTotal,
+    };
+  });
+}
+
+function renderApparelOrderRows(items = []) {
+  return items.map((item) => `
+    <tr>
+      <td style="padding:10px;border-bottom:1px solid #eee;">${escapeHtml(item.name)}<br/><small>SKU: ${escapeHtml(item.sku)} · Size: ${escapeHtml(item.size)}</small></td>
+      <td style="padding:10px;border-bottom:1px solid #eee;text-align:center;">${item.quantity}</td>
+      <td style="padding:10px;border-bottom:1px solid #eee;text-align:right;">$${item.lineTotal.toFixed(2)}</td>
+    </tr>
+  `).join('');
+}
+
+app.get('/api/public/apparel-products', async (req, res) => {
+  try {
+    const limit = Math.min(Math.max(Number(req.query.limit || 100), 1), 100);
+    const force = ['true', '1', 'yes'].includes(String(req.query.refresh || req.query.force || '').toLowerCase());
+    const catalog = await getPublicApparelProducts({ force, limit });
+    res.set('Cache-Control', 'no-store');
+    return res.json({
+      ok: true,
+      source: catalog.source,
+      shop: catalog.shop,
+      syncedAt: catalog.syncedAt,
+      cached: Boolean(catalog.cached),
+      reason: catalog.reason,
+      products: catalog.products.slice(0, limit),
+    });
+  } catch (error) {
+    console.error('[apparel-products] catalog failed:', error);
+    return res.status(500).json({
+      ok: false,
+      source: 'fallback',
+      message: 'Unable to load apparel catalog.',
+      products: PUBLIC_APPAREL_PRODUCTS,
+    });
+  }
+});
+
+app.post('/api/public/apparel-orders', submitLimiter, async (req, res) => {
+  try {
+    const {
+      customerName,
+      email,
+      phone,
+      shippingAddress,
+      city,
+      state,
+      zipCode,
+      country,
+      notes,
+      items,
+      userId,
+    } = req.body || {};
+
+    if (!customerName || !email || !shippingAddress || !city || !zipCode) {
+      return res.status(400).json({
+        ok: false,
+        message: 'Customer name, email, shipping address, city, and ZIP/postal code are required.',
+      });
+    }
+
+    const orderItems = await resolveApparelOrderItems(items);
+    const subtotal = Number(orderItems.reduce((sum, item) => sum + item.lineTotal, 0).toFixed(2));
+    const order = await ApparelOrder.create({
+      orderNumber: buildApparelOrderNumber(),
+      userId: mongoose.isValidObjectId(userId) ? userId : undefined,
+      customerName,
+      email,
+      phone,
+      shippingAddress,
+      city,
+      state,
+      zipCode,
+      country: country || 'United States',
+      notes,
+      items: orderItems,
+      subtotal,
+      currency: 'USD',
+    });
+
+    const orderRows = renderApparelOrderRows(orderItems);
+    const adminHtml = `
+      <table width="100%" cellpadding="0" cellspacing="0" border="0" style="width:100%;max-width:680px;margin:auto;font-family:Arial,sans-serif;color:#222;">
+        <tr><td style="padding:18px 0;text-align:center;"><h2 style="margin:0;">New Fantasy MMAdness Apparel Order</h2><p style="margin:6px 0 0;">Order ${escapeHtml(order.orderNumber)}</p></td></tr>
+        <tr><td style="padding:16px;background:#f8f8f8;border-radius:12px;">
+          <p><strong>Name:</strong> ${escapeHtml(customerName)}</p>
+          <p><strong>Email:</strong> ${escapeHtml(email)}</p>
+          <p><strong>Phone:</strong> ${escapeHtml(phone || 'Not provided')}</p>
+          <p><strong>Ship to:</strong> ${escapeHtml(shippingAddress)}, ${escapeHtml(city)}, ${escapeHtml(state || '')} ${escapeHtml(zipCode)}, ${escapeHtml(country || 'United States')}</p>
+          ${notes ? `<p><strong>Notes:</strong> ${escapeHtml(notes)}</p>` : ''}
+        </td></tr>
+        <tr><td style="padding-top:18px;"><table width="100%" cellpadding="0" cellspacing="0" style="border-collapse:collapse;"><thead><tr><th align="left">Item</th><th>Qty</th><th align="right">Total</th></tr></thead><tbody>${orderRows}</tbody></table></td></tr>
+        <tr><td style="padding-top:16px;text-align:right;"><strong>Subtotal: $${subtotal.toFixed(2)}</strong></td></tr>
+      </table>
+    `;
+    const customerHtml = `
+      <table width="100%" cellpadding="0" cellspacing="0" border="0" style="width:100%;max-width:680px;margin:auto;font-family:Arial,sans-serif;color:#222;">
+        <tr><td style="padding:18px 0;text-align:center;"><h2 style="margin:0;">Your Fantasy MMAdness order is received</h2><p style="margin:6px 0 0;">Order ${escapeHtml(order.orderNumber)}</p></td></tr>
+        <tr><td style="padding:16px;background:#f8f8f8;border-radius:12px;"><p>Hi ${escapeHtml(customerName)},</p><p>We received your apparel order. The Fantasy MMAdness team will follow up with payment and shipping confirmation.</p></td></tr>
+        <tr><td style="padding-top:18px;"><table width="100%" cellpadding="0" cellspacing="0" style="border-collapse:collapse;"><thead><tr><th align="left">Item</th><th>Qty</th><th align="right">Total</th></tr></thead><tbody>${orderRows}</tbody></table></td></tr>
+        <tr><td style="padding-top:16px;text-align:right;"><strong>Subtotal: $${subtotal.toFixed(2)}</strong></td></tr>
+      </table>
+    `;
+
+    await Promise.allSettled([
+      transporter.sendMail({
+        from: FMM_MAIL_FROM,
+        to: process.env.APPAREL_ORDER_EMAIL || ADMIN_ALERT_EMAILS,
+        subject: `New apparel order ${order.orderNumber}`,
+        html: adminHtml,
+      }),
+      transporter.sendMail({
+        from: FMM_MAIL_FROM,
+        to: email,
+        subject: `Fantasy MMAdness apparel order ${order.orderNumber}`,
+        html: customerHtml,
+      }),
+    ]);
+
+    clearPublicResponseCache();
+    return res.status(201).json({
+      ok: true,
+      message: 'Order received.',
+      orderNumber: order.orderNumber,
+      status: order.status,
+      subtotal: order.subtotal,
+      items: order.items,
+    });
+  } catch (error) {
+    console.error('Error creating apparel order:', error);
+    return res.status(error.status || 500).json({
+      ok: false,
+      message: error.message || 'Failed to create apparel order.',
+    });
+  }
+});
+
+app.post('/contact-us-fantasymmadness', submitLimiter, (req, res) => {
+  // Escaped before it reaches any email body — see escapeHtml.
+  const fullName = escapeHtml(String(req.body?.fullName || '').slice(0, 120));
+  const email = escapeHtml(String(req.body?.email || '').slice(0, 160));
+  const subject = escapeHtml(String(req.body?.subject || '').slice(0, 200));
+  const message = escapeHtml(String(req.body?.message || '').slice(0, 4000));
+
+  // Validate input (basic validation)
+  if (!fullName || !email || !message) {
+    return res.status(400).json({ error: 'Full name, email, and message are required.' });
+  }
+  // Email template for Admin
+  const adminHtml = `
+    <table width="100%" cellpadding="0" cellspacing="0" border="0" style="width:100%; max-width:600px; margin:auto;">
+      <!-- Header Section -->
+      <tr>
+        <td align="center" style="padding: 15px 0;">
+          <img src="https://res.cloudinary.com/daflot6fo/image/upload/v1736068036/bywcrrcqmcyczdyhjmdv.png" alt="Fantasy Madness Logo" style="width:100px;" />
+          <h2 style="margin: 0; color: #191164; font-family: 'New York', Charter, Georgia, serif;">Fantasy Madness</h2>
+        </td>
+      </tr>
+      
+      <!-- Message Details Section -->
+      <tr>
+        <td style="padding: 20px; font-family: Arial, sans-serif; color: #333;">
+          <p style="font-size: 16px;"><strong>Full Name:</strong> ${fullName}</p>
+          <p style="font-size: 16px;"><strong>Email:</strong> ${email}</p>
+          <p style="font-size: 16px;"><strong>Subject:</strong> ${subject || 'No Subject'}</p>
+          <p style="font-size: 16px;"><strong>Message:</strong></p>
+          <p style="font-size: 16px; color: #555;">${message}</p>
+        </td>
+      </tr>
+
+      <!-- Footer Section with Social Icons -->
+      <tr>
+        <td align="center" style="padding: 20px 0;">
+          <img src="https://res.cloudinary.com/daflot6fo/image/upload/v1736068036/bywcrrcqmcyczdyhjmdv.png" alt="Fantasy Madness Logo" style="width:70px;" />
+          <p><a href="https://fantasymmadness.com" style="font-family: Arial, sans-serif; color: #191164; text-decoration: none;">https://fantasymmadness.com</a></p>
+          <div style="padding-top: 10px;">
+            <!-- Social Icons -->
+            <a href="https://www.facebook.com/share/2pzYV9XdQpAU7n6p/?mibextid=LQQJ4d" style="margin: 0 5px;">
+              <img src="https://i.ibb.co/G9wVH2g/facebook-removebg-preview-two.png" alt="Facebook" style="width:35px; height:35px; border-radius:50%;" />
+            </a>
+            <a href="https://www.instagram.com/fantasymmadness" style="margin: 0 5px;">
+              <img src="https://i.ibb.co/tKj4px0/insta-removebg-preview-two.png" alt="Instagram" style="width:35px; height:35px; border-radius:50%;" />
+            </a>
+            <a href="https://x.com/davis_kell51697" style="margin: 0 5px;">
+              <img src="https://i.ibb.co/T0cvy2Q/twitter-removebg-preview-two.png" alt="Twitter" style="width:35px; height:35px; border-radius:50%;" />
+            </a>
+          </div>
+        </td>
+      </tr>
+    </table>
+  `;
+
+  // Email template for User
+  const userHtml = `
+    <table width="100%" cellpadding="0" cellspacing="0" border="0" style="width:100%; max-width:600px; margin:auto;">
+      <!-- Header Section -->
+      <tr>
+       <td align="center" style="padding: 15px 0;">
+          <img src="https://res.cloudinary.com/daflot6fo/image/upload/v1736068036/bywcrrcqmcyczdyhjmdv.png" alt="Fantasy Madness Logo" style="width:100px;" />
+          <h2 style="margin: 0; color: #191164; font-family: 'New York', Charter, Georgia, serif;">Fantasy Madness</h2>
+        </td>
+     </tr>
+      
+      <!-- Message Confirmation Section -->
+      <tr>
+        <td style="padding: 20px; font-family: Arial, sans-serif; color: #333;">
+          <p style="font-size: 16px;">Hello ${fullName},</p>
+          <p style="font-size: 16px; color: #555;">
+            Thank you for reaching out! We have received your message and will get back to you as soon as possible. Here's a summary of your submission:
+          </p>
+          <p style="font-size: 16px;"><strong>Subject:</strong> ${subject || 'No Subject'}</p>
+          <p style="font-size: 16px;"><strong>Message:</strong></p>
+          <p style="font-size: 16px; color: #555;">${message}</p>
+        </td>
+      </tr>
+
+      <!-- Footer Section with Social Icons -->
+      <tr>
+        <td align="center" style="padding: 20px 0;">
+          <img src="https://res.cloudinary.com/daflot6fo/image/upload/v1736068036/bywcrrcqmcyczdyhjmdv.png" alt="Fantasy Madness Logo" style="width:70px;" />
+          <p><a href="https://fantasymmadness.com" style="font-family: Arial, sans-serif; color: #191164; text-decoration: none;">https://fantasymmadness.com</a></p>
+          <div style="padding-top: 10px;">
+            <!-- Social Icons -->
+            <a href="https://www.facebook.com/share/2pzYV9XdQpAU7n6p/?mibextid=LQQJ4d" style="margin: 0 5px; width:35px; height:35px; border-radius:50%; background:#fff; background-color:#fff;">
+              <img src="https://i.ibb.co/G9wVH2g/facebook-removebg-preview-two.png" alt="Facebook" style="width:35px; height:35px; border-radius:50%; background-color:#fff; background:#fff;" />
+            </a>
+            <a href="https://www.instagram.com/fantasymmadness" style="margin: 0 5px;">
+              <img src="https://i.ibb.co/tKj4px0/insta-removebg-preview-two.png" alt="Instagram" style="width:35px; height:35px; border-radius:50%; background-color:#fff;" />
+            </a>
+            <a href="https://x.com/davis_kell51697" style="margin: 0 5px;">
+              <img src="https://i.ibb.co/T0cvy2Q/twitter-removebg-preview-two.png" alt="Twitter" style="width:35px; height:35px; border-radius:50%; background-color:#fff;" />
+            </a>
+          </div>
+        </td>
+      </tr>
+    </table>
+  `;
+
+
+  // Admin email options
+  const adminMailOptions = {
+    from: FMM_MAIL_FROM,
+    replyTo: email,
+    to: ADMIN_ALERT_EMAILS,
+    subject: `Contact Form Submission: ${subject}`,
+    html: adminHtml,
+  };
+
+  // User email options
+  const userMailOptions = {
+    from: FMM_MAIL_FROM,
+    to: email,
+    subject: 'Thank You for Contacting Fantasy Madness!',
+    html: userHtml,
+  };
+
+  // Send both emails
+  Promise.all([
+    transporter.sendMail(adminMailOptions),
+    transporter.sendMail(userMailOptions)
+  ])
+    .then(([adminInfo, userInfo]) => {
+      console.log('Admin email sent:', adminInfo.response);
+      console.log('User email sent:', userInfo.response);
+      res.status(200).json({ message: 'Email successfully sent .' });
+    })
+    .catch(error => {
+      console.error('Error sending emails:', error);
+      res.status(500).json({ error: 'Failed to send emails.' });
+    });
+});
+// SECURITY: admin-only. This sends mail to every user and affiliate; as an open
+// GET, anyone (or a crawler prefetching links) could trigger a mass blast.
+app.get('/notify', verifyAdminToken, async (req, res) => {
+  try {
+    // Fetch all matches
+    const matches = await Match.find({});
+    if (!matches || matches.length === 0) {
+      return res.status(404).json({ message: 'No matches found' });
+    }
+
+    // Fetch all users
+    const users = await User.find({}).select('email firstName isSubscribed isNotificationsEnabled').limit(20000).lean();
+    if (!users || users.length === 0) {
+      return res.status(404).json({ message: 'No users found' });
+    }
+
+    // Fetch all affiliates
+    const affiliates = await Affiliate.find({});
+    if (!affiliates || affiliates.length === 0) {
+      return res.status(404).json({ message: 'No affiliates found' });
+    }
+
+    const emailPromises = [];
+    for (const match of matches) {
+      // Skip if notification already sent
+      if (match.notificationSent) continue;
+
+      if (match.matchType === 'SHADOW') {
+        const affiliate = affiliates.find((a) => a._id.toString() === match.affiliateId?.toString());
+        if (affiliate) {
+          const usersJoinedIds = affiliate.usersJoined.map((user) => user.userId);
+
+          // Filter eligible users
+          const eligibleUsers = users.filter(
+            (user) => usersJoinedIds.includes(user._id.toString()) && normalizeWalletTokenNumber(user.tokens) >= normalizeWalletTokenNumber(match.matchTokens)
+          );
+
+          // Users who submitted predictions
+          const predictionUsers = match.userPredictions
+            .filter((prediction) => prediction.predictionStatus === 'submitted')
+            .map((prediction) => prediction.userId);
+
+          // Combine eligible users and prediction users
+          const allEligibleUsers = [...new Set([...eligibleUsers.map((user) => user._id.toString()), ...predictionUsers])];
+
+          // Required users based on match tokens and pot
+          const requiredUsers = match.pot / match.matchTokens;
+
+          // Check eligibility
+          if (allEligibleUsers.length >= requiredUsers) {
+            // Prepare and send emails to all users
+            emailPromises.push(
+              ...users.map(async (user) => {
+                const emailHtml = `
+                  <table width="100%" cellpadding="0" cellspacing="0" border="0" style="width:100%; max-width:600px; margin:auto;">
+                    <tr>
+                      <td align="center" style="padding: 15px 0;">
+                        <img src="https://res.cloudinary.com/daflot6fo/image/upload/v1736068036/bywcrrcqmcyczdyhjmdv.png" alt="Fantasy Madness Logo" style="width:100px;" />
+                        <h2 style="margin: 0; color: #191164; font-family: 'New York', Charter, Georgia, serif;">Fantasy Madness</h2>
+                      </td>
+                    </tr>
+                    <tr>
+                      <td style="padding: 20px; font-family: Arial, sans-serif; color: #333;">
+                        <p style="font-size: 16px;">Hello ${user.fullName || 'User'},</p>
+                        <p style="font-size: 16px; color: #555;">
+                          A new match has been scheduled! Here are the details:
+                        </p>
+                        <p style="font-size: 16px;"><strong>Match:</strong> ${match.matchFighterA} vs. ${match.matchFighterB}</p>
+                        <p style="font-size: 16px;"><strong>Category:</strong> ${match.matchCategory} / ${match.matchCategoryTwo}</p>
+                        <p style="font-size: 16px;"><strong>Description:</strong> ${match.matchDescription}</p>
+                        <p style="font-size: 16px;"><strong>Tokens Required:</strong> ${match.matchTokens}</p>
+                        <p style="font-size: 16px; color: #555;">
+                          Visit <a href="https://fantasymmadness.com" style="color: #191164;">Fantasy Madness</a> to join the action!
+                        </p>
+                      </td>
+                    </tr>
+                    
+          <tr>
+            <td align="center" style="padding: 20px 0;">
+              <img src="https://res.cloudinary.com/daflot6fo/image/upload/v1736068036/bywcrrcqmcyczdyhjmdv.png" alt="Fantasy Madness Logo" style="width:70px;" />
+              <p><a href="https://fantasymmadness.com" style="font-family: Arial, sans-serif; color: #191164; text-decoration: none;">https://fantasymmadness.com</a></p>
+              <div style="padding-top: 10px;">
+                <a href="https://www.facebook.com/share/2pzYV9XdQpAU7n6p/?mibextid=LQQJ4d" style="margin: 0 5px;">
+                  <img src="https://i.ibb.co/G9wVH2g/facebook-removebg-preview-two.png" alt="Facebook" style="width:35px; height:35px;" />
+                </a>
+                <a href="https://www.instagram.com/fantasymmadness" style="margin: 0 5px;">
+                  <img src="https://i.ibb.co/tKj4px0/insta-removebg-preview-two.png" alt="Instagram" style="width:35px; height:35px;" />
+                </a>
+                <a href="https://x.com/davis_kell51697" style="margin: 0 5px;">
+                  <img src="https://i.ibb.co/T0cvy2Q/twitter-removebg-preview-two.png" alt="Twitter" style="width:35px; height:35px;" />
+                </a>
+              </div>
+            </td>
+          </tr>
+                  </table>
+                `;
+
+                await transporter.sendMail({
+                  from: FMM_MAIL_FROM,
+                  to: user.email,
+                  subject: `Upcoming Match: ${match.matchName}`,
+                  html: emailHtml,
+                });
+              })
+            );
+
+            // Mark notification as sent
+            match.notificationSent = true;
+            await match.save();
+          }
+        }
+      }
+    }
+
+    // Send all emails
+    await Promise.all(emailPromises);
+
+    res.status(200).json({ message: 'Notifications processed successfully' });
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ message: 'Error processing notifications' });
+  }
+});
+
+
+app.post('/send-emails-to-all-users', verifyAdminToken, async (req, res) => {
+  const { emails, subject, message } = req.body;
+
+  if (!emails || emails.length === 0) {
+    return res.status(400).json({ error: 'No email addresses provided.' });
+  }
+
+  try {
+    // Loop through each email and send the message
+    for (let email of emails) {
+      await transporter.sendMail({
+        from: FMM_MAIL_FROM, // sender address
+        to: email, // receiver email
+        subject: subject, // subject line
+        text: message, // plain text body
+      });
+    }
+
+    res.status(200).json({ success: true, message: 'Emails sent successfully!' });
+  } catch (error) {
+    console.error('Error sending emails:', error);
+    res.status(500).json({ error: 'Failed to send emails.' });
+  }
+});
+
+
+app.post('/register', submitLimiter, async (req, res) => {
+  try {
+    // Deliberately not logging req.body: it carries the plaintext password.
+
+    const {
+      firstName,
+      lastName,
+      playerName,
+      email,
+      phone,
+      password,
+      zipCode,
+      isNotificationsEnabled,
+      isSubscribed,
+      isUSCitizen,
+      isAgreed,
+      referrerId
+    } = req.body;
+
+    // Duplicate-account guard: blocks device reuse and email aliasing
+    // (gmail dots / +tags). Fails open so a check error never blocks a real user.
+    try {
+      const dupe = await checkDuplicateSignup({
+        email,
+        deviceId: String(req.body?.deviceId || '').slice(0, 128),
+        ip: req.headers['x-forwarded-for'] || req.socket?.remoteAddress,
+      });
+      if (dupe) return res.status(409).json({ message: dupe.message, code: dupe.code });
+    } catch (dupeError) {
+      console.warn('Duplicate check skipped:', dupeError.message);
+    }
+
+    // Basic input validation to prevent malformed requests
+    if (!email || !password || !firstName || !lastName) {
+      console.warn('Registration rejected: missing required fields', {
+      hasEmail: Boolean(email),
+      hasPassword: Boolean(password),
+      hasFirstName: Boolean(firstName),
+      hasLastName: Boolean(lastName),
+    });
+      return res.status(400).json({ error: "Missing required fields" });
+    }
+
+    // Check if email exists in Redusers
+    const redListedUser = await Redusers.findOne({ email }).lean();
+    if (redListedUser) {
+      console.log(`Blocked registration for redlisted email: ${email}`);
+
+      const mailOptions = {
+        from: FMM_MAIL_FROM,
+        to: email,
+        subject: 'Registration Blocked',
+        html: `
+          <h2>Fantasy Madness</h2>
+          <p>Dear ${firstName || "User"}, your registration has been blocked due to redlist status.</p>
+        `,
+      };
+
+      try {
+        await transporter.sendMail(mailOptions);
+        console.log('Redlist email notification sent successfully.');
+      } catch (err) {
+        console.error('Error sending redlist email:', err);
+      }
+
+      return res.status(403).json({ error: 'Registration blocked due to red list status.' });
+    }
+
+    // Check if email already exists
+    const existingUser = await User.findOne({ email }).lean();
+    if (existingUser) {
+      console.log(`Duplicate registration attempt: ${email}`);
+      return res.status(400).json({ error: 'Email already registered' });
+    }
+
+    // Generate verification token
+    const verificationToken = crypto.randomBytes(20).toString('hex');
+
+    const hashedPassword = await bcrypt.hash(password, 10);
+    const newUser = new User({
+      firstName,
+      lastName,
+      playerName,
+      email,
+      phone,
+      zipCode,
+      isNotificationsEnabled,
+      isSubscribed,
+      isUSCitizen,
+      isAgreed,
+      verified: false,
+      verificationToken,
+      password: hashedPassword,
+      tokens: '500',
+      signupBonusGranted: true,
+    });
+
+    await newUser.save();
+    console.log(`✅ User created successfully: ${email}`);
+
+    // Notification
+    await new Notification({ title: `New User Signed Up: ${newUser.firstName}` }).save();
+    sendAdminPush({ title: 'New player sign-up', body: `${newUser.firstName} just joined.`, url: '/administration/RegisteredUsers' }).catch(() => null);
+
+    // Handle referral safely
+    if (referrerId && referrerId !== newUser._id.toString()) {
+      try {
+        const referrer = await User.findById(referrerId);
+        const alreadyReferred = await Referral.findOne({ referredUser: newUser._id });
+        if (referrer && !alreadyReferred) {
+          await Referral.create({
+            referrer: referrer._id,
+            referredUser: newUser._id,
+            rewarded: true,
+          });
+          referrer.tokens = addWalletTokens(referrer.tokens, 3);
+          await referrer.save();
+          console.log(`🎁 3 tokens awarded to referrer: ${referrer.email}`);
+        }
+      } catch (err) {
+        console.error('Referral processing error:', err);
+      }
+    }
+
+    // Schedule verification timeout cleanup. Was 120000ms (2 minutes) — far
+    // too aggressive: any real-world email delay (spam filtering, provider
+    // lag) meant the account was deleted before the person could even open
+    // their inbox, so a late-arriving link failed with no clear reason and
+    // there was no way to get a fresh one. 24 hours, plus a real resend route
+    // below.
+    setTimeout(async () => {
+      try {
+        const user = await User.findOne({ email });
+        if (user && !user.verified) {
+          console.log(`Deleting unverified user: ${email}`);
+          await transporter.sendMail({
+            from: FMM_MAIL_FROM,
+            to: email,
+            subject: 'Verification Failed',
+            html: `<p>Dear ${user.firstName}, your registration was removed due to unverified email.</p>`,
+          });
+          await User.deleteOne({ email });
+        }
+      } catch (err) {
+        console.error('Error during verification timeout cleanup:', err);
+      }
+    }, 24 * 60 * 60 * 1000);
+
+    // Send verification email. A failure here must NOT fail the whole signup —
+    // the account is already saved, and the resend-verification endpoint can
+    // recover from a one-time send failure (e.g. SMTP credentials not set on
+    // the backend, which silently drops every outgoing email including this
+    // one). Previously this threw a 500 after the account existed, leaving
+    // the user stuck with no account confirmation and no email, ever.
+    const verificationLink = `https://fantasymmadness-game-server-three.vercel.app/verify-email?token=${verificationToken}`;
+    try {
+      await transporter.sendMail({
+        from: FMM_MAIL_FROM,
+        to: email,
+        subject: 'Email Verification',
+        html: `<p>Click below to verify your email:</p>
+               <a href="${verificationLink}">Verify Email</a>`,
+      });
+      console.log(`Verification email sent to: ${email}`);
+      return res.status(200).json({
+        message: 'Registration successful! Please check your email to verify your account.',
+      });
+    } catch (err) {
+      console.error('Error sending verification email:', err);
+      // Account still exists and is usable via /resend-verification —
+      // tell the client that plainly instead of a bare failure.
+      return res.status(201).json({
+        message: 'Account created, but the verification email could not be sent. Use "Resend verification email" to try again.',
+        emailFailed: true,
+      });
+    }
+  } catch (error) {
+    console.error("Unhandled registration error:", error);
+    return res.status(500).json({ error: 'Error during registration' });
+  }
+});
+
+app.post('/resend-verification', submitLimiter, async (req, res) => {
+  try {
+    const email = String(req.body?.email || '').trim().toLowerCase();
+    if (!email) return res.status(400).json({ message: 'Email is required.' });
+    const user = await User.findOne({ email });
+    // Same response whether or not the account exists / is already verified —
+    // this endpoint must not confirm which emails are registered.
+    if (!user || user.verified) {
+      return res.status(200).json({ message: 'If that account needs verification, a new email is on its way.' });
+    }
+    const verificationToken = crypto.randomBytes(20).toString('hex');
+    user.verificationToken = verificationToken;
+    await user.save();
+    const verificationLink = `https://fantasymmadness-game-server-three.vercel.app/verify-email?token=${verificationToken}`;
+    await transporter.sendMail({
+      from: FMM_MAIL_FROM,
+      to: email,
+      subject: 'Email Verification',
+      html: `<p>Click below to verify your email:</p><a href="${verificationLink}">Verify Email</a>`,
+    });
+    res.status(200).json({ message: 'Verification email resent.' });
+  } catch (error) {
+    console.error('Error resending verification email:', error);
+    res.status(500).json({ message: 'Could not resend the verification email.' });
+  }
+});
+
+app.get('/verify-email', async (req, res) => {
+  const { token } = req.query;
+  const frontendOrigin = String(process.env.FRONTEND_URL || process.env.APP_URL || 'https://www.fantasymmadness.com').replace(/\/$/, '');
+
+  const user = await User.findOne({ verificationToken: token });
+
+  if (!user) {
+    return res.redirect(`${frontendOrigin}/auth?mode=login&role=player&verification=invalid`);
+  }
+
+  user.verified = true;
+  user.verificationToken = null; // Clear the token after verification
+  await user.save();
+
+  return res.redirect(`${frontendOrigin}/auth?mode=login&role=player&verified=1`);
+});
+
+
+
+
+// Default route
+app.get("/", (req, res) =>{
+  res.send("Backend server has started running successfully...");
+});
+
+app.delete('/usertodelete/:id', verifyAdminToken, async (req, res) => {
+  const { id } = req.params;
+
+  try {
+    // Find the user by ID
+    const user = await User.findById(id).select('+profileDeleteUrl firstName email');
+    if (!user) {
+      return res.status(404).json({ message: 'User not found' });
+    }
+
+ if (user.profileDeleteUrl) {
+  try {
+    await cloudinary.uploader.destroy(user.profileDeleteUrl);
+  } catch (error) {
+    console.error('Error deleting profile image from Cloudinary:', error.message);
+  }
+}
+
+    // Remove user from all affiliate leagues
+    const affiliates = await Affiliate.find({ 'usersJoined.userId': id });
+    for (const affiliate of affiliates) {
+      affiliate.usersJoined = affiliate.usersJoined.filter(user => user.userId.toString() !== id);
+      await affiliate.save();
+      console.log(`User ${user.email} removed from Affiliate League: ${affiliate.playerName} (${affiliate._id})`);
+    }
+
+    // Delete the user from the database
+    await User.findByIdAndDelete(id);
+ const notification = new Notification({
+      title: `User deleted: ${user.firstName}`,
+    });
+    await notification.save();
+    res.status(200).json({ message: 'User and profile image deleted successfully' });
+  } catch (error) {
+    console.error('Error deleting user:', error);
+    res.status(500).json({ message: 'Internal server error' });
+  }
+});
+
+
+// Get user details by email (for checking verification status and returning additional user info)
+// SECURITY: authenticated but not authorised — any signed-in player could read
+// any other player's phone number and zip code by knowing their email address.
+// Callers now get their own record, or a name-and-avatar projection of someone
+// else's. Admin tokens still see the full record.
+app.get('/user/:email', verifyToken, async (req, res) => {
+  const { email } = req.params;
+  try {
+    const user = await User.findOne({ email });
+    if (!user) {
+      return res.status(404).send('User not found');
+    }
+
+    const callerId = String(req.user?.id || req.user?._id || '');
+    const isSelf = callerId && callerId === String(user._id);
+    if (!isSelf) {
+      // Public projection only: no phone, no zip, no contact detail.
+      return res.json({
+        _id: user._id,
+        verified: user.verified,
+        playerName: user.playerName,
+        firstName: user.firstName,
+        profileUrl: user.profileUrl,
+      });
+    }
+
+    // Destructure necessary fields from the user object
+    const { verified, firstName, lastName, playerName, phone, zipCode, profileUrl , _id } = user;
+
+    // Return the user information along with the verification status
+    res.json({ 
+      verified, 
+      firstName, 
+      lastName, 
+      playerName, 
+      phone, 
+      zipCode,
+      profileUrl ,
+      _id
+    });
+  } catch (error) {
+    res.status(500).send('Internal server error');
+  }
+});
+
+
+// SECURITY: the email came from the request body, so anyone could overwrite
+// another player's avatar (and delete their Cloudinary asset).
+app.post('/upload-avatar', verifyToken, upload.single('image'), async (req, res) => {
+  try {
+    const tokenUser = await User.findById(req.user?.id || req.user?._id).select('email').lean();
+    const email = tokenUser?.email;
+    if (!email) return res.status(403).json({ message: 'You can only change your own avatar.' });
+
+    if (!req.file) {
+      return res.status(400).json({ message: 'No image file provided' });
+    }
+
+    // Find the user to retrieve the previous avatar details
+    const user = await User.findOne({ email }).select('+profileDeleteUrl profileUrl email');
+    if (!user) {
+      return res.status(404).json({ message: 'User not found' });
+    }
+
+    // Delete the previous avatar from Cloudinary if it exists
+    if (user.profileDeleteUrl) {
+      await cloudinary.uploader.destroy(user.profileDeleteUrl);
+    }
+
+    // Upload the new avatar to Cloudinary
+    const result = await new Promise((resolve, reject) => {
+      cloudinary.uploader.upload_stream(
+        { folder: 'avatars' },
+        (error, result) => {
+          if (error) return reject(error);
+          resolve(result);
+        }
+      ).end(req.file.buffer);
+    });
+
+    // Update the user with the new avatar URL and public ID
+    user.profileUrl = result.secure_url; // New avatar URL
+    user.profileDeleteUrl = result.public_id; // Cloudinary public ID for deletion
+    await user.save();
+
+    res.status(200).json({ message: 'Avatar uploaded and saved successfully', profileUrl: user.profileUrl });
+  } catch (error) {
+    console.error('Error uploading avatar:', error);
+    res.status(500).json({ message: 'Server error' });
+  }
+});
+
+
+
+
+app.post('/user/:email/subscribe', verifyToken, async (req, res) => {
+  // Bound to the signed-in account so one user cannot alter another's subscription.
+  {
+    const caller = await User.findById(String(req.user?.id || req.user?._id || '')).select('email').lean();
+    if (!caller || String(caller.email).toLowerCase() !== String(req.params.email).toLowerCase()) {
+      return res.status(403).json({ message: 'You can only change your own subscription.', code: 'NOT_OWNER' });
+    }
+  }
+  const { email } = req.params;
+  const { plan } = req.body;
+
+  try {
+    const user = await User.findOne({ email });
+
+    if (!user) {
+      return res.status(404).send('User not found');
+    }
+
+    // Check if the user has already availed the free plan
+    let freePlanBefore = NaN;
+    let stdPlanBefore = NaN;
+    if (plan === 'Free') {
+      if (user.hasAvailedFreePlan) {
+        return res.status(400).json({ message: 'User has already availed the free plan' });
+      }
+
+      // Set the current plan to "Free", set the expiry date to one month from now, and allot 20 free tokens
+      user.currentPlan = 'Free';
+      user.freePlanExpiryDate = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000); // 1 month from now
+      user.hasAvailedFreePlan = true;
+      freePlanBefore = Number.parseInt(String(user.tokens || '0'), 10) || 0;
+      user.tokens = '20'; // Allot 20 free tokens for the Free plan
+
+    } else if (plan === 'Standard') {
+      user.currentPlan = 'Standard';
+      stdPlanBefore = Number.parseInt(String(user.tokens || '0'), 10) || 0;
+      user.tokens = '100'; // Allot 100 free tokens for the Standard plan
+    }
+
+    await user.save();
+    // Plan allotments SET a balance rather than adjust it, so the movement was
+    // previously invisible in any history.
+    const planAfter = Number.parseInt(String(user.tokens || '0'), 10) || 0;
+    const planBefore = plan === 'Standard' ? stdPlanBefore : freePlanBefore;
+    if (Number.isFinite(planBefore)) {
+      await recordWalletMove({
+        userId: user._id,
+        amount: planAfter - planBefore,
+        balanceBefore: planBefore,
+        balanceAfter: planAfter,
+        reason: 'plan_allotment',
+        reference: String(plan || '') + ':' + Date.now(),
+        meta: { plan },
+      });
+    }
+    res.status(200).json({ message: 'Subscription updated successfully' });
+
+  } catch (error) {
+    console.error('Error updating subscription:', error);
+    res.status(500).send('Internal server error');
+  }
+});
+
+
+// Job to reset the current plan to "None" after the free plan expires
+const cron = require('node-cron');
+
+
+// Job to reset the current plan to "None" after the free plan expires
+cron.schedule('0 0 * * *', async () => { // Runs daily at midnight
+  const users = await User.find({
+    currentPlan: 'Free',
+    freePlanExpiryDate: { $lte: new Date() }
+  });
+
+  for (const user of users) {
+    user.currentPlan = 'None';
+    await user.save();
+  }
+
+  console.log('Expired free plans have been reset to "None"');
+});
+
+
+
+// Cron Job Route
+function buildShadowTemplatePayloadFromLiveMatch(match = {}) {
+  return {
+    sourceMatchId: match._id,
+    convertedFromLiveAt: new Date(),
+    matchCategory: match.matchCategory,
+    matchCategoryTwo: match.matchCategoryTwo,
+    matchName: match.matchName,
+    matchFighterA: match.matchFighterA,
+    matchFighterB: match.matchFighterB,
+    fighterAId: match.fighterAId,
+    fighterBId: match.fighterBId,
+    promotionBackground: match.promotionBackground,
+    matchDescription: match.matchDescription,
+    matchVideoUrl: match.matchVideoUrl,
+    matchDate: match.matchDate,
+    matchDateKey: match.matchDateKey || extractCalendarDateKey(match.matchDate),
+    eventTimeZone: match.eventTimeZone,
+    matchTime: match.matchTime,
+    venue: match.venue,
+    fighterAImage: match.fighterAImage,
+    fighterBImage: match.fighterBImage,
+    matchType: 'SHADOW',
+    matchTokens: Number.isFinite(Number(match.matchTokens)) ? Math.max(0, Number(match.matchTokens)) : 0,
+    pot: Number.isFinite(Number(match.pot)) ? Math.max(0, Number(match.pot)) : 0,
+    maxRounds: match.maxRounds,
+    fighterAImageDeleteUrl: match.fighterAImageDeleteUrl,
+    fighterBImageDeleteUrl: match.fighterBImageDeleteUrl,
+    promotionBackgroundDeleteUrl: match.promotionBackgroundDeleteUrl,
+    matchStatus: match.matchStatus === 'Draft' ? 'Draft' : 'Ongoing',
+    matchShadowStatus: 'active',
+    matchShadowOpenStatus: 'open',
+    BoxingMatch: match.BoxingMatch,
+    MMAMatch: match.MMAMatch,
+    homepagePromoted: false,
+    homepagePromotionRank: 0,
+  };
+}
+
+async function convertPastLiveFightsToShadowTemplates({ notifyAffiliates = false } = {}) {
+  const now = new Date();
+  const liveMatches = await Match.find(applyFightPublicVisibilityFilter({ matchType: 'LIVE' }, { includeDrafts: 'false' }));
+  const expiredUnresolved = liveMatches.filter((match) => {
+    const fightDate = parseFightDateTime(match);
+    const status = String(match.matchStatus || '').trim().toLowerCase();
+    const completed = ['finished', 'completed', 'closed', 'settled'].includes(status) || Boolean(match.prizesSettledAt);
+    return Boolean(fightDate && fightDate.getTime() < now.getTime() && !completed);
+  });
+
+  // Never convert a production fight merely because its scheduled time passed.
+  // It may be delayed, awaiting official scoring, or need an admin to close it.
+  // Shadow creation must be an explicit admin action after the result is known.
+  return {
+    processedAt: now.toISOString(),
+    converted: [],
+    skipped: expiredUnresolved.map((match) => ({
+      sourceMatchId: String(match._id),
+      matchName: match.matchName,
+      reason: 'expired-live-fight-requires-admin-review',
+    })),
+    requiresAdminReview: expiredUnresolved.length,
+    checked: liveMatches.length,
+    notifyAffiliates: Boolean(notifyAffiliates),
+  };
+}
+
+app.get('/api/cron-job', verifyCronSecret, async (req, res) => {
+  try {
+    const notifyAffiliates = ['true', '1', 'yes'].includes(String(req.query.notifyAffiliates || '').toLowerCase());
+    const result = await convertPastLiveFightsToShadowTemplates({ notifyAffiliates });
+    res.status(200).json({ ok: true, message: 'Expired live-fight review completed. No fights were converted automatically.', ...result });
+  } catch (error) {
+    console.error('Error in cron job:', error);
+    res.status(500).json({ ok: false, error: 'Cron job failed.' });
+  }
+});
+
+
+
+// Login API
+app.post('/login', loginLimiter, async (req, res) => {
+  const { email, password } = req.body;
+
+  try {
+    const user = await User.findOne({ email }).select('_id +password verified').lean();
+
+    if (!user) {
+      return res.status(400).json({ message: 'Invalid email or password' });
+    }
+
+    if (!user.verified) {
+      return res.status(403).json({ message: 'Please verify your email before logging in' });
+    }
+
+    const isPasswordValid = await bcrypt.compare(password, user.password);
+
+    if (!isPasswordValid) {
+      return res.status(400).json({ message: 'Invalid email or password' });
+    }
+
+    const token = jwt.sign({ id: user._id, scope: TOKEN_SCOPES.PLAYER }, process.env.JWT_SECRET, { expiresIn: SESSION_TOKEN_TTL });
+
+    res.cookie('token', token, { httpOnly: true, maxAge: SESSION_COOKIE_MAX_AGE });
+
+    res.status(200).json({
+      message: 'Login successful',
+      token,  // Return token in response body
+      user: {
+        id: user._id,
+        verified: user.verified,
+      },
+    });
+  } catch (error) {
+    res.status(500).json({ message: 'Internal server error' });
+  }
+});
+
+
+
+
+const optionalVerifyToken = (req, res, next) => {
+  const authHeader = req.headers.authorization;
+  const token = authHeader && authHeader.split(' ')[1];
+  if (!token) return next();
+  return jwt.verify(token, process.env.JWT_SECRET, (error, user) => {
+    if (error) return res.status(403).json({ ok: false, message: 'Your session is invalid. Please sign in again.' });
+    req.user = user;
+    return next();
+  });
+};
+
+const coinOrderItemSchema = new mongoose.Schema({
+  sku: { type: String, required: true },
+  label: { type: String, required: true },
+  coins: { type: Number, required: true, min: 1 },
+  quantity: { type: Number, required: true, min: 1, max: 20 },
+  unitPriceCents: { type: Number, required: true, min: 1 },
+  lineCoins: { type: Number, required: true, min: 1 },
+  lineTotalCents: { type: Number, required: true, min: 1 },
+}, { _id: false });
+
+const coinPurchaseOrderSchema = new mongoose.Schema({
+  orderNumber: { type: String, required: true, unique: true, index: true },
+  idempotencyKey: { type: String, required: true, unique: true, index: true },
+  userId: { type: mongoose.Schema.Types.ObjectId, ref: 'User', index: true },
+  email: { type: String, required: true, lowercase: true, trim: true, index: true },
+  firstName: { type: String, trim: true },
+  lastName: { type: String, trim: true },
+  billing: {
+    address: String,
+    city: String,
+    state: String,
+    zipCode: String,
+    country: String,
+  },
+  items: { type: [coinOrderItemSchema], required: true },
+  baseCoins: { type: Number, required: true, min: 1 },
+  bonusCoins: { type: Number, default: 0, min: 0 },
+  creditedCoins: { type: Number, default: 0, min: 0 },
+  subtotalCents: { type: Number, required: true, min: 1 },
+  currency: { type: String, default: 'USD' },
+  firstPurchaseOffer: { type: Boolean, default: false },
+  status: {
+    type: String,
+    enum: ['CREATED', 'PROCESSING', 'CREDITED', 'FAILED', 'CANCELLED'],
+    default: 'CREATED',
+    index: true,
+  },
+  provider: { type: String, default: 'authorize-net' },
+  providerReference: String,
+  providerEventId: String,
+  providerInvoiceNumber: { type: String, index: true },
+  checkoutUrl: String,
+  checkoutToken: { type: String, select: false },
+  checkoutTokenCreatedAt: Date,
+  returnUrl: String,
+  creditedAt: Date,
+  failureReason: String,
+}, { timestamps: true });
+coinPurchaseOrderSchema.index({ email: 1, createdAt: -1 });
+const CoinPurchaseOrder = mongoose.models.CoinPurchaseOrder || mongoose.model('CoinPurchaseOrder', coinPurchaseOrderSchema);
+
+const fmPlusOrderSchema = new mongoose.Schema({
+  orderNumber: { type: String, required: true, unique: true, index: true },
+  idempotencyKey: { type: String, required: true, unique: true, index: true },
+  userId: { type: mongoose.Schema.Types.ObjectId, ref: 'User', index: true },
+  email: { type: String, required: true, lowercase: true, trim: true, index: true },
+  firstName: { type: String, trim: true },
+  lastName: { type: String, trim: true },
+  billing: { address: String, city: String, state: String, zipCode: String, country: String },
+  plan: { type: String, enum: ['monthly', 'pass'], required: true },
+  recurring: { type: Boolean, default: false },
+  durationDays: { type: Number, default: 30 },
+  bonusCoins: { type: Number, default: 1000 },
+  subtotalCents: { type: Number, required: true, min: 1 },
+  currency: { type: String, default: 'USD' },
+  status: { type: String, enum: ['CREATED', 'PROCESSING', 'CREDITED', 'FAILED', 'CANCELLED'], default: 'CREATED', index: true },
+  provider: { type: String, default: 'authorize-net' },
+  providerReference: String,
+  providerEventId: String,
+  providerInvoiceNumber: { type: String, index: true },
+  checkoutUrl: String,
+  checkoutToken: { type: String, select: false },
+  checkoutTokenCreatedAt: Date,
+  returnUrl: String,
+  benefitStartsAt: Date,
+  benefitExpiresAt: Date,
+  creditedAt: Date,
+  failureReason: String,
+}, { timestamps: true });
+fmPlusOrderSchema.index({ email: 1, createdAt: -1 });
+const FmPlusOrder = mongoose.models.FmPlusOrder || mongoose.model('FmPlusOrder', fmPlusOrderSchema);
+
+function normalizeCheckoutEmail(value) {
+  return String(value || '').trim().toLowerCase();
+}
+
+function buildCoinOrderNumber() {
+  return `FMM-COIN-${Date.now()}-${crypto.randomBytes(3).toString('hex').toUpperCase()}`;
+}
+
+function buildFmPlusOrderNumber() {
+  return `FMM-PLUS-${Date.now()}-${crypto.randomBytes(3).toString('hex').toUpperCase()}`;
+}
+
+function getSafeCheckoutReturnUrl(value) {
+  const appOrigin = String(process.env.PUBLIC_APP_URL || 'https://www.fantasymmadness.com').replace(/\/$/, '');
+  const fallback = `${appOrigin}/checkout?status=return`;
+  try {
+    const requested = new URL(String(value || fallback));
+    const allowed = new Set([
+      'fantasymmadness.com',
+      'www.fantasymmadness.com',
+      ...(process.env.NODE_ENV === 'production' ? [] : ['localhost', '127.0.0.1']),
+    ]);
+    return allowed.has(requested.hostname) ? requested.toString() : fallback;
+  } catch (_error) {
+    return fallback;
+  }
+}
+
+function buildKurvHostedCheckoutUrl(order) {
+  const hostedUrl = process.env.KURV_HOSTED_CHECKOUT_URL;
+  if (!hostedUrl) return '';
+  const url = new URL(hostedUrl);
+  url.searchParams.set('reference', order.orderNumber);
+  url.searchParams.set('merchant_reference', order.orderNumber);
+  url.searchParams.set('amount', (order.subtotalCents / 100).toFixed(2));
+  url.searchParams.set('currency', order.currency);
+  url.searchParams.set('email', order.email);
+  const isMembership = Boolean(order.plan);
+  url.searchParams.set('description', isMembership
+    ? `${order.plan === 'monthly' ? 'FM+ Monthly' : 'FM+ 30-Day Pass'} membership`
+    : `${order.baseCoins.toLocaleString('en-US')} FM coins`);
+  if (isMembership) {
+    url.searchParams.set('product', 'fm-plus');
+    url.searchParams.set('plan', order.plan);
+    url.searchParams.set('recurring', order.recurring ? 'true' : 'false');
+  }
+  url.searchParams.set('return_url', order.returnUrl);
+  return url.toString();
+}
+
+function readKurvWebhookReference(payload = {}) {
+  const data = payload.data || payload.payment || payload.transaction || {};
+  return String(
+    data.merchant_reference || data.merchantReference || data.reference || data.orderNumber ||
+    payload.merchant_reference || payload.merchantReference || payload.reference || payload.orderNumber || ''
+  ).trim();
+}
+
+function readKurvWebhookAmountCents(payload = {}) {
+  const data = payload.data || payload.payment || payload.transaction || {};
+  const cents = data.amount_cents ?? data.amountCents ?? payload.amount_cents ?? payload.amountCents;
+  if (Number.isFinite(Number(cents))) return Math.round(Number(cents));
+  const amount = data.amount ?? payload.amount;
+  return Number.isFinite(Number(amount)) ? Math.round(Number(amount) * 100) : null;
+}
+
+function isKurvPaymentSuccess(payload = {}) {
+  const eventType = String(payload.type || payload.event || payload.eventType || '').trim().toLowerCase();
+  const status = String(payload.status || payload.data?.status || payload.payment?.status || '').trim().toLowerCase();
+  return ['payment.completed', 'payment.succeeded', 'checkout.completed', 'transaction.approved'].includes(eventType)
+    || ['paid', 'completed', 'succeeded', 'approved'].includes(status);
+}
+
+function getAuthorizeNetEnvironment() {
+  const requested = String(process.env.AUTHORIZE_NET_ENVIRONMENT || 'sandbox').trim().toLowerCase();
+  const live = ['production', 'prod', 'live'].includes(requested);
+  return {
+    live,
+    isLive: live,
+    apiUrl: live
+      ? 'https://api.authorize.net/xml/v1/request.api'
+      : 'https://apitest.authorize.net/xml/v1/request.api',
+    hostedPaymentUrl: live
+      ? 'https://accept.authorize.net/payment/payment'
+      : 'https://test.authorize.net/payment/payment',
+  };
+}
+
+// TEMPORARY DIAGNOSTIC — remove once the payment issue is confirmed fixed.
+// Verifies the 4 Authorize.Net credentials without touching the payment flow:
+// masked presence check + a real authenticateTestRequest call (no charge, no
+// customer/card data) to confirm the login/transaction key pair is accepted.
+const mask = (value) => {
+  const str = String(value || '').trim();
+  if (!str) return null;
+  return str.length <= 4 ? '*'.repeat(str.length) : `${str.slice(0, 2)}${'*'.repeat(Math.max(0, str.length - 6))}${str.slice(-4)}`;
+};
+
+app.get('/api/diagnostics/authorize-net-checkout-test', async (req, res) => {
+  try {
+    const testOrder = { subtotalCents: 1000, orderNumber: `DIAG-${Date.now()}`, returnUrl: '' };
+    const hosted = await requestAuthorizeNetHostedToken(testOrder);
+    res.send(`<!doctype html><html><body style="margin:0"><form id="f" method="POST" action="${hosted.checkoutUrl}"><input type="hidden" name="token" value="${hosted.token}"></form><script>document.getElementById('f').submit()</script>Redirecting to Authorize.Net test checkout ($10.00, not charged unless you complete it)...</body></html>`);
+  } catch (error) {
+    res.status(500).send(`Failed to create test checkout: ${error.message}`);
+  }
+});
+
+app.get('/api/diagnostics/authorize-net', async (req, res) => {
+  const keys = {
+    AUTHORIZE_NET_API_LOGIN_ID: process.env.AUTHORIZE_NET_API_LOGIN_ID,
+    AUTHORIZE_NET_TRANSACTION_KEY: process.env.AUTHORIZE_NET_TRANSACTION_KEY,
+    AUTHORIZE_NET_SIGNATURE_KEY: process.env.AUTHORIZE_NET_SIGNATURE_KEY,
+    AUTHORIZE_NET_CLIENT_KEY: process.env.AUTHORIZE_NET_CLIENT_KEY,
+  };
+  const keyStatus = Object.fromEntries(Object.entries(keys).map(([name, value]) => [
+    name,
+    { loaded: Boolean(String(value || '').trim()), masked: mask(value) },
+  ]));
+  const allLoaded = Object.values(keyStatus).every((entry) => entry.loaded);
+  const environment = getAuthorizeNetEnvironment();
+
+  const result = {
+    ok: false,
+    checkedAt: new Date().toISOString(),
+    environment: environment.live ? 'production' : 'sandbox',
+    keys: keyStatus,
+    allKeysLoaded: allLoaded,
+    credentialsValid: false,
+    authorizeNet: null,
+  };
+
+  if (!allLoaded) {
+    result.message = 'One or more Authorize.Net keys are missing from the environment.';
+    return res.status(200).json(result);
+  }
+
+  try {
+    const response = await axios.post(environment.apiUrl, {
+      authenticateTestRequest: {
+        merchantAuthentication: authorizeNetMerchantAuthentication(),
+      },
+    }, { headers: { 'Content-Type': 'application/json' } });
+
+    // Authorize.Net's JSON API replies with a leading BOM on some payloads.
+    const raw = typeof response.data === 'string' ? response.data.replace(/^\uFEFF/, '') : response.data;
+    const payload = typeof raw === 'string' ? JSON.parse(raw) : raw;
+    const resultCode = payload?.messages?.resultCode;
+    const messages = (payload?.messages?.message || []).map((m) => ({ code: m.code, text: m.text }));
+
+    result.authorizeNet = { resultCode, messages };
+    result.credentialsValid = resultCode === 'Ok';
+    result.ok = result.credentialsValid;
+    result.message = result.credentialsValid
+      ? 'Authorize.Net accepted the API Login ID / Transaction Key pair.'
+      : 'Authorize.Net rejected the credentials — see authorizeNet.messages.';
+
+    // The real coin/FM+ checkout doesn't use authenticateTestRequest — it calls
+    // getHostedPaymentPageRequest (redirect-to-Authorize.Net flow). That request
+    // can fail on its own (e.g. Hosted Payment Page not enabled on the account)
+    // even when the basic credential check above passes, so probe it too with a
+    // throwaway $0.01 request — no order is created, nothing is saved.
+    if (result.credentialsValid) {
+      try {
+        const hppResponse = await axios.post(environment.apiUrl, {
+          getHostedPaymentPageRequest: {
+            merchantAuthentication: authorizeNetMerchantAuthentication(),
+            transactionRequest: {
+              transactionType: 'authOnlyTransaction',
+              amount: '0.01',
+              order: { invoiceNumber: `DIAG-${Date.now()}`, description: 'Diagnostic check (not charged)' },
+              billTo: { firstName: 'Diagnostic', lastName: 'Check', address: '123 Test St', city: 'Test', state: 'GA', zip: '30000', country: 'US' },
+            },
+            hostedPaymentSettings: { setting: [{ settingName: 'hostedPaymentSecurityOptions', settingValue: JSON.stringify({ captcha: false }) }] },
+          },
+        }, { headers: { 'Content-Type': 'application/json' } });
+        const hppRaw = typeof hppResponse.data === 'string' ? hppResponse.data.replace(/^\uFEFF/, '') : hppResponse.data;
+        const hppPayload = typeof hppRaw === 'string' ? JSON.parse(hppRaw) : hppRaw;
+        const hppResultCode = hppPayload?.messages?.resultCode;
+        result.hostedPaymentPage = {
+          ok: hppResultCode === 'Ok' && Boolean(hppPayload.token),
+          resultCode: hppResultCode,
+          messages: (hppPayload?.messages?.message || []).map((m) => ({ code: m.code, text: m.text })),
+          hasToken: Boolean(hppPayload.token),
+        };
+      } catch (hppError) {
+        result.hostedPaymentPage = { ok: false, error: hppError.message };
+      }
+    }
+  } catch (error) {
+    result.message = 'Could not reach Authorize.Net to verify credentials.';
+    result.error = error.message;
+  }
+
+  return res.status(200).json(result);
+});
+
+function hasAuthorizeNetCredentials() {
+  return Boolean(
+    String(process.env.AUTHORIZE_NET_API_LOGIN_ID || '').trim()
+    && String(process.env.AUTHORIZE_NET_TRANSACTION_KEY || '').trim()
+    && String(process.env.AUTHORIZE_NET_SIGNATURE_KEY || '').trim(),
+  );
+}
+
+function buildAuthorizeNetInvoiceNumber(order = {}) {
+  const prefix = order.plan ? 'FP' : 'FC';
+  const digest = crypto.createHash('sha256').update(String(order.orderNumber || '')).digest('hex').slice(0, 16).toUpperCase();
+  return `${prefix}${digest}`;
+}
+
+function buildCheckoutResultUrl(order = {}, status = 'return') {
+  const url = new URL(getSafeCheckoutReturnUrl(order.returnUrl));
+  url.searchParams.set('status', status);
+  url.searchParams.set('order', order.orderNumber);
+  return url.toString();
+}
+
+function authorizeNetMerchantAuthentication() {
+  return {
+    name: String(process.env.AUTHORIZE_NET_API_LOGIN_ID || '').trim(),
+    transactionKey: String(process.env.AUTHORIZE_NET_TRANSACTION_KEY || '').trim(),
+  };
+}
+
+function getAuthorizeNetMessage(payload = {}) {
+  const messages = payload?.messages?.message;
+  const first = Array.isArray(messages) ? messages[0] : messages;
+  return String(first?.text || first?.description || 'The secure payment form could not be created.').trim();
+}
+
+async function requestAuthorizeNetHostedToken(order) {
+  if (!hasAuthorizeNetCredentials()) {
+    const error = new Error('Secure payment is awaiting merchant gateway configuration.');
+    error.status = 503;
+    error.code = 'AUTHORIZE_NET_NOT_CONFIGURED';
+    throw error;
+  }
+
+  const environment = getAuthorizeNetEnvironment();
+  const invoiceNumber = order.providerInvoiceNumber || buildAuthorizeNetInvoiceNumber(order);
+  const description = order.plan
+    ? `${order.plan === 'monthly' ? 'FM+ Monthly' : 'FM+ 30-Day Pass'} membership`
+    : `${Number(order.baseCoins || 0).toLocaleString('en-US')} FM coins`;
+  const requestBody = {
+    getHostedPaymentPageRequest: {
+      merchantAuthentication: authorizeNetMerchantAuthentication(),
+      transactionRequest: {
+        transactionType: 'authCaptureTransaction',
+        amount: (Number(order.subtotalCents || 0) / 100).toFixed(2),
+      },
+      hostedPaymentSettings: {
+        setting: [
+          {
+            settingName: 'hostedPaymentReturnOptions',
+            settingValue: JSON.stringify({
+              url: buildCheckoutResultUrl(order, 'return'),
+              urlText: 'Return to Fantasy MMAdness',
+              cancelUrl: buildCheckoutResultUrl(order, 'cancelled'),
+              cancelUrlText: 'Cancel',
+            }),
+          },
+          { settingName: 'hostedPaymentBillingAddressOptions', settingValue: JSON.stringify({ show: true, required: true }) },
+        ],
+      },
+    },
+  };
+
+  const response = await axios.post(environment.apiUrl, requestBody, {
+    headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+    timeout: 15000,
+  });
+  const payload = response.data || {};
+  if (String(payload?.messages?.resultCode || '').toLowerCase() !== 'ok' || !payload.token) {
+    const error = new Error(getAuthorizeNetMessage(payload));
+    error.status = 502;
+    throw error;
+  }
+  return { token: payload.token, checkoutUrl: environment.hostedPaymentUrl, invoiceNumber };
+}
+
+async function attachAuthorizeNetHostedCheckout(order) {
+  const hosted = await requestAuthorizeNetHostedToken(order);
+  order.provider = 'authorize-net';
+  order.providerInvoiceNumber = hosted.invoiceNumber;
+  order.checkoutUrl = hosted.checkoutUrl;
+  order.checkoutToken = hosted.token;
+  order.checkoutTokenCreatedAt = new Date();
+  await order.save();
+  return hosted;
+}
+
+// Direct in-page charge via Accept.js: the browser tokenizes the card with
+// Authorize.Net directly (raw card digits never touch our server), and this
+// takes the resulting opaqueData token and settles the order synchronously —
+// the alternative to the hostedPaymentPage redirect above.
+async function authorizeNetChargeOpaqueData(order, opaqueData) {
+  if (!hasAuthorizeNetCredentials()) {
+    const error = new Error('Secure payment is awaiting merchant gateway configuration.');
+    error.status = 503;
+    error.code = 'AUTHORIZE_NET_NOT_CONFIGURED';
+    throw error;
+  }
+  const environment = getAuthorizeNetEnvironment();
+  const invoiceNumber = order.providerInvoiceNumber || buildAuthorizeNetInvoiceNumber(order);
+  const requestBody = {
+    createTransactionRequest: {
+      merchantAuthentication: authorizeNetMerchantAuthentication(),
+      transactionRequest: {
+        transactionType: 'authCaptureTransaction',
+        amount: (Number(order.subtotalCents || 0) / 100).toFixed(2),
+        payment: { opaqueData: { dataDescriptor: String(opaqueData?.dataDescriptor || ''), dataValue: String(opaqueData?.dataValue || '') } },
+        order: {
+          invoiceNumber,
+          description: order.plan ? `${order.plan === 'monthly' ? 'FM+ Monthly' : 'FM+ 30-Day Pass'} membership` : `${Number(order.baseCoins || 0).toLocaleString('en-US')} FM coins`,
+        },
+        billTo: {
+          firstName: order.firstName || '',
+          lastName: order.lastName || '',
+          address: order.billing?.address || '',
+          city: order.billing?.city || '',
+          state: order.billing?.state || '',
+          zip: order.billing?.zipCode || '',
+          country: order.billing?.country || 'US',
+        },
+      },
+    },
+  };
+  const response = await axios.post(environment.apiUrl, requestBody, {
+    headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+    timeout: 15000,
+  });
+  const payload = response.data || {};
+  const txn = payload.transactionResponse || {};
+  const approved = String(txn.responseCode || '').trim() === '1';
+  if (!approved) {
+    const declineMessage = txn.errors?.[0]?.errorText || txn.messages?.[0]?.description || getAuthorizeNetMessage(payload);
+    const error = new Error(declineMessage || 'The card was declined.');
+    error.status = 402;
+    error.declined = true;
+    throw error;
+  }
+  return { transactionId: txn.transId, invoiceNumber };
+}
+
+function getAuthorizeNetClientConfig() {
+  const clientKey = String(process.env.AUTHORIZE_NET_CLIENT_KEY || '').trim();
+  const apiLoginId = String(process.env.AUTHORIZE_NET_API_LOGIN_ID || '').trim();
+  const environment = getAuthorizeNetEnvironment();
+  return {
+    ok: Boolean(clientKey && apiLoginId),
+    apiLoginID: apiLoginId,
+    clientKey,
+    jsUrl: environment.live ? 'https://js.authorize.net/v1/Accept.js' : 'https://jstest.authorize.net/v1/Accept.js',
+  };
+}
+
+app.get('/api/checkout/accept-js-config', (req, res) => {
+  const config = getAuthorizeNetClientConfig();
+  if (!config.ok) return res.status(503).json({ ok: false, code: 'AUTHORIZE_NET_NOT_CONFIGURED', message: 'Secure card entry is awaiting merchant gateway configuration.' });
+  return res.json(config);
+});
+
+function verifyAuthorizeNetWebhookSignature(rawBody, signatureHeader) {
+
+  const signatureKey = String(process.env.AUTHORIZE_NET_SIGNATURE_KEY || '').replace(/\s+/g, '').trim();
+  const received = String(signatureHeader || '').replace(/^sha512=/i, '').trim().toLowerCase();
+  if (!signatureKey || !/^[a-f0-9]+$/i.test(signatureKey) || signatureKey.length % 2 !== 0 || !/^[a-f0-9]{128}$/i.test(received)) return false;
+  const expected = crypto.createHmac('sha512', Buffer.from(signatureKey, 'hex')).update(String(rawBody || ''), 'utf8').digest('hex').toLowerCase();
+  const expectedBuffer = Buffer.from(expected, 'hex');
+  const receivedBuffer = Buffer.from(received, 'hex');
+  return expectedBuffer.length === receivedBuffer.length && crypto.timingSafeEqual(expectedBuffer, receivedBuffer);
+}
+
+async function getAuthorizeNetTransactionDetails(transactionId) {
+  const environment = getAuthorizeNetEnvironment();
+  const response = await axios.post(environment.apiUrl, {
+    getTransactionDetailsRequest: {
+      merchantAuthentication: authorizeNetMerchantAuthentication(),
+      transId: String(transactionId || '').trim(),
+    },
+  }, {
+    headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+    timeout: 15000,
+  });
+  const payload = response.data || {};
+  if (String(payload?.messages?.resultCode || '').toLowerCase() !== 'ok' || !payload.transaction) {
+    const error = new Error(getAuthorizeNetMessage(payload));
+    error.status = 502;
+    throw error;
+  }
+  return payload.transaction;
+}
+
+async function sendCoinCheckoutAccountEmail({ user, resetToken, order }) {
+  if (!resetToken) return;
+  const appOrigin = String(process.env.PUBLIC_APP_URL || 'https://www.fantasymmadness.com').replace(/\/$/, '');
+  const passwordUrl = `${appOrigin}/resetPassword-user/${resetToken}`;
+  await transporter.sendMail({
+    from: FMM_MAIL_FROM,
+    to: user.email,
+    subject: 'Set your Fantasy MMAdness player password',
+    text: `Your payment was confirmed and your player wallet was created. Set your password using this single-use link within 24 hours: ${passwordUrl}\n\nOrder: ${order.orderNumber}\nWallet credit: ${order.creditedCoins} FM`,
+  });
+}
+
+async function settlePaidCoinOrder(orderNumber, providerEventId = '') {
+  let createdAccountEmail = null;
+  let createdAccountResetToken = null;
+
+  const settled = await mongoose.connection.transaction(async (session) => {
+    const order = await CoinPurchaseOrder.findOne({ orderNumber }).session(session);
+    if (!order) {
+      const error = new Error('Coin order not found.');
+      error.status = 404;
+      throw error;
+    }
+    if (order.status === 'CREDITED') return { order, alreadyCredited: true };
+    if (!['CREATED', 'PROCESSING'].includes(order.status)) {
+      const error = new Error(`Coin order cannot be credited from status ${order.status}.`);
+      error.status = 409;
+      throw error;
+    }
+    order.status = 'PROCESSING';
+    order.providerEventId = providerEventId || order.providerEventId;
+    await order.save({ session });
+
+    let user = order.userId ? await User.findById(order.userId).session(session) : null;
+    if (!user) user = await User.findOne({ email: order.email }).select('+password +resetPasswordToken +resetPasswordExpires').session(session);
+
+    if (!user) {
+      const resetToken = crypto.randomBytes(32).toString('hex');
+      const resetTokenHash = crypto.createHash('sha256').update(resetToken).digest('hex');
+      const randomPassword = crypto.randomBytes(32).toString('hex');
+      const documents = await User.create([{
+        firstName: order.firstName || order.email.split('@')[0],
+        lastName: order.lastName || '',
+        playerName: order.firstName || order.email.split('@')[0],
+        email: order.email,
+        password: await bcrypt.hash(randomPassword, 10),
+        verified: true,
+        tokens: '500',
+        signupBonusGranted: true,
+        resetPasswordToken: resetTokenHash,
+        resetPasswordExpires: Date.now() + 24 * 60 * 60 * 1000,
+        isAgreed: true,
+      }], { session });
+      user = documents[0];
+      createdAccountEmail = user.email;
+      createdAccountResetToken = resetToken;
+    }
+
+    const firstPurchase = !user.hasReceivedFirstPurchaseBonus;
+    const bonusCoins = firstPurchase ? order.baseCoins : 0;
+    const creditedCoins = order.baseCoins + bonusCoins;
+    const coinBalanceBefore = Number.parseInt(String(user.tokens || '0'), 10) || 0;
+    user.tokens = addWalletTokens(user.tokens, creditedCoins);
+    await recordWalletMove({
+      userId: user._id,
+      amount: creditedCoins,
+      balanceBefore: coinBalanceBefore,
+      balanceAfter: Number.parseInt(String(user.tokens || '0'), 10) || 0,
+      reason: 'coin_purchase',
+      reference: String(order.orderNumber || ''),
+      meta: { baseCoins: order.baseCoins, bonusCoins },
+      session,
+    });
+    user.hasReceivedFirstPurchaseBonus = true;
+    await user.save({ session });
+
+    order.userId = user._id;
+    order.firstPurchaseOffer = firstPurchase;
+    order.bonusCoins = bonusCoins;
+    order.creditedCoins = creditedCoins;
+    order.status = 'CREDITED';
+    order.creditedAt = new Date();
+    await order.save({ session });
+    return { order, user, alreadyCredited: false };
+  });
+
+  if (createdAccountResetToken && settled?.user?.email === createdAccountEmail) {
+    sendCoinCheckoutAccountEmail({ user: settled.user, resetToken: createdAccountResetToken, order: settled.order })
+      .catch((error) => console.error('[coin-checkout] Password-set email failed:', error.message));
+  }
+
+  // Receipt. People expect something in writing after paying.
+  if (settled && !settled.alreadyCredited && settled.user?.email) {
+    const credited = Number(settled.order?.creditedCoins || 0);
+    const bonus = Number(settled.order?.bonusCoins || 0);
+    sendMoneyNotice({
+      to: settled.user.email,
+      subject: 'Your FM coins have been added',
+      heading: 'PURCHASE CONFIRMED',
+      lines: [
+        `<strong>${credited.toLocaleString()} FM</strong> has been added to your wallet.`,
+        bonus > 0 ? `That includes a <strong>${bonus.toLocaleString()} FM</strong> bonus.` : '',
+        `Order: ${settled.order?.orderNumber || 'n/a'}`,
+        'Your coins are ready to use — jump back in and enter a fight.',
+      ].filter(Boolean),
+    });
+  }
+  return settled;
+}
+
+async function settlePaidFmPlusOrder(orderNumber, providerEventId = '') {
+  let createdAccountResetToken = null;
+  const settled = await mongoose.connection.transaction(async (session) => {
+    const order = await FmPlusOrder.findOne({ orderNumber }).session(session);
+    if (!order) {
+      const error = new Error('FM+ order not found.');
+      error.status = 404;
+      throw error;
+    }
+    if (order.status === 'CREDITED') return { order, alreadyCredited: true };
+    if (!['CREATED', 'PROCESSING'].includes(order.status)) {
+      const error = new Error(`FM+ order cannot be credited from status ${order.status}.`);
+      error.status = 409;
+      throw error;
+    }
+    order.status = 'PROCESSING';
+    order.providerEventId = providerEventId || order.providerEventId;
+    await order.save({ session });
+
+    let user = order.userId ? await User.findById(order.userId).session(session) : null;
+    if (!user) user = await User.findOne({ email: order.email }).select('+password +resetPasswordToken +resetPasswordExpires').session(session);
+    if (!user) {
+      const resetToken = crypto.randomBytes(32).toString('hex');
+      const resetTokenHash = crypto.createHash('sha256').update(resetToken).digest('hex');
+      const randomPassword = crypto.randomBytes(32).toString('hex');
+      const documents = await User.create([{
+        firstName: order.firstName || order.email.split('@')[0],
+        lastName: order.lastName || '',
+        playerName: order.firstName || order.email.split('@')[0],
+        email: order.email,
+        password: await bcrypt.hash(randomPassword, 10),
+        verified: true,
+        tokens: '500',
+        signupBonusGranted: true,
+        resetPasswordToken: resetTokenHash,
+        resetPasswordExpires: Date.now() + 24 * 60 * 60 * 1000,
+        isAgreed: true,
+      }], { session });
+      user = documents[0];
+      createdAccountResetToken = resetToken;
+    }
+
+    const now = new Date();
+    const currentExpiry = user.fmPlusExpiresAt && new Date(user.fmPlusExpiresAt) > now
+      ? new Date(user.fmPlusExpiresAt)
+      : now;
+    const expiry = new Date(currentExpiry.getTime() + Number(order.durationDays || 30) * 24 * 60 * 60 * 1000);
+    const fmPlusBalanceBefore = Number.parseInt(String(user.tokens || '0'), 10) || 0;
+    user.tokens = addWalletTokens(user.tokens, order.bonusCoins);
+    await recordWalletMove({
+      userId: user._id,
+      amount: order.bonusCoins,
+      balanceBefore: fmPlusBalanceBefore,
+      balanceAfter: Number.parseInt(String(user.tokens || '0'), 10) || 0,
+      reason: 'fm_plus_bonus',
+      reference: String(order.orderNumber || ''),
+      session,
+    });
+    user.isSubscribed = true;
+    user.currentPlan = 'FM+';
+    user.fmPlusPlan = order.plan;
+    user.fmPlusExpiresAt = expiry;
+    user.fmPlusLastCoinCreditAt = now;
+    await user.save({ session });
+
+    order.userId = user._id;
+    order.status = 'CREDITED';
+    order.benefitStartsAt = now;
+    order.benefitExpiresAt = expiry;
+    order.creditedAt = now;
+    await order.save({ session });
+    return { order, user, alreadyCredited: false };
+  });
+
+  if (settled && !settled.alreadyCredited && settled.user?.email) {
+    sendMoneyNotice({
+      to: settled.user.email,
+      subject: 'FM+ is active on your account',
+      heading: 'FM+ ACTIVE',
+      lines: [
+        'Your FM+ membership is now active.',
+        Number(settled.order?.bonusCoins || 0) > 0
+          ? `<strong>${Number(settled.order.bonusCoins).toLocaleString()} FM</strong> in bonus coins has been added to your wallet.`
+          : '',
+        settled.user.fmPlusExpiresAt
+          ? `Your membership runs until <strong>${new Date(settled.user.fmPlusExpiresAt).toLocaleDateString()}</strong>.`
+          : '',
+        'Streak saves are half price for you, and you get early access to new fight cards.',
+      ].filter(Boolean),
+    });
+  }
+
+  if (createdAccountResetToken && settled?.user) {
+    sendCoinCheckoutAccountEmail({ user: settled.user, resetToken: createdAccountResetToken, order: {
+      ...settled.order.toObject(),
+      creditedCoins: settled.order.bonusCoins,
+    } }).catch((error) => console.error('[fm-plus-checkout] Password-set email failed:', error.message));
+  }
+  return settled;
+}
+
+// A signed-in player is checked against their stored state. A guest checkout has
+// no account yet, so the state they type at checkout is used; it is re-checked
+// once the account exists.
+async function blockPurchaseOutsidePaidStates(req) {
+  const userId = String(req.user?.id || req.user?._id || '').trim();
+  let state = String(req.body?.state || '').trim().toUpperCase();
+  if (userId) {
+    const account = await User.findById(userId).select('residenceState').lean();
+    if (account?.residenceState) state = String(account.residenceState).toUpperCase();
+  }
+  if (!state) return null; // nothing to judge on yet; the entry gate still applies
+
+  const mode = resolveStateMode(state);
+  if (mode === 'paid') return null;
+  return {
+    ok: false,
+    code: mode === 'blocked' ? 'STATE_BLOCKED' : 'FREE_PLAY_ONLY',
+    state,
+    message: mode === 'blocked'
+      ? `Fantasy MMAdness is not available in ${state}.`
+      : `Coin purchases are not available in ${state}. You can still play every fight for free — coins are won and used for status there, not cash.`,
+  };
+}
+
+// Lets the app render free-play or paid mode from one build.
+app.get('/api/public/jurisdiction', optionalVerifyToken, async (req, res) => {
+  try {
+    let state = String(req.query.state || '').trim().toUpperCase();
+    const userId = String(req.user?.id || req.user?._id || '').trim();
+    if (userId) {
+      const account = await User.findById(userId).select('residenceState dateOfBirth').lean();
+      if (account?.residenceState) state = String(account.residenceState).toUpperCase();
+    }
+    const mode = resolveStateMode(state);
+    return res.json({
+      ok: true,
+      state: state || null,
+      mode,
+      minimumAge: minimumAgeForState(state),
+      canPayEntryFees: mode === 'paid',
+      canBuyCoins: mode === 'paid',
+      canWinCashValue: mode === 'paid',
+      canPlayFree: mode !== 'blocked',
+      message: mode === 'paid'
+        ? 'Paid contests available.'
+        : mode === 'blocked'
+          ? 'Not available in this state.'
+          : 'Free play only — coins are for status here, not cash value.',
+    });
+  } catch (error) {
+    console.error('Jurisdiction lookup failed:', error);
+    return res.status(500).json({ ok: false, message: 'Could not determine availability.' });
+  }
+});
+
+app.get('/api/public/coin-products', (_req, res) => {
+  const products = Object.values(FM_COIN_PRODUCTS).map((product) => ({
+    ...product,
+    mostPopular: product.sku === 'fm-5000',
+  }));
+  res.json({ ok: true, currency: 'USD', firstPurchaseMultiplier: 2, signupBonusCoins: 500, products });
+});
+
+app.get('/api/public/fm-plus-plans', (_req, res) => {
+  res.json({
+    ok: true,
+    currency: 'USD',
+    plans: Object.values(FM_PLUS_PLANS),
+    entitlements: ['1,000 FM bonus', 'Early Fantasy Card access', 'Exclusive FM+ leagues', 'No ads', '25 FM streak save'],
+  });
+});
+
+app.post('/api/checkout/coin-orders', optionalVerifyToken, async (req, res) => {
+  try {
+    // TEST ACCOUNTS MUST NEVER REACH A LIVE PAYMENT PAGE.
+    // The gateway runs in production, so a tester tapping "buy coins" would be
+    // charged a real card. Checkout previously knew nothing about test accounts.
+    // Admins grant coins to testers instead: POST /api/admin/test-accounts/grant.
+    if (getAuthorizeNetEnvironment().isLive) {
+      const buyerEmail = String(
+        req.body?.email
+        || (req.user?.id ? (await User.findById(req.user.id).select('email').lean())?.email : '')
+        || '',
+      ).trim().toLowerCase();
+      const buyer = req.user?.id
+        ? await User.findById(req.user.id).select('isTestAccount').lean()
+        : null;
+      if (buyer?.isTestAccount || buyerEmail.endsWith('@fmmtest.com')) {
+        return res.status(403).json({
+          ok: false,
+          code: 'TEST_ACCOUNT_LIVE_PAYMENT_BLOCKED',
+          message: 'This is a test account and the payment gateway is live. Ask an admin to add coins to your wallet instead of buying them.',
+        });
+      }
+    }
+
+    // Free-play states must not be able to buy coins. If they could, the coins
+    // would have cash value there and the free mode would be the paid product
+    // with extra steps.
+    const purchaseBlock = await blockPurchaseOutsidePaidStates(req);
+    if (purchaseBlock) return res.status(403).json(purchaseBlock);
+
+    if (!hasAuthorizeNetCredentials()) {
+      return res.status(503).json({
+        ok: false,
+        code: 'AUTHORIZE_NET_NOT_CONFIGURED',
+        message: 'Secure coin checkout is awaiting merchant gateway configuration.',
+      });
+    }
+
+    const idempotencyKey = String(req.headers['idempotency-key'] || req.body?.idempotencyKey || '').trim();
+    if (!idempotencyKey || idempotencyKey.length < 12 || idempotencyKey.length > 160) {
+      return res.status(400).json({ ok: false, message: 'A valid idempotency key is required.' });
+    }
+    const existingOrder = await CoinPurchaseOrder.findOne({ idempotencyKey }).select('+checkoutToken');
+    if (existingOrder) {
+      const tokenAge = Date.now() - new Date(existingOrder.checkoutTokenCreatedAt || 0).getTime();
+      // Hosted Payment Page tokens are single-use — reusing one that already
+      // rendered (even without a completed payment) hands the browser back a
+      // spent token, which renders as a blank Order Summary. Always mint fresh.
+      const hosted = await attachAuthorizeNetHostedCheckout(existingOrder);
+      return res.status(200).json({
+        ok: true,
+        orderNumber: existingOrder.orderNumber,
+        checkoutUrl: hosted.checkoutUrl,
+        checkoutMethod: 'POST',
+        formToken: hosted.token,
+        subtotalCents: existingOrder.subtotalCents,
+        baseCoins: existingOrder.baseCoins,
+        reused: true,
+      });
+    }
+
+    const cart = resolveCoinCart(req.body?.items);
+    const billing = req.body?.billing || {};
+    const authenticatedUser = req.user?.id ? await User.findById(req.user.id).lean() : null;
+    const email = normalizeCheckoutEmail(authenticatedUser?.email || req.body?.email || billing.email);
+    if (!email || !/^\S+@\S+\.\S+$/.test(email)) {
+      return res.status(400).json({ ok: false, message: 'A valid email address is required.' });
+    }
+    if (!authenticatedUser) {
+      const existingUser = await User.findOne({ email }).select('_id').lean();
+      if (existingUser) {
+        return res.status(409).json({ ok: false, code: 'SIGN_IN_REQUIRED', message: 'This email already has a player account. Sign in before buying coins.' });
+      }
+    }
+
+    const firstName = String(authenticatedUser?.firstName || billing.firstName || req.body?.firstName || '').trim();
+    const lastName = String(authenticatedUser?.lastName || billing.lastName || req.body?.lastName || '').trim();
+    if (!authenticatedUser && (!firstName || !lastName)) {
+      return res.status(400).json({ ok: false, message: 'First and last name are required to create the player wallet after payment.' });
+    }
+
+    const order = new CoinPurchaseOrder({
+      orderNumber: buildCoinOrderNumber(),
+      idempotencyKey,
+      userId: authenticatedUser?._id,
+      email,
+      firstName,
+      lastName,
+      billing: {
+        address: String(billing.address || '').trim(),
+        city: String(billing.city || '').trim(),
+        state: String(billing.state || '').trim(),
+        zipCode: String(billing.zipCode || billing.zip || '').trim(),
+        country: String(billing.country || 'US').trim(),
+      },
+      items: cart.items,
+      baseCoins: cart.baseCoins,
+      subtotalCents: cart.subtotalCents,
+      firstPurchaseOffer: authenticatedUser ? !authenticatedUser.hasReceivedFirstPurchaseBonus : true,
+      provider: 'authorize-net',
+      returnUrl: getSafeCheckoutReturnUrl(req.body?.returnUrl),
+    });
+    order.providerInvoiceNumber = buildAuthorizeNetInvoiceNumber(order);
+    await order.save();
+
+    if (req.body?.opaqueData?.dataValue) {
+      try {
+        const charge = await authorizeNetChargeOpaqueData(order, req.body.opaqueData);
+        await CoinPurchaseOrder.updateOne({ orderNumber: order.orderNumber }, { $set: { provider: 'authorize-net', providerReference: charge.transactionId } });
+        const result = await settlePaidCoinOrder(order.orderNumber, charge.transactionId);
+        return res.status(201).json({ ok: true, orderNumber: order.orderNumber, charged: true, creditedCoins: result?.order?.creditedCoins ?? order.baseCoins ?? 0, firstPurchaseOffer: order.firstPurchaseOffer });
+      } catch (chargeError) {
+        return res.status(chargeError.status || 402).json({ ok: false, declined: true, message: chargeError.message || 'The card was declined.' });
+      }
+    }
+
+    const hosted = await attachAuthorizeNetHostedCheckout(order);
+
+    return res.status(201).json({
+      ok: true,
+      orderNumber: order.orderNumber,
+      checkoutUrl: hosted.checkoutUrl,
+      checkoutMethod: 'POST',
+      formToken: hosted.token,
+      subtotalCents: order.subtotalCents,
+      baseCoins: order.baseCoins,
+      firstPurchaseOffer: order.firstPurchaseOffer,
+    });
+  } catch (error) {
+    if (error?.code === 11000 && error?.keyPattern?.idempotencyKey) {
+      const reused = await CoinPurchaseOrder.findOne({ idempotencyKey: String(req.headers['idempotency-key'] || req.body?.idempotencyKey || '').trim() }).select('+checkoutToken');
+      if (reused) {
+        const hosted = await attachAuthorizeNetHostedCheckout(reused);
+        return res.status(200).json({ ok: true, orderNumber: reused.orderNumber, checkoutUrl: hosted.checkoutUrl, checkoutMethod: 'POST', formToken: hosted.token, reused: true });
+      }
+    }
+    console.error('[coin-checkout] Create order failed:', error);
+    return res.status(error.status || 500).json({ ok: false, message: error.message || 'Unable to create coin checkout.' });
+  }
+});
+
+app.post('/api/checkout/fm-plus-orders', optionalVerifyToken, async (req, res) => {
+  try {
+    const purchaseBlock = await blockPurchaseOutsidePaidStates(req);
+    if (purchaseBlock) return res.status(403).json(purchaseBlock);
+
+    if (!hasAuthorizeNetCredentials()) {
+      return res.status(503).json({ ok: false, code: 'AUTHORIZE_NET_NOT_CONFIGURED', message: 'Secure FM+ checkout is awaiting merchant gateway configuration.' });
+    }
+    const plan = resolveFmPlusPlan(req.body?.plan);
+    if (plan.recurring) {
+      return res.status(409).json({
+        ok: false,
+        code: 'AUTHORIZE_NET_RECURRING_NOT_ENABLED',
+        message: 'Monthly auto-renew requires a separate recurring-billing setup. Choose the 30-day pass to continue today.',
+      });
+    }
+    const idempotencyKey = String(req.headers['idempotency-key'] || req.body?.idempotencyKey || '').trim();
+    if (!idempotencyKey || idempotencyKey.length < 12 || idempotencyKey.length > 160) {
+      return res.status(400).json({ ok: false, message: 'A valid idempotency key is required.' });
+    }
+    const existingOrder = await FmPlusOrder.findOne({ idempotencyKey }).select('+checkoutToken');
+    if (existingOrder) {
+      const hosted = await attachAuthorizeNetHostedCheckout(existingOrder);
+      return res.status(200).json({ ok: true, orderNumber: existingOrder.orderNumber, checkoutUrl: hosted.checkoutUrl, checkoutMethod: 'POST', formToken: hosted.token, plan: existingOrder.plan, reused: true });
+    }
+
+    const billing = req.body?.billing || {};
+    const authenticatedUser = req.user?.id ? await User.findById(req.user.id).lean() : null;
+    const email = normalizeCheckoutEmail(authenticatedUser?.email || req.body?.email || billing.email);
+    if (!email || !/^\S+@\S+\.\S+$/.test(email)) {
+      return res.status(400).json({ ok: false, message: 'A valid email address is required.' });
+    }
+    if (!authenticatedUser) {
+      const existingUser = await User.findOne({ email }).select('_id').lean();
+      if (existingUser) return res.status(409).json({ ok: false, code: 'SIGN_IN_REQUIRED', message: 'This email already has a player account. Sign in before joining FM+.' });
+    }
+    const firstName = String(authenticatedUser?.firstName || billing.firstName || req.body?.firstName || '').trim();
+    const lastName = String(authenticatedUser?.lastName || billing.lastName || req.body?.lastName || '').trim();
+    if (!authenticatedUser && (!firstName || !lastName)) {
+      return res.status(400).json({ ok: false, message: 'First and last name are required to create the player account after payment.' });
+    }
+
+    const order = new FmPlusOrder({
+      orderNumber: buildFmPlusOrderNumber(),
+      idempotencyKey,
+      userId: authenticatedUser?._id,
+      email,
+      firstName,
+      lastName,
+      billing: {
+        address: String(billing.address || '').trim(), city: String(billing.city || '').trim(),
+        state: String(billing.state || '').trim(), zipCode: String(billing.zipCode || billing.zip || '').trim(),
+        country: String(billing.country || 'US').trim(),
+      },
+      plan: plan.id,
+      recurring: plan.recurring,
+      durationDays: plan.durationDays,
+      bonusCoins: plan.bonusCoins,
+      subtotalCents: plan.priceCents,
+      provider: 'authorize-net',
+      returnUrl: getSafeCheckoutReturnUrl(req.body?.returnUrl),
+    });
+    order.providerInvoiceNumber = buildAuthorizeNetInvoiceNumber(order);
+    await order.save();
+
+    if (req.body?.opaqueData?.dataValue) {
+      try {
+        const charge = await authorizeNetChargeOpaqueData(order, req.body.opaqueData);
+        await FmPlusOrder.updateOne({ orderNumber: order.orderNumber }, { $set: { provider: 'authorize-net', providerReference: charge.transactionId } });
+        const result = await settlePaidFmPlusOrder(order.orderNumber, charge.transactionId);
+        return res.status(201).json({ ok: true, orderNumber: order.orderNumber, charged: true, creditedCoins: result.order.bonusCoins, plan: order.plan });
+      } catch (chargeError) {
+        return res.status(chargeError.status || 402).json({ ok: false, declined: true, message: chargeError.message || 'The card was declined.' });
+      }
+    }
+
+    const hosted = await attachAuthorizeNetHostedCheckout(order);
+    return res.status(201).json({
+      ok: true,
+      orderNumber: order.orderNumber,
+      checkoutUrl: hosted.checkoutUrl,
+      checkoutMethod: 'POST',
+      formToken: hosted.token,
+      plan: order.plan,
+      subtotalCents: order.subtotalCents,
+    });
+  } catch (error) {
+    if (error?.code === 11000 && error?.keyPattern?.idempotencyKey) {
+      const reused = await FmPlusOrder.findOne({ idempotencyKey: String(req.headers['idempotency-key'] || req.body?.idempotencyKey || '').trim() }).select('+checkoutToken');
+      if (reused) {
+        const hosted = await attachAuthorizeNetHostedCheckout(reused);
+        return res.status(200).json({ ok: true, orderNumber: reused.orderNumber, checkoutUrl: hosted.checkoutUrl, checkoutMethod: 'POST', formToken: hosted.token, plan: reused.plan, reused: true });
+      }
+    }
+    console.error('[fm-plus-checkout] Create order failed:', error);
+    return res.status(error.status || 500).json({ ok: false, message: error.message || 'Unable to create FM+ checkout.' });
+  }
+});
+
+app.get('/api/checkout/orders/:orderNumber/status', async (req, res) => {
+  try {
+    const orderNumber = String(req.params.orderNumber || '').trim();
+    if (!/^FMM-(?:COIN|PLUS)-[A-Z0-9-]{12,80}$/i.test(orderNumber)) {
+      return res.status(400).json({ ok: false, message: 'Invalid checkout order reference.' });
+    }
+    const isFmPlus = orderNumber.startsWith('FMM-PLUS-');
+    const order = await (isFmPlus ? FmPlusOrder : CoinPurchaseOrder)
+      .findOne({ orderNumber })
+      .select('orderNumber status creditedCoins bonusCoins creditedAt benefitExpiresAt failureReason')
+      .lean();
+    if (!order) return res.status(404).json({ ok: false, message: 'Checkout order not found.' });
+    return res.json({
+      ok: true,
+      orderNumber,
+      status: order.status,
+      creditedCoins: isFmPlus ? Number(order.bonusCoins || 0) : Number(order.creditedCoins || 0),
+      creditedAt: order.creditedAt,
+      benefitExpiresAt: isFmPlus ? order.benefitExpiresAt : undefined,
+      message: order.status === 'FAILED' ? 'Payment confirmation could not be completed. Please contact support with the order reference.' : undefined,
+    });
+    if (order.status === 'FAILED') {
+      recordPaymentFailure({ orderNumber, reason: 'Order settled as FAILED' });
+    }
+  } catch (error) {
+    return res.status(500).json({ ok: false, message: 'Checkout status is temporarily unavailable.' });
+  }
+});
+
+app.post('/api/webhooks/authorize-net', async (req, res) => {
+  try {
+    if (!verifyAuthorizeNetWebhookSignature(req.rawBody, req.headers['x-anet-signature'])) {
+      return res.status(401).json({ ok: false, message: 'Invalid webhook signature.' });
+    }
+    const eventType = String(req.body?.eventType || '').trim();
+    if (eventType !== 'net.authorize.payment.authcapture.created') {
+      return res.status(200).json({ ok: true, ignored: true });
+    }
+
+    const transactionId = String(req.body?.payload?.id || '').trim();
+    if (!/^\d+$/.test(transactionId)) return res.status(400).json({ ok: false, message: 'Transaction reference is missing.' });
+    const transaction = await getAuthorizeNetTransactionDetails(transactionId);
+    const invoiceNumber = String(transaction?.order?.invoiceNumber || '').trim();
+    const order = invoiceNumber
+      ? await (invoiceNumber.startsWith('FP') ? FmPlusOrder : CoinPurchaseOrder).findOne({ providerInvoiceNumber: invoiceNumber }).lean()
+      : null;
+    if (!order) return res.status(404).json({ ok: false, message: 'Checkout order not found.' });
+
+    const responseCode = String(transaction.responseCode || req.body?.payload?.responseCode || '').trim();
+    const transactionStatus = String(transaction.transactionStatus || '').trim().toLowerCase();
+    if (responseCode !== '1' || !['capturedpendingsettlement', 'settledsuccessfully'].includes(transactionStatus)) {
+      return res.status(409).json({ ok: false, message: 'The transaction is not an approved captured payment.' });
+    }
+    const paidAmount = Number(transaction.authAmount ?? transaction.settleAmount ?? req.body?.payload?.authAmount);
+    if (!Number.isFinite(paidAmount) || Math.round(paidAmount * 100) !== Number(order.subtotalCents)) {
+      return res.status(409).json({ ok: false, message: 'Paid amount does not match the server-priced order.' });
+    }
+
+    const Model = invoiceNumber.startsWith('FP') ? FmPlusOrder : CoinPurchaseOrder;
+    await Model.updateOne({ orderNumber: order.orderNumber }, {
+      $set: {
+        provider: 'authorize-net',
+        providerReference: transactionId,
+        providerEventId: String(req.body?.notificationId || transactionId),
+      },
+    });
+    const result = invoiceNumber.startsWith('FP')
+      ? await settlePaidFmPlusOrder(order.orderNumber, String(req.body?.notificationId || transactionId))
+      : await settlePaidCoinOrder(order.orderNumber, String(req.body?.notificationId || transactionId));
+    return res.status(200).json({
+      ok: true,
+      orderNumber: order.orderNumber,
+      creditedCoins: invoiceNumber.startsWith('FP') ? (result?.order?.bonusCoins ?? 0) : (result?.order?.creditedCoins ?? 0),
+      alreadyCredited: result?.alreadyCredited,
+    });
+  } catch (error) {
+    console.error('[authorize-net-checkout] Webhook settlement failed:', error);
+    return res.status(error.status || 500).json({ ok: false, message: 'Payment settlement failed.' });
+  }
+});
+
+app.post('/api/webhooks/kurv', async (req, res) => {
+  try {
+    const signature = req.headers['x-kurv-signature'] || req.headers['x-signature'];
+    if (!timingSafeSignatureMatch(req.rawBody, signature, process.env.KURV_WEBHOOK_SECRET)) {
+      return res.status(401).json({ ok: false, message: 'Invalid webhook signature.' });
+    }
+    if (!isKurvPaymentSuccess(req.body || {})) {
+      return res.status(202).json({ ok: true, ignored: true });
+    }
+    const orderNumber = readKurvWebhookReference(req.body || {});
+    const isFmPlus = orderNumber.startsWith('FMM-PLUS-');
+    const order = orderNumber
+      ? await (isFmPlus ? FmPlusOrder : CoinPurchaseOrder).findOne({ orderNumber }).lean()
+      : null;
+    if (!order) return res.status(404).json({ ok: false, message: 'Checkout order not found.' });
+
+    const paidAmountCents = readKurvWebhookAmountCents(req.body || {});
+    if (paidAmountCents !== null && paidAmountCents !== Number(order.subtotalCents)) {
+      return res.status(409).json({ ok: false, message: 'Paid amount does not match the server-priced order.' });
+    }
+    const providerEventId = String(req.body?.id || req.body?.eventId || req.body?.data?.id || '').trim();
+    const result = isFmPlus
+      ? await settlePaidFmPlusOrder(orderNumber, providerEventId)
+      : await settlePaidCoinOrder(orderNumber, providerEventId);
+    return res.json({
+      ok: true,
+      orderNumber,
+      creditedCoins: isFmPlus ? (result?.order?.bonusCoins ?? 0) : (result?.order?.creditedCoins ?? 0),
+      benefitExpiresAt: isFmPlus ? result?.order?.benefitExpiresAt : undefined,
+      alreadyCredited: result?.alreadyCredited,
+    });
+  } catch (error) {
+    console.error('[coin-checkout] Webhook settlement failed:', error);
+    return res.status(error.status || 500).json({ ok: false, message: error.message || 'Coin settlement failed.' });
+  }
+});
+
+
+// Profile API
+app.get('/profile', verifyToken, async (req, res) => {
+  try {
+    const user = await User.findById(req.user.id).select(USER_SAFE_SELECT);
+
+    if (!user) {
+      return res.status(404).json({ message: 'User not found' });
+    }
+
+    if (isWalletTokenValueInvalid(user.tokens)) {
+      user.tokens = normalizeWalletTokenString(user.tokens);
+      await user.save();
+    }
+
+    if (
+      String(user.currentPlan || '').toUpperCase() === 'FM+' &&
+      user.fmPlusExpiresAt &&
+      new Date(user.fmPlusExpiresAt).getTime() <= Date.now()
+    ) {
+      user.isSubscribed = false;
+      user.currentPlan = 'None';
+      user.fmPlusPlan = 'none';
+      await user.save();
+    }
+
+    res.status(200).json({ user: sanitizeAccountObject(user) });
+  } catch (error) {
+    res.status(500).json({ message: 'Internal server error' });
+  }
+});
+
+app.put('/api/users/me/profile', verifyToken, async (req, res) => {
+  try {
+    const updates = {};
+    ['firstName', 'lastName', 'playerName'].forEach((field) => {
+      if (req.body?.[field] === undefined) return;
+      updates[field] = String(req.body[field] || '').trim().slice(0, field === 'playerName' ? 40 : 80);
+    });
+    if (!Object.keys(updates).length) return res.status(400).json({ ok: false, message: 'No profile fields were provided.' });
+    const user = await User.findByIdAndUpdate(req.user.id, { $set: updates }, { new: true, runValidators: true }).select(USER_SAFE_SELECT);
+    if (!user) return res.status(404).json({ ok: false, message: 'User not found.' });
+    return res.json({ ok: true, user: sanitizeAccountObject(user) });
+  } catch (error) {
+    console.error('[profile] Signed-in profile update failed:', error);
+    return res.status(500).json({ ok: false, message: 'Unable to update your profile.' });
+  }
+});
+
+function utcDayKey(value = new Date()) {
+  const date = value instanceof Date ? value : new Date(value);
+  if (Number.isNaN(date.getTime())) return '';
+  return `${date.getUTCFullYear()}-${String(date.getUTCMonth() + 1).padStart(2, '0')}-${String(date.getUTCDate()).padStart(2, '0')}`;
+}
+
+function hasActiveFmPlusBenefits(user = {}, now = new Date()) {
+  if (!user.isSubscribed || String(user.currentPlan || '').toUpperCase() !== 'FM+') return false;
+  if (!user.fmPlusExpiresAt) return true;
+  return new Date(user.fmPlusExpiresAt).getTime() > now.getTime();
+}
+
+async function loadStreakUser(req, res) {
+  const user = await User.findById(req.user?.id).select(USER_SAFE_SELECT);
+  if (!user) {
+    res.status(404).json({ ok: false, message: 'User not found.' });
+    return null;
+  }
+  return user;
+}
+
+app.post('/api/users/me/streak/claim', verifyToken, async (req, res) => {
+  try {
+    const user = await loadStreakUser(req, res);
+    if (!user) return;
+    const now = new Date();
+    const lastClaim = user.dailyRewardClaimedAt ? new Date(user.dailyRewardClaimedAt) : null;
+    const skipUnlocked = user.streakSkipUnlockedAt ? new Date(user.streakSkipUnlockedAt) : null;
+    const claimedToday = lastClaim && utcDayKey(lastClaim) === utcDayKey(now);
+    const hasUnusedSkip = claimedToday && skipUnlocked && skipUnlocked.getTime() > lastClaim.getTime();
+    if (claimedToday && !hasUnusedSkip) return res.status(409).json({ ok: false, message: 'Today’s reward has already been claimed.' });
+
+    const yesterday = new Date(now.getTime() - 86400000);
+    const consecutive = lastClaim && (utcDayKey(lastClaim) === utcDayKey(yesterday) || claimedToday);
+    user.loginStreak = consecutive ? Math.min(3650, Number(user.loginStreak || 0) + 1) : 1;
+    user.dailyRewardClaimedAt = now;
+    user.streakExpiresAt = new Date(now.getTime() + 24 * 60 * 60 * 1000);
+    user.tokens = normalizeWalletTokenString(Number(normalizeWalletTokenString(user.tokens)) + 250);
+    await user.save();
+    clearPublicResponseCache();
+    return res.json({ ok: true, creditedCoins: 250, user: sanitizeAccountObject(user) });
+  } catch (error) {
+    console.error('[streak] Reward claim failed:', error);
+    return res.status(500).json({ ok: false, message: 'Unable to claim the reward.' });
+  }
+});
+
+app.post('/api/users/me/streak/save', verifyToken, async (req, res) => {
+  try {
+    const user = await loadStreakUser(req, res);
+    if (!user) return;
+    const now = new Date();
+    const cost = hasActiveFmPlusBenefits(user, now) ? 25 : 50;
+    const balance = Number(normalizeWalletTokenString(user.tokens));
+    if (balance < cost) return res.status(409).json({ ok: false, message: `You need ${cost} FM to save this streak.` });
+    user.tokens = normalizeWalletTokenString(balance - cost);
+    await recordWalletMove({
+      userId: user._id, amount: -cost, balanceBefore: balance, balanceAfter: balance - cost,
+      reason: 'streak_save_legacy', reference: String(Date.now()),
+    });
+    user.streakExpiresAt = new Date(now.getTime() + 24 * 60 * 60 * 1000);
+    await user.save();
+    clearPublicResponseCache();
+    return res.json({ ok: true, debitedCoins: cost, user: sanitizeAccountObject(user) });
+  } catch (error) {
+    console.error('[streak] Streak save failed:', error);
+    return res.status(500).json({ ok: false, message: 'Unable to save the streak.' });
+  }
+});
+
+app.post('/api/users/me/streak/skip-wait', verifyToken, async (req, res) => {
+  try {
+    const user = await loadStreakUser(req, res);
+    if (!user) return;
+    const balance = Number(normalizeWalletTokenString(user.tokens));
+    if (balance < 75) return res.status(409).json({ ok: false, message: 'You need 75 FM to skip the wait.' });
+    user.tokens = normalizeWalletTokenString(balance - 75);
+    user.streakSkipUnlockedAt = new Date();
+    await user.save();
+    clearPublicResponseCache();
+    return res.json({ ok: true, debitedCoins: 75, user: sanitizeAccountObject(user) });
+  } catch (error) {
+    console.error('[streak] Skip-wait failed:', error);
+    return res.status(500).json({ ok: false, message: 'Unable to skip the wait.' });
+  }
+});
+
+
+// Profile API
+app.get('/profileAffiliate', verifyToken, requireScope(TOKEN_SCOPES.AFFILIATE), async (req, res) => {
+  try {
+    const user = await Affiliate.findById(req.user.id).select(AFFILIATE_SAFE_SELECT);
+
+    if (!user) {
+      return res.status(404).json({ message: 'User not found' });
+    }
+
+    res.status(200).json({ user });
+  } catch (error) {
+    res.status(500).json({ message: 'Internal server error' });
+  }
+});
+
+
+
+
+
+
+
+
+
+
+const adminTokensSchema = new mongoose.Schema({
+  tokens: { type: String, default: '0' },
+  affiliateRewarded: { type: String, default: '0' },
+  matchId: String, 
+  matchName: String, 
+  totalTokens: { type: String, default: '0' }, // New field to track total tokens
+}, { timestamps: true });
+
+const Admintokens = mongoose.models.Admintokens || mongoose.model('Admintokens', adminTokensSchema);
+
+// POST API to reward tokens to the admin and update matchReward status
+// SECURITY: admin-only.
+app.post('/api/reward-tokens-to-admin', verifyAdminToken, async (req, res) => {
+  try {
+    const { tokens, matchId, matchName, affiliateRewarded } = req.body;
+
+    // Fetch or create an admin token document
+    let adminToken = await Admintokens.findOne({ matchId });
+
+    if (!adminToken) {
+      adminToken = new Admintokens({ matchId, matchName });
+    }
+
+    // Add tokens to the admin's account and update totalTokens
+    adminToken.tokens = addWalletTokens(adminToken.tokens, tokens);
+    adminToken.affiliateRewarded = (parseInt(adminToken.affiliateRewarded, 10) + parseInt(affiliateRewarded, 10)).toString();
+    adminToken.totalTokens = addWalletTokens(adminToken.totalTokens, tokens);
+
+    await adminToken.save();
+
+    res.status(200).json({ success: true, message: 'Tokens added to Admin wallet successfully', adminToken });
+  } catch (error) {
+    console.error('Request failed:', error);
+    res.status(500).json({ success: false, message: 'Server error' });
+  }
+});
+
+
+
+
+
+// GET API to fetch all admin token details
+app.get('/api/admin-tokens', verifyAdminToken, async (req, res) => {
+  try {
+    // Fetch all admin tokens from the database
+    const adminTokens = await Admintokens.find().sort({ _id: -1 }).limit(1000).lean();
+
+    if (adminTokens.length === 0) {
+      return res.status(404).json({ success: false, message: 'No admin tokens found' });
+    }
+
+    // Return all admin token details
+    res.status(200).json({ 
+      success: true, 
+      message: 'Admin token data fetched successfully', 
+      adminTokens 
+    });
+  } catch (error) {
+    console.error('Request failed:', error);
+    res.status(500).json({ success: false, message: 'Server error' });
+  }
+});
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+const affiliateSchema = new mongoose.Schema({
+  firstName: String,
+  lastName: String,
+  playerName: String,
+  zipCode: String,
+  email: String,
+  phone: String,
+  hearing: String,
+  password: { type: String, select: false },
+  isNotificationsEnabled: Boolean,
+  isSubscribed: Boolean,
+  isUSCitizen: Boolean,
+  isAgreed: Boolean,
+  // --- Tax reporting (1099-NEC at $600/yr) ---------------------------------
+  // taxIdLast4 is what admin screens display. The full value is write-only and
+  // must never be returned by an API (it is excluded from AFFILIATE_SAFE_SELECT).
+  taxIdEncrypted: { type: String, select: false },
+  taxIdLast4: String,
+  taxIdType: { type: String, enum: ['SSN', 'EIN', ''], default: '' },
+  taxFormW9SignedAt: Date,
+  taxLegalName: String,
+  taxBusinessName: String,
+  taxAddress: String,
+  earningsYtdCents: { type: Number, min: 0, default: 0 },
+  taxYear: Number,
+  totalViews: { type: Number, default: 0 },
+verified: { type: Boolean, default: false },
+  profileUrl: String,
+  profileDeleteUrl: { type: String, select: false },
+  tokens: { type: String, default: '0' },
+  preferredPaymentMethod: String, 
+  preferredPaymentMethodValue: { type: String, select: false }, 
+  resetPasswordToken: { type: String, select: false },
+  resetPasswordExpires: { type: Date, select: false },
+  rewardTitle: String,
+rewardImageUrl: String,
+rewardImageDeleteUrl: { type: String, select: false },
+
+  usersJoined: [{
+    userId: { type: mongoose.Schema.Types.ObjectId, ref: 'User' }, // User who joined
+    email: String,  // Email of the user who joined
+    joinedAt: { type: Date, default: Date.now } // Timestamp
+  }],
+  payouts: [{
+    amount: Number, // Example of amount paid
+    createdAt: { type: Date, default: Date.now }, // Timestamp for payout creation
+    status: { type: String, default: 'pending' }, // pending | paid | rejected
+    resolvedAt: Date,      // when an admin approved or rejected it
+    resolvedBy: String,    // admin id that actioned it
+    reason: String         // rejection reason, or payment reference on approval
+  }],
+  // Set only by POST /api/admin/test-accounts. Lets test data be excluded from
+  // public numbers and purged in one call without ever touching a real account.
+  isTestAccount: { type: Boolean, default: false, index: true },
+
+}, { timestamps: true });
+affiliateSchema.index({ email: 1 });
+affiliateSchema.index({ createdAt: -1 });
+affiliateSchema.index({ totalViews: -1, createdAt: -1 });
+attachSafeAccountJsonTransform(affiliateSchema);
+
+const Affiliate = mongoose.models.Affiliate || mongoose.model('Affiliate', affiliateSchema);
+
+// Instant-approval affiliate invites — the admin generates a link for a known
+// fighter/influencer to skip the manual-approval wait entirely. One-time use,
+// expires after 14 days by default.
+const affiliateInviteSchema = new mongoose.Schema({
+  code: { type: String, required: true, unique: true, index: true },
+  note: { type: String, default: '' },
+  expiresAt: { type: Date, required: true },
+  usedAt: { type: Date, default: null },
+  usedByAffiliateId: { type: mongoose.Schema.Types.ObjectId, ref: 'Affiliate', default: null },
+}, { timestamps: true });
+const AffiliateInvite = mongoose.models.AffiliateInvite || mongoose.model('AffiliateInvite', affiliateInviteSchema);
+
+
+app.post('/upload-affiliate-reward', verifyAdminToken, upload.single('image'), async (req, res) => {
+  try {
+    const { affiliateId, rewardTitle } = req.body;
+
+    if (!affiliateId) {
+      return res.status(400).json({ message: 'Affiliate ID is required' });
+    }
+
+    if (!req.file) {
+      return res.status(400).json({ message: 'No image file provided' });
+    }
+
+    const affiliate = await Affiliate.findById(affiliateId).select('+rewardImageDeleteUrl rewardTitle rewardImageUrl');
+    if (!affiliate) {
+      return res.status(404).json({ message: 'Affiliate not found' });
+    }
+
+    // Delete old reward image from Cloudinary if exists
+    if (affiliate.rewardImageDeleteUrl) {
+      await cloudinary.uploader.destroy(affiliate.rewardImageDeleteUrl);
+    }
+
+    // Upload new reward image to Cloudinary
+    const result = await new Promise((resolve, reject) => {
+      cloudinary.uploader.upload_stream(
+        { folder: 'affiliate_rewards' },
+        (error, result) => {
+          if (error) return reject(error);
+          resolve(result);
+        }
+      ).end(req.file.buffer);
+    });
+
+    // Update affiliate reward fields
+    affiliate.rewardTitle = rewardTitle;
+    affiliate.rewardImageUrl = result.secure_url;
+    affiliate.rewardImageDeleteUrl = result.public_id;
+    await affiliate.save();
+
+    res.status(200).json({
+      message: 'Reward info uploaded and saved successfully',
+      rewardTitle: affiliate.rewardTitle,
+      rewardImageUrl: affiliate.rewardImageUrl
+    });
+  } catch (error) {
+    console.error('Error uploading reward image:', error);
+    res.status(500).json({ message: 'Server error' });
+  }
+});
+
+
+
+
+
+app.post('/admin/add-affiliate', verifyAdminToken, async (req, res) => {
+  const { firstName, lastName, email, password } = req.body;
+
+  if (!firstName || !lastName || !email || !password) {
+    return res.status(400).json({ message: 'All fields are required.' });
+  }
+
+  try {
+    // Check if affiliate already exists
+    const existingAffiliate = await Affiliate.findOne({ email });
+    if (existingAffiliate) {
+      return res.status(400).json({ message: 'Affiliate with this email already exists.' });
+    }
+
+    // Hash the password
+    const hashedPassword = await bcrypt.hash(password, 10);
+
+    // Create new affiliate with default values and profileUrl
+    const newAffiliate = new Affiliate({
+      firstName,
+      lastName,
+      email,
+      password: hashedPassword,
+      verified: true,
+      isNotificationsEnabled: true,
+      isSubscribed: true,
+      isAgreed: true,
+      profileUrl: "https://res.cloudinary.com/daflot6fo/image/upload/v1736068036/bywcrrcqmcyczdyhjmdv.png",
+    });
+
+    await newAffiliate.save();
+
+    // Email to the affiliate
+    await transporter.sendMail({
+      from: FMM_MAIL_FROM,
+      to: email,
+      subject: 'Welcome to Fantasy Madness Affiliate Program!',
+      html: `
+        <table width="100%" cellpadding="0" cellspacing="0" border="0" style="width:100%; max-width:600px; margin:auto;">
+          <tr>
+            <td align="center" style="padding: 15px 0;">
+              <img src="https://res.cloudinary.com/daflot6fo/image/upload/v1736068036/bywcrrcqmcyczdyhjmdv.png" alt="Fantasy Madness Logo" style="width:100px;" />
+              <h2 style="margin: 0; color: #191164; font-family: 'New York', Charter, Georgia, serif;">Fantasy Madness</h2>
+            </td>
+          </tr>
+
+          <tr>
+            <td style="padding: 10px 0;">
+              <p style="font-size: 16px; font-family: Arial, sans-serif; color: #333;">Dear ${firstName},</p>
+              <p style="font-size: 16px; font-family: Arial, sans-serif; color: #333;">
+                You have been successfully added to the Fantasy Madness Affiliate Program by our administrators!
+              </p>
+              <p style="font-size: 16px; font-family: Arial, sans-serif; color: #333;">
+                Below are your login credentials:
+              </p>
+              <ul style="font-size: 16px; font-family: Arial, sans-serif; color: #333;">
+                <li><strong>Email:</strong> ${email}</li>
+                <li><strong>Password:</strong> ${password}</li>
+              </ul>
+              <p style="font-size: 16px; font-family: Arial, sans-serif; color: #333;">
+                Please log in at <a href="https://fantasymmadness.com/login" style="color: #191164; text-decoration: none;">https://fantasymmadness.com/login</a> to explore your account and get started!
+              </p>
+              <p style="font-size: 16px; font-family: Arial, sans-serif; color: #333;">
+                If you have any questions, feel free to reach out to us!
+              </p>
+            </td>
+          </tr>
+
+          <tr>
+        <td align="center" style="padding: 20px 0;">
+          <img src="https://res.cloudinary.com/daflot6fo/image/upload/v1736068036/bywcrrcqmcyczdyhjmdv.png" alt="Fantasy Madness Logo" style="width:70px;" />
+          <p><a href="https://fantasymmadness.com" style="font-family: Arial, sans-serif; color: #191164; text-decoration: none;">https://fantasymmadness.com</a></p>   
+          <div style="padding-top: 10px;">
+            <!-- Social Icons -->
+            <a href="https://www.facebook.com/share/2pzYV9XdQpAU7n6p/?mibextid=LQQJ4d" style="margin: 0 5px; width:35px; height:35px; border-radius:50%; background:#fff; background-color:#fff;">
+              <img src="https://i.ibb.co/G9wVH2g/facebook-removebg-preview-two.png" alt="Facebook" style="width:35px; height:35px; border-radius:50%; background-color:#fff; background:#fff;" />
+            </a>
+            <a href="https://www.instagram.com/fantasymmadness" style="margin: 0 5px;">
+              <img src="https://i.ibb.co/tKj4px0/insta-removebg-preview-two.png" alt="Instagram" style="width:35px; height:35px; border-radius:50%; background-color:#fff;" />
+            </a>
+            <a href="https://x.com/davis_kell51697" style="margin: 0 5px;">
+              <img src="https://i.ibb.co/T0cvy2Q/twitter-removebg-preview-two.png" alt="Twitter" style="width:35px; height:35px; border-radius:50%; background-color:#fff;" />
+            </a>
+          </div>
+        </td>
+      </tr>
+    
+        </table>
+      `,
+    });
+
+    // Email to the admin
+    await transporter.sendMail({
+      from: FMM_MAIL_FROM,
+      to: ADMIN_ALERT_EMAILS, // Replace with admin email
+      subject: 'Affiliate Successfully Added',
+      html: `
+      <table width="100%" cellpadding="0" cellspacing="0" border="0" style="width:100%; max-width:600px; margin:auto;">
+        <tr>
+          <td align="center" style="padding: 15px 0;">
+            <img src="https://res.cloudinary.com/daflot6fo/image/upload/v1736068036/bywcrrcqmcyczdyhjmdv.png" alt="Fantasy Madness Logo" style="width:100px;" />
+            <h2 style="margin: 0; color: #191164; font-family: 'New York', Charter, Georgia, serif;">Fantasy Madness</h2>
+          </td>
+        </tr>
+  
+        <tr>
+          <td style="padding: 10px 0;">
+            <p style="font-size: 16px; font-family: Arial, sans-serif; color: #333;">
+              You have successfully added a new affiliate to the Fantasy Madness program with the following details:
+            </p>
+            <ul style="font-size: 16px; font-family: Arial, sans-serif; color: #333;">
+              <li><strong>First Name:</strong> ${firstName}</li>
+              <li><strong>Last Name:</strong> ${lastName}</li>
+              <li><strong>Email:</strong> ${email}</li>
+            </ul>
+            <p style="font-size: 16px; font-family: Arial, sans-serif; color: #333;">
+              No approval is needed as the account was added directly by you. The affiliate has been notified of their login credentials.
+            </p>
+          </td>
+        </tr>
+  
+          <tr>
+        <td align="center" style="padding: 20px 0;">
+          <img src="https://res.cloudinary.com/daflot6fo/image/upload/v1736068036/bywcrrcqmcyczdyhjmdv.png" alt="Fantasy Madness Logo" style="width:70px;" />
+          <p><a href="https://fantasymmadness.com" style="font-family: Arial, sans-serif; color: #191164; text-decoration: none;">https://fantasymmadness.com</a></p>   
+          <div style="padding-top: 10px;">
+            <!-- Social Icons -->
+            <a href="https://www.facebook.com/share/2pzYV9XdQpAU7n6p/?mibextid=LQQJ4d" style="margin: 0 5px; width:35px; height:35px; border-radius:50%; background:#fff; background-color:#fff;">
+              <img src="https://i.ibb.co/G9wVH2g/facebook-removebg-preview-two.png" alt="Facebook" style="width:35px; height:35px; border-radius:50%; background-color:#fff; background:#fff;" />
+            </a>
+            <a href="https://www.instagram.com/fantasymmadness" style="margin: 0 5px;">
+              <img src="https://i.ibb.co/tKj4px0/insta-removebg-preview-two.png" alt="Instagram" style="width:35px; height:35px; border-radius:50%; background-color:#fff;" />
+            </a>
+            <a href="https://x.com/davis_kell51697" style="margin: 0 5px;">
+              <img src="https://i.ibb.co/T0cvy2Q/twitter-removebg-preview-two.png" alt="Twitter" style="width:35px; height:35px; border-radius:50%; background-color:#fff;" />
+            </a>
+          </div>
+        </td>
+      </tr>
+      
+      </table> `,
+    });
+
+    res.status(201).json({ message: 'Affiliate added successfully and emails sent.' });
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ message: 'An error occurred while adding the affiliate.' });
+  }
+});
+
+
+
+
+app.post('/affiliate-google-login', loginLimiter, async (req, res) => {
+  const { token } = req.body;
+
+  try {
+    // Verify Google token
+    const ticket = await client.verifyIdToken({
+      idToken: token,
+      audience: process.env.GOOGLE_CLIENT_ID,
+    });
+    const { name, email, picture } = ticket.getPayload();
+
+    // Check if the affiliate exists
+    let affiliate = await Affiliate.findOne({ email });
+
+    if (!affiliate) {
+      // If affiliate does not exist, create a new one
+      affiliate = new Affiliate({
+        firstName: name.split(' ')[0],
+        lastName: name.split(' ')[1] || '', // Handle single-word names
+        email,
+        profileUrl: picture,
+        verified: false, // Mark as unverified, admin will verify
+        isNotificationsEnabled: true, // Notifications enabled
+        isSubscribed: true, // Subscribed to updates
+        isAgreed: true, // Agreed to terms and conditions
+      });
+
+      await affiliate.save();
+
+const notification = new Notification({
+      title: `Affiliate Signed Up: ${affiliate.firstName}`,
+    });
+    await notification.save();
+    
+
+
+      // Send welcome email to the affiliate
+      await transporter.sendMail({
+        from: FMM_MAIL_FROM,
+        to: email, // Affiliate's email
+        subject: 'Welcome to Fantasy Madness Affiliate Program!',
+        html: `
+          <table width="100%" cellpadding="0" cellspacing="0" border="0" style="width:100%; max-width:600px; margin:auto;">
+            <tr>
+              <td align="center" style="padding: 15px 0;">
+                <img src="https://res.cloudinary.com/daflot6fo/image/upload/v1736068036/bywcrrcqmcyczdyhjmdv.png" alt="Fantasy Madness Logo" style="width:100px;" />
+                <h2 style="margin: 0; color: #191164; font-family: 'New York', Charter, Georgia, serif;">Fantasy Madness</h2>
+              </td>
+            </tr>
+
+            <tr>
+              <td style="padding: 10px 0;">
+                <p style="font-size: 16px; font-family: Arial, sans-serif; color: #333;">Dear ${affiliate.firstName},</p>
+                <p style="font-size: 16px; font-family: Arial, sans-serif; color: #333;">
+                  Welcome to Fantasy Madness! Your registration as an affiliate has been received and is pending approval by our administrators.
+                </p>
+                <p style="font-size: 16px; font-family: Arial, sans-serif; color: #333;">
+                  You will be notified once your account is approved. Meanwhile, feel free to explore our platform and learn more about our affiliate program.
+                </p>
+              </td>
+            </tr>
+
+            <tr>
+              <td align="center" style="padding: 15px 0;">
+                <img src="https://res.cloudinary.com/daflot6fo/image/upload/v1736068036/bywcrrcqmcyczdyhjmdv.png" alt="Fantasy Madness Logo" style="width:70px;" />
+                <p><a href="https://fantasymmadness.com" style="font-family: Arial, sans-serif; color: #191164; text-decoration: none;">https://fantasymmadness.com</a></p>
+              </td>
+            </tr>
+          </table>
+        `,
+      });
+
+
+
+      // Send email notification to admin for approval
+      const approvalLink = `https://fantasymmadness-game-server-three.vercel.app/approveAffiliate/${affiliate._id}?t=${signActionToken('affiliate-approval', affiliate._id)}`;
+      sendAdminPush({ title: 'New affiliate sign-up', body: `${affiliate.firstName} needs approval.`, url: '/administration/AffiliateUsers' }).catch(() => null);
+
+      await transporter.sendMail({
+        from: FMM_MAIL_FROM,
+        to: ADMIN_ALERT_EMAILS, // Admin email
+        subject: 'New Affiliate Registration - Approval Needed',
+        html: `
+          <table width="100%" cellpadding="0" cellspacing="0" border="0" style="width:100%; max-width:600px; margin:auto;">
+            <tr>
+              <td align="center" style="padding: 15px 0;">
+                <img src="https://res.cloudinary.com/daflot6fo/image/upload/v1736068036/bywcrrcqmcyczdyhjmdv.png" alt="Fantasy Madness Logo" style="width:100px;" />
+                <h2 style="margin: 0; color: #191164; font-family: 'New York', Charter, Georgia, serif;">Fantasy Madness</h2>
+              </td>
+            </tr>
+
+            <tr>
+              <td style="padding: 10px 0;">
+                <p style="font-size: 16px; font-family: Arial, sans-serif; color: #333;">Dear Admin,</p>
+                <p style="font-size: 16px; font-family: Arial, sans-serif; color: #333;">
+                  A new affiliate <strong>${affiliate.firstName} ${affiliate.lastName}</strong> has registered via Google Login on Fantasy Madness. Please review and approve their profile.
+                </p>
+              </td>
+            </tr>
+
+            <tr>
+              <td align="center" style="padding: 20px; background-color:#f8f8f8;">
+                <img src="${affiliate.profileUrl}" alt="Affiliate Profile" style="width:60px; height:60px; border-radius:50%; border:3px solid #191164;" />
+                <h3 style="color: #191164; font-family: 'Impact', fantasy, sans-serif;">Affiliate Details</h3>
+                <p style="font-size: 17px; font-family: 'Comic Sans MS', fantasy, sans-serif; color: #555;">
+                  Name: ${affiliate.firstName} ${affiliate.lastName}<br>
+                  Email: ${affiliate.email}
+                </p>
+              </td>
+            </tr>
+
+            <tr>
+              <td align="center" style="padding: 20px;">
+                <a href="${approvalLink}" style="display:inline-block; padding:10px 20px; color:#fff; background-color:#191164; border-radius:5px; text-decoration:none; font-family: Arial, sans-serif;">Approve Now</a>
+              </td>
+            </tr>
+
+            <tr>
+              <td align="center" style="padding: 15px 0;">
+                <img src="https://res.cloudinary.com/daflot6fo/image/upload/v1736068036/bywcrrcqmcyczdyhjmdv.png" alt="Fantasy Madness Logo" style="width:70px;" />
+                <p><a href="https://fantasymmadness.com" style="font-family: Arial, sans-serif; color: #191164; text-decoration: none;">https://fantasymmadness.com</a></p>
+              </td>
+            </tr>
+          </table>
+        `,
+      });
+    }
+
+    // Generate JWT token
+    const jwtToken = jwt.sign({ id: affiliate._id, scope: TOKEN_SCOPES.AFFILIATE }, process.env.JWT_SECRET, { expiresIn: SESSION_TOKEN_TTL });
+
+    // Return JWT token and affiliate info
+    res.status(200).json({
+      message: 'Affiliate Google login successful',
+      token: jwtToken,
+      affiliate: {
+        id: affiliate._id,
+        name: `${affiliate.firstName} ${affiliate.lastName}`.trim(),
+        email: affiliate.email,
+        profileUrl: affiliate.profileUrl,
+        verified: affiliate.verified,
+      },
+    });
+  } catch (error) {
+    console.error('Affiliate Google login error', error);
+
+    // Send email notification about login failure
+    await transporter.sendMail({
+      from: FMM_MAIL_FROM,
+      to: ADMIN_ALERT_EMAILS,
+      subject: 'Affiliate Google Login Failed',
+      html: `
+        <table width="100%" cellpadding="0" cellspacing="0" border="0" style="width:100%; max-width:600px; margin:auto;">
+          <tr>
+            <td align="center" style="padding: 15px 0;">
+              <img src="https://res.cloudinary.com/daflot6fo/image/upload/v1736068036/bywcrrcqmcyczdyhjmdv.png" alt="Fantasy Madness Logo" style="width:100px;" />
+              <h2 style="margin: 0; color: #191164; font-family: 'New York', Charter, Georgia, serif;">Fantasy Madness</h2>
+            </td>
+          </tr>
+
+          <tr>
+            <td style="padding: 10px 0;">
+              <p style="font-size: 16px; font-family: Arial, sans-serif; color: #333;">Dear Admins,</p>
+              <p style="font-size: 16px; font-family: Arial, sans-serif; color: #333;">
+                An error occurred during an affiliate Google login attempt:
+              </p>
+              <p style="font-size: 16px; font-family: 'Courier New', monospace; color: #d20a0a; background-color: #f8d7da; border-radius: 5px; padding: 10px; border: 1px solid #f5c6cb;">
+                ${error.message}
+              </p>
+            </td>
+          </tr>
+
+          <tr>
+            <td align="center" style="padding: 15px 0;">
+              <p style="font-family: Arial, sans-serif; color: #191164;">Please investigate the issue at your earliest convenience.</p>
+            </td>
+          </tr>
+
+          <tr>
+            <td align="center" style="padding: 15px 0;">
+              <img src="https://res.cloudinary.com/daflot6fo/image/upload/v1736068036/bywcrrcqmcyczdyhjmdv.png" alt="Fantasy Madness Logo" style="width:70px;" />
+              <p><a href="https://fantasymmadness.com" style="font-family: Arial, sans-serif; color: #191164; text-decoration: none;">https://fantasymmadness.com</a></p>
+            </td>
+          </tr>
+        </table>
+      `,
+    });
+
+    res.status(500).json({ message: 'Internal server error' });
+  }
+});
+
+
+
+// Route to increment totalViews
+app.post('/affiliate/:affiliateId/incrementViews', submitLimiter, async (req, res) => {
+  try {
+    const { affiliateId } = req.params;
+    const updatedAffiliate = await Affiliate.findByIdAndUpdate(
+      affiliateId,
+      { $inc: { totalViews: 1 } },
+      { new: true }
+    );
+
+    if (!updatedAffiliate) {
+      return res.status(404).json({ message: 'Affiliate not found' });
+    }
+
+    res.status(200).json(updatedAffiliate);
+  } catch (error) {
+    console.error('Error incrementing views:', error);
+    res.status(500).json({ message: 'Internal server error' });
+  }
+});
+
+
+app.post('/forgotPassword', submitLimiter, async (req, res) => {
+  const { email } = req.body;
+
+  try {
+    // Find the affiliate by email
+    const affiliate = await Affiliate.findOne({ email });
+    if (!affiliate) {
+      return res.status(404).send('Affiliate not found');
+    }
+
+    // Generate reset token
+    const resetToken = crypto.randomBytes(32).toString('hex');
+    const resetTokenHash = crypto.createHash('sha256').update(resetToken).digest('hex');
+
+    // Set reset token and expiration time (e.g., 1 hour)
+    affiliate.resetPasswordToken = resetTokenHash;
+    affiliate.resetPasswordExpires = Date.now() + 3600000;
+
+    await affiliate.save();
+
+    // Send email with reset token
+    const resetURL = `https://fantasymmadness.com/resetPassword/${resetToken}`;
+
+    const mailOptions = {
+      to: affiliate.email,
+      from: FMM_MAIL_FROM,
+      subject: 'Password Reset Request',
+      text: `You are receiving this because you have requested a password reset for your account.\n\n
+      Please click the following link to reset your password:\n\n
+      ${resetURL}\n\n
+      If you did not request this, please ignore this email.\n`,
+    };
+
+    await transporter.sendMail(mailOptions);
+    
+    res.status(200).send('Password reset email sent');
+  } catch (error) {
+    console.error('Error sending reset password email:', error);
+    res.status(500).send('Server error');
+  }
+});
+
+
+app.post('/resetPassword/:token', submitLimiter, async (req, res) => {
+  try {
+    // Hash the token from the URL to match the stored hash
+    const resetTokenHash = crypto.createHash('sha256').update(req.params.token).digest('hex');
+
+    // Find the affiliate by the token and ensure the token hasn't expired
+    const affiliate = await Affiliate.findOne({
+      resetPasswordToken: resetTokenHash,
+      resetPasswordExpires: { $gt: Date.now() }, // Ensure token is not expired
+    });
+
+    if (!affiliate) {
+      return res.status(400).send('Invalid or expired token');
+    }
+
+    // Update the password and remove the reset token and expiry
+    affiliate.password = await bcrypt.hash(req.body.password, 10);
+    affiliate.resetPasswordToken = undefined;
+    affiliate.resetPasswordExpires = undefined;
+
+    await affiliate.save();
+
+    res.status(200).send('Password has been reset');
+  } catch (error) {
+    console.error('Error resetting password:', error);
+    res.status(500).send('Server error');
+  }
+});
+
+
+app.delete('/affiliates/:id/payouts-to-delete', verifyAdminToken, async (req, res) => {
+  const affiliateId = req.params.id;
+
+  try {
+      // Find the affiliate by id
+      const affiliate = await Affiliate.findById(affiliateId);
+
+      if (!affiliate) {
+          return res.status(404).json({ message: 'Affiliate not found' });
+      }
+
+      // Remove all payouts
+      affiliate.payouts = [];
+
+      // Save the updated affiliate document
+      await affiliate.save();
+
+      // Send success response
+      res.status(200).json({ message: 'All payouts have been deleted for this affiliate', affiliate });
+  } catch (error) {
+      console.error('Error deleting payouts:', error);
+      res.status(500).json({ message: 'Server error. Unable to delete payouts.' });
+  }
+});
+
+
+
+
+
+
+// SECURITY + MONEY: authenticated, and the affiliate comes from the verified
+// token rather than the :id in the URL. The amount is validated against the real
+// balance and debited immediately, so the same balance cannot be requested twice.
+// (:id is kept in the path for backward compatibility but is no longer trusted.)
+app.post('/affiliate/:id/payout', verifyToken, requireScope(TOKEN_SCOPES.AFFILIATE), async (req, res) => {
+  try {
+    const affiliateId = String(req.user?.id || req.user?._id || '').trim();
+    if (!affiliateId) {
+      return res.status(401).json({ message: 'Authentication is required to request a payout.' });
+    }
+
+    const affiliate = await Affiliate.findById(affiliateId);
+
+    if (!affiliate) {
+      return res.status(404).json({ message: 'Affiliate not found' });
+    }
+
+    const balance = Number.parseInt(String(affiliate.tokens || '0'), 10) || 0;
+    const requested = Math.floor(Number(req.body?.amount));
+
+    if (!Number.isFinite(requested) || requested <= 0) {
+      return res.status(400).json({ message: 'Enter a payout amount greater than zero.', code: 'INVALID_AMOUNT' });
+    }
+    if (requested > balance) {
+      return res.status(400).json({
+        message: 'Payout amount is more than your available balance.',
+        code: 'INSUFFICIENT_BALANCE',
+        balance,
+        requested,
+      });
+    }
+
+    // Block a second request while one is still outstanding.
+    const hasPending = Array.isArray(affiliate.payouts)
+      && affiliate.payouts.some((item) => String(item?.status || 'pending').toLowerCase() === 'pending');
+    if (hasPending) {
+      return res.status(409).json({
+        message: 'You already have a payout request awaiting review.',
+        code: 'PAYOUT_ALREADY_PENDING',
+      });
+    }
+
+    // Debit now so the same balance cannot be requested again before the admin
+    // processes it. A rejected payout must credit this back.
+    // Atomic: only applies while tokens still equals what we read, so a second
+    // simultaneous request cannot claim the same balance.
+    const debited = await Affiliate.findOneAndUpdate(
+      { _id: affiliateId, tokens: String(balance) },
+      { tokens: String(balance - requested) },
+      { new: true }
+    );
+    if (!debited) {
+      return res.status(409).json({
+        message: 'Your balance just changed. Please review and request again.',
+        code: 'BALANCE_CHANGED',
+      });
+    }
+    affiliate.tokens = String(balance - requested);
+    await recordWalletMove({
+      userId: affiliate._id,
+      amount: -requested,
+      balanceBefore: balance,
+      balanceAfter: balance - requested,
+      reason: 'payout_requested',
+      reference: String(Date.now()),
+    });
+
+    const payout = { amount: requested, status: 'pending', createdAt: new Date() };
+    affiliate.payouts.push(payout);
+
+    // Save the updated affiliate
+    await affiliate.save();
+
+    const amount = requested;
+
+    // Send email notification
+    const mailOptions = {
+      from: FMM_MAIL_FROM,
+      to: ADMIN_ALERT_EMAILS, // Admin email
+      subject: 'New Payout Request',
+      text: `
+        Hello Admin,
+        
+        There is a new payout request from the following affiliate:
+        
+        Affiliate Details:
+        Name: ${affiliate.firstName} ${affiliate.lastName}
+        Email: ${affiliate.email}
+        Phone: ${affiliate.phone}
+
+        Payout Request Details:
+        Amount: $${amount}
+        Requested On: ${payout.createdAt}
+
+        Thank you!
+      `,
+    };
+
+    // Send email
+    await transporter.sendMail(mailOptions);
+
+    // Respond to the client
+    res.status(200).json({ message: 'Payout request created and email sent successfully', payout });
+  } catch (error) {
+    console.error('Request failed:', error);
+    res.status(500).json({ message: 'Server error' });
+  }
+});
+
+
+// Endpoint to confirm payment
+app.post('/confirm-payment-affiliate', verifyAdminToken, async (req, res) => {
+    const { affiliateId, amount, payoutId } = req.body;
+
+    try {
+        // Find the affiliate by ID
+        const affiliate = await Affiliate.findById(affiliateId);
+
+        if (!affiliate) {
+            return res.status(404).json({ message: 'Affiliate not found' });
+        }
+
+        // Convert tokens to a number for comparison and deduction
+        const currentTokens = Number(affiliate.tokens); // Convert string to number
+
+        // Check if the affiliate has enough tokens
+        if (currentTokens < amount) {
+            return res.status(400).json({ message: 'Insufficient tokens' });
+        }
+
+        // Deduct the amount from tokens
+        await recordWalletMove({
+          userId: affiliate._id, amount: -amount, balanceBefore: currentTokens,
+          balanceAfter: currentTokens - amount,
+          reason: 'affiliate_payout_legacy', reference: String(Date.now()),
+        });
+        affiliate.tokens = (currentTokens - amount).toString(); // Convert back to string
+
+        // Update the payout status to completed
+        const payout = affiliate.payouts.id(payoutId);
+        if (payout) {
+            payout.status = 'completed';
+        } else {
+            return res.status(404).json({ message: 'Payout not found' });
+        }
+
+        // Save the changes
+        await affiliate.save();
+
+        // Return a success response
+        res.status(200).json({ message: 'Payment processed successfully', affiliate });
+    } catch (error) {
+        console.error('Error processing payment:', error);
+        res.status(500).json({ message: 'Server error' });
+    }
+});
+
+
+app.post('/affiliate/:affiliateId/remove-user', verifyToken, requireScope(TOKEN_SCOPES.AFFILIATE), async (req, res) => {
+  const { affiliateId } = req.params;
+  const { userId } = req.body;
+
+  try {
+    // Only the promoter who owns this league may remove its members.
+    const callerId = String(req.user?.id || req.user?._id || '').trim();
+    if (callerId !== String(affiliateId)) {
+      return res.status(403).json({ message: 'You can only manage your own league.', code: 'NOT_LEAGUE_OWNER' });
+    }
+
+    const affiliate = await Affiliate.findById(affiliateId);
+    const user = await User.findById(userId);
+
+    if (!affiliate) {
+      return res.status(404).json({ message: 'Affiliate not found' });
+    }
+
+    if (!user) {
+      return res.status(404).json({ message: 'User not found' });
+    }
+
+    const userExists = affiliate.usersJoined.some(joined => joined.userId.toString() === userId.toString());
+
+    if (!userExists) {
+      return res.status(400).json({ message: 'User not found in this league' });
+    }
+
+    // Remove user from affiliate
+    await Affiliate.findByIdAndUpdate(
+      affiliateId,
+      { $pull: { usersJoined: { userId: userId } } },
+      { new: true }
+    );
+
+    // Prepare and send email to affiliate
+    const emailHtml = `
+      <table width="100%" cellpadding="0" cellspacing="0" border="0" style="width:100%; max-width:600px; margin:auto;">
+        <tr>
+          <td align="center" style="padding: 15px 0;">
+            <img src="https://res.cloudinary.com/daflot6fo/image/upload/v1736068036/bywcrrcqmcyczdyhjmdv.png" alt="Fantasy Madness Logo" style="width:100px;" />
+            <h2 style="margin: 0; color: #191164; font-family: 'New York', Charter, Georgia, serif;">Fantasy Madness</h2>
+          </td>
+        </tr>
+        
+        <tr>
+          <td style="padding: 20px; font-family: Arial, sans-serif; color: #333;">
+            <p style="font-size: 16px;">Hello ${affiliate.firstName},</p>
+            <p style="font-size: 16px; color: #555;">
+              This is to inform you that <strong>${user.firstName || user.lastName }</strong> has left your league on Fantasy MMA Madness.
+            </p>
+          </td>
+        </tr>
+
+        <tr>
+          <td align="center" style="padding: 20px 0;">
+            <img src="https://res.cloudinary.com/daflot6fo/image/upload/v1736068036/bywcrrcqmcyczdyhjmdv.png" alt="Fantasy Madness Logo" style="width:70px;" />
+            <p><a href="https://fantasymmadness.com" style="font-family: Arial, sans-serif; color: #191164; text-decoration: none;">https://fantasymmadness.com</a></p>
+            <div style="padding-top: 10px;">
+              <a href="https://www.facebook.com/share/2pzYV9XdQpAU7n6p/?mibextid=LQQJ4d" style="margin: 0 5px;">
+                <img src="https://i.ibb.co/G9wVH2g/facebook-removebg-preview-two.png" alt="Facebook" style="width:35px; height:35px;" />
+              </a>
+              <a href="https://www.instagram.com/fantasymmadness" style="margin: 0 5px;">
+                <img src="https://i.ibb.co/tKj4px0/insta-removebg-preview-two.png" alt="Instagram" style="width:35px; height:35px;" />
+              </a>
+              <a href="https://x.com/davis_kell51697" style="margin: 0 5px;">
+                <img src="https://i.ibb.co/T0cvy2Q/twitter-removebg-preview-two.png" alt="Twitter" style="width:35px; height:35px;" />
+              </a>
+            </div>
+          </td>
+        </tr>
+      </table>
+    `;
+
+    await transporter.sendMail({
+      from: FMM_MAIL_FROM,
+      to: affiliate.email,
+      subject: 'A User Has Left Your League',
+      html: emailHtml,
+    });
+
+    return res.status(200).json({ message: 'User removed and email sent to affiliate' });
+
+  } catch (error) {
+    console.error('Error in remove-user route:', error);
+    return res.status(500).json({ message: 'Error removing user from the league' });
+  }
+});
+
+
+app.post('/clean-affiliate-users', verifyAdminToken, async (req, res) => {
+  try {
+    const affiliates = await Affiliate.find(); // Get all affiliates
+    
+    for (const affiliate of affiliates) {
+      const validUsers = [];
+      const removedUsers = [];
+
+      for (const user of affiliate.usersJoined) {
+        const userExists = await User.findById(user.userId);
+        if (userExists) {
+          validUsers.push(user); // Retain valid users
+        } else {
+          removedUsers.push(user);
+        }
+      }
+
+      // Update the affiliate with the filtered users
+      await Affiliate.findByIdAndUpdate(affiliate._id, { usersJoined: validUsers });
+      
+      if (removedUsers.length > 0) {
+        console.log(`Affiliate League: ${affiliate.playerName} (${affiliate._id}) - Removed Users:`, removedUsers.map(u => u.email));
+      }
+    }
+
+    return res.status(200).json({ message: 'Affiliate user lists cleaned successfully' });
+  } catch (error) {
+    console.error('Request failed:', error);
+    return res.status(500).json({ message: 'Error cleaning affiliate users' });
+  }
+});
+
+// POST API to reward tokens to the user and update matchReward status
+// SECURITY: admin-only.
+app.post('/api/reward-tokens-to-affiliate/:affiliateId', verifyAdminToken, async (req, res) => {
+  try {
+    const { affiliateId } = req.params;
+    const { tokens } = req.body;
+
+    // Find the user by ID
+    const user = await Affiliate.findById(affiliateId);
+
+    if (!user) {
+      return res.status(404).json({ message: 'User not found' });
+    }
+
+    // Add tokens to the user's account
+    const grantBalanceBefore = Number.parseInt(String(user.tokens || '0'), 10) || 0;
+    user.tokens = addWalletTokens(user.tokens, tokens);
+    await recordWalletMove({
+      userId: user._id,
+      amount: tokens,
+      balanceBefore: grantBalanceBefore,
+      balanceAfter: Number.parseInt(String(user.tokens || '0'), 10) || 0,
+      reason: 'admin_grant',
+      reference: String(req.params.userId || req.body?.matchId || Date.now()),
+      meta: { grantedBy: req.admin?.id || null },
+    });
+
+    // Save the updated user
+    await user.save();
+
+    res.status(200).json({ success: true, message: 'Tokens rewarded to affiliate successfully', user });
+  } catch (error) {
+    console.error('Request failed:', error);
+    res.status(500).json({ success: false, message: 'Server error' });
+  }
+});
+
+
+
+
+
+app.get('/affiliateByName', async (req, res) => {
+  const { fullName } = req.query;
+
+  if (!fullName) {
+      return res.status(400).json({ error: 'FullName is required.' });
+  }
+
+  try {
+      // Assuming you have a model called Affiliate
+      // Safe projection only. This used to return the entire document —
+      // payouts, tax fields, email, payment details — to anyone who guessed a name.
+      const affiliate = await Affiliate.findOne({
+          $expr: { 
+              $eq: [{ $concat: ["$firstName", " ", "$lastName"] }, fullName] 
+          }
+      }).select('_id firstName lastName playerName profileUrl totalViews').lean();
+
+      if (!affiliate) {
+          return res.status(404).json({ message: 'Affiliate not found' });
+      }
+
+      res.status(200).json(affiliate);
+  } catch (error) {
+      console.error('Error fetching affiliate details:', error);
+      res.status(500).json({ message: 'Server error' });
+  }
+});
+
+
+
+app.post('/affiliate/updatePayment/:id', verifyToken, requireScope(TOKEN_SCOPES.AFFILIATE), async (req, res) => {
+  if (String(req.user?.id || req.user?._id || '') !== String(req.params.id)) {
+    return res.status(403).json({ message: 'You can only update your own payment details.', code: 'NOT_OWNER' });
+  }
+  const { id } = req.params; // Get the affiliate ID from URL params
+  const { preferredPaymentMethod, preferredPaymentMethodValue } = req.body; // Get data from request body
+
+  try {
+    // Find the affiliate by ID and update the payment method and value
+    const updatedAffiliate = await Affiliate.findByIdAndUpdate(
+      id, 
+      {
+        preferredPaymentMethod,
+        preferredPaymentMethodValue
+      }, 
+      { new: true } // Return the updated document
+    );
+
+    if (!updatedAffiliate) {
+      return res.status(404).json({ message: 'Affiliate not found' });
+    }
+
+    res.status(200).json({ message: 'Affiliate updated successfully', data: updatedAffiliate });
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ message: 'Server error' });
+  }
+});
+
+
+
+
+
+
+
+const sendUserEmail = async (user, affiliate) => {
+  const mailOptions = {
+    from: FMM_MAIL_FROM,
+    to: user.email,
+    subject: `Thank You for Joining ${affiliate.firstName}'s League!`,
+    html: `
+      <table width="100%" cellpadding="0" cellspacing="0" border="0" style="width:100%; max-width:600px; margin:auto;">
+        <!-- Logo Section -->
+        <tr>
+          <td align="center" style="padding: 15px 0;">
+            <img src="https://res.cloudinary.com/daflot6fo/image/upload/v1736068036/bywcrrcqmcyczdyhjmdv.png" alt="Fantasy Madness Logo" style="width:100px;" />
+            <h2 style="margin: 0; color: #191164; font-family: 'New York', Charter, Georgia, serif;">Fantasy Madness</h2>
+          </td>
+        </tr>
+        
+        <!-- Greeting Section -->
+        <tr>
+          <td style="padding: 10px 0;">
+            <p style="font-size: 16px; font-family: Arial, sans-serif; color: #333;">Dear ${user.firstName},</p>
+            <p style="font-size: 16px; font-family: Arial, sans-serif; color: #333;">
+              Thank you for joining <strong>${affiliate.firstName}</strong>'s league!
+            </p>
+            <p style="font-size: 16px; font-family: Arial, sans-serif; color: #333;">
+              We are thrilled to have you on board. Stay tuned for more exciting updates and matches ahead!
+            </p>
+          </td>
+        </tr>
+        
+        <!-- Affiliate Profile Section -->
+        <tr>
+          <td align="center" style="padding: 20px; background-color:#f8f8f8;">
+            <img src="${affiliate.profileUrl}" alt="Affiliate Profile" style="width:60px; height:60px; border-radius:50%; border:3px solid #191164;" />
+            <h3 style="color: #191164; font-family: 'Impact', fantasy, sans-serif;">${affiliate.firstName}'s League</h3>
+            <p style="font-size: 17px; font-family: 'Comic Sans MS', fantasy, sans-serif; color: #555;">
+              Get ready for the ultimate competition! We’re excited to see you in action.
+            </p>
+          </td>
+        </tr>
+
+        <!-- Footer Section -->
+        <tr>
+          <td align="center" style="padding: 15px 0;">
+            <img src="https://res.cloudinary.com/daflot6fo/image/upload/v1736068036/bywcrrcqmcyczdyhjmdv.png" alt="Fantasy Madness Logo" style="width:70px;" />
+            <p><a href="https://fantasymmadness.com" style="font-family: Arial, sans-serif; color: #191164; text-decoration: none;">https://fantasymmadness.com</a></p>
+          </td>
+        </tr>
+      </table>
+    `,
+  };
+
+  await transporter.sendMail(mailOptions);
+};
+
+
+const sendAffiliateEmail = async (affiliate, user) => {
+  const mailOptions = {
+    from: FMM_MAIL_FROM,
+    to: affiliate.email,
+    subject: `${user.firstName} ${user.lastName} has joined your league!`,
+    html: `
+      <table width="100%" cellpadding="0" cellspacing="0" border="0" style="width:100%; max-width:600px; margin:auto;">
+        <!-- Logo Section -->
+        <tr>
+          <td align="center" style="padding: 15px 0;">
+            <img src="https://res.cloudinary.com/daflot6fo/image/upload/v1736068036/bywcrrcqmcyczdyhjmdv.png" alt="Fantasy Madness Logo" style="width:100px;" />
+            <h2 style="margin: 0; color: #191164; font-family: 'New York', Charter, Georgia, serif;">Fantasy Madness</h2>
+          </td>
+        </tr>
+        
+        <!-- Greeting Section -->
+        <tr>
+          <td style="padding: 10px 0;">
+            <p style="font-size: 16px; font-family: Arial, sans-serif; color: #333;">Dear ${affiliate.firstName},</p>
+            <p style="font-size: 16px; font-family: Arial, sans-serif; color: #333;">
+              We are excited to inform you that <strong>${user.firstName} ${user.lastName}</strong> has joined your league!
+            </p>
+            <p style="font-size: 16px; font-family: Arial, sans-serif; color: #333;">
+              You are now one step closer to building a fantastic team. Keep an eye on the upcoming matches and engage with your new members.
+            </p>
+          </td>
+        </tr>
+
+        <!-- Affiliate Profile Section -->
+        <tr>
+          <td align="center" style="padding: 20px; background-color:#f8f8f8;">
+            <img src="${affiliate.profileUrl}" alt="Affiliate Profile" style="width:60px; height:60px; border-radius:50%; border:3px solid #191164;" />
+            <h3 style="color: #191164; font-family: 'Impact', fantasy, sans-serif;">${affiliate.firstName}'s League</h3>
+            <p style="font-size: 17px; font-family: 'Comic Sans MS', fantasy, sans-serif; color: #555;">
+              Keep building your team and prepare for thrilling challenges ahead!
+            </p>
+          </td>
+        </tr>
+
+        <!-- Footer Section -->
+        <tr>
+          <td align="center" style="padding: 15px 0;">
+            <img src="https://res.cloudinary.com/daflot6fo/image/upload/v1736068036/bywcrrcqmcyczdyhjmdv.png" alt="Fantasy Madness Logo" style="width:70px;" />
+            <p><a href="https://fantasymmadness.com" style="font-family: Arial, sans-serif; color: #191164; text-decoration: none;">https://fantasymmadness.com</a></p>
+          </td>
+        </tr>
+      </table>
+    `,
+  };
+
+  await transporter.sendMail(mailOptions);
+};
+
+app.post('/affiliate/:affiliateId/join', verifyToken, requireScope(TOKEN_SCOPES.PLAYER), async (req, res) => {
+  const { affiliateId } = req.params;
+  // SECURITY: derived from the verified token. Body ids are ignored — otherwise
+  // any caller could join another player into a league.
+  const userId = String(req.user?.id || req.user?._id || '').trim();
+  const userEmail = String(req.body?.userEmail || '').trim();
+  if (!userId) return res.status(401).json({ message: 'Sign in to join a league.' });
+
+  try {
+    const affiliate = await Affiliate.findById(affiliateId);
+
+    if (!affiliate) {
+      return res.status(404).json({ message: 'Affiliate not found' });
+    }
+
+    // Check if user has already joined
+    const alreadyJoined = affiliate.usersJoined.some(user => user.userId.toString() === userId.toString());
+
+    if (alreadyJoined) {
+      return res.status(400).json({ message: 'User already joined this league' });
+    }
+
+    // Fetch the user's details from the User collection using userId
+    const user = await User.findById(userId);
+    if (!user) {
+      return res.status(404).json({ message: 'User not found' });
+    }
+
+    // Add the user to the league
+    affiliate.usersJoined.push({ userId, email: userEmail });
+    await affiliate.save();
+
+    // Send emails to both the user and the affiliate
+    await sendUserEmail(user, affiliate);
+    await sendAffiliateEmail(affiliate, user);
+
+    return res.status(200).json({ message: 'User successfully joined the league', affiliate });
+  } catch (error) {
+    console.error('Request failed:', error);
+    return res.status(500).json({ message: 'Error joining the league' });
+  }
+});
+app.put('/update-profile-affiliate/:userId', verifyToken, requireSelf((req) => req.params.userId), upload.single('image'), async (req, res) => {
+  const { userId } = req.params;
+  const { firstName, lastName, playerName, phone, zipCode, shortBio } = req.body;
+
+  try {
+    // Create an object to hold the fields that should be updated
+    const updateFields = {};
+
+    if (firstName) updateFields.firstName = firstName;
+    if (lastName) updateFields.lastName = lastName;
+    if (playerName) updateFields.playerName = playerName;
+    if (phone) updateFields.phone = phone;
+    if (zipCode) updateFields.zipCode = zipCode;
+    if (shortBio) updateFields.shortBio = shortBio;
+
+    // Check if a new image is provided
+    if (req.file) {
+      // Find the affiliate to retrieve the previous delete URL
+      const affiliate = await Affiliate.findById(userId).select('+profileDeleteUrl');
+      if (!affiliate) {
+        return res.status(404).send('Affiliate not found');
+      }
+
+      // Delete the previous image from Cloudinary if delete URL exists
+      if (affiliate.profileDeleteUrl) {
+        await cloudinary.uploader.destroy(affiliate.profileDeleteUrl);
+      }
+
+      // Upload new avatar image to Cloudinary
+      const result = await new Promise((resolve, reject) => {
+        cloudinary.uploader.upload_stream(
+          { folder: 'affiliates' },
+          (error, result) => {
+            if (error) return reject(error);
+            resolve(result);
+          }
+        ).end(req.file.buffer);
+      });
+
+      updateFields.profileUrl = result.secure_url;
+      updateFields.profileDeleteUrl = result.public_id;
+    }
+
+    // Update the affiliate document with the specified fields
+    const updatedAffiliate = await Affiliate.findByIdAndUpdate(userId, updateFields, { new: true });
+
+    if (!updatedAffiliate) {
+      return res.status(404).send('Affiliate not found');
+    }
+
+    res.status(200).json({
+      message: 'Profile updated successfully',
+      user: updatedAffiliate,
+    });
+  } catch (error) {
+    console.error('Error updating affiliate profile:', error);
+    res.status(500).send('Server error');
+  }
+});
+
+// Delete Affiliate API
+app.delete('/affiliatetodelete/:id', verifyAdminToken, async (req, res) => {
+  const { id } = req.params;
+  console.log('Received DELETE request for Affiliate ID:', id);
+
+  try {
+    // Find the affiliate by ID
+    const affiliate = await Affiliate.findById(id).select('+profileDeleteUrl firstName');
+    if (!affiliate) {
+      return res.status(404).json({ message: 'Affiliate not found' });
+    }
+
+    if (affiliate.profileDeleteUrl) {
+  try {
+    await cloudinary.uploader.destroy(affiliate.profileDeleteUrl);
+  } catch (error) {
+    console.error('Error deleting affiliate profile image from Cloudinary:', error.message);
+  }
+}
+
+    // Delete the affiliate from the database
+    await Affiliate.findByIdAndDelete(id);
+const notification = new Notification({
+      title: `Affiliate Removed: ${affiliate.firstName}`,
+    });
+    await notification.save();
+   
+    res.status(200).json({ message: 'Affiliate and profile image deleted successfully' });
+  } catch (error) {
+    console.error('Error deleting affiliate:', error);
+    res.status(500).json({ message: 'Internal server error' });
+  }
+});
+
+
+
+// Get affiliates. Kept at the legacy /affiliates path for compatibility,
+// with sensitive credential/reset/payment values removed from each payload.
+// Public-safe projection: league browsers must not receive affiliate email,
+// phone or payout details, which AFFILIATE_SAFE_SELECT still carries.
+const AFFILIATE_PUBLIC_FIELDS = Object.freeze([
+  '_id', 'firstName', 'lastName', 'playerName', 'profileUrl', 'totalViews',
+  'verified', 'rewardTitle', 'rewardImageUrl', 'affiliateName', 'leagueName',
+  'description', 'usersJoined', 'promotionBackgroundUrl',
+]);
+
+function toPublicAffiliate(affiliate) {
+  const row = {};
+  AFFILIATE_PUBLIC_FIELDS.forEach((field) => {
+    if (affiliate?.[field] !== undefined) row[field] = affiliate[field];
+  });
+  if (Array.isArray(row.usersJoined)) row.usersJoined = row.usersJoined.length;
+  return row;
+}
+
+app.get('/api/public/affiliates', async (req, res) => {
+  try {
+    const limit = parsePositiveInteger(req.query.limit, 60, 200);
+    const affiliates = await Affiliate.find({ verified: true })
+      .select(AFFILIATE_SAFE_SELECT)
+      .limit(limit)
+      .lean();
+    res.json(sanitizeAccountList(affiliates).map(toPublicAffiliate));
+  } catch (error) {
+    console.error('Error fetching public affiliates:', error);
+    res.status(500).json({ message: 'Error fetching affiliates' });
+  }
+});
+
+app.get('/affiliates', verifyAdminToken, async (req, res) => {
+  try {
+    const affiliates = await Affiliate.find().select(AFFILIATE_SAFE_SELECT).sort({ createdAt: -1 }).lean();
+    return res.json(sanitizeAccountList(affiliates));
+  } catch (error) {
+    console.error('Error fetching affiliates:', error);
+    res.status(500).json({ message: 'Error fetching affiliates' });
+  }
+});
+
+app.get('/api/public/leagues', async (req, res) => {
+  try {
+    const limit = parsePositiveInteger(req.query.limit, 12, 100);
+    const affiliates = await Affiliate.find().select(AFFILIATE_SAFE_SELECT).lean();
+    const sanitizedAffiliates = sanitizeAccountList(affiliates);
+    // Keep the raw rows for the joined-user lookup below, but only publish the
+    // public projection: this route used to hand out affiliate email + phone.
+    const leagueSource = sanitizedAffiliates.slice(0, limit);
+    const leagues = leagueSource.map(toPublicAffiliate);
+    const joinedUserIds = [...new Set(leagueSource
+      .flatMap((league) => Array.isArray(league.usersJoined) ? league.usersJoined : [])
+      .map((entry) => String(entry?.userId || '').trim())
+      .filter((id) => mongoose.isValidObjectId(id)))];
+    const userObjectIds = joinedUserIds.map((id) => new mongoose.Types.ObjectId(id));
+    const userRows = userObjectIds.length
+      ? await User.find({ _id: { $in: userObjectIds } }).select(USER_SAFE_SELECT).lean()
+      : [];
+    const users = sanitizeAccountList(userRows).map((row) => ({
+      _id: row._id,
+      firstName: row.firstName,
+      lastName: row.lastName,
+      playerName: row.playerName,
+      profileUrl: row.profileUrl,
+    }));
+
+    res.json({
+      ok: true,
+      leagues,
+      users,
+      count: leagues.length,
+      generatedAt: new Date().toISOString(),
+    });
+  } catch (error) {
+    console.error('Error fetching public leagues:', error);
+    res.status(500).json({ ok: false, leagues: [], users: [], count: 0, message: 'Unable to load live league data.' });
+  }
+});
+
+app.post('/send-email-affiliate', verifyAdminToken, async (req, res) => {
+  const email = String(req.body?.email || '').trim().toLowerCase();
+  const subject = String(req.body?.subject || '').trim().slice(0, 180);
+  const message = String(req.body?.message || '').trim().slice(0, 20000);
+
+  // Check if email, subject, and message are provided
+  if (!email || !subject || !message) {
+      return res.status(400).json({ message: 'Email, subject, and message are required.' });
+  }
+
+  if (!/^\S+@\S+\.\S+$/.test(email)) return res.status(400).json({ message: 'Enter a valid affiliate email address.' });
+  if (!SMTP_PASS) return res.status(503).json({ message: mailFailureMessage(), code: 'SMTP_NOT_CONFIGURED' });
+
+  try {
+      // Send mail with the defined transport object
+      await transporter.sendMail({
+          // This operational route must use the authenticated mailbox for both
+          // the visible header and SMTP envelope. Some providers reject even a
+          // configured alias until its domain has been separately verified.
+          from: SMTP_USER,
+          to: email,
+          envelope: { from: SMTP_USER, to: [email] },
+          subject: subject, // Subject line
+          text: message, // plain text body
+      });
+
+      res.status(200).json({ message: 'Email sent successfully' });
+  } catch (error) {
+      const diagnostics = {
+        code: String(error?.code || 'SMTP_DELIVERY_FAILED'),
+        command: String(error?.command || ''),
+        responseCode: Number(error?.responseCode || 0) || null,
+        rejectedRecipient: Array.isArray(error?.rejected) && error.rejected.length > 0,
+        providerResponse: safeMailProviderResponse(error),
+      };
+      console.error('Affiliate email delivery failed:', {
+        ...diagnostics,
+        response: String(error?.response || '').slice(0, 500),
+        rejectedErrors: Array.isArray(error?.rejectedErrors)
+          ? error.rejectedErrors.map((item) => ({ code: item?.code, command: item?.command, responseCode: item?.responseCode, response: String(item?.response || '').slice(0, 300) }))
+          : [],
+      });
+      res.status(502).json({ message: mailFailureMessage(error), ...diagnostics });
+  }
+});
+
+
+
+
+app.post('/affiliates/:id/verify', verifyAdminToken, async (req, res) => {
+  try {
+      const { id } = req.params;
+      const affiliate = await Affiliate.findById(id);
+
+      if (!affiliate) {
+          return res.status(404).json({ message: 'Affiliate not found' });
+      }
+
+      affiliate.verified = true;
+      await affiliate.save();
+
+      res.status(200).json({ message: 'Affiliate verified successfully', affiliate });
+  } catch (error) {
+      console.error('Error verifying affiliate:', error);
+      res.status(500).json({ message: 'Internal server error' });
+  }
+});
+
+// Admin generates a one-time instant-approval link to send directly to a
+// known fighter/influencer — they land on the normal signup form but skip
+// the manual-approval wait.
+app.post('/api/admin/affiliate-invites', verifyAdminToken, async (req, res) => {
+  try {
+    const days = Number(req.body?.expiresInDays) > 0 ? Number(req.body.expiresInDays) : 14;
+    const code = crypto.randomBytes(9).toString('base64url');
+    const invite = await AffiliateInvite.create({
+      code,
+      note: String(req.body?.note || '').slice(0, 200),
+      expiresAt: new Date(Date.now() + days * 24 * 60 * 60 * 1000),
+    });
+    const siteBase = String(process.env.PUBLIC_SITE_URL || 'https://fantasymmadness.com').replace(/\/$/, '');
+    res.status(201).json({ invite, url: `${siteBase}/auth?mode=signup&role=affiliate&invite=${code}` });
+  } catch (error) {
+    console.error('Error creating affiliate invite:', error);
+    res.status(500).json({ message: 'Could not create the invite link.' });
+  }
+});
+
+app.get('/api/admin/affiliate-invites', verifyAdminToken, async (req, res) => {
+  try {
+    const invites = await AffiliateInvite.find().sort({ createdAt: -1 }).limit(100).populate('usedByAffiliateId', 'firstName lastName email');
+    res.json({ invites });
+  } catch (error) {
+    console.error('Error listing affiliate invites:', error);
+    res.status(500).json({ message: 'Could not load invites.' });
+  }
+});
+
+app.post('/registerAffiliate', submitLimiter, upload.single('image'), async (req, res) => {
+  try {
+    const {
+      firstName,
+      lastName,
+      playerName,
+      email,
+      phone,
+      password,
+      zipCode,
+      isNotificationsEnabled,
+      isSubscribed,
+      isUSCitizen,
+      isAgreed,
+      hearing,
+      inviteCode,
+    } = req.body;
+
+    // Check if email already exists
+    const existingUser = await Affiliate.findOne({ email });
+    if (existingUser) {
+      return res.status(400).send('Email already registered');
+    }
+
+    // Handle image upload if an image is provided
+    let profileUrl = '';
+    let profileDeleteUrl = '';
+    if (req.file) {
+      const result = await new Promise((resolve, reject) => {
+        cloudinary.uploader.upload_stream(
+          { folder: 'affiliates' },
+          (error, result) => {
+            if (error) return reject(error);
+            resolve(result);
+          }
+        ).end(req.file.buffer);
+      });
+
+      profileUrl = result.secure_url;
+      profileDeleteUrl = result.public_id;
+    }
+
+    // Redeem an instant-approval invite, if a valid unused/unexpired one was supplied.
+    let redeemedInvite = null;
+    const trimmedInviteCode = String(inviteCode || '').trim();
+    if (trimmedInviteCode) {
+      redeemedInvite = await AffiliateInvite.findOne({ code: trimmedInviteCode, usedAt: null, expiresAt: { $gt: new Date() } });
+    }
+
+    // Create new user with hashed password
+    const newUser = new Affiliate({
+      firstName,
+      lastName,
+      playerName,
+      email,
+      phone,
+      zipCode,
+      hearing,
+      isNotificationsEnabled,
+      isSubscribed,
+      isUSCitizen,
+      isAgreed,
+      verified: Boolean(redeemedInvite),
+      password: await bcrypt.hash(password, 10),
+      profileUrl, // Save the profile image URL
+      profileDeleteUrl, // Save the delete URL for future image deletion
+    });
+
+    // Save the new user to the database
+    await newUser.save();
+
+    if (redeemedInvite) {
+      redeemedInvite.usedAt = new Date();
+      redeemedInvite.usedByAffiliateId = newUser._id;
+      await redeemedInvite.save();
+    }
+
+const notification = new Notification({
+      title: redeemedInvite ? `Affiliate auto-approved via invite: ${newUser.firstName}` : `Affiliate Signed Up: ${newUser.firstName}`,
+    });
+    await notification.save();
+
+    if (redeemedInvite) {
+      // Instant-approved — no admin action needed, just let them know it happened.
+      sendAdminPush({ title: 'Affiliate auto-approved', body: `${newUser.firstName} signed up via instant invite and is live.`, url: '/administration/AffiliateUsers' }).catch(() => null);
+      return res.status(201).json({ message: 'Affiliate account created and instantly approved.', instantApproved: true });
+    }
+
+    const approvalLink = `https://fantasymmadness-game-server-three.vercel.app/approveAffiliate/${newUser._id}?t=${signActionToken('affiliate-approval', newUser._id)}`;
+    sendAdminPush({ title: 'New affiliate sign-up', body: `${newUser.firstName} needs approval.`, url: '/administration/AffiliateUsers' }).catch(() => null);
+
+    // Send email notification to the admin
+    await transporter.sendMail({
+      from: FMM_MAIL_FROM,
+      to: ADMIN_ALERT_EMAILS, // Admin email
+      subject: 'New Affiliate Registration - Approval Needed',
+      html: `
+        <table width="100%" cellpadding="0" cellspacing="0" border="0" style="width:100%; max-width:600px; margin:auto;">
+          <tr>
+            <td align="center" style="padding: 15px 0;">
+              <img src="https://res.cloudinary.com/daflot6fo/image/upload/v1736068036/bywcrrcqmcyczdyhjmdv.png" alt="Fantasy Madness Logo" style="width:100px;" />
+              <h2 style="margin: 0; color: #191164; font-family: 'New York', Charter, Georgia, serif;">Fantasy Madness</h2>
+            </td>
+          </tr>
+          
+          <tr>
+            <td style="padding: 10px 0;">
+              <p style="font-size: 16px; font-family: Arial, sans-serif; color: #333;">Dear Admin,</p>
+              <p style="font-size: 16px; font-family: Arial, sans-serif; color: #333;">
+                A new affiliate <strong>${newUser.firstName} ${newUser.lastName}</strong> has registered on Fantasy Madness. Please review and approve their profile.
+              </p>
+            </td>
+          </tr>
+          
+          <tr>
+            <td align="center" style="padding: 20px; background-color:#f8f8f8;">
+              <img src="${newUser.profileUrl}" alt="Affiliate Profile" style="width:60px; height:60px; border-radius:50%; border:3px solid #191164;" />
+              <h3 style="color: #191164; font-family: 'Impact', fantasy, sans-serif;">Affiliate Details</h3>
+              <p style="font-size: 17px; font-family: 'Comic Sans MS', fantasy, sans-serif; color: #555;">
+                Name: ${newUser.firstName} ${newUser.lastName}<br>
+                Email: ${newUser.email}<br>
+                Phone: ${newUser.phone}<br>
+                ZIP Code: ${newUser.zipCode}
+              </p>
+            </td>
+          </tr>
+
+         <tr>
+           <td align="center" style="padding: 20px;">
+             <a href="${approvalLink}" style="display:inline-block; padding:10px 20px; color:#fff; background-color:#191164; border-radius:5px; text-decoration:none; font-family: Arial, sans-serif;">Approve Now</a>
+           </td>
+          </tr>
+
+
+          <tr>
+            <td align="center" style="padding: 15px 0;">
+              <img src="https://res.cloudinary.com/daflot6fo/image/upload/v1736068036/bywcrrcqmcyczdyhjmdv.png" alt="Fantasy Madness Logo" style="width:70px;" />
+              <p><a href="https://fantasymmadness.com" style="font-family: Arial, sans-serif; color: #191164; text-decoration: none;">https://fantasymmadness.com</a></p>
+            </td>
+          </tr>
+        </table>
+      `,
+    });
+
+    res.status(201).send('User registered successfully');
+  } catch (error) {
+    console.error('Error registering user:', error);
+    res.status(500).send('Server error');
+  }
+});
+
+// SECURITY: this was an open GET that flipped an affiliate to verified — anyone
+// (or a link-prefetching mail client) could approve accounts. Links now carry an
+// HMAC built with signActionToken('affiliate-approval', id).
+app.get('/approveAffiliate/:id', async (req, res) => {
+  try {
+    const { id } = req.params;
+    const isAdminCaller = (() => {
+      const token = String(req.headers.authorization || '').replace(/^Bearer\s+/i, '').trim();
+      try {
+        return Boolean(token && process.env.JWT_SECRET_ADMIN && jwt.verify(token, process.env.JWT_SECRET_ADMIN));
+      } catch (_error) {
+        return false;
+      }
+    })();
+    if (!isAdminCaller && !verifySignedAction('affiliate-approval', id, req.query.t)) {
+      return res.status(403).send('<html><body style="font-family:Georgia,serif;padding:48px"><h1>This approval link is not valid.</h1><p>Open the affiliate in the admin console to approve it.</p></body></html>');
+    }
+    const affiliate = await Affiliate.findById(id);
+
+    if (!affiliate) {
+      return res.status(404).send(`
+        <html>
+          <body style="display: flex; align-items: center; justify-content: center; height: 100vh; background-color: #333; color: white; font-family: Arial, sans-serif;">
+            <h1 style="color: #ff0000; font-size: 48px;">Affiliate not found</h1>
+          </body>
+        </html>
+      `);
+    }
+
+    // Check if the affiliate is already verified
+    if (affiliate.verified) {
+      return res.send(`
+        <html>
+          <head>
+            <style>
+              body {
+                background-color: #000;
+                color: #fff;
+                font-family: Arial, sans-serif;
+                display: flex;
+                align-items: center;
+                justify-content: center;
+                height: 100vh;
+                margin: 0;
+              }
+              .container {
+                text-align: center;
+                border: 2px solid #ff0000;
+                padding: 20px;
+                width: 80%;
+                max-width: 500px;
+                background-color: #222;
+                border-radius: 10px;
+                box-shadow: 0px 4px 15px rgba(255, 0, 0, 0.6);
+              }
+              h1 {
+                font-size: 36px;
+                margin-bottom: 15px;
+                color: #ff0000;
+                text-shadow: 2px 2px #000;
+              }
+              p {
+                font-size: 18px;
+                margin-bottom: 20px;
+                color: #ccc;
+              }
+              .profile-img {
+                width: 100px;
+                height: 100px;
+                border-radius: 50%;
+                border: 3px solid #ff0000;
+                margin-top: 15px;
+              }
+            </style>
+          </head>
+          <body>
+            <div class="container">
+              <h1>Affiliate Already Approved</h1>
+              <p>This affiliate has already been approved previously.</p>
+              <img src="${affiliate.profileUrl}" alt="Affiliate Profile Image" class="profile-img" />
+            </div>
+             <script>
+              setTimeout(() => window.close(), 3000); // Close tab after 2 seconds
+            </script>
+          </body>
+        </html>
+      `);
+    }
+
+    // Mark affiliate as verified if not already verified
+    affiliate.verified = true;
+    await affiliate.save();
+
+    // Send success response
+    res.send(`
+      <html>
+        <head>
+          <style>
+            body {
+              background-color: #000;
+              color: #fff;
+              font-family: Arial, sans-serif;
+              display: flex;
+              align-items: center;
+              justify-content: center;
+              height: 100vh;
+              margin: 0;
+            }
+            .container {
+              text-align: center;
+              border: 2px solid #ff0000;
+              padding: 20px;
+              width: 80%;
+              max-width: 500px;
+              background-color: #222;
+              border-radius: 10px;
+              box-shadow: 0px 4px 15px rgba(255, 0, 0, 0.6);
+            }
+            h1 {
+              font-size: 36px;
+              margin-bottom: 15px;
+              color: #ff0000;
+              text-shadow: 2px 2px #000;
+            }
+            p {
+              font-size: 18px;
+              margin-bottom: 20px;
+              color: #ccc;
+            }
+            .profile-img {
+              width: 100px;
+              height: 100px;
+              border-radius: 50%;
+              border: 3px solid #ff0000;
+              margin-top: 15px;
+            }
+          </style>
+        </head>
+        <body>
+          <div class="container">
+            <h1>Affiliate Approved!</h1>
+            <p>Congratulations! The affiliate has been successfully approved.</p>
+            <img src="${affiliate.profileUrl}" alt="Affiliate Profile Image" class="profile-img" />
+            <script>
+              setTimeout(() => window.close(), 3000); // Close tab after 2 seconds
+            </script>
+          </div>
+        </body>
+      </html>
+    `);
+  } catch (error) {
+    console.error('Error approving affiliate:', error);
+    res.status(500).send(`
+      <html>
+        <body style="display: flex; align-items: center; justify-content: center; height: 100vh; background-color: #333; color: white; font-family: Arial, sans-serif;">
+          <h1 style="color: #ff0000; font-size: 48px;">Internal Server Error</h1>
+        </body>
+      </html>
+    `);
+  }
+});
+
+// Login API
+app.post('/loginAffiliate', loginLimiter, async (req, res) => {
+  const { email, password } = req.body;
+
+  try {
+    const user = await Affiliate.findOne({ email }).select('_id +password verified').lean();
+
+    if (!user) {
+      return res.status(400).json({ message: 'Invalid email or password' });
+    }
+
+    const isPasswordValid = await bcrypt.compare(password, user.password);
+
+    if (!isPasswordValid) {
+      return res.status(400).json({ message: 'Invalid email or password' });
+    }
+
+    const token = jwt.sign({ id: user._id, scope: TOKEN_SCOPES.AFFILIATE }, process.env.JWT_SECRET, { expiresIn: SESSION_TOKEN_TTL });
+
+    res.cookie('token', token, { httpOnly: true, maxAge: SESSION_COOKIE_MAX_AGE });
+
+    res.status(200).json({
+      message: 'Login successful',
+      token,  // Return token in response body
+      user: {
+        id: user._id,
+        verified: user.verified,
+      },
+    });
+  } catch (error) {
+    res.status(500).json({ message: 'Internal server error' });
+  }
+});
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+const scoreSchema = new mongoose.Schema({
+  playerId: String,
+  matchId: String,
+  predictions: [{ 
+    round: Number, 
+    hpPrediction1: Number,  // For Boxing or MMA (HP or ST)
+    bpPrediction1: Number,  // For Boxing or MMA (BP or KI)
+    hpPrediction2: Number,  // For Boxing or MMA (HP or ST)
+    bpPrediction2: Number,  // For Boxing or MMA (BP or KI)
+    tpPrediction1: Number,  // For Boxing or MMA (TP or KN)
+    tpPrediction2: Number,  // For Boxing or MMA (TP or KN)
+    rwPrediction1: Number, 
+    rwPrediction2: Number, 
+    koPrediction1: Number, 
+    koPrediction2: Number,
+    elPrediction1: Number,  // For MMA only (EL)
+    elPrediction2: Number   // For MMA only (EL)
+  }],
+  // Refund bookkeeping. A refunded entry is voided but kept for history.
+  refunded: { type: Boolean, default: false, index: true },
+  refundedAt: Date,
+  refundReason: String,
+}, { timestamps: true });
+scoreSchema.index({ matchId: 1, playerId: 1 });
+scoreSchema.index({ playerId: 1 });
+scoreSchema.index({ matchId: 1 });
+
+const Score = mongoose.models.Score || mongoose.model('Score', scoreSchema);
+
+// Signed-in entry feed used by the v7 MY ENTRIES and Watch Party screens.
+// The user id comes only from the verified token; callers cannot inspect another
+// player's scorecard by changing a query string.
+app.get('/api/users/me/fight-entries', verifyToken, requireScope(TOKEN_SCOPES.PLAYER), async (req, res) => {
+  try {
+    const playerId = normalizePredictionUserId(req.user?.id || req.user?._id);
+    if (!playerId) return res.status(401).json({ ok: false, message: 'Sign in to view your entries.' });
+    const limit = Math.min(Math.max(parseInt(req.query.limit, 10) || 100, 1), 200);
+    const scores = await Score.find({ playerId }).select('matchId').sort({ updatedAt: -1, _id: -1 }).limit(limit).lean();
+    const matchIds = [...new Set(scores.map((score) => String(score.matchId || '')).filter(Boolean))];
+    if (!matchIds.length) return res.json({ ok: true, entries: [], count: 0 });
+
+    const objectIds = matchIds.filter((id) => mongoose.Types.ObjectId.isValid(id));
+    const [matches, shadows] = await Promise.all([
+      Match.find({ _id: { $in: objectIds } }).populate('fighterAId fighterBId').lean(),
+      Shadow.find({ _id: { $in: objectIds } }).populate('fighterAId fighterBId').lean(),
+    ]);
+    const rows = [
+      ...matches.map((item) => ({ ...item, sourceType: 'match' })),
+      ...shadows.map((item) => ({ ...item, sourceType: 'shadow' })),
+    ].map((item) => attachCombatFighterReadFallbacks(item, item.sourceType));
+    const withEntryState = await attachPlayerPredictionStateToFightItems(rows, { userId: playerId, includePrivateEntry: true });
+    const order = new Map(matchIds.map((id, index) => [id, index]));
+    const entries = withEntryState
+      .filter((item) => item.userEntry)
+      .sort((left, right) => (order.get(String(left._id)) ?? 9999) - (order.get(String(right._id)) ?? 9999))
+      .map((item) => {
+        const { userPredictions, ...safeItem } = item;
+        return safeItem;
+      });
+
+    res.setHeader('Cache-Control', 'private, no-store');
+    return res.json({ ok: true, entries, count: entries.length });
+  } catch (error) {
+    console.error('[fight-entries] Failed to load signed-in entries:', error);
+    return res.status(500).json({ ok: false, message: 'Unable to load your fight entries.' });
+  }
+});
+// LEGACY. Kept only so the existing website prediction room keeps working.
+// SECURITY + REVENUE: this used to save a prediction with no auth and no charge,
+// so every paid entry was free. It now:
+//   * requires a token and derives the player from it (body ids ignored)
+//   * delegates NEW entries to createFightEntry(), which charges atomically
+//   * still allows a player to EDIT their own existing entry for free
+// Prefer POST /api/fights/:fightId/entries. Retire this once the website moves.
+app.post('/api/scores', verifyToken, requireScope(TOKEN_SCOPES.PLAYER), async (req, res) => {
+  try {
+    const { matchId, predictions } = req.body;
+    const playerId = String(req.user?.id || req.user?._id || '').trim();
+
+    if (!playerId) {
+      return res.status(401).json({ message: 'Authentication is required to submit predictions.' });
+    }
+
+    if (!matchId || !Array.isArray(predictions)) {
+      return res.status(400).json({
+        message: 'matchId and predictions array are required.',
+      });
+    }
+
+    // Existing entry → this is an edit before lock. Already paid for; no charge.
+    // Excludes refunded entries: a refunded player re-entering must pay again.
+    const existingScore = await Score.findOne({ playerId, matchId, refunded: { $ne: true } });
+
+    if (existingScore) {
+      // SECURITY: the edit path used to accept new predictions at any time.
+      // New entries were gated by isFightOpenForEntry, but an existing entrant
+      // could rewrite their card AFTER the fight — or after the official round
+      // stats were entered — and score a perfect sheet. Edits now obey the same
+      // lock as entries, and are refused outright once prizes are settled.
+      const liveFight = await Match.findById(matchId) || await Shadow.findById(matchId);
+      if (!liveFight) {
+        return res.status(404).json({ message: 'Fight not found.', code: 'FIGHT_NOT_FOUND' });
+      }
+      if (liveFight.prizesSettledAt) {
+        return res.status(409).json({
+          message: 'This fight has been settled — predictions can no longer be changed.',
+          code: 'FIGHT_SETTLED',
+        });
+      }
+      if (!isFightOpenForEntry(liveFight)) {
+        return res.status(409).json({
+          message: 'Predictions are locked for this fight.',
+          code: 'FIGHT_LOCKED',
+        });
+      }
+
+      existingScore.predictions = predictions;
+      await existingScore.save();
+      try {
+        await updateClassicFightPredictionStatus(matchId, playerId, 'submitted');
+      } catch (markerError) {
+        console.warn('Score saved but prediction status marker could not be synced:', markerError.message);
+      }
+      clearPublicResponseCache();
+      return res.status(200).json({ ...existingScore.toObject(), entryFeeCharged: 0, updated: true });
+    }
+
+    // No entry yet → a NEW entry, which must be charged. One shared code path.
+    const result = await createFightEntry({
+      userId: playerId,
+      fightId: String(matchId),
+      predictions,
+      idempotencyKey: req.headers['idempotency-key'] || req.body?.idempotencyKey,
+    });
+
+    return res.status(result.idempotent ? 200 : 201).json({
+      ...(result.entry?.toObject ? result.entry.toObject() : result.entry),
+      entryFeeCharged: result.entryFeeCharged,
+      walletBalance: result.balanceAfter,
+      idempotent: Boolean(result.idempotent),
+    });
+  } catch (error) {
+    if (error?.code === 11000) {
+      return res.status(200).json({ idempotent: true, message: 'This entry was already processed.' });
+    }
+    const status = error?.status || 400;
+    if (status >= 500) console.error('Legacy /api/scores entry failed:', error);
+    return res.status(status).json({
+      message: error?.message || 'Could not save predictions.',
+      code: error?.code || 'ENTRY_FAILED',
+      ...(error?.extra || {}),
+    });
+  }
+});
+
+// API endpoint to retrieve scores
+app.get('/api/scores', optionalVerifyToken, async (req, res) => {
+  try {
+    const query = {};
+    if (req.query.matchId) query.matchId = String(req.query.matchId);
+    if (req.query.playerId) query.playerId = String(req.query.playerId);
+
+    const scoreQuery = Score.find(query).lean();
+    if (req.query.limit) scoreQuery.limit(parsePositiveInteger(req.query.limit, 100, 1000));
+
+    const scores = await scoreQuery;
+
+    // CONFIDENTIALITY: raw picks are only ever returned to their owner. Anyone
+    // else (leaderboards, public boards) gets points without the predictions,
+    // so the field cannot be read and played against before a fight locks.
+    const callerId = String(req.user?.id || req.user?._id || '');
+    let isAdmin = false;
+    try {
+      const adminHeader = req.headers.authorization;
+      const adminToken = adminHeader && adminHeader.startsWith('Bearer ') ? adminHeader.slice(7) : null;
+      if (adminToken && process.env.JWT_SECRET_ADMIN) {
+        jwt.verify(adminToken, process.env.JWT_SECRET_ADMIN);
+        isAdmin = true;
+      }
+    } catch (ignored) { isAdmin = false; }
+
+    const safeScores = scores.map((row) => {
+      const isOwner = callerId && String(row.playerId) === callerId;
+      if (isOwner || isAdmin) return row;
+      const { predictions, ...rest } = row;
+      return rest;
+    });
+
+    res.send(safeScores);
+  } catch (error) {
+    res.status(500).send(error);
+  }
+});
+
+
+function normalizeLeaderboardPlayerId(value) {
+  const raw = String(value?._id || value?.id || value || '').trim();
+  return raw && !['null', 'undefined', 'none'].includes(raw.toLowerCase()) ? raw : '';
+}
+
+function readNumericField(source = {}, fields = []) {
+  for (const field of fields) {
+    const raw = source?.[field];
+    if (raw === null || raw === undefined || raw === '') continue;
+    const parsed = Number(typeof raw === 'string' ? raw.replace(/,/g, '').trim() : raw);
+    if (Number.isFinite(parsed) && parsed >= 0) return parsed;
+  }
+  return null;
+}
+
+function estimatePredictionActivityPoints(predictions = []) {
+  if (!Array.isArray(predictions)) return 0;
+
+  return predictions.reduce((total, roundPrediction) => {
+    if (!roundPrediction || typeof roundPrediction !== 'object') return total;
+
+    const numericValues = Object.entries(roundPrediction)
+      .filter(([key]) => !['_id', 'id', 'round'].includes(String(key)))
+      .map(([, value]) => Number(value))
+      .filter((value) => Number.isFinite(value) && value > 0);
+
+    // This is only used when official fight result stats are not available yet.
+    // It prevents a real submitted-prediction leaderboard from being replaced by fake fallback rows.
+    return total + numericValues.reduce((sum, value) => sum + value, 0);
+  }, 0);
+}
+
+function getClassicFightOfficialStats(match = {}) {
+  const categoryText = String(
+    match.matchCategoryTwo || match.matchCategory || match.effectiveCategory || match.displayCategory || ''
+  ).toLowerCase();
+  const isBoxing = categoryText.includes('box');
+  const isMma = categoryText.includes('mma') || categoryText.includes('ufc');
+
+  if (isBoxing) {
+    return {
+      category: 'boxing',
+      fighterOneStats: match.BoxingMatch?.fighterOneStats || [],
+      fighterTwoStats: match.BoxingMatch?.fighterTwoStats || [],
+    };
+  }
+
+  if (isMma) {
+    return {
+      category: 'mma',
+      fighterOneStats: match.MMAMatch?.fighterOneStats || [],
+      fighterTwoStats: match.MMAMatch?.fighterTwoStats || [],
+    };
+  }
+
+  return {
+    category: match.matchCategory || match.matchCategoryTwo || '',
+    fighterOneStats: match.BoxingMatch?.fighterOneStats || match.MMAMatch?.fighterOneStats || [],
+    fighterTwoStats: match.BoxingMatch?.fighterTwoStats || match.MMAMatch?.fighterTwoStats || [],
+  };
+}
+
+function hasOfficialStats(stats = {}) {
+  return Array.isArray(stats.fighterOneStats) &&
+    Array.isArray(stats.fighterTwoStats) &&
+    stats.fighterOneStats.length > 0 &&
+    stats.fighterTwoStats.length > 0;
+}
+
+function buildLeaderboardDisplayName(user = {}, fallbackId = '') {
+  return [user.firstName, user.lastName].filter(Boolean).join(' ').trim() ||
+    user.playerName ||
+    user.username ||
+    (user.email ? String(user.email).split('@')[0] : '') ||
+    `Player ${String(fallbackId).slice(-6)}`;
+}
+
+async function buildClassicLeaderboard({ limit = 10, tier = 'global' } = {}) {
+  const resolvedLimit = parsePositiveInteger(limit, 10, 100);
+
+  const [scoreRows, wrestlingRows] = await Promise.all([
+    Score.find().select('playerId matchId predictions totalPoints totalScore score points createdAt updatedAt').lean().catch((error) => {
+      console.warn('Classic score rows unavailable for public leaderboard:', error.message);
+      return [];
+    }),
+    (typeof ProWrestlingPrediction !== 'undefined'
+      ? ProWrestlingPrediction.find({ predictionStatus: { $in: ['SUBMITTED', 'LOCKED', 'SCORED', 'SETTLED'] } })
+        .select('userId matchId score totalScore totalPoints points predictionStatus createdAt updatedAt')
+        .lean()
+        .catch((error) => {
+          console.warn('Pro Wrestling prediction rows unavailable for public leaderboard:', error.message);
+          return [];
+        })
+      : Promise.resolve([])),
+  ]);
+
+  const scoreMatchIds = [...new Set((Array.isArray(scoreRows) ? scoreRows : [])
+    .map((score) => String(score.matchId || '').trim())
+    .filter(Boolean))];
+  const validScoreMatchObjectIds = scoreMatchIds
+    .filter((matchId) => mongoose.isValidObjectId(matchId))
+    .map((matchId) => new mongoose.Types.ObjectId(matchId));
+
+  const matchSelect = 'matchName matchFighterA matchFighterB matchDate matchCategory matchCategoryTwo matchStatus matchShadowStatus matchShadowOpenStatus fighterAImage fighterBImage promotionBackground matchType matchTokens fighterAId fighterBId BoxingMatch.fighterOneStats BoxingMatch.fighterTwoStats MMAMatch.fighterOneStats MMAMatch.fighterTwoStats userPredictions createdAt updatedAt';
+
+  const [scoreMatchRows, scoreShadowRows, embeddedMatchRows, embeddedShadowRows] = await Promise.all([
+    validScoreMatchObjectIds.length
+      ? Match.find({ _id: { $in: validScoreMatchObjectIds } }).select(matchSelect).populate('fighterAId fighterBId').lean().catch(() => [])
+      : Promise.resolve([]),
+    validScoreMatchObjectIds.length
+      ? Shadow.find({ _id: { $in: validScoreMatchObjectIds } }).select(matchSelect).populate('fighterAId fighterBId').lean().catch(() => [])
+      : Promise.resolve([]),
+    Match.find({ 'userPredictions.0': { $exists: true } }).select(matchSelect).populate('fighterAId fighterBId').limit(1500).lean().catch(() => []),
+    Shadow.find({ 'userPredictions.0': { $exists: true } }).select(matchSelect).populate('fighterAId fighterBId').limit(1500).lean().catch(() => []),
+  ]);
+
+  const matchById = new Map([...scoreMatchRows, ...scoreShadowRows, ...embeddedMatchRows, ...embeddedShadowRows]
+    .filter((match) => match && !isDraftFightRecord(match))
+    .map((match) => [String(match._id), match]));
+
+  const isRealSubmittedEmbeddedPrediction = (prediction = {}) => {
+    const playerId = normalizeLeaderboardPlayerId(prediction?.userId || prediction?.playerId || prediction?.user || prediction?.player);
+    if (!playerId) return false;
+    const rawStatus = prediction?.predictionStatus ?? prediction?.status;
+    const normalizedStatus = getPredictionStatusText(rawStatus);
+    if (!rawStatus) return true;
+    return normalizedStatus === 'submitted';
+  };
+
+  const embeddedPredictionRows = [...embeddedMatchRows, ...embeddedShadowRows]
+    .filter((match) => match && !isDraftFightRecord(match))
+    .flatMap((match) => (Array.isArray(match.userPredictions) ? match.userPredictions : [])
+      .filter(isRealSubmittedEmbeddedPrediction)
+      .map((prediction) => ({
+        playerId: normalizeLeaderboardPlayerId(prediction?.userId || prediction?.playerId || prediction?.user || prediction?.player),
+        matchId: String(match._id),
+        match,
+        prediction,
+      })))
+    .filter((entry) => entry.playerId);
+
+  const playerIds = [...new Set([
+    ...(Array.isArray(scoreRows) ? scoreRows : []).map((score) => normalizeLeaderboardPlayerId(score.playerId)),
+    ...(Array.isArray(wrestlingRows) ? wrestlingRows : []).map((prediction) => normalizeLeaderboardPlayerId(prediction.userId)),
+    ...embeddedPredictionRows.map((entry) => entry.playerId),
+  ].filter(Boolean))];
+  const validPlayerObjectIds = playerIds
+    .filter((playerId) => mongoose.isValidObjectId(playerId))
+    .map((playerId) => new mongoose.Types.ObjectId(playerId));
+
+  const userRows = validPlayerObjectIds.length
+    ? await User.find({ _id: { $in: validPlayerObjectIds } }).select(USER_SAFE_SELECT).lean().catch(() => [])
+    : [];
+  const userById = new Map(sanitizeAccountList(userRows).map((user) => [String(user._id), user]));
+  const rowsByPlayer = new Map();
+
+  const getOrCreateRow = (playerId) => {
+    const id = normalizeLeaderboardPlayerId(playerId);
+    if (!id) return null;
+    if (!rowsByPlayer.has(id)) {
+      const user = userById.get(id) || { _id: id };
+      rowsByPlayer.set(id, {
+        ...user,
+        _id: user._id || id,
+        playerName: user.playerName || user.username || buildLeaderboardDisplayName(user, id),
+        displayName: buildLeaderboardDisplayName(user, id),
+        totalPoints: 0,
+        points: 0,
+        matchesPlayed: 0,
+        scoredMatches: 0,
+        pendingScorecards: 0,
+        classicPoints: 0,
+        proWrestlingPoints: 0,
+        scoredHistory: [],
+        latestMatchId: null,
+        latestMatch: null,
+        source: 'real-user-scores',
+      });
+    }
+    return rowsByPlayer.get(id);
+  };
+
+  const registerLatestMatch = (row, matchId, match, sourceType = 'match') => {
+    if (!row || !matchId) return;
+    row.latestMatchId = String(matchId);
+    row.matchId = String(matchId);
+    if (match) {
+      row.latestMatch = pickPublicFightFields(match, sourceType);
+      row.match = row.latestMatch;
+    }
+  };
+
+  const countedPairs = new Set();
+  const recordScoredResult = (row, points, occurredAt) => {
+    if (!row) return;
+    const safePoints = Math.max(0, Math.round(Number(points) || 0));
+    row.totalPoints += safePoints;
+    row.points = row.totalPoints;
+    row.scoredMatches += 1;
+    const date = new Date(occurredAt || 0);
+    row.scoredHistory.push({ points: safePoints, at: Number.isNaN(date.getTime()) ? 0 : date.getTime() });
+  };
+
+  (Array.isArray(scoreRows) ? scoreRows : []).forEach((score) => {
+    const playerId = normalizeLeaderboardPlayerId(score.playerId);
+    const matchId = String(score.matchId || '').trim();
+    if (!playerId || !matchId) return;
+    countedPairs.add(`${playerId}:${matchId}`);
+    const row = getOrCreateRow(playerId);
+    if (!row) return;
+
+    const explicitScore = readNumericField(score, ['totalPoints', 'totalScore', 'score', 'points']);
+    const match = matchById.get(matchId);
+    const officialStats = match ? getClassicFightOfficialStats(match) : null;
+    const officialPoints = officialStats && hasOfficialStats(officialStats)
+      ? calculateClassicPredictionPoints(score.predictions, officialStats.fighterOneStats, officialStats.fighterTwoStats, officialStats.category)
+      : 0;
+    const hasOfficialFightStats = Boolean(officialStats && hasOfficialStats(officialStats));
+    const hasOfficialScore = explicitScore !== null || hasOfficialFightStats;
+    const pointsEarned = explicitScore !== null
+      ? explicitScore
+      : hasOfficialFightStats
+        ? officialPoints
+        : 0;
+
+    row.classicPoints += Math.max(0, Math.round(pointsEarned));
+    row.matchesPlayed += 1;
+    if (hasOfficialScore) recordScoredResult(row, pointsEarned, score.updatedAt || score.createdAt || match?.matchDate);
+    else row.pendingScorecards += 1;
+    registerLatestMatch(row, matchId, match, 'match');
+  });
+
+  embeddedPredictionRows.forEach((entry) => {
+    if (countedPairs.has(`${entry.playerId}:${entry.matchId}`)) return;
+    countedPairs.add(`${entry.playerId}:${entry.matchId}`);
+    const row = getOrCreateRow(entry.playerId);
+    if (!row) return;
+
+    const explicitPredictionPoints = readNumericField(entry.prediction, ['totalPoints', 'totalScore', 'score', 'points']);
+    const predictionRows = Array.isArray(entry.prediction?.predictions) ? entry.prediction.predictions :
+      Array.isArray(entry.prediction?.rounds) ? entry.prediction.rounds : [];
+    const officialStats = entry.match ? getClassicFightOfficialStats(entry.match) : null;
+    const hasOfficialFightStats = Boolean(officialStats && hasOfficialStats(officialStats));
+    const officialPoints = hasOfficialFightStats
+      ? calculateClassicPredictionPoints(predictionRows, officialStats.fighterOneStats, officialStats.fighterTwoStats, officialStats.category)
+      : 0;
+    const hasOfficialScore = explicitPredictionPoints !== null || hasOfficialFightStats;
+    const pointsEarned = explicitPredictionPoints !== null
+      ? explicitPredictionPoints
+      : hasOfficialFightStats
+        ? officialPoints
+        : 0;
+
+    row.classicPoints += Math.max(0, Math.round(pointsEarned));
+    row.matchesPlayed += 1;
+    if (hasOfficialScore) recordScoredResult(row, pointsEarned, entry.prediction?.updatedAt || entry.prediction?.createdAt || entry.match?.matchDate);
+    else row.pendingScorecards += 1;
+    registerLatestMatch(row, entry.matchId, entry.match, 'embedded-prediction');
+  });
+
+  (Array.isArray(wrestlingRows) ? wrestlingRows : []).forEach((prediction) => {
+    const playerId = normalizeLeaderboardPlayerId(prediction.userId);
+    const matchId = String(prediction.matchId || '').trim();
+    if (!playerId) return;
+    const pairKey = matchId ? `${playerId}:pw:${matchId}` : `${playerId}:pw:${prediction._id || Math.random()}`;
+    if (countedPairs.has(pairKey)) return;
+    countedPairs.add(pairKey);
+
+    const row = getOrCreateRow(playerId);
+    if (!row) return;
+
+    const predictionStatus = String(prediction.predictionStatus || '').toUpperCase();
+    const hasOfficialScore = ['SCORED', 'SETTLED'].includes(predictionStatus);
+    const explicitPoints = readNumericField(prediction, ['score', 'totalScore', 'totalPoints', 'points']);
+    const pointsEarned = hasOfficialScore && explicitPoints !== null ? explicitPoints : 0;
+    row.proWrestlingPoints += Math.max(0, Math.round(pointsEarned));
+    row.matchesPlayed += 1;
+    if (hasOfficialScore) recordScoredResult(row, pointsEarned, prediction.updatedAt || prediction.createdAt);
+    else row.pendingScorecards += 1;
+    if (matchId) registerLatestMatch(row, matchId, null, 'pro-wrestling');
+  });
+
+  const rankedRows = [...rowsByPlayer.values()]
+    .filter((row) => Number(row.scoredMatches || 0) > 0)
+    .map((row) => {
+      const recentScores = [...row.scoredHistory]
+        .sort((left, right) => right.at - left.at)
+        .slice(0, 10);
+      const rollingAverageScore = recentScores.length
+        ? recentScores.reduce((sum, item) => sum + item.points, 0) / recentScores.length
+        : 0;
+      const { scoredHistory, ...safeRow } = row;
+      return { ...safeRow, rollingAverageScore: Math.round(rollingAverageScore * 100) / 100 };
+    })
+    .sort((a, b) =>
+      Number(b.totalPoints || 0) - Number(a.totalPoints || 0) ||
+      Number(b.scoredMatches || 0) - Number(a.scoredMatches || 0) ||
+      Number(b.matchesPlayed || 0) - Number(a.matchesPlayed || 0) ||
+      String(a.displayName || '').localeCompare(String(b.displayName || ''))
+    );
+
+  const totalRankedPlayers = rankedRows.length;
+  const rollingOrder = [...rankedRows].sort((left, right) =>
+    Number(right.rollingAverageScore || 0) - Number(left.rollingAverageScore || 0) ||
+    Number(right.scoredMatches || 0) - Number(left.scoredMatches || 0)
+  );
+  const rollingIndexByPlayer = new Map(rollingOrder.map((row, index) => [String(row._id), index]));
+  const tierCounts = { rookie: 0, regular: 0, expert: 0 };
+  const rowsWithTiers = rankedRows.map((row, index) => {
+    const rollingIndex = rollingIndexByPlayer.get(String(row._id)) ?? index;
+    const performancePercentile = totalRankedPlayers <= 1
+      ? 100
+      : Math.round((1 - rollingIndex / (totalRankedPlayers - 1)) * 10000) / 100;
+    // New and lightly-scored users remain Rookie. Experienced players move to
+    // Expert only after sustained top-20% performance; everyone else is Regular.
+    const skillTier = Number(row.scoredMatches || 0) < 5
+      ? 'rookie'
+      : Number(row.scoredMatches || 0) >= 10 && performancePercentile >= 80
+        ? 'expert'
+        : 'regular';
+    tierCounts[skillTier] += 1;
+    return {
+      ...row,
+      rank: index + 1,
+      globalRank: index + 1,
+      skillTier,
+      rollingPerformancePercentile: performancePercentile,
+      totalPoints: Math.round(row.totalPoints || 0),
+      points: Math.round(row.totalPoints || 0),
+    };
+  });
+
+  const nextTierRank = { rookie: 0, regular: 0, expert: 0 };
+  rowsWithTiers.forEach((row) => {
+    nextTierRank[row.skillTier] += 1;
+    row.tierRank = nextTierRank[row.skillTier];
+  });
+
+  const tierUpdates = rowsWithTiers
+    .filter((row) => mongoose.isValidObjectId(row._id) && (
+      row.skillTier !== userById.get(String(row._id))?.skillTier ||
+      Number(userById.get(String(row._id))?.rollingPerformancePercentile) !== Number(row.rollingPerformancePercentile)
+    ))
+    .map((row) => ({
+      updateOne: {
+        filter: { _id: row._id },
+        update: { $set: { skillTier: row.skillTier, rollingPerformancePercentile: row.rollingPerformancePercentile, skillTierUpdatedAt: new Date() } },
+      },
+    }));
+  if (tierUpdates.length) {
+    await User.bulkWrite(tierUpdates, { ordered: false }).catch((error) => {
+      console.warn('Skill-tier profile sync skipped:', error.message);
+    });
+  }
+
+  const requestedTier = ['rookie', 'regular', 'expert'].includes(String(tier || '').toLowerCase())
+    ? String(tier).toLowerCase()
+    : 'global';
+  const leaderboard = (requestedTier === 'global'
+    ? rowsWithTiers
+    : rowsWithTiers.filter((row) => row.skillTier === requestedTier))
+    .slice(0, resolvedLimit);
+
+  return {
+    leaderboard,
+    tier: requestedTier,
+    tierCounts,
+    playerCount: rowsByPlayer.size,
+    scoreRows: Array.isArray(scoreRows) ? scoreRows.length : 0,
+    embeddedPredictionRows: embeddedPredictionRows.length,
+    wrestlingRows: Array.isArray(wrestlingRows) ? wrestlingRows.length : 0,
+  };
+}
+
+async function loadPublicFightCards({ limit = 6, category } = {}) {
+  let baseFilter = {};
+  baseFilter = appendAndFilter(baseFilter, buildEffectiveFightCategoryFilter(category));
+  const visibleFilter = applyFightPublicVisibilityFilter(baseFilter, { playable: 'true' });
+  const queryLimit = Math.min(Math.max(limit * 6, limit), 500);
+
+  const [matches, shadows] = await Promise.all([
+    applyFightFreshSortLean(Match.find(visibleFilter).populate('fighterAId fighterBId')).limit(queryLimit),
+    applyFightFreshSortLean(Shadow.find(visibleFilter).populate('fighterAId fighterBId')).limit(queryLimit).catch(() => []),
+  ]);
+
+  let items = [
+    ...matches.map((item) => ({ ...pickPublicFightFields(item, 'match'), __raw: item })),
+    ...shadows.map((item) => ({ ...pickPublicFightFields(item, 'shadow'), __raw: item })),
+  ].filter((item) => {
+    const raw = item.__raw || item;
+    return isPublicHomeActiveFightRecord(raw);
+  });
+
+  if (!isAllFilterValue(category)) {
+    items = items.filter((item) => isFightRecordInEffectiveCategory(item.__raw || item, category));
+  }
+
+  return items
+    .sort((a, b) => {
+      const toTime = (value) => {
+        const date = value ? new Date(value) : null;
+        return date && !Number.isNaN(date.getTime()) ? date.getTime() : 0;
+      };
+      return Math.max(toTime(b.updatedAt), toTime(b.createdAt), toTime(b.matchDate))
+        - Math.max(toTime(a.updatedAt), toTime(a.createdAt), toTime(a.matchDate));
+    })
+    .slice(0, limit)
+    .map(({ __raw, ...item }) => item);
+}
+
+async function getRealFightCalendarState(now = new Date()) {
+  const rows = await Match.find(applyFightPublicVisibilityFilter({}, { includeDrafts: 'false' }))
+    .select('matchDate matchDateKey matchTime eventTimeZone matchType matchStatus matchShadowOpenStatus createdAt updatedAt')
+    .limit(1500)
+    .lean()
+    .catch(() => []);
+  const futureTimes = rows
+    .filter((fight) => String(fight.matchType || '').toLowerCase() !== 'shadow' && !isDraftFightRecord(fight))
+    .map((fight) => parseFightDateTime(fight))
+    .filter((date) => date && !Number.isNaN(date.getTime()) && date.getTime() >= now.getTime())
+    .map((date) => date.getTime())
+    .sort((left, right) => left - right);
+  const nextFightAt = futureTimes.length ? new Date(futureTimes[0]) : null;
+  const daysToNextLiveFight = nextFightAt
+    ? Math.max(0, Math.ceil((nextFightAt.getTime() - now.getTime()) / 86400000))
+    : null;
+  return {
+    nextFightAt,
+    daysToNextLiveFight,
+    deadWeek: daysToNextLiveFight === null || daysToNextLiveFight > 7,
+  };
+}
+
+async function ensureDeadWeekShadowFight(now = new Date()) {
+  const calendar = await getRealFightCalendarState(now);
+  await Shadow.updateMany(
+    { shadowAutoPublished: true, shadowExpiresAt: { $lte: now } },
+    { $set: { matchStatus: 'Closed', matchShadowOpenStatus: 'closed', homepagePromoted: false } },
+  ).catch(() => null);
+  // Dead-week mystery fights no longer claim a homepage slot on their own — that
+  // locked admins out of putting a real fight in that position. Clear it off any
+  // still-active one immediately; admins place fights there manually now.
+  await Shadow.updateMany(
+    { shadowAutoPublished: true, homepagePromoted: true },
+    { $set: { homepagePromoted: false } },
+  ).catch(() => null);
+  if (!calendar.deadWeek) {
+    // Was: only expired shadow fights got closed above; an active one from a
+    // PRIOR dead week kept running (and showing "MYSTERY RED/BLUE CORNER")
+    // for up to its full 7-day window even after a real fight was published —
+    // masking the real fight instead of stepping aside for it. Retire it
+    // immediately once a real upcoming fight exists.
+    await Shadow.updateMany(
+      { shadowAutoPublished: true, matchShadowOpenStatus: 'open' },
+      { $set: { matchStatus: 'Closed', matchShadowOpenStatus: 'closed', homepagePromoted: false } },
+    ).catch(() => null);
+    clearPublicResponseCache();
+    return { ...calendar, shadow: null, published: false };
+  }
+
+  const active = await Shadow.findOne({
+    shadowAutoPublished: true,
+    shadowExpiresAt: { $gt: now },
+    matchShadowOpenStatus: 'open',
+    matchStatus: { $ne: 'Draft' },
+  }).populate('fighterAId fighterBId');
+  if (active) return { ...calendar, shadow: active, published: false };
+
+  const repeatCutoff = new Date(now.getTime() - 60 * 86400000);
+  const baseFilter = {
+    matchStatus: { $ne: 'Draft' },
+    matchFighterA: { $exists: true, $ne: '' },
+    matchFighterB: { $exists: true, $ne: '' },
+  };
+  let candidate = await Shadow.findOne({
+    ...baseFilter,
+    $or: [{ shadowLastUsedAt: { $exists: false } }, { shadowLastUsedAt: null }, { shadowLastUsedAt: { $lte: repeatCutoff } }],
+  }).sort({ shadowLastUsedAt: 1, convertedFromLiveAt: -1, updatedAt: -1 }).populate('fighterAId fighterBId');
+  if (!candidate) {
+    candidate = await Shadow.findOne(baseFilter).sort({ shadowLastUsedAt: 1, convertedFromLiveAt: -1, updatedAt: -1 }).populate('fighterAId fighterBId');
+  }
+  if (!candidate) return { ...calendar, shadow: null, published: false };
+
+  const expiresAt = new Date(now.getTime() + 7 * 86400000);
+  if (!candidate.shadowOriginalMatchDate && candidate.matchDate) candidate.shadowOriginalMatchDate = candidate.matchDate;
+  candidate.matchDate = expiresAt;
+  candidate.matchDateKey = extractCalendarDateKey(expiresAt);
+  candidate.matchStatus = 'Open';
+  candidate.matchShadowStatus = 'active';
+  candidate.matchShadowOpenStatus = 'open';
+  candidate.matchType = 'SHADOW';
+  candidate.shadowIdentityHidden = true;
+  candidate.shadowAutoPublished = true;
+  candidate.shadowPublishedAt = now;
+  candidate.shadowExpiresAt = expiresAt;
+  candidate.shadowLastUsedAt = now;
+  await candidate.save();
+  clearPublicResponseCache();
+  return { ...calendar, shadow: candidate, published: true };
+}
+
+async function buildRetentionState() {
+  const result = await ensureDeadWeekShadowFight(new Date());
+  return {
+    deadWeek: result.deadWeek,
+    daysToNextLiveFight: result.daysToNextLiveFight,
+    nextLiveFightAt: result.nextFightAt ? result.nextFightAt.toISOString() : null,
+    shadowFight: result.shadow ? pickPublicFightFields(result.shadow, 'shadow') : null,
+    shadowPublishedNow: Boolean(result.published),
+  };
+}
+
+app.post('/api/admin/retention/retire-shadow-fight', verifyAdminToken, async (req, res) => {
+  try {
+    await Shadow.updateMany(
+      { shadowAutoPublished: true, matchShadowOpenStatus: 'open' },
+      { $set: { matchStatus: 'Closed', matchShadowOpenStatus: 'closed', homepagePromoted: false } },
+    );
+    clearPublicResponseCache();
+    res.json({ ok: true, message: 'Mystery fight retired. Real fights will show now.' });
+  } catch (error) {
+    console.error('Error retiring shadow fight:', error);
+    res.status(500).json({ message: 'Could not retire the mystery fight.' });
+  }
+});
+
+cron.schedule('15 0 * * *', async () => {
+  try {
+    await ensureDeadWeekShadowFight(new Date());
+  } catch (error) {
+    console.error('[retention] Daily Shadow Fight rotation failed:', error);
+  }
+});
+
+// Uses the shared guard like every other job: it accepts both the
+// x-cron-secret header and Vercel's Authorization bearer, and does a
+// timing-safe comparison rather than a plain string match.
+app.get('/api/cron/retention', verifyCronSecret, async (req, res) => {
+  const configuredSecret = String(process.env.CRON_SECRET || '').trim();
+  const suppliedSecret = String(req.headers.authorization || '').replace(/^Bearer\s+/i, '').trim();
+  if (configuredSecret && suppliedSecret !== configuredSecret) return res.status(401).json({ ok: false, message: 'Unauthorized.' });
+  try {
+    const result = await ensureDeadWeekShadowFight(new Date());
+    return res.json({ ok: true, deadWeek: result.deadWeek, published: result.published, shadowFightId: result.shadow?._id || null });
+  } catch (error) {
+    console.error('[retention] Scheduled rotation failed:', error);
+    return res.status(500).json({ ok: false, message: 'Retention rotation failed.' });
+  }
+});
+
+app.get('/api/public/leaderboard', async (req, res) => {
+  try {
+    const limit = parsePositiveInteger(req.query.limit, 25, 100);
+    const result = await buildClassicLeaderboard({ limit, tier: req.query.tier });
+    res.setHeader('Cache-Control', 'public, max-age=15, stale-while-revalidate=45');
+    return res.json({
+      ok: true,
+      leaderboard: result.leaderboard,
+      playerCount: result.playerCount,
+      tier: result.tier,
+      tierCounts: result.tierCounts,
+      source: 'real-user-scores',
+      diagnostics: {
+        scoreRows: result.scoreRows || 0,
+        wrestlingRows: result.wrestlingRows || 0,
+        embeddedPredictionRows: result.embeddedPredictionRows || 0,
+        realPlayerRows: result.playerCount || 0,
+      },
+      generatedAt: new Date().toISOString(),
+    });
+  } catch (error) {
+    console.error('Error building public leaderboard:', error);
+    res.status(500).json({ ok: false, message: 'Failed to build public leaderboard.' });
+  }
+});
+
+app.get('/api/public/home-summary', async (req, res) => {
+  try {
+    const fightLimit = parsePositiveInteger(req.query.fightLimit || req.query.limit, 6, 24);
+    const leaderboardLimit = parsePositiveInteger(req.query.leaderboardLimit, 5, 25);
+
+    const [featuredFights, leaderboardResult, totalPlayers, activeClassicFights, retention] = await Promise.all([
+      loadPublicFightCards({ limit: fightLimit, category: req.query.category }),
+      buildClassicLeaderboard({ limit: leaderboardLimit }),
+      User.countDocuments(),
+      Match.countDocuments(applyFightPublicVisibilityFilter({}, { playable: 'true' })),
+      buildRetentionState(),
+    ]);
+
+    res.setHeader('Cache-Control', 'public, max-age=15, stale-while-revalidate=45');
+    res.json({
+      ok: true,
+      featuredFights,
+      leaderboard: leaderboardResult.leaderboard,
+      retention,
+      stats: {
+        players: totalPlayers,
+        activeFights: activeClassicFights,
+        leaderboardPlayers: leaderboardResult.playerCount,
+      },
+      generatedAt: new Date().toISOString(),
+    });
+  } catch (error) {
+    console.error('Error building public home summary:', error);
+    res.status(500).json({ ok: false, message: 'Failed to build public home summary.' });
+  }
+});
+
+// This deletes EVERY prediction on the platform. Settlement, refunds and
+// eligibility all read from these rows, so wiping them makes open contests
+// unscoreable and unrefundable. Guarded, and it refuses outright while any
+// contest is still awaiting settlement.
+app.delete('/api/scores', verifyAdminToken, requireBulkConfirmation('SCORES'), async (req, res) => {
+  try {
+    const unsettled = await Match.countDocuments({
+      $or: [{ prizesSettledAt: null }, { prizesSettledAt: { $exists: false } }],
+      matchStatus: { $ne: 'cancelled' },
+    });
+    if (unsettled > 0 && String(req.body?.force || '') !== 'YES-I-ACCEPT-UNSETTLED-LOSS') {
+      return res.status(409).json({
+        ok: false,
+        message: `${unsettled} fight(s) have not been settled yet. Deleting predictions now would make them impossible to score or refund. Settle them first, or send force="YES-I-ACCEPT-UNSETTLED-LOSS".`,
+        code: 'UNSETTLED_CONTESTS_EXIST',
+        unsettled,
+      });
+    }
+    await Score.deleteMany({}); // This will delete all records in the Score collection
+    clearPublicResponseCache();
+    res.status(200).send({ message: 'All records deleted successfully' });
+  } catch (error) {
+    res.status(500).send({ error: 'Failed to delete records' });
+  }
+});
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+const adminSchema = new mongoose.Schema({
+  firstName: String,
+  lastName: String,
+  email: String,
+  password: { type: String, select: false },
+  profileUrl: String, // Add profileUrl field
+  // Set only by POST /api/admin/test-accounts, so a seeded back-office login can
+  // be listed and purged with the other test data.
+  isTestAccount: { type: Boolean, default: false, index: true },
+});
+adminSchema.index({ email: 1 });
+adminSchema.set('toJSON', {
+  transform: (_doc, ret) => {
+    delete ret.password;
+    return ret;
+  },
+});
+
+const Admin = mongoose.models.Admin || mongoose.model('Admin', adminSchema);
+
+app.post('/admin/register', verifyAdminToken, async (req, res) => {
+  const { firstName, lastName, email, password, profileUrl } = req.body;
+
+  try {
+    // Check if the email already exists
+    const existingAdmin = await Admin.findOne({ email });
+    if (existingAdmin) {
+      return res.status(400).json({ message: 'Admin already exists' });
+    }
+
+    // Hash the password
+    const hashedPassword = await bcrypt.hash(password, 10);
+
+    // Create a new admin
+    const newAdmin = new Admin({
+      firstName,
+      lastName,
+      email,
+      password: hashedPassword,
+      profileUrl,
+    });
+
+    // Save the admin to the database
+    await newAdmin.save();
+
+    res.status(201).json({ message: 'Admin registered successfully' });
+  } catch (error) {
+    res.status(500).json({ message: 'Server error' });
+  }
+});
+
+app.post('/admin/login', loginLimiter, async (req, res) => {
+  try {
+    const { email, password } = req.body;
+
+    // Find the admin by email
+    const admin = await Admin.findOne({ email }).select('_id email +password').lean();
+    if (!admin) {
+      return res.status(400).json({ message: 'Invalid email or password.' });
+    }
+
+    // Compare the provided password with the stored hashed password
+    const isMatch = await bcrypt.compare(password, admin.password);
+    if (!isMatch) {
+      return res.status(400).json({ message: 'Invalid email or password.' });
+    }
+
+    // Generate a JWT token
+    const token = jwt.sign(
+      { id: admin._id, email: admin.email },
+      process.env.JWT_SECRET_ADMIN,
+      { expiresIn: '12h' }
+    );
+
+    
+
+    res.status(200).json({ token, message: 'Login successful.' });
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ message: 'Server error. Please try again later.' });
+  }
+});
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+const youtubeVideosSchema = new mongoose.Schema({
+  videoUrl: String, 
+});
+youtubeVideosSchema.index({ videoUrl: 1 });
+
+
+
+const YoutubeVideos = mongoose.models.YoutubeVideos || mongoose.model('YoutubeVideos', youtubeVideosSchema);
+
+
+
+// Delete Match API
+app.delete('/youtubevideotodelete/:id', verifyAdminToken, async (req, res) => {
+  const { id } = req.params;
+  
+  try {
+    const user = await YoutubeVideos.findByIdAndDelete(id);
+    
+    res.status(200).json({ message: 'YoutubeVideos deleted successfully' });
+  } catch (error) {
+    res.status(500).json({ message: 'Internal server error' });
+  }
+});
+
+app.post('/youtubeVideos', verifyAdminToken, async (req, res) => {
+  const { videoUrl } = req.body;
+
+  if (!videoUrl) {
+    return res.status(400).json({ message: 'Video URL is required' });
+  }
+
+  try {
+    // Check if the video URL already exists in the database
+    const existingVideo = await YoutubeVideos.findOne({ videoUrl });
+
+    if (existingVideo) {
+      return res.status(409).json({ message: 'This video already exists in the library' });
+    }
+
+    // If not, create a new video entry
+    const newVideo = new YoutubeVideos({ videoUrl });
+    await newVideo.save();
+
+    res.status(201).json({ message: 'YouTube video added successfully', video: newVideo });
+  } catch (error) {
+    res.status(500).json({ message: 'Internal server error' });
+  }
+});
+
+// Get Matches API
+app.get('/youtubeVideos', async (req, res) => {
+  const match = await YoutubeVideos.find().sort({ _id: -1 }).limit(500).lean();
+  res.send(match);
+});
+
+
+app.post('/addShadow', verifyAdminToken, upload.fields([
+  { name: 'fighterAImage' },
+  { name: 'fighterBImage' },
+  { name: 'promotionBackground' },
+]), async (req, res) => {
+  try {
+    const {
+      matchCategoryTwo,
+      maxRounds,
+      matchCategory,
+      matchName,
+      matchFighterA,
+      matchFighterB,
+      matchDescription,
+      matchVideoUrl,
+      matchDate,
+      matchTime,
+      venue,
+      matchType,
+      fighterAImageUrl,
+      fighterAImageDeleteUrlFromReq,
+      fighterBImageUrl,
+      fighterBImageDeleteUrlFromReq,
+      promotionBackgroundUrl,
+      promotionBackgroundDeleteUrlFromReq
+    } = req.body;
+
+    // Helper function to upload to Cloudinary
+    const uploadToCloudinary = (fileBuffer, folder) => {
+      return new Promise((resolve, reject) => {
+        cloudinary.uploader.upload_stream(
+          { folder },
+          (error, result) => {
+            if (error) return reject(error);
+            resolve(result);
+          }
+        ).end(fileBuffer);
+      });
+    };
+
+    let fighterAImage = fighterAImageUrl || null;
+    let fighterBImage = fighterBImageUrl || null;
+    let promotionBackground = promotionBackgroundUrl || null;
+
+    let fighterAImageDeleteUrl = fighterAImageDeleteUrlFromReq || null;
+    let fighterBImageDeleteUrl = fighterBImageDeleteUrlFromReq || null;
+    let promotionBackgroundDeleteUrl = promotionBackgroundDeleteUrlFromReq || null;
+
+    if (req.files.fighterAImage) {
+      const resultA = await uploadToCloudinary(req.files.fighterAImage[0].buffer, 'fighters');
+      fighterAImage = resultA.secure_url;
+      fighterAImageDeleteUrl = resultA.public_id;
+    }
+
+    if (req.files.fighterBImage) {
+      const resultB = await uploadToCloudinary(req.files.fighterBImage[0].buffer, 'fighters');
+      fighterBImage = resultB.secure_url;
+      fighterBImageDeleteUrl = resultB.public_id;
+    }
+
+    if (req.files.promotionBackground) {
+      const resultBackground = await uploadToCloudinary(req.files.promotionBackground[0].buffer, 'promotions');
+      promotionBackground = resultBackground.secure_url;
+      promotionBackgroundDeleteUrl = resultBackground.public_id;
+    }
+
+    const normalizedShadowDate = normalizeCalendarDateInput(matchDate);
+    if (matchDate && !normalizedShadowDate.date) {
+      return res.status(400).json({ message: 'A valid match date is required.' });
+    }
+
+    const newMatch = new Shadow({
+      matchCategory,
+      matchCategoryTwo,
+      matchName,
+      matchFighterA,
+      matchFighterB,
+      matchDescription,
+      matchVideoUrl,
+      matchDate: normalizedShadowDate.date || matchDate,
+      matchDateKey: normalizedShadowDate.key || undefined,
+      eventTimeZone: req.body?.eventTimeZone || req.body?.timezone || undefined,
+      matchTime,
+      venue,
+      fighterAImage,
+      fighterBImage,
+      fighterAImageDeleteUrl,
+      fighterBImageDeleteUrl,
+      promotionBackground,
+      promotionBackgroundDeleteUrl,
+      matchType: 'SHADOW',
+      maxRounds,
+      ...(parseHomepagePromotionBoolean(req.body?.homepagePromoted ?? req.body?.promoted, false)
+        ? buildAutoHomepagePromotionFields({ body: req.body, admin: req.admin, actor: 'addShadow' })
+        : {}),
+    });
+
+    await newMatch.save();
+    clearPublicResponseCache();
+
+ const notification = new Notification({
+      title: `Shadow Fight Added: ${newMatch.matchName}`,
+    });
+    await notification.save();
+    if (req.body.notify === 'true' || req.body.notify === true) {
+      // Only the fields the mail needs — this was loading payout and tax details
+      // to read an email address.
+      const users = await Affiliate.find()
+        .select('email firstName lastName playerName')
+        .limit(20000)
+        .lean();
+
+      const mailPromises = users.map((user) => {
+        const mailOptions = {
+          from: FMM_MAIL_FROM,
+          to: user.email,
+          subject: 'Fantasy MMAdness - New Fight Announcement',
+          html: `
+          <table width="100%" cellpadding="0" cellspacing="0" border="0" style="width:100%; max-width:600px; margin:auto;">
+            <!-- Logo Section -->
+            <tr>
+              <td align="center" style="padding: 15px 0;">
+                <img src="https://res.cloudinary.com/daflot6fo/image/upload/v1736068036/bywcrrcqmcyczdyhjmdv.png" alt="Fantasy mmadness Logo" style="width:100px;" />
+                <h2 style="margin: 0; color: #191164; font-family: 'New York', Charter, Georgia, serif;">Fantasy mmadness</h2>
+              </td>
+            </tr>
+            
+            <!-- Greeting Section -->
+            <tr>
+              <td style="padding: 10px 0;">
+                <p style="font-size: 16px; font-family: Arial, sans-serif; color: #333;">Dear ${user.firstName} ${user.lastName},</p>
+                <p style="font-size: 16px; font-family: Arial, sans-serif; color: #333;">We're thrilled to announce that a new Shadow Fight has been added to your dashboard, ready for promotion.</p>
+                <p style="font-size: 16px; font-family: Arial, sans-serif; color: #333;"><strong>Fight Name:</strong> ${matchName}</p>
+              </td>
+            </tr>
+            
+            <!-- Affiliate Call-to-Action Section -->
+            <tr>
+              <td align="center" style="padding: 20px; background-color:#f8f8f8;">
+                <h2 style="color: #191164; font-family: 'Impact', fantasy, sans-serif;">Take the Lead!</h2>
+                <p style="font-size: 17px; font-family: 'Comic Sans MS', fantasy, sans-serif; color: #555;">
+                  The new Shadow Fight is now available for promotion. Share the excitement with your audience, build anticipation, and engage them in this thrilling event. 
+                </p>
+                <p style="font-size: 17px; font-family: 'Comic Sans MS', fantasy, sans-serif; color: #555;">
+                  Boost your league’s activity by encouraging fans to participate, and don’t miss the opportunity to expand your reach and earn rewards.
+                </p>
+              </td>
+            </tr>
+        
+            <!-- Match Details Section -->
+            <tr>
+              <td style="padding: 10px;">
+                <p style="font-size: 16px; font-family: Arial, sans-serif; color: #333;"><strong>Max Rounds:</strong> ${maxRounds}</p>
+                <p style="font-size: 16px; font-family: Arial, sans-serif; color: #333;"><strong>Match Type:</strong> ${matchType}</p>
+                <p style="font-size: 16px; font-family: Arial, sans-serif; color: #333;">
+                  Now is the time to activate your followers and get them involved. Start promoting the fight today, and keep the excitement growing in your community!
+                </p>
+              </td>
+            </tr>
+        
+            <!-- Footer Section -->
+            <tr>
+              <td align="center" style="padding: 15px 0;">
+                <img src="https://res.cloudinary.com/daflot6fo/image/upload/v1736068036/bywcrrcqmcyczdyhjmdv.png" alt="Fantasy mmadness Logo" style="width:70px;" />
+                <p><a href="https://fantasymmadness.com" style="font-family: Arial, sans-serif; color: #191164; text-decoration: none;">https://fantasymmadness.com</a></p>
+              </td>
+            </tr>
+          </table>
+        `,
+        };
+
+        return transporter.sendMail(mailOptions);
+      });
+
+      try {
+        await Promise.all(mailPromises);
+        console.log('Emails sent successfully');
+      } catch (error) {
+        console.error('Error sending emails:', error);
+      }
+    } else {
+      console.log('Notification skipped because notify is set to false');
+    }
+
+    res.status(200).json({
+      message: 'Match Added Successfully and Notifications Sent',
+      matchId: newMatch._id,
+    });
+  } catch (error) {
+    console.error('Error adding shadow match:', error);
+    res.status(500).send('Server error');
+  }
+});
+
+
+// Counts exclude test accounts — otherwise a testing group inflates the numbers
+// the business is judged on.
+app.get('/dashboard-counts', verifyAdminToken, async (req, res) => {
+  try {
+    // Fetch entity counts
+    const affiliatesCount = await Affiliate.countDocuments({});
+    const matchesCount = await Match.countDocuments({});
+    const usersCount = await User.countDocuments({});
+    const shadowTemplatesCount = await Shadow.countDocuments({});
+    const apparelOrdersCount = await ApparelOrder.countDocuments({});
+
+    // Fetch total clicks from SiteStats
+    const stats = await SiteStats.findOne({}).lean();
+    const totalClicks = stats ? stats.totalClicks : 0;
+
+    // Count unread notifications
+    const unreadNotificationsCount = await Notification.countDocuments({ read: false });
+
+    // Send response
+    res.json({
+      affiliatesCount,
+      matchesCount,
+      usersCount,
+      shadowTemplatesCount,
+      apparelOrdersCount,
+      totalClicks,
+      unreadNotificationsCount
+    });
+  } catch (error) {
+    console.error('Error fetching dashboard counts:', error);
+    res.status(500).json({ error: 'Failed to fetch counts' });
+  }
+});
+
+
+
+const userRemovedMatchesSchema = new mongoose.Schema({
+  userId: { type: String, required: true },  // userId as a string
+  removedMatchesIds: { 
+      type: [String],  // array of strings to store removed match IDs
+      default: [] 
+  },
+}, { timestamps: true });
+userRemovedMatchesSchema.index({ userId: 1 });
+
+
+const UserRemovedMatches = mongoose.models.UserRemovedMatches || mongoose.model('UserRemovedMatches', userRemovedMatchesSchema);
+
+
+app.delete('/remove-matches-of-user/:userId', verifyAdminToken, async (req, res) => {
+  const { userId } = req.params;
+
+  try {
+      const result = await UserRemovedMatches.deleteMany({ userId });
+      
+      if (result.deletedCount === 0) {
+          return res.status(404).json({ message: 'No records found for this userId.' });
+      }
+      
+      res.status(200).json({ message: 'All records removed successfully.' });
+  } catch (error) {
+      console.error('Error deleting records:', error);
+      res.status(500).json({ message: 'Internal server error.' });
+  }
+});
+
+// Add removed match for a user
+app.post('/remove-match-from-my-dashboard', verifyToken, async (req, res) => {
+  // userId comes from the token — a body id would let one user edit another's dashboard.
+  const userId = String(req.user?.id || req.user?._id || '').trim();
+  const { matchId } = req.body;
+
+  try {
+      // Find the user's removed matches document
+      let userMatches = await UserRemovedMatches.findOne({ userId });
+
+      if (!userMatches) {
+          // If the document doesn't exist, create it
+          userMatches = new UserRemovedMatches({
+              userId,
+              removedMatchesIds: [matchId]
+          });
+      } else {
+          // If it exists, check if the matchId already exists
+          if (!userMatches.removedMatchesIds.includes(matchId)) {
+              userMatches.removedMatchesIds.push(matchId);
+          } else {
+              return res.status(409).json({ message: 'Match already removed for this user' });
+          }
+      }
+
+      // Save the updated document
+      await userMatches.save();
+
+      res.status(201).json({ message: 'Match removed successfully', data: userMatches });
+  } catch (error) {
+      console.error('Request failed:', error);
+      res.status(500).json({ message: 'Server error' });
+  }
+});
+
+// Remove a removed match for a user
+app.delete('/remove-match-from-my-dashboard', verifyToken, async (req, res) => {
+  const { userId, matchId } = req.body;
+
+  try {
+      // Find the user's removed matches document
+      let userMatches = await UserRemovedMatches.findOne({ userId });
+
+      if (!userMatches) {
+          return res.status(404).json({ message: 'No removed matches found for this user' });
+      }
+
+      // Check if the matchId exists in the removedMatchesIds array
+      const matchIndex = userMatches.removedMatchesIds.indexOf(matchId);
+
+      if (matchIndex === -1) {
+          return res.status(404).json({ message: 'Match not found in removed list' });
+      }
+
+      // Remove the matchId from the array
+      userMatches.removedMatchesIds.splice(matchIndex, 1);
+
+      // Save the updated document
+      await userMatches.save();
+
+      res.status(200).json({ message: 'Match removed from dashboard successfully', data: userMatches });
+  } catch (error) {
+      console.error('Request failed:', error);
+      res.status(500).json({ message: 'Server error' });
+  }
+});
+
+
+app.get('/user/:userId/removed-matches', verifyToken, requireSelf((req) => req.params.userId), async (req, res) => {
+  const { userId } = req.params;
+
+  try {
+      // Find the user's removed matches document
+      const userMatches = await UserRemovedMatches.findOne({ userId });
+
+      if (!userMatches) {
+          return res.status(404).json({ message: 'No matches found for this user' });
+      }
+
+      res.status(200).json(userMatches);
+  } catch (error) {
+      console.error('Request failed:', error);
+      res.status(500).json({ message: 'Server error' });
+  }
+});
+
+
+// SECURITY: was public and returned every player's trashed-fight list. Players
+// now get only their own rows; admins still get the full set.
+app.get('/users/removed-matches', verifyToken, async (req, res) => {
+  try {
+      const callerId = String(req.user?.id || req.user?._id || '');
+      const allUserMatches = await UserRemovedMatches.find({ userId: callerId }).lean();
+
+      if (!allUserMatches || allUserMatches.length === 0) {
+          return res.status(404).json({ message: 'No removed matches found for any user' });
+      }
+
+      res.status(200).json(allUserMatches);
+  } catch (error) {
+      console.error('Request failed:', error);
+      res.status(500).json({ message: 'Server error' });
+  }
+});
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+const customUserSchema = new mongoose.Schema({
+  fullName: String,
+  email: { type: String, required: true, unique: true },
+  
+}, { timestamps: true });
+
+customUserSchema.index({ createdAt: -1 });
+const Usernonregistered = mongoose.models.Usernonregistered || mongoose.model('Usernonregistered', customUserSchema);
+
+// POST API to create a new non-registered user
+app.post('/api/users/nonregistered', submitLimiter, async (req, res) => {
+  try {
+    const { fullName, email } = req.body;
+
+    // Check if the email already exists in the User collection
+    const existingUser = await User.findOne({ email });
+
+    if (existingUser) {
+      // If the email already exists, return an error
+      return res.status(400).json({ message: 'Email is already registered' });
+    }
+
+    // If the email does not exist, create a new non-registered user
+    const newUser = new Usernonregistered({ fullName, email });
+    await newUser.save();
+    
+    res.status(201).json({ message: 'User created successfully', newUser });
+  } catch (error) {
+    console.error('Request failed:', error);
+    res.status(400).json({ message: 'Error creating user' });
+  }
+});
+
+
+// GET API to fetch all non-registered users
+app.get('/api/users/nonregistered', verifyAdminToken, async (req, res) => {
+  try {
+      const users = await Usernonregistered.find().sort({ _id: -1 }).limit(5000).lean();
+      res.status(200).json(users);
+  } catch (error) {
+      console.error('Request failed:', error);
+      res.status(500).json({ message: 'Error fetching users' });
+  }
+});
+
+
+// DELETE API to remove a non-registered user by ID
+app.delete('/api/users/nonregistered/:id', verifyAdminToken, async (req, res) => {
+  try {
+      const { id } = req.params;
+      const deletedUser = await Usernonregistered.findByIdAndDelete(id);
+      if (deletedUser) {
+          res.status(200).json({ message: 'User deleted successfully' });
+      } else {
+          res.status(404).json({ message: 'User not found' });
+      }
+  } catch (error) {
+      console.error('Request failed:', error);
+      res.status(500).json({ message: 'Error deleting user' });
+  }
+});
+
+
+
+
+
+const ForumSchema = new mongoose.Schema({
+  threads: [
+    {
+      title: { type: String, required: true }, // Thread title
+      body: { type: String, required: true }, // Thread body content
+      profileUrl: String,
+      author: {
+        userId: { type: String, required: true }, // Author's user ID stored as a string
+        username: { type: String, required: true } // Author's username
+      },
+      views: { type: Number, default: 0 }, // Thread view count
+      replies: [
+        {
+          body: { type: String, required: true }, // Reply content
+          author: {
+            userId: { type: String, required: true }, // Reply author's user ID as a string
+            username: { type: String, required: true } // Reply author's username
+          },
+          createdDate: { type: Date, default: Date.now }, // Reply creation date
+          likes: [{ type: String }] // User IDs of those who liked the reply, stored as strings
+        }
+      ],
+      createdDate: { type: Date, default: Date.now }, // Thread creation date
+      lastUpdated: { type: Date, default: Date.now }, // Last update timestamp for the thread
+      locked: { type: Boolean, default: false }, // If the thread is locked
+      pinned: { type: Boolean, default: false } // If the thread is pinned
+    }
+  ],
+  notifications: [
+    {
+      type: { type: String, enum: ['reply', 'like', 'follow', 'mention'], required: true }, // Notification type
+      recipient: { type: String, required: true }, // Recipient's user ID as a string
+      sender: { type: String, required: true }, // Sender's user ID as a string
+      thread: { type: String }, // Associated thread ID as a string
+      post: { type: String }, // Associated post ID as a string
+      read: { type: Boolean, default: false }, // Whether the notification has been read
+      createdDate: { type: Date, default: Date.now } // Date of notification creation
+    }
+  ]
+});
+
+const Forum = mongoose.models.Forum || mongoose.model('Forum', ForumSchema);
+app.post('/threads', verifyToken, async (req, res) => {
+  try {
+    const newThread = {
+      title: req.body.title,
+      body: req.body.body,
+      profileUrl: req.body.profileUrl,
+      author: {
+        userId: req.body.author.userId,
+        username: req.body.author.username
+      },
+      createdDate: new Date(),
+      lastUpdated: new Date()
+    };
+
+    // Find the forum instance, or create a new one if it doesn't exist
+    let forum = await Forum.findOne();
+    if (!forum) {
+      forum = new Forum({ threads: [] }); // Create a new forum if none exists
+    }
+
+    forum.threads.push(newThread);
+    await forum.save();
+
+    res.status(201).json(newThread);
+  } catch (err) {
+    res.status(500).json({ message: 'Something went wrong on our side. Please try again.' });
+  }
+});
+
+
+
+// Reply to a thread
+app.post('/threads/:threadId/replies', verifyToken, async (req, res) => {
+  try {
+    const forum = await Forum.findOne(); // Assuming one forum instance
+    const thread = forum.threads.id(req.params.threadId);
+
+    const newReply = {
+      body: req.body.body,
+      author: {
+        userId: req.body.author.userId,
+        username: req.body.author.username
+      },
+      createdDate: new Date()
+    };
+
+    thread.replies.push(newReply);
+    thread.lastUpdated = new Date(); // Update the thread's last update time
+    await forum.save();
+
+    res.status(201).json(newReply);
+  } catch (err) {
+    res.status(500).json({ message: 'Something went wrong on our side. Please try again.' });
+  }
+});
+
+// Like a reply
+app.post('/threads/:threadId/replies/:replyId/like', verifyToken, async (req, res) => {
+  try {
+    const forum = await Forum.findOne(); // Assuming one forum instance
+    const thread = forum.threads.id(req.params.threadId);
+    const reply = thread.replies.id(req.params.replyId);
+
+    reply.likes.push(req.body.userId); // Push userId into likes array
+    await forum.save();
+
+    res.status(200).json({ message: 'Reply liked!' });
+  } catch (err) {
+    res.status(500).json({ message: 'Something went wrong on our side. Please try again.' });
+  }
+});
+
+
+// Create a notification
+app.post('/notifications', verifyAdminToken, async (req, res) => {
+  try {
+    const forum = await Forum.findOne(); // Assuming one forum instance
+    const newNotification = {
+      type: req.body.type,
+      recipient: req.body.recipient,
+      sender: req.body.sender,
+      thread: req.body.thread || null,
+      post: req.body.post || null,
+      read: req.body.read || false,
+      createdDate: new Date()
+    };
+
+    forum.notifications.push(newNotification);
+    await forum.save();
+
+    res.status(201).json(newNotification);
+  } catch (err) {
+    res.status(500).json({ message: 'Something went wrong on our side. Please try again.' });
+  }
+});
+
+
+// Mark a notification as read
+app.post('/notifications/:notificationId/read', verifyToken, async (req, res) => {
+  try {
+    const forum = await Forum.findOne(); // Assuming one forum instance
+    const notification = forum.notifications.id(req.params.notificationId);
+
+    if (!notification) return res.status(404).json({ message: 'Notification not found' });
+
+    notification.read = true;
+    await forum.save();
+
+    res.status(200).json({ message: 'Notification marked as read' });
+  } catch (err) {
+    res.status(500).json({ message: 'Something went wrong on our side. Please try again.' });
+  }
+});
+
+
+// Get all threads
+app.get('/threads', async (req, res) => {
+  try {
+    const forum = await Forum.findOne(); // Assuming one forum instance
+
+    if (!forum) {
+      return res.status(200).json([]); // No forum found, return an empty array
+    }
+
+    res.status(200).json(forum.threads);
+  } catch (err) {
+    res.status(500).json({ message: 'Something went wrong on our side. Please try again.' });
+  }
+});
+
+
+
+// Get a single thread by ID
+app.get('/threads/:threadId', async (req, res) => {
+  try {
+    const forum = await Forum.findOne();
+    const thread = forum.threads.id(req.params.threadId);
+
+    if (!thread) return res.status(404).json({ message: 'Thread not found' });
+
+    res.status(200).json(thread);
+  } catch (err) {
+    res.status(500).json({ message: 'Something went wrong on our side. Please try again.' });
+  }
+});
+
+
+// Get all replies in a thread
+app.get('/threads/:threadId/replies', async (req, res) => {
+  try {
+    const forum = await Forum.findOne();
+    const thread = forum.threads.id(req.params.threadId);
+
+    if (!thread) return res.status(404).json({ message: 'Thread not found' });
+
+    res.status(200).json(thread.replies);
+  } catch (err) {
+    res.status(500).json({ message: 'Something went wrong on our side. Please try again.' });
+  }
+});
+
+// Get all notifications for a user
+app.get('/notifications/:userId', verifyToken, requireSelf((req) => req.params.userId), async (req, res) => {
+  try {
+    const forum = await Forum.findOne();
+    const notifications = forum.notifications.filter(
+      notification => notification.recipient === req.params.userId
+    );
+
+    res.status(200).json(notifications);
+  } catch (err) {
+    res.status(500).json({ message: 'Something went wrong on our side. Please try again.' });
+  }
+});
+
+
+// Get a single notification by ID
+app.get('/notifications/:notificationId', async (req, res) => {
+  try {
+    const forum = await Forum.findOne();
+    const notification = forum.notifications.id(req.params.notificationId);
+
+    if (!notification) return res.status(404).json({ message: 'Notification not found' });
+
+    res.status(200).json(notification);
+  } catch (err) {
+    res.status(500).json({ message: 'Something went wrong on our side. Please try again.' });
+  }
+});
+
+// Delete a thread
+app.delete('/threads/:threadId', verifyToken, async (req, res) => {
+  try {
+    const forum = await Forum.findOne(); // Assuming one forum instance
+    const thread = forum.threads.id(req.params.threadId);
+
+    if (!thread) return res.status(404).json({ message: 'Thread not found' });
+
+    forum.threads.pull(req.params.threadId); // Remove thread using pull
+    await forum.save(); // Save the updated forum
+
+    res.status(200).json({ message: 'Thread deleted successfully' });
+  } catch (err) {
+    res.status(500).json({ message: 'Something went wrong on our side. Please try again.' });
+  }
+});
+// Delete a reply from a thread
+app.delete('/threads/:threadId/replies/:replyId', verifyToken, async (req, res) => {
+  try {
+    const forum = await Forum.findOne();
+    const thread = forum.threads.id(req.params.threadId);
+
+    if (!thread) return res.status(404).json({ message: 'Thread not found' });
+
+    const reply = thread.replies.id(req.params.replyId);
+    if (!reply) return res.status(404).json({ message: 'Reply not found' });
+
+    thread.replies.pull(req.params.replyId); // Remove reply using pull
+    await forum.save();
+
+    res.status(200).json({ message: 'Reply deleted successfully' });
+  } catch (err) {
+    res.status(500).json({ message: 'Something went wrong on our side. Please try again.' });
+  }
+});
+
+
+
+// Delete a notification
+app.delete('/notifications/:notificationId', verifyAdminToken, async (req, res) => {
+  try {
+    const forum = await Forum.findOne(); // Assuming one forum instance
+    const notification = forum.notifications.id(req.params.notificationId);
+
+    if (!notification) return res.status(404).json({ message: 'Notification not found' });
+
+    notification.remove(); // Remove notification
+    await forum.save();
+
+    res.status(200).json({ message: 'Notification deleted successfully' });
+  } catch (err) {
+    res.status(500).json({ message: 'Something went wrong on our side. Please try again.' });
+  }
+});
+
+// Delete all replies from a thread
+app.delete('/threads/:threadId/replies', verifyToken, async (req, res) => {
+  try {
+    const forum = await Forum.findOne();
+    const thread = forum.threads.id(req.params.threadId);
+
+    if (!thread) return res.status(404).json({ message: 'Thread not found' });
+
+    thread.replies = []; // Clear all replies
+    await forum.save();
+
+    res.status(200).json({ message: 'All replies deleted successfully' });
+  } catch (err) {
+    res.status(500).json({ message: 'Something went wrong on our side. Please try again.' });
+  }
+});
+
+// Delete all threads in the forum
+app.delete('/threads', verifyToken, async (req, res) => {
+  try {
+    const forum = await Forum.findOne(); // Assuming one forum instance
+    forum.threads = []; // Clear all threads
+    await forum.save();
+
+    res.status(200).json({ message: 'All threads deleted successfully' });
+  } catch (err) {
+    res.status(500).json({ message: 'Something went wrong on our side. Please try again.' });
+  }
+});
+
+
+// Update a thread (only by the author)
+app.put('/threads/:threadId', verifyToken, async (req, res) => {
+  try {
+    const forum = await Forum.findOne();
+    const thread = forum.threads.id(req.params.threadId);
+
+    if (!thread) return res.status(404).json({ message: 'Thread not found' });
+
+    // Compare against the TOKEN, not the request body. The old check used
+    // req.body.userId, which the caller controls, so anyone could pass the real
+    // author's id and edit their post.
+    if (String(thread.author.userId) !== String(req.user?.id || req.user?._id || '')) {
+      return res.status(403).json({ message: 'Permission denied' });
+    }
+
+    // Update thread fields
+    thread.title = req.body.title || thread.title;
+    thread.body = req.body.body || thread.body;
+    thread.lastUpdated = Date.now();
+
+    await forum.save();
+    res.status(200).json({ message: 'Thread updated successfully', thread });
+  } catch (err) {
+    res.status(500).json({ message: 'Something went wrong on our side. Please try again.' });
+  }
+});
+
+// Update a reply (only by the author)
+app.put('/threads/:threadId/replies/:replyId', verifyToken, async (req, res) => {
+  try {
+    const forum = await Forum.findOne();
+    const thread = forum.threads.id(req.params.threadId);
+
+    if (!thread) return res.status(404).json({ message: 'Thread not found' });
+
+    const reply = thread.replies.id(req.params.replyId);
+    if (!reply) return res.status(404).json({ message: 'Reply not found' });
+
+    // Check if the user is the author of the reply
+    // Compare against the TOKEN, not the body — a caller-supplied id is not proof of identity.
+    if (String(reply.author.userId) !== String(req.user?.id || req.user?._id || '')) {
+      return res.status(403).json({ message: 'Permission denied' });
+    }
+
+    // Update reply fields
+    reply.body = req.body.body || reply.body;
+    reply.lastUpdated = Date.now();
+
+    await forum.save();
+    res.status(200).json({ message: 'Reply updated successfully', reply });
+  } catch (err) {
+    res.status(500).json({ message: 'Something went wrong on our side. Please try again.' });
+  }
+});
+
+// Update a notification (only by the recipient)
+app.put('/notifications/:notificationId', verifyToken, async (req, res) => {
+  try {
+    const forum = await Forum.findOne();
+    const notification = forum.notifications.id(req.params.notificationId);
+
+    if (!notification) return res.status(404).json({ message: 'Notification not found' });
+
+    // Check if the user is the recipient of the notification
+    // Compare against the TOKEN, not the body.
+    if (String(notification.recipient) !== String(req.user?.id || req.user?._id || '')) {
+      return res.status(403).json({ message: 'Permission denied' });
+    }
+
+    // Update notification fields
+    notification.read = req.body.read || notification.read;
+
+    await forum.save();
+    res.status(200).json({ message: 'Notification updated successfully', notification });
+  } catch (err) {
+    res.status(500).json({ message: 'Something went wrong on our side. Please try again.' });
+  }
+});
+
+// Increment thread views
+app.put('/threads/:threadId/views', submitLimiter, async (req, res) => {
+  try {
+    const forum = await Forum.findOne();
+    const thread = forum.threads.id(req.params.threadId);
+
+    if (!thread) return res.status(404).json({ message: 'Thread not found' });
+
+    // Increment views count
+    thread.views += 1;
+
+    await forum.save();
+    res.status(200).json({ message: 'Thread view count updated', views: thread.views });
+  } catch (err) {
+    res.status(500).json({ message: 'Something went wrong on our side. Please try again.' });
+  }
+});
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+const redListSchema = new mongoose.Schema({
+  email: { type: String, required: true, unique: true },
+  profileUrl: String,
+}, { timestamps: true });
+
+const Redusers = mongoose.models.Redusers || mongoose.model('Redusers', redListSchema);
+
+app.post('/redusers', verifyAdminToken, async (req, res) => {
+  try {
+    const { email, profileUrl } = req.body;
+
+    // Find and delete user from User collection
+    const user = await User.findOneAndDelete({ email });
+    if (!user) {
+      return res.status(404).json({ message: 'User not found in the system' });
+    }
+
+    // Add user to the red list
+    const newRedUser = new Redusers({ email, profileUrl });
+    await newRedUser.save();
+
+
+    const mailOptions = {
+      from: FMM_MAIL_FROM,
+      to: user.email,
+      subject: 'Account Flagged Due to Violation',
+      html: `
+      <table width="100%" cellpadding="0" cellspacing="0" border="0" style="width:100%; max-width:600px; margin:auto;">
+        <!-- Logo Section -->
+        <tr>
+          <td align="center" style="padding: 15px 0;">
+            <img src="https://res.cloudinary.com/daflot6fo/image/upload/v1736068036/bywcrrcqmcyczdyhjmdv.png" alt="Fantasy Madness Logo" style="width:100px;" />
+            <h2 style="margin: 0; color: #191164; font-family: 'New York', Charter, Georgia, serif;">Fantasy Madness</h2>
+          </td>
+        </tr>
+        
+        <!-- Greeting Section -->
+        <tr>
+          <td style="padding: 10px 0;">
+            <p style="font-size: 16px; font-family: Arial, sans-serif; color: #333;">Dear ${user.firstName},</p>
+            <p style="font-size: 16px; font-family: Arial, sans-serif; color: #333;">
+              Due to violations of our terms and conditions, your account has been flagged and removed from Fantasy Madness. 
+            </p>
+            <p style="font-size: 16px; font-family: Arial, sans-serif; color: #333;">
+              Please contact our support team if you believe this was a mistake.
+            </p>
+          </td>
+        </tr>
+
+        <!-- Footer Section -->
+        <tr>
+          <td align="center" style="padding: 15px 0;">
+            <img src="https://res.cloudinary.com/daflot6fo/image/upload/v1736068036/bywcrrcqmcyczdyhjmdv.png" alt="Fantasy Madness Logo" style="width:70px;" />
+            <p><a href="https://fantasymmadness.com" style="font-family: Arial, sans-serif; color: #191164; text-decoration: none;">https://fantasymmadness.com</a></p>
+          </td>
+        </tr>
+      </table>
+    `,
+    };
+
+    await transporter.sendMail(mailOptions);
+
+    res.status(201).json({ message: 'User added to the red list and notification sent', data: newRedUser });
+  } catch (error) {
+    console.error('Request failed:', error);
+    res.status(500).json({ message: 'Error adding user to the red list or sending email' });
+  }
+});
+
+// GET API - Get all users from the red list
+app.get('/redusers', verifyAdminToken, async (req, res) => {
+  try {
+    const redUsers = await Redusers.find().sort({ _id: -1 }).limit(2000).lean();
+    res.status(200).json({ message: 'Red list users retrieved', data: redUsers });
+  } catch (error) {
+    console.error('Request failed:', error);
+    res.status(500).json({ message: 'Error retrieving red list users' });
+  }
+});
+
+// DELETE API - Remove a user from the red list by email
+app.delete('/redusers/:email', verifyAdminToken, async (req, res) => {
+  try {
+    const { email } = req.params;
+    const deletedUser = await Redusers.findOneAndDelete({ email });
+    if (!deletedUser) {
+      return res.status(404).json({ message: 'User not found in the red list' });
+    }
+    res.status(200).json({ message: 'User removed from the red list', data: deletedUser });
+  } catch (error) {
+    console.error('Request failed:', error);
+    res.status(500).json({ message: 'Error removing user from the red list' });
+  }
+});
+
+
+
+
+const siteStatsSchema = new mongoose.Schema({
+  domain: { type: String, required: true },  // New: Track by domain
+  totalClicks: { type: Number, default: 0 },
+  allClicks: { type: Number, default: 0 },
+  trackedDevices: { type: [String], default: [] },
+  clicksByDate: {
+    type: Map,
+    of: Number,
+    default: new Map(),
+  },
+  allClicksByDate: {
+    type: Map,
+    of: Number,
+    default: new Map(),
+  },
+});
+
+siteStatsSchema.index({ domain: 1 });
+const SiteStats = mongoose.models.SiteStats || mongoose.model('SiteStats', siteStatsSchema);
+
+app.post('/track-click', submitLimiter, async (req, res) => {
+  const { deviceId, domain } = req.body;
+  const targetDomain = domain || "https://fantasymmadness.com/"; // default fallback
+
+  if (!deviceId) {
+    return res.status(400).send({ message: 'Device ID is required' });
+  }
+
+  try {
+    const today = new Date().toISOString().split('T')[0];
+
+    let stats = await SiteStats.findOne({ domain: targetDomain });
+    if (!stats) {
+      stats = await SiteStats.create({
+        domain: targetDomain,
+        totalClicks: 0,
+        allClicks: 0,
+        trackedDevices: [],
+        clicksByDate: new Map(),
+        allClicksByDate: new Map(),
+      });
+    }
+
+    stats.allClicks += 1;
+    stats.allClicksByDate.set(today, (stats.allClicksByDate.get(today) || 0) + 1);
+
+    let isNewDevice = false;
+
+    if (!stats.trackedDevices.includes(deviceId)) {
+      stats.totalClicks += 1;
+      stats.trackedDevices.push(deviceId);
+      stats.clicksByDate.set(today, (stats.clicksByDate.get(today) || 0) + 1);
+      isNewDevice = true;
+    }
+
+    await stats.save();
+
+    res.status(200).send({ 
+      message: isNewDevice ? 'Click tracked (unique)' : 'Click tracked (repeat)',
+      totalClicks: stats.totalClicks,
+      allClicks: stats.allClicks,
+      clicksByDate: Object.fromEntries(stats.clicksByDate),
+      allClicksByDate: Object.fromEntries(stats.allClicksByDate),
+    });
+
+  } catch (error) {
+    console.error('Error tracking click:', error);
+    res.status(500).send({ message: 'Error tracking click' });
+  }
+});
+
+
+app.get('/get-total-clicks', async (req, res) => {
+  const domain = req.query.domain || "https://fantasymmadness.com/";
+
+  try {
+    const stats = await SiteStats.findOne({ domain });
+
+    if (!stats) {
+      return res.status(404).send({ message: `No stats found for domain ${domain}.` });
+    }
+
+    res.status(200).send({ stats });
+  } catch (error) {
+    console.error('Error fetching total clicks:', error);
+    res.status(500).send({ message: 'Error fetching total clicks' });
+  }
+});
+
+app.get('/get-all-time-clicks', async (req, res) => {
+  
+  try {
+    const stats = await SiteStats.find({ }).lean();
+
+    if (!stats) {
+      return res.status(404).send({ message: `No stats found.` });
+    }
+
+    res.status(200).send({ stats });
+  } catch (error) {
+    console.error('Error fetching total clicks:', error);
+    res.status(500).send({ message: 'Error fetching total clicks' });
+  }
+});
+app.post('/reset-stats', verifyAdminToken, requireBulkConfirmation('SITESTATS'), async (req, res) => {
+  try {
+    await SiteStats.deleteMany({});
+    
+    res.status(200).send({ message: 'All site stats have been reset successfully.' });
+  } catch (error) {
+    console.error('Error resetting stats:', error);
+    res.status(500).send({ message: 'Error resetting stats.' });
+  }
+});
+
+
+app.post('/reset-unique-visitors', verifyAdminToken, async (req, res) => {
+  const domain = req.body.domain || "https://fantasymmadness.com/";
+
+  try {
+    const stats = await SiteStats.findOne({ domain });
+    if (!stats) return res.status(404).send({ message: `No stats found for domain ${domain}.` });
+
+    stats.totalClicks = 0;
+    stats.trackedDevices = [];
+    stats.clicksByDate = new Map();
+
+    await stats.save();
+
+    res.status(200).send({ message: `Unique visitor stats reset for domain ${domain}.` });
+  } catch (error) {
+    console.error('Error resetting unique visitors:', error);
+    res.status(500).send({ message: 'Error resetting unique visitor stats.' });
+  }
+});
+
+app.post('/reset-all-visitors', verifyAdminToken, async (req, res) => {
+  const domain = req.body.domain || "https://fantasymmadness.com/";
+
+  try {
+    const stats = await SiteStats.findOne({ domain });
+    if (!stats) return res.status(404).send({ message: `No stats found for domain ${domain}.` });
+
+    stats.allClicks = 0;
+    stats.allClicksByDate = new Map();
+
+    await stats.save();
+
+    res.status(200).send({ message: `All visitor stats reset for domain ${domain}.` });
+  } catch (error) {
+    console.error('Error resetting all visitors:', error);
+    res.status(500).send({ message: 'Error resetting all visitor stats.' });
+  }
+});
+
+app.post('/assign-default-domain', verifyAdminToken, async (req, res) => {
+  const defaultDomain = "https://fantasymmadness.com/";
+
+  try {
+    const result = await SiteStats.updateMany(
+      { domain: { $exists: false } },
+      { $set: { domain: defaultDomain } }
+    );
+
+    res.status(200).send({
+      message: `Domain assigned to ${result.modifiedCount} documents.`,
+    });
+  } catch (error) {
+    console.error('Error assigning default domain:', error);
+    res.status(500).send({ message: 'Failed to assign domain.' });
+  }
+});
+
+
+
+
+
+
+
+
+
+
+
+
+const faqSchema = new mongoose.Schema({
+  title: String,
+  description:String,
+});
+
+faqSchema.index({ title: 1 });
+const Faqs = mongoose.models.Faqs || mongoose.model('Faqs', faqSchema);
+
+
+app.delete('/all/delete/faqs', verifyAdminToken, requireBulkConfirmation('FAQS'), async (req, res) => {
+  try {
+    // Delete all documents from the Faqs collection
+    const result = await Faqs.deleteMany({});
+    res.status(200).json({
+      message: 'All FAQs deleted successfully.',
+      deletedCount: result.deletedCount,
+    });
+  } catch (error) {
+    console.error('Error deleting FAQs:', error);
+    res.status(500).json({ error: 'Failed to delete FAQs from the database.' });
+  }
+});
+app.post('/faqs', verifyAdminToken, async (req, res) => {
+  try {
+    const faq = new Faqs(req.body);
+    await faq.save();
+
+    // Create a notification when a new FAQ is added
+    const notification = new Notification({
+      title: `New FAQ Added: ${faq.title}`,
+    });
+    await notification.save();
+
+    res.status(201).json({ success: true, data: faq });
+  } catch (error) {
+    res.status(400).json({ success: false, message: error.message });
+  }
+});
+
+app.get('/faqs', async (req, res) => {
+  try {
+    const faqs = await Faqs.find().limit(300).lean();
+    res.status(200).json({ success: true, data: faqs });
+  } catch (error) {
+    res.status(500).json({ success: false, message: 'Something went wrong on our side. Please try again.' });
+  }
+});
+
+app.put('/faqs/:id', verifyAdminToken, async (req, res) => {
+  try {
+    const faq = await Faqs.findByIdAndUpdate(req.params.id, req.body, {
+      new: true,
+      runValidators: true,
+    });
+
+    if (!faq) return res.status(404).json({ success: false, message: 'FAQ not found' });
+
+    // Create a notification for FAQ update
+    const notification = new Notification({
+      title: `FAQ Updated: ${faq.title}`,
+    });
+    await notification.save();
+
+    res.status(200).json({ success: true, data: faq });
+  } catch (error) {
+    res.status(400).json({ success: false, message: error.message });
+  }
+});
+
+app.delete('/faqs/:id', verifyAdminToken, async (req, res) => {
+  try {
+    const faq = await Faqs.findByIdAndDelete(req.params.id);
+    if (!faq) return res.status(404).json({ success: false, message: 'FAQ not found' });
+
+    // Create a notification for FAQ deletion
+    const notification = new Notification({
+      title: `FAQ Deleted: ${faq.title}`,
+    });
+    await notification.save();
+
+    res.status(200).json({ success: true, message: 'FAQ deleted successfully' });
+  } catch (error) {
+    res.status(400).json({ success: false, message: error.message });
+  }
+});
+
+
+app.post('/faqs/bulk', verifyAdminToken, async (req, res) => {
+  const faqs = req.body; // Expecting an array of FAQ objects in the request body
+
+  if (!Array.isArray(faqs) || faqs.length === 0) {
+    return res.status(400).json({ error: 'Request body should be an array of FAQs.' });
+  }
+
+  try {
+    // Insert the array of FAQs into the database
+    const insertedFaqs = await Faqs.insertMany(faqs);
+    res.status(201).json({
+      message: 'FAQs added successfully.',
+      data: insertedFaqs,
+    });
+  } catch (error) {
+    console.error('Error adding FAQs:', error);
+    res.status(500).json({ error: 'Failed to add FAQs to the database.' });
+  }
+});
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+const testimonialSchema = new mongoose.Schema({
+  author: String,
+  description:String,
+});
+testimonialSchema.index({ author: 1 });
+
+const Testimonials = mongoose.models.Testimonials || mongoose.model('Testimonials', testimonialSchema);
+
+
+app.delete('/all/delete/testimonials', verifyAdminToken, requireBulkConfirmation('TESTIMONIALS'), async (req, res) => {
+  try {
+    // Delete all documents from the Faqs collection
+    const result = await Testimonials.deleteMany({});
+    res.status(200).json({
+      message: 'All Testimonials deleted successfully.',
+      deletedCount: result.deletedCount,
+    });
+  } catch (error) {
+    console.error('Error deleting Testimonials:', error);
+    res.status(500).json({ error: 'Failed to delete Testimonials from the database.' });
+  }
+});
+
+
+app.post('/testimonials', verifyAdminToken, async (req, res) => {
+  const { userId, ...testimonialData } = req.body;
+
+  try {
+    // Create and save the new testimonial
+    const testimonial = new Testimonials(testimonialData);
+    await testimonial.save();
+
+    // Update the User's hasSubmittedTestimonial status
+    const user = await User.findByIdAndUpdate(
+      userId,
+      { hasSubmittedTestimonial: true },
+      { new: true }
+    );
+
+    if (!user) {
+      return res.status(404).json({ success: false, message: 'User not found' });
+    }
+
+    res.status(201).json({
+      success: true,
+      data: {
+        testimonial,
+        user,
+      },
+    });
+  } catch (error) {
+    res.status(400).json({ success: false, message: error.message });
+  }
+});
+
+app.get('/testimonials', async (req, res) => {
+  try {
+    const testimonials = await Testimonials.find().limit(300).lean();
+    res.status(200).json({ success: true, data: testimonials });
+  } catch (error) {
+    res.status(500).json({ success: false, message: 'Something went wrong on our side. Please try again.' });
+  }
+});
+
+app.put('/testimonials/:id', verifyAdminToken, async (req, res) => {
+  try {
+    const testimonials = await Testimonials.findByIdAndUpdate(req.params.id, req.body, {
+      new: true,
+      runValidators: true,
+    });
+    if (!testimonials) return res.status(404).json({ success: false, message: 'testimonials not found' });
+    res.status(200).json({ success: true, data: testimonials });
+  } catch (error) {
+    res.status(400).json({ success: false, message: error.message });
+  }
+});
+
+app.delete('/testimonials/:id', verifyAdminToken, async (req, res) => {
+  try {
+    const testimonials = await Testimonials.findByIdAndDelete(req.params.id);
+    if (!testimonials) return res.status(404).json({ success: false, message: 'testimonials not found' });
+    res.status(200).json({ success: true, message: 'testimonials deleted successfully' });
+  } catch (error) {
+    res.status(400).json({ success: false, message: error.message });
+  }
+});
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+const newsSchema = new mongoose.Schema({
+  title: String,
+  description: String,
+  dateCreated: { type: Date, default: Date.now }, // Automatically set the creation date
+});
+
+newsSchema.index({ dateCreated: -1 });
+newsSchema.index({ title: 1 });
+const News = mongoose.models.News || mongoose.model('News', newsSchema);
+
+
+// Delete all News articles
+app.delete('/all/delete/news', verifyAdminToken, requireBulkConfirmation('NEWS'), async (req, res) => {
+  try {
+    const result = await News.deleteMany({});
+    res.status(200).json({
+      message: 'All News articles deleted successfully.',
+      deletedCount: result.deletedCount,
+    });
+  } catch (error) {
+    console.error('Error deleting News:', error);
+    res.status(500).json({ error: 'Failed to delete News articles from the database.' });
+  }
+});
+
+
+
+
+// Add a new News article
+app.post('/news', verifyAdminToken, async (req, res) => {
+  try {
+    // Create and save the news article
+    const news = new News(req.body);
+    await news.save();
+
+    const notification = new Notification({
+      title: `New News Added: ${news.title}`,
+    });
+    await notification.save();
+
+
+    // Check if notifications are enabled in the request
+    if (req.body.notify === 'true' || req.body.notify === true) {
+      // Fetch all users with isSubscribed set to true
+      const subscribedUsers = await User.find({ isSubscribed: true }).select('email firstName').limit(20000).lean();
+
+      if (subscribedUsers.length > 0) {
+        const emailPromises = subscribedUsers.map(user => {
+          const unsubscribeUrl = `https://fantasymmadness-game-server-three.vercel.app/unsubscribe-user/${user._id}?t=${signActionToken('unsubscribe', user._id)}`;
+          const mailOptions = {
+            from: FMM_MAIL_FROM,
+            to: user.email,
+            subject: 'Fantasy mmadness - New Update!',
+            html: `
+              <table width="100%" cellpadding="0" cellspacing="0" border="0" style="width:100%; max-width:600px; margin:auto;">
+                <tr>
+                  <td align="center" style="padding: 15px 0;">
+                    <img src="https://res.cloudinary.com/daflot6fo/image/upload/v1736068036/bywcrrcqmcyczdyhjmdv.png" alt="Fantasy mmadness Logo" style="width:100px;" />
+                    <h2 style="margin: 0; color: #191164; font-family: 'New York', Charter, Georgia, serif;">Fantasy mmadness</h2>
+                  </td>
+                </tr>
+                <tr>
+                  <td style="padding: 10px 0;">
+                    <p style="font-size: 16px; font-family: Arial, sans-serif; color: #333;">Dear ${user.firstName} ${user.lastName},</p>
+                    <p style="font-size: 16px; font-family: Arial, sans-serif; color: #333;">We have some exciting news for you:</p>
+                    <p style="font-size: 20px; font-family: 'Georgia', serif; font-weight: bold; color: #d20a0a; margin-top: 20px; border-bottom: 2px solid #d20a0a; padding-bottom: 5px;">
+                      ${news.title}
+                    </p>
+                    <p style="font-size: 16px; font-family: Arial, sans-serif; line-height: 1.6; color: #555; margin-top: 10px; padding: 10px; background: #f9f9f9; border-radius: 8px; border: 1px solid #ddd;">
+                      ${news.description}
+                    </p>
+                  </td>
+                </tr>
+                     <!-- Footer Section with Social Icons -->
+      <tr>
+        <td align="center" style="padding: 20px 0;">
+          <img src="https://res.cloudinary.com/daflot6fo/image/upload/v1736068036/bywcrrcqmcyczdyhjmdv.png" alt="Fantasy Madness Logo" style="width:70px;" />
+          <p><a href="https://fantasymmadness.com" style="font-family: Arial, sans-serif; color: #191164; text-decoration: none;">https://fantasymmadness.com</a></p>
+                   <p>If you no longer wish to receive updates, you can <a href="${unsubscribeUrl}" style="color: #d20a0a; text-decoration: none;">unsubscribe</a>.</p>
+           
+          <div style="padding-top: 10px;">
+            <!-- Social Icons -->
+            <a href="https://www.facebook.com/share/2pzYV9XdQpAU7n6p/?mibextid=LQQJ4d" style="margin: 0 5px; width:35px; height:35px; border-radius:50%; background:#fff; background-color:#fff;">
+              <img src="https://i.ibb.co/G9wVH2g/facebook-removebg-preview-two.png" alt="Facebook" style="width:35px; height:35px; border-radius:50%; background-color:#fff; background:#fff;" />
+            </a>
+            <a href="https://www.instagram.com/fantasymmadness" style="margin: 0 5px;">
+              <img src="https://i.ibb.co/tKj4px0/insta-removebg-preview-two.png" alt="Instagram" style="width:35px; height:35px; border-radius:50%; background-color:#fff;" />
+            </a>
+            <a href="https://x.com/davis_kell51697" style="margin: 0 5px;">
+              <img src="https://i.ibb.co/T0cvy2Q/twitter-removebg-preview-two.png" alt="Twitter" style="width:35px; height:35px; border-radius:50%; background-color:#fff;" />
+            </a>
+          </div>
+        </td>
+      </tr>
+              </table>
+            `,
+          };
+
+          return transporter.sendMail(mailOptions);
+        });
+
+        // Send all emails
+        try {
+          await Promise.all(emailPromises);
+          console.log('Emails sent successfully to subscribed users.');
+        } catch (error) {
+          console.error('Error sending emails:', error);
+        }
+      }
+    } else {
+      console.log('Notification skipped because notify is set to false');
+    }
+
+    res.status(201).json({ success: true, message: 'News article added successfully and notifications sent (if applicable).', data: news });
+  } catch (error) {
+    console.error('Error creating news article:', error);
+    res.status(400).json({ success: false, message: error.message });
+  }
+});
+
+// Unsubscribe a user
+// SECURITY: this took a bare user id, so anyone could unsubscribe anyone else by
+// walking ids — a silent way to cut players off from entry, refund and payout
+// notices. Email links cannot send a header, so they carry an HMAC instead, the
+// same pattern as the affiliate approval links. Legacy links without a signature
+// still work for 30 days so nobody's existing email breaks; after that, remove
+// the ALLOW_UNSIGNED_UNSUBSCRIBE branch.
+const ALLOW_UNSIGNED_UNSUBSCRIBE = process.env.ALLOW_UNSIGNED_UNSUBSCRIBE !== 'false';
+
+app.get('/unsubscribe-user/:userId', async (req, res) => {
+  try {
+    const { userId } = req.params;
+
+    if (!verifySignedAction('unsubscribe', userId, req.query.t)) {
+      if (!ALLOW_UNSIGNED_UNSUBSCRIBE) {
+        return res.status(403).send('<div style="font-family:Arial,sans-serif;text-align:center;margin-top:50px"><h1>This unsubscribe link is not valid.</h1><p>Use the link in a recent email, or change notification settings in your account.</p></div>');
+      }
+      console.warn('[unsubscribe] unsigned legacy link used for', userId);
+    }
+
+    // Update the user's subscription status
+    const user = await User.findByIdAndUpdate(userId, { isSubscribed: false }, { new: true });
+
+    if (!user) {
+      return res.status(404).json({ success: false, message: 'User not found' });
+    }
+
+    res.send(`
+      <div style="text-align: center; font-family: Arial, sans-serif; margin-top: 50px;">
+        <h1 style="color: #d20a0a;">Unsubscribed Successfully</h1>
+        <p style="font-size: 16px; color: #333;">You will no longer receive notifications from Fantasy Madness.</p>
+        <a href="https://fantasymmadness.com" style="text-decoration: none; color: #191164; font-weight: bold;">Return to Fantasy Madness</a>
+      </div>
+    `);
+  } catch (error) {
+    console.error('Error unsubscribing user:', error);
+    res.status(500).json({ success: false, message: 'An error occurred while unsubscribing the user.' });
+  }
+});
+
+
+
+app.get('/news', async (req, res) => {
+  try {
+    // Fetch from database
+    const dbArticles = await News.find().sort({ createdAt: -1 }).lean();
+
+    // Fetch UFC-focused Google News RSS.
+    const feed = await parser.parseURL(process.env.UFC_NEWS_RSS_URL || GOOGLE_NEWS_UFC_RSS_FEED_URL);
+    const rssArticles = ufcEventDiscoveryPrivate.formatRssItemsAsNewsArticles(feed.items || []);
+
+    // Optionally add a source flag to DB articles too
+    const formattedDbArticles = dbArticles.map(article => ({
+      _id: article._id,
+      title: article.title,
+      description: article.description,
+      link: article.link,
+      pubDate: article.pubDate,
+      image: article.image,
+      creator: article.creator,
+      source: 'database'
+    }));
+
+    // Combine both
+    const allArticles = [...formattedDbArticles, ...rssArticles];
+
+    // Optional: Sort by date (descending)
+    allArticles.sort((a, b) => new Date(b.pubDate) - new Date(a.pubDate));
+
+    res.status(200).json({ success: true, data: allArticles });
+  } catch (error) {
+    console.error('Error loading news:', error.message);
+    res.status(500).json({ success: false, message: 'Failed to load news.' });
+  }
+});
+
+app.get('/api/public/fight-news-calendar', async (req, res) => {
+  try {
+    const { payload, cacheState } = await readThroughPublicCache(
+      getPublicCacheKey(req, 'public-fight-news-calendar'),
+      async () => {
+        const limit = parsePositiveInteger(req.query.limit, 40, 120);
+        const now = new Date();
+        const [dbArticles, feed] = await Promise.all([
+          News.find().sort({ dateCreated: -1, createdAt: -1 }).limit(limit * 2).lean(),
+          parser.parseURL(process.env.UFC_NEWS_RSS_URL || GOOGLE_NEWS_UFC_RSS_FEED_URL).catch((error) => {
+            console.warn('Fight-news calendar RSS unavailable:', error.message);
+            return { items: [] };
+          }),
+        ]);
+
+        const dbItems = dbArticles.map((article) => ({
+          _id: article._id,
+          title: article.title,
+          description: article.description,
+          contentSnippet: article.description,
+          link: article.link,
+          pubDate: article.pubDate || article.dateCreated || article.createdAt,
+          isoDate: article.pubDate || article.dateCreated || article.createdAt,
+          source: article.source || 'database',
+        }));
+
+        const seen = new Set();
+        const items = [...dbItems, ...(feed.items || [])]
+          .map((article, index) => {
+            const candidate = ufcEventDiscoveryPrivate.parseUfcEventCandidateFromRssItem(article, { now });
+            if (!candidate || !candidate.eventDate) return null;
+
+            const sufficiency = ufcEventDiscoveryPrivate.hasSufficientEventData(candidate, { now });
+            const tooOld = candidate.eventDate.getTime() < now.getTime() - (48 * 60 * 60 * 1000);
+            if (tooOld || (!sufficiency.ok && Number(candidate.confidence || 0) < 45)) return null;
+
+            const dedupeKey = candidate.discoveryKey || candidate.articleUrl || `${candidate.eventName}-${candidate.eventDate.toISOString().slice(0, 10)}`;
+            if (seen.has(dedupeKey)) return null;
+            seen.add(dedupeKey);
+
+            return {
+              _id: `fight-news-${dedupeKey || index}`.replace(/[^a-zA-Z0-9:_-]/g, '-'),
+              sourceType: 'fight-news',
+              title: candidate.eventName || candidate.title || 'Upcoming fight news event',
+              matchName: candidate.eventName || candidate.title || 'Upcoming fight news event',
+              description: candidate.description || candidate.title || '',
+              matchDescription: candidate.description || candidate.title || '',
+              eventDate: candidate.eventDate.toISOString(),
+              matchDate: candidate.eventDate.toISOString(),
+              eventTime: candidate.matchTime || '',
+              matchTime: candidate.matchTime || '',
+              venue: candidate.venue || candidate.city || 'News event',
+              city: candidate.city || '',
+              fighterA: candidate.fighterA || '',
+              fighterB: candidate.fighterB || '',
+              matchFighterA: candidate.fighterA || '',
+              matchFighterB: candidate.fighterB || '',
+              eventName: candidate.eventName || '',
+              eventType: candidate.eventType || '',
+              eventNumber: candidate.eventNumber || null,
+              confidence: candidate.confidence || 0,
+              discoveryKey: candidate.discoveryKey || '',
+              source: candidate.articleSource || 'Google News',
+              articleSource: candidate.articleSource || '',
+              link: candidate.articleUrl || candidate.officialEventUrl || '',
+              officialEventUrl: candidate.officialEventUrl || '',
+              provider: candidate.provider || 'google-news-ufc-rss',
+              calendarEligible: true,
+              isCalendarEvent: true,
+              eventDiscovered: true,
+              pubDate: candidate.publishedAt ? candidate.publishedAt.toISOString() : null,
+            };
+          })
+          .filter(Boolean)
+          .sort((a, b) => new Date(a.matchDate).getTime() - new Date(b.matchDate).getTime())
+          .slice(0, limit);
+
+        return {
+          ok: true,
+          success: true,
+          data: items,
+          items,
+          count: items.length,
+          generatedAt: new Date().toISOString(),
+        };
+      }
+    );
+
+    setPublicCacheHeaders(res, PUBLIC_CACHE_TTL_SECONDS, cacheState);
+    res.status(200).json(payload);
+  } catch (error) {
+    console.error('Error loading fight-news calendar:', error.message);
+    res.status(500).json({ ok: false, success: false, message: 'Failed to load fight-news calendar.' });
+  }
+});
+// Update a News article by ID
+app.put('/news/:id', verifyAdminToken, async (req, res) => {
+  try {
+    const news = await News.findByIdAndUpdate(req.params.id, req.body, {
+      new: true,
+      runValidators: true,
+    });
+    if (!news) return res.status(404).json({ success: false, message: 'News article not found' });
+
+    const notification = new Notification({
+      title: `News Updated: ${news.title}`,
+    });
+    await notification.save();
+
+    res.status(200).json({ success: true, data: news });
+  } catch (error) {
+    res.status(400).json({ success: false, message: error.message });
+  }
+});
+
+// Delete a News article by ID
+app.delete('/news/:id', verifyAdminToken, async (req, res) => {
+  try {
+    const news = await News.findByIdAndDelete(req.params.id);
+    if (!news) return res.status(404).json({ success: false, message: 'News article not found' });
+    
+    const notification = new Notification({
+      title: `News Deleted: ${news.title}`,
+    });
+    await notification.save();
+    res.status(200).json({ success: true, message: 'News article deleted successfully' });
+  } catch (error) {
+    res.status(400).json({ success: false, message: error.message });
+  }
+});
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+const sponsorSchema = new mongoose.Schema({
+  name: String,
+  email: String,
+  description: String,
+  image: String,
+  imageDeleteUrl: String,
+  websiteLink: String,
+  instaLink: String,
+  dateCreated: { type: Date, default: Date.now }, // Automatically set the creation date
+});
+
+sponsorSchema.index({ email: 1 });
+sponsorSchema.index({ dateCreated: -1 });
+const Sponsors = mongoose.models.Sponsors || mongoose.model('Sponsors', sponsorSchema);
+
+// Get all sponsors by email
+// --------------------------------------------------------------------------
+// SPONSOR LOGIN
+// The old flow was: GET /sponsors/email/<address> -> if a sponsor exists, the
+// browser set isSponsorAuthenticated=true in localStorage. Knowing (or guessing)
+// a sponsor's email address was the entire credential, and the "session" was a
+// client-side string. Replaced with an emailed one-time code and a real JWT.
+// --------------------------------------------------------------------------
+const sponsorLoginCodeSchema = new mongoose.Schema({
+  normalizedEmail: { type: String, required: true, index: true },
+  codeHash: { type: String, required: true },
+  attempts: { type: Number, default: 0 },
+  expiresAt: { type: Date, required: true },
+}, { timestamps: true });
+
+const SponsorLoginCode = mongoose.models.SponsorLoginCode
+  || mongoose.model('SponsorLoginCode', sponsorLoginCodeSchema);
+
+const SPONSOR_CODE_TTL_MS = 10 * 60 * 1000;
+const SPONSOR_CODE_MAX_ATTEMPTS = 5;
+const hashSponsorCode = (code) => crypto.createHash('sha256').update(String(code)).digest('hex');
+
+app.post('/api/sponsor/login/request', submitLimiter, async (req, res) => {
+  const normalizedEmail = String(req.body?.email || '').trim().toLowerCase();
+  // Always answer the same way: this endpoint must not confirm who is a sponsor.
+  const genericResponse = { ok: true, message: 'If that address belongs to a sponsor, a sign-in code is on its way.' };
+  try {
+    if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(normalizedEmail)) {
+      return res.status(400).json({ ok: false, message: 'Enter a valid email address.' });
+    }
+    const sponsor = await Sponsors.findOne({ email: new RegExp(`^${normalizedEmail.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`, 'i') })
+      .select('_id email name')
+      .lean();
+    if (!sponsor) return res.json(genericResponse);
+
+    const code = String(crypto.randomInt(100000, 1000000));
+    await SponsorLoginCode.deleteMany({ normalizedEmail });
+    await SponsorLoginCode.create({
+      normalizedEmail,
+      codeHash: hashSponsorCode(code),
+      expiresAt: new Date(Date.now() + SPONSOR_CODE_TTL_MS),
+    });
+
+    await transporter.sendMail({
+      from: FMM_MAIL_FROM,
+      to: sponsor.email,
+      subject: 'Your Fantasy MMAdness sponsor sign-in code',
+      html: `<div style="font-family:Georgia,'Times New Roman',serif;color:#201f1d">
+        <p>Hello ${sponsor.name || 'there'},</p>
+        <p>Your sponsor sign-in code is:</p>
+        <p style="font-size:30px;letter-spacing:6px;font-variant-numeric:tabular-nums"><strong>${code}</strong></p>
+        <p>It expires in 10 minutes. If you did not request it, you can ignore this email.</p>
+      </div>`,
+    });
+    return res.json(genericResponse);
+  } catch (error) {
+    console.error('Sponsor login code error:', error);
+    return res.json(genericResponse);
+  }
+});
+
+app.post('/api/sponsor/login/verify', loginLimiter, async (req, res) => {
+  try {
+    const normalizedEmail = String(req.body?.email || '').trim().toLowerCase();
+    const code = String(req.body?.code || '').trim();
+    if (!normalizedEmail || !/^\d{6}$/.test(code)) {
+      return res.status(400).json({ ok: false, message: 'Enter the 6-digit code from your email.' });
+    }
+    const record = await SponsorLoginCode.findOne({ normalizedEmail }).sort({ createdAt: -1 });
+    if (!record || record.expiresAt.getTime() < Date.now()) {
+      return res.status(400).json({ ok: false, message: 'That code has expired. Request a new one.' });
+    }
+    if (record.attempts >= SPONSOR_CODE_MAX_ATTEMPTS) {
+      return res.status(429).json({ ok: false, message: 'Too many attempts. Request a new code.' });
+    }
+    const supplied = Buffer.from(hashSponsorCode(code));
+    const expected = Buffer.from(record.codeHash);
+    if (supplied.length !== expected.length || !crypto.timingSafeEqual(supplied, expected)) {
+      record.attempts += 1;
+      await record.save();
+      return res.status(400).json({ ok: false, message: 'That code is not correct.' });
+    }
+    const sponsor = await Sponsors.findOne({ email: new RegExp(`^${normalizedEmail.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`, 'i') }).lean();
+    if (!sponsor) return res.status(404).json({ ok: false, message: 'Sponsor account not found.' });
+    await SponsorLoginCode.deleteMany({ normalizedEmail });
+
+    const token = jwt.sign({ id: sponsor._id, scope: TOKEN_SCOPES.SPONSOR }, process.env.JWT_SECRET, { expiresIn: SESSION_TOKEN_TTL });
+    return res.json({ ok: true, token, sponsor });
+  } catch (error) {
+    console.error('Sponsor login verify error:', error);
+    return res.status(500).json({ ok: false, message: 'Sign-in is temporarily unavailable.' });
+  }
+});
+
+app.get('/api/sponsor/me', verifyToken, async (req, res) => {
+  try {
+    if (req.user?.scope !== TOKEN_SCOPES.SPONSOR) return res.status(403).json({ ok: false, message: 'Not a sponsor session.' });
+    const sponsor = await Sponsors.findById(req.user.id).lean();
+    if (!sponsor) return res.status(404).json({ ok: false, message: 'Sponsor account not found.' });
+    return res.json({ ok: true, sponsor });
+  } catch (error) {
+    return res.status(500).json({ ok: false, message: 'Unable to load sponsor profile.' });
+  }
+});
+
+app.get('/sponsors/email/:email', verifyAdminToken, async (req, res) => {
+  try {
+    const { email } = req.params; // Extract email from the request parameters
+
+    // Find all sponsors with the given email
+    const sponsors = await Sponsors.find({ email }).lean();
+
+    if (sponsors.length === 0) {
+      return res.status(404).json({ success: false, message: 'No sponsors found for the given email' });
+    }
+
+    res.status(200).json({ success: true, data: sponsors });
+  } catch (error) {
+    console.error('Error fetching sponsors by email:', error);
+    res.status(500).json({ success: false, message: 'An error occurred while fetching sponsors' });
+  }
+});
+
+
+app.delete('/all/delete/sponsors', verifyAdminToken, requireBulkConfirmation('SPONSORS'), async (req, res) => {
+  try {
+    const result = await Sponsors.deleteMany({});
+    res.status(200).json({
+      message: 'All Sponsors articles deleted successfully.',
+      deletedCount: result.deletedCount,
+    });
+  } catch (error) {
+    console.error('Error deleting Sponsors:', error);
+    res.status(500).json({ error: 'Failed to delete Sponsors articles from the database.' });
+  }
+});
+
+
+
+// POST route to upload sponsor
+app.post('/upload-sponsor', verifyAdminToken, upload.single('image'), async (req, res) => {
+  try {
+    const { name, description, websiteLink, instaLink, email } = req.body; // Extract sponsor data
+
+    // Check if the sponsor already exists
+    const existingSponsor = await Sponsors.findOne({ email });
+    if (existingSponsor) {
+      return res.status(400).json({ message: 'Sponsor with this email already exists.' });
+    }
+
+    // Ensure image is provided
+    if (!req.file) {
+      return res.status(400).json({ error: 'Image is required' });
+    }
+
+    // Upload image to Cloudinary
+    let imageUrl = '';
+    let imageDeleteUrl = '';
+    const result = await new Promise((resolve, reject) => {
+      cloudinary.uploader.upload_stream(
+        { folder: 'sponsors' },
+        (error, result) => {
+          if (error) return reject(error);
+          resolve(result);
+        }
+      ).end(req.file.buffer);
+    });
+
+    imageUrl = result.secure_url;
+    imageDeleteUrl = result.public_id;
+
+    // Save sponsor details in the database
+    const newSponsor = new Sponsors({
+      name,
+      description,
+      email,
+      image: imageUrl,
+      imageDeleteUrl: imageDeleteUrl,
+      websiteLink,
+      instaLink,
+    });
+
+    await newSponsor.save();
+  
+    const notification = new Notification({
+      title: `New Sponsor added: ${newSponsor.name}`,
+    });
+    await notification.save();
+  
+    const emailContent = `
+      <table width="100%" cellpadding="0" cellspacing="0" border="0" style="width:100%; max-width:600px; margin:auto;">
+        <tr>
+          <td align="center" style="padding: 15px 0;">
+            <img src="https://res.cloudinary.com/daflot6fo/image/upload/v1736068036/bywcrrcqmcyczdyhjmdv.png" alt="Fantasy Madness Logo" style="width:100px;" />
+            <h2 style="margin: 0; color: #191164; font-family: 'New York', Charter, Georgia, serif;">Fantasy Madness</h2>
+          </td>
+        </tr>
+        <tr>
+          <td style="padding: 10px 0;">
+            <p style="font-size: 16px; font-family: Arial, sans-serif; color: #333;">Dear ${name},</p>
+            <p style="font-size: 16px; font-family: Arial, sans-serif; color: #333;">
+              Thank you for supporting Fantasy Madness! We have successfully added the following information to our website:
+            </p>
+            <ul style="font-size: 16px; font-family: Arial, sans-serif; color: #333;">
+              <li><strong>Name:</strong> ${name}</li>
+              <li><strong>Description:</strong> ${description}</li>
+              <li><strong>Website Link:</strong> <a href="${websiteLink}" style="color: #191164; text-decoration: none;">${websiteLink}</a></li>
+              <li><strong>Instagram Link:</strong> <a href="${instaLink}" style="color: #191164; text-decoration: none;">${instaLink}</a></li>
+              <li>You can use this email:<strong>${email}</strong> to access the sponsor dashboard </li>
+           
+              </ul>
+            <p style="font-size: 16px; font-family: Arial, sans-serif; color: #333;">
+              If you have any questions or updates, feel free to contact us.
+            </p>
+          </td>
+        </tr>
+        <tr>
+          <td align="center" style="padding: 20px 0;">
+            <img src="https://res.cloudinary.com/daflot6fo/image/upload/v1736068036/bywcrrcqmcyczdyhjmdv.png" alt="Fantasy Madness Logo" style="width:70px;" />
+            <p><a href="https://fantasymmadness.com" style="font-family: Arial, sans-serif; color: #191164; text-decoration: none;">https://fantasymmadness.com</a></p>   
+            <div style="padding-top: 10px;">
+              <a href="https://www.facebook.com/share/2pzYV9XdQpAU7n6p/?mibextid=LQQJ4d" style="margin: 0 5px;">
+                <img src="https://i.ibb.co/G9wVH2g/facebook-removebg-preview-two.png" alt="Facebook" style="width:35px; height:35px; border-radius:50%;" />
+              </a>
+              <a href="https://www.instagram.com/fantasymmadness" style="margin: 0 5px;">
+                <img src="https://i.ibb.co/tKj4px0/insta-removebg-preview-two.png" alt="Instagram" style="width:35px; height:35px; border-radius:50%;" />
+              </a>
+              <a href="https://x.com/davis_kell51697" style="margin: 0 5px;">
+                <img src="https://i.ibb.co/T0cvy2Q/twitter-removebg-preview-two.png" alt="Twitter" style="width:35px; height:35px; border-radius:50%;" />
+              </a>
+            </div>
+          </td>
+        </tr>
+      </table>
+    `;
+
+    await transporter.sendMail({
+      from: FMM_MAIL_FROM,
+      to: email,
+      subject: 'Welcome to Fantasy Madness!',
+      html: emailContent,
+    });
+
+    res.status(200).json({ message: 'Sponsor uploaded, saved successfully, and email sent', sponsor: newSponsor });
+  } catch (error) {
+    console.error('Error uploading sponsor:', error);
+    res.status(500).json({ error: 'An error occurred while uploading the sponsor' });
+  }
+});
+
+
+// Get all News articles
+app.get('/sponsors', async (req, res) => {
+  try {
+    const sponsorArticles = await Sponsors.find().lean();
+    res.status(200).json({ success: true, data: sponsorArticles });
+  } catch (error) {
+    res.status(500).json({ success: false, message: 'Something went wrong on our side. Please try again.' });
+  }
+});
+// PUT route to update a sponsor by ID
+app.put('/sponsor/:id', verifyAdminToken, upload.single('image'), async (req, res) => {
+  try {
+    const { name, description, websiteLink, instaLink, email } = req.body; // Extract sponsor data
+
+    // Find the existing sponsor
+    const sponsor = await Sponsors.findById(req.params.id);
+    if (!sponsor) {
+      return res.status(404).json({ success: false, message: 'Sponsor not found' });
+    }
+
+    let updatedData = { name, description, websiteLink, instaLink, email };
+
+    // Check if a new image is uploaded
+    if (req.file) {
+      // Upload the new image to Cloudinary
+      const result = await new Promise((resolve, reject) => {
+        cloudinary.uploader.upload_stream(
+          { folder: 'sponsors' },
+          (error, result) => {
+            if (error) return reject(error);
+            resolve(result);
+          }
+        ).end(req.file.buffer);
+      });
+
+      const newImageUrl = result.secure_url;
+      const newPublicId = result.public_id;
+
+      // Delete the old image from Cloudinary if it exists
+      if (sponsor.imageDeleteUrl) {
+        await cloudinary.uploader.destroy(sponsor.imageDeleteUrl);
+      }
+
+      // Add new image details to the update data
+      updatedData.image = newImageUrl;
+      updatedData.imageDeleteUrl = newPublicId;
+    }
+
+    // Update the sponsor in the database
+    const updatedSponsor = await Sponsors.findByIdAndUpdate(req.params.id, updatedData, {
+      new: true,
+      runValidators: true,
+    });
+    
+    const notification = new Notification({
+      title: `Sponsor updated: ${updatedSponsor.name}`,
+    });
+    await notification.save();
+
+    res.status(200).json({ success: true, data: updatedSponsor });
+  } catch (error) {
+    console.error('Error updating sponsor:', error);
+    res.status(400).json({ success: false, message: error.message });
+  }
+});
+app.delete('/sponsor/:id', verifyAdminToken, async (req, res) => {
+  try {
+    const sponsor = await Sponsors.findByIdAndDelete(req.params.id);
+    if (!sponsor) return res.status(404).json({ success: false, message: 'Sponsor not found' });
+
+    // Delete the image from Cloudinary using public_id
+    if (sponsor.imageDeleteUrl) {
+      try {
+        await cloudinary.uploader.destroy(sponsor.imageDeleteUrl);
+      } catch (err) {
+        console.warn('Failed to delete image from Cloudinary:', err.message);
+      }
+    }
+
+    // Save notification
+    const notification = new Notification({
+      title: `Sponsor deleted: ${sponsor.name}`,
+    });
+    await notification.save();
+
+    res.status(200).json({ success: true, message: 'Sponsor deleted successfully' });
+  } catch (error) {
+    console.error('Error deleting sponsor:', error);
+    res.status(400).json({ success: false, message: error.message });
+  }
+});
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+// Blogs of fantasy mmadness
+const blogSchema = new mongoose.Schema({
+  metaTitle: String,
+  metaDescription: String,
+  header: String,
+  blogHeaderImage: String,
+  blogHeaderImagePublicId: String, // For deletion
+
+  sections: [
+    {
+      title: String,
+      content: String,
+      image: String,
+      imagePublicId: String, // For deletion
+      headings: [
+        {
+          title: String,
+          content: String
+        }
+      ]
+    }
+  ]
+}, { timestamps: true });
+blogSchema.index({ createdAt: -1 });
+blogSchema.index({ metaTitle: 1 });
+
+
+const Blog = mongoose.models.Blog || mongoose.model('Blog', blogSchema);
+
+app.post('/api/create-blog', verifyAdminToken, upload.fields([
+  { name: 'blogHeaderImage', maxCount: 1 },
+  { name: 'sectionImages' } // multiple section images
+]), async (req, res) => {
+  try {
+    const {
+      metaTitle,
+      metaDescription,
+      header,
+      sections // stringified JSON array
+    } = req.body;
+
+    // Parse sections safely
+    let parsedSections = [];
+    try {
+      parsedSections = JSON.parse(sections || '[]');
+    } catch (e) {
+      console.error('Invalid JSON in sections:', sections);
+      return res.status(400).json({ error: 'Invalid sections format.' });
+    }
+
+    console.log('Parsed Sections:', parsedSections.length);
+    const sectionImages = req.files['sectionImages'] || [];
+    console.log('Received sectionImages:', sectionImages.length);
+
+    let blogHeaderImage = '';
+let blogHeaderImagePublicId = ''; // ✅ Declare this at the top
+if (req.files['blogHeaderImage']) {
+  const result = await new Promise((resolve, reject) => {
+    cloudinary.uploader.upload_stream(
+      { folder: 'blogs/header' },
+      (error, result) => {
+        if (error) return reject(error);
+        resolve(result);
+      }
+    ).end(req.files['blogHeaderImage'][0].buffer);
+  });
+  blogHeaderImage = result.secure_url;
+  blogHeaderImagePublicId = result.public_id;
+}
+
+    // Upload section images and map them to parsedSections
+    for (let i = 0; i < parsedSections.length; i++) {
+      if (sectionImages[i]?.buffer) {
+        const imageUpload = await new Promise((resolve, reject) => {
+          cloudinary.uploader.upload_stream(
+            { folder: 'blogs/sections' },
+            (error, result) => {
+              if (error) return reject(error);
+              resolve(result);
+            }
+          ).end(sectionImages[i].buffer);
+        });
+        parsedSections[i].image = imageUpload.secure_url;
+        parsedSections[i].imagePublicId = imageUpload.public_id;
+      } else {
+        console.warn(`No image found for section index ${i}`);
+      }
+    }
+
+    // Check if blog exists
+    let blog = await Blog.findOne({ metaTitle });
+
+    if (blog) {
+      blog.sections.push(...parsedSections);
+      await blog.save();
+    } else {
+      blog = new Blog({
+        metaTitle,
+        metaDescription,
+        header,
+        blogHeaderImage,
+        blogHeaderImagePublicId,
+        sections: parsedSections
+      });
+      await blog.save();
+    }
+
+ const notification = new Notification({
+      title: `Blog Added: ${metaTitle}`,
+    });
+    await notification.save();
+    const swarmAutomation = await app.locals.swarmPhase2?.triggerAutomationEvent?.({
+      trigger: 'blog_approved',
+      vertical: 'combat',
+      sourceEntity: { type: 'blog', id: String(blog._id), label: blog.metaTitle || metaTitle },
+      input: {
+        blogId: String(blog._id),
+        blogTitle: blog.metaTitle || metaTitle,
+        title: blog.header || metaTitle,
+        metaDescription: blog.metaDescription,
+      },
+      metadata: { route: '/api/create-blog', action: 'manual-blog-created-or-updated' },
+      reason: 'blog-created-or-updated-in-backend',
+    }).catch((error) => ({ ok: false, warning: 'Blog was saved but blog_approved automation failed.', error: error.message }));
+    res.status(201).json({ message: 'Blog created/updated successfully', blog, automation: swarmAutomation || null });
+
+  } catch (error) {
+    console.error('Error creating blog:', error.message);
+    console.error(error.stack);
+    res.status(500).json({ error: 'Internal server error while creating blog.' });
+  }
+});
+
+
+app.get('/api/blogs', async (req, res) => {
+  try {
+    const blogs = await Blog.find().sort({ createdAt: -1 }).lean();
+    res.status(200).json(blogs);
+  } catch (err) {
+    console.error('Error fetching blogs:', err);
+    res.status(500).json({ error: 'Internal server error while fetching blogs.' });
+  }
+});
+
+app.get('/api/blogs/:id', async (req, res) => {
+  try {
+    const blogId = req.params.id;
+    const blog = await Blog.findById(blogId).lean();
+
+    if (!blog) {
+      return res.status(404).json({ error: 'Blog not found.' });
+    }
+
+    res.status(200).json(blog);
+  } catch (err) {
+    console.error('Error fetching blog by ID:', err);
+    res.status(500).json({ error: 'Internal server error while fetching the blog.' });
+  }
+});
+
+
+app.delete('/api/blogs/:id', verifyAdminToken, async (req, res) => {
+  try {
+    const blog = await Blog.findById(req.params.id);
+    if (!blog) return res.status(404).json({ error: 'Blog not found.' });
+
+    if (blog.blogHeaderImagePublicId) {
+      await cloudinary.uploader.destroy(blog.blogHeaderImagePublicId);
+    }
+
+    for (const section of blog.sections) {
+      if (section.imagePublicId) {
+        await cloudinary.uploader.destroy(section.imagePublicId);
+      }
+    }
+
+ const notification = new Notification({
+      title: `Blog Deleted: ${blog.metaTitle}`,
+    });
+    await notification.save();
+
+    await Blog.findByIdAndDelete(req.params.id);
+    res.status(200).json({ message: 'Blog deleted successfully.' });
+  } catch (err) {
+    console.error('Error deleting blog:', err);
+    res.status(500).json({ error: 'Internal server error while deleting blog.' });
+  }
+});
+
+app.delete('/api/delete/blogs', verifyAdminToken, async (req, res) => {
+  try {
+    const blogs = await Blog.find();
+
+    const deletedHeaderImages = [];
+    const deletedSectionImages = [];
+
+    for (const blog of blogs) {
+      if (blog.blogHeaderImagePublicId) {
+        await cloudinary.uploader.destroy(blog.blogHeaderImagePublicId);
+        deletedHeaderImages.push(blog.blogHeaderImagePublicId);
+      }
+
+      for (const section of blog.sections) {
+        if (section.imagePublicId) {
+          await cloudinary.uploader.destroy(section.imagePublicId);
+          deletedSectionImages.push(section.imagePublicId);
+        }
+      }
+    }
+
+    await Blog.deleteMany();
+
+    res.status(200).json({
+      message: 'All blogs and associated images deleted successfully.',
+      deletedHeaderImages,
+      deletedSectionImages
+    });
+  } catch (err) {
+    console.error('Error deleting all blogs:', err);
+    res.status(500).json({ error: 'Internal server error while deleting blogs.' });
+  }
+});
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+const referralSchema = new mongoose.Schema({
+  referrer: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true },
+  referredUser: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true },
+  rewarded: { type: Boolean, default: false },
+  createdAt: { type: Date, default: Date.now }
+});
+referralSchema.index({ referrer: 1, createdAt: -1 });
+referralSchema.index({ referredUser: 1 });
+
+const Referral = mongoose.models.Referral || mongoose.model('Referral', referralSchema);
+
+app.get('/api/referrals', async (req, res) => {
+  try {
+    const leaderboard = await Referral.aggregate([
+      {
+        $group: {
+          _id: "$referrer",
+          referralsCount: { $sum: 1 },
+          referredUserIds: { $push: "$referredUser" }
+        }
+      },
+      {
+        $sort: { referralsCount: -1 }
+      },
+      {
+        $lookup: {
+          from: "users",
+          localField: "_id",
+          foreignField: "_id",
+          as: "referrerDetails"
+        }
+      },
+      { $unwind: "$referrerDetails" },
+      {
+        $lookup: {
+          from: "users",
+          localField: "referredUserIds",
+          foreignField: "_id",
+          as: "referredUsers"
+        }
+      },
+      {
+        $project: {
+          _id: 0,
+          referrer: {
+            _id: "$referrerDetails._id",
+            firstName: "$referrerDetails.firstName",
+            lastName: "$referrerDetails.lastName"
+          },
+          referralsCount: 1
+          // referredUsers deliberately omitted: a public leaderboard should not
+          // disclose which accounts each referrer brought in.
+        }
+      }
+    ]);
+
+    res.status(200).json(leaderboard);
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'Failed to fetch leaderboard' });
+  }
+});
+
+app.get('/api/referrals/:id', async (req, res) => {
+  try {
+    const referral = await Referral.findById(req.params.id).populate('referrer referredUser');
+    if (!referral) return res.status(404).send('Referral not found');
+    res.status(200).json(referral);
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to fetch referral' });
+  }
+});
+
+app.delete('/api/referrals/:id', verifyAdminToken, async (req, res) => {
+  try {
+    await Referral.findByIdAndDelete(req.params.id);
+    res.status(204).send();
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to delete referral' });
+  }
+});
+
+
+
+
+
+
+
+// admin notifications
+const notificationSchema = new mongoose.Schema({
+  title: { type: String, required: true },
+  read: { type: Boolean, default: false },
+}, { timestamps: true });
+
+notificationSchema.index({ read: 1, createdAt: -1 });
+const Notification = mongoose.models.Notification || mongoose.model('Notification', notificationSchema);
+
+// GET all notifications
+app.get('/api/notifications', verifyAdminToken, async (req, res) => {
+  try {
+    const notifications = await Notification.find().sort({ createdAt: -1 }).lean();
+    res.status(200).json(notifications);
+  } catch (error) {
+    res.status(500).json({ message: 'Error fetching notifications' });
+  }
+});
+
+// DELETE a notification by ID
+app.delete('/api/notifications/:id', verifyAdminToken, async (req, res) => {
+  try {
+    const { id } = req.params;
+    const deleted = await Notification.findByIdAndDelete(id);
+    if (!deleted) return res.status(404).json({ message: 'Notification not found' });
+    res.status(200).json({ message: 'Notification deleted' });
+  } catch (error) {
+    res.status(500).json({ message: 'Error deleting notification' });
+  }
+});
+
+// PATCH - mark notification as read (automatically sets read to true)
+app.patch('/api/notifications/:id/read', verifyToken, async (req, res) => {
+  try {
+    const { id } = req.params;
+
+    const updated = await Notification.findByIdAndUpdate(
+      id,
+      { read: true },
+      { new: true }
+    );
+
+    if (!updated) return res.status(404).json({ message: 'Notification not found' });
+    res.status(200).json(updated);
+  } catch (error) {
+    res.status(500).json({ message: 'Error updating read status' });
+  }
+});
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+const messageSchema = new mongoose.Schema({
+  senderId: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
+  senderName: String,
+  text: String,
+  time: String, // e.g., '10:45 AM'
+  date: String, // e.g., '2025-05-28'
+  profileUrl: String,
+}, { timestamps: true });
+
+const Message = mongoose.models.Message || mongoose.model('Message', messageSchema);
+
+
+// --- Pusher config ---
+const pusher = new Pusher({
+  appId: process.env.PUSHER_APP_ID,
+  key: process.env.PUSHER_KEY,
+  secret: process.env.PUSHER_SECRET,
+  cluster: process.env.PUSHER_CLUSTER,
+  useTLS: true,
+});
+app.post('/api/messages/send', verifyToken, async (req, res) => {
+  const {
+    senderId,
+    senderName,
+    text,
+    profileUrl,
+    time = moment().format('hh:mm A'),
+    date = moment().format('YYYY-MM-DD'),
+  } = req.body;
+
+  try {
+    const newMessage = await Message.create({
+      senderId,
+      senderName,
+      text,
+      time,
+      date,
+      profileUrl
+    });
+
+    const triggerResponse = await pusher.trigger('Fantasy-mmadness', 'new-message', {
+      message: newMessage,
+    });
+
+    res.status(201).json({
+      message: newMessage,
+      pusherTriggered: triggerResponse === null, // Pusher returns null on success
+    });
+  } catch (err) {
+    res.status(500).json({ error: 'Message send failed' });
+  }
+});
+
+app.get('/api/messages/get', verifyAdminToken, async (req, res) => {
+  try {
+    const messages = await Message.find({}).sort({ createdAt: 1 }).lean();
+
+    // Group messages by 'date'
+    const messagesByDate = messages.reduce((acc, msg) => {
+      const date = msg.date;
+      if (!acc[date]) acc[date] = [];
+      acc[date].push(msg);
+      return acc;
+    }, {});
+
+    res.status(200).json(messagesByDate); // <- Return grouped structure
+  } catch (err) {
+    res.status(500).json({ error: 'Fetch failed' });
+  }
+});
+
+
+app.put('/api/messages/:id', verifyToken, async (req, res) => {
+  // Only the sender may edit a message.
+  {
+    const existing = await Message.findById(req.params.id).select('senderId userId').lean().catch(() => null);
+    const callerId = String(req.user?.id || req.user?._id || '');
+    if (existing && ![String(existing.senderId || ''), String(existing.userId || '')].includes(callerId)) {
+      return res.status(403).json({ message: 'You can only edit your own messages.', code: 'NOT_OWNER' });
+    }
+  }
+  try {
+    const { id } = req.params;
+    const { text } = req.body;
+
+    if (!text || text.trim() === '') {
+      return res.status(400).json({ error: 'Text is required for update' });
+    }
+
+    const updatedMessage = await Message.findByIdAndUpdate(
+      id,
+      { text },
+      { new: true }
+    );
+
+    if (!updatedMessage) {
+      return res.status(404).json({ error: 'Message not found' });
+    }
+
+    await pusher.trigger('Fantasy-mmadness', 'message-updated', {
+      message: updatedMessage,
+    });
+
+    res.status(200).json({ message: 'Message updated successfully', updatedMessage });
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to update message' });
+  }
+});
+
+app.delete('/api/message-to-del/:id', verifyAdminToken, async (req, res) => {
+  try {
+    const { id } = req.params;
+    const deletedMessage = await Message.findByIdAndDelete(id);
+
+    if (!deletedMessage) {
+      return res.status(404).json({ error: 'Message not found' });
+    }
+
+    await pusher.trigger('Fantasy-mmadness', 'message-deleted', {
+      messageId: id,
+    });
+
+    res.status(200).json({ message: 'Message deleted successfully', deletedMessage });
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to delete message' });
+  }
+});
+
+app.delete('/api/messages/delete-all', verifyAdminToken, requireBulkConfirmation('MESSAGES'), async (req, res) => {
+  try {
+    await Message.deleteMany({});
+
+    await pusher.trigger('Fantasy-mmadness', 'all-messages-deleted', {
+      message: 'All messages have been deleted',
+    });
+
+    res.status(200).json({ message: 'All messages deleted successfully.' });
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to delete messages' });
+  }
+});
+
+
+
+
+
+// ============================================================================
+// PRO WRESTLING GAME MODE
+// Additive implementation: existing MMA/boxing routes and collections remain
+// untouched. Pro Wrestling reuses the existing User, Affiliate and wallet token
+// records while keeping its contest, prediction and settlement data isolated.
+// ============================================================================
+
+const {
+  WRESTLING_STAT_KEYS,
+  WRESTLING_WINNER_VALUES,
+  DEFAULT_WRESTLING_SCORING_RULE,
+  DEFAULT_WRESTLING_PAYOUT_RULE,
+  normalizeWrestlingStats,
+  normalizeScoringRule,
+  normalizePayoutRule,
+  calculateProWrestlingScore,
+  rankWrestlingPredictions,
+  calculatePayoutDistribution,
+  canTransitionWrestlingStatus,
+  isWrestlingPredictionLocked,
+  validateWrestlingPredictionPayload,
+} = require('./pro-wrestling-core');
+
+const PRO_WRESTLING_GAME_MODE = 'PRO_WRESTLING';
+const PRO_WRESTLING_PREDICTION_FORMAT = 'FULL_MATCH';
+const PRO_WRESTLING_MATCH_STATUSES = [
+  'DRAFT',
+  'OPEN',
+  'LOCKED',
+  'LIVE',
+  'SCORING',
+  'FINALIZED',
+  'CANCELLED',
+  'NO_CONTEST',
+];
+const PRO_WRESTLING_ENTRY_STATUSES = [
+  'JOINED',
+  'PREDICTION_SUBMITTED',
+  'LOCKED',
+  'SETTLED',
+  'REFUNDED',
+];
+const PRO_WRESTLING_PREDICTION_STATUSES = [
+  'DRAFT',
+  'SUBMITTED',
+  'LOCKED',
+  'SCORED',
+  'SETTLED',
+  'REFUNDED',
+];
+
+const wrestlingActionStatsSchema = new mongoose.Schema({
+  HP: { type: Number, min: 0, default: 0 },
+  BP: { type: Number, min: 0, default: 0 },
+  K: { type: Number, min: 0, default: 0 },
+  PM: { type: Number, min: 0, default: 0 },
+  FM: { type: Number, min: 0, default: 0 },
+}, { _id: false });
+
+const wrestlingCompetitorSchema = new mongoose.Schema({
+  wrestlerId: { type: mongoose.Schema.Types.ObjectId, ref: 'ProWrestler' },
+  displayName: { type: String, required: true, trim: true },
+  image: String,
+  promotion: String,
+}, { _id: false });
+
+const proWrestlerSchema = new mongoose.Schema({
+  displayName: { type: String, required: true, trim: true },
+  slug: { type: String, required: true, unique: true, lowercase: true, trim: true },
+  profileImage: String,
+  profileImageDeleteUrl: String,
+  bannerImage: String,
+  bannerImageDeleteUrl: String,
+  promotion: String,
+  country: String,
+  height: String,
+  weight: String,
+  wrestlingStyle: String,
+  signatureMoves: [{ type: String, trim: true }],
+  finishingMoves: [{ type: String, trim: true }],
+  careerRecord: {
+    wins: { type: Number, min: 0, default: 0 },
+    losses: { type: Number, min: 0, default: 0 },
+    draws: { type: Number, min: 0, default: 0 },
+    noContests: { type: Number, min: 0, default: 0 },
+  },
+  historicalStatistics: {
+    matches: { type: Number, min: 0, default: 0 },
+    HP: { type: Number, min: 0, default: 0 },
+    BP: { type: Number, min: 0, default: 0 },
+    K: { type: Number, min: 0, default: 0 },
+    PM: { type: Number, min: 0, default: 0 },
+    FM: { type: Number, min: 0, default: 0 },
+  },
+  biography: String,
+  active: { type: Boolean, default: true },
+  featured: { type: Boolean, default: false },
+  seo: {
+    title: String,
+    description: String,
+    keywords: [String],
+  },
+  createdBy: { type: mongoose.Schema.Types.ObjectId, ref: 'Admin' },
+  updatedBy: { type: mongoose.Schema.Types.ObjectId, ref: 'Admin' },
+}, { timestamps: true });
+proWrestlerSchema.index({ active: 1, displayName: 1 });
+proWrestlerSchema.index({ featured: -1, displayName: 1 });
+
+const proWrestlingScoringRuleSchema = new mongoose.Schema({
+  ruleId: { type: String, required: true, unique: true, uppercase: true, trim: true },
+  name: { type: String, required: true },
+  active: { type: Boolean, default: true },
+  config: { type: mongoose.Schema.Types.Mixed, required: true },
+  createdBy: { type: mongoose.Schema.Types.ObjectId, ref: 'Admin' },
+  updatedBy: { type: mongoose.Schema.Types.ObjectId, ref: 'Admin' },
+}, { timestamps: true });
+
+const proWrestlingPayoutRuleSchema = new mongoose.Schema({
+  ruleId: { type: String, required: true, unique: true, uppercase: true, trim: true },
+  name: { type: String, required: true },
+  active: { type: Boolean, default: true },
+  config: { type: mongoose.Schema.Types.Mixed, required: true },
+  createdBy: { type: mongoose.Schema.Types.ObjectId, ref: 'Admin' },
+  updatedBy: { type: mongoose.Schema.Types.ObjectId, ref: 'Admin' },
+}, { timestamps: true });
+
+const proWrestlingMatchSchema = new mongoose.Schema({
+  gameMode: { type: String, enum: [PRO_WRESTLING_GAME_MODE], default: PRO_WRESTLING_GAME_MODE, index: true },
+  predictionFormat: { type: String, enum: [PRO_WRESTLING_PREDICTION_FORMAT], default: PRO_WRESTLING_PREDICTION_FORMAT },
+  scoringRuleVersion: { type: String, default: DEFAULT_WRESTLING_SCORING_RULE.ruleId },
+  payoutRuleVersion: { type: String, default: DEFAULT_WRESTLING_PAYOUT_RULE.ruleId },
+  scoringRules: { type: mongoose.Schema.Types.Mixed, required: true },
+  payoutRules: { type: mongoose.Schema.Types.Mixed, required: true },
+  eventName: { type: String, required: true, trim: true },
+  promotionName: { type: String, trim: true },
+  matchTitle: { type: String, required: true, trim: true },
+  slug: { type: String, required: true, unique: true, lowercase: true, trim: true },
+  matchFormat: {
+    type: String,
+    enum: ['SINGLES', 'TAG_TEAM', 'TRIPLE_THREAT', 'FATAL_FOUR_WAY'],
+    default: 'SINGLES',
+  },
+  competitorA: { type: wrestlingCompetitorSchema, required: true },
+  competitorB: { type: wrestlingCompetitorSchema, required: true },
+  matchDate: { type: Date, required: true, index: true },
+  matchTime: String,
+  lockAt: { type: Date, required: true, index: true },
+  entryFeeTokens: { type: Number, min: 0, default: 0 },
+  basePot: { type: Number, min: 0, default: 0 },
+  currentPot: { type: Number, min: 0, default: 0 },
+  minimumParticipants: { type: Number, min: 0, default: 0 },
+  maximumParticipants: { type: Number, min: 0, default: 0 },
+  participantCount: { type: Number, min: 0, default: 0 },
+  autoCancelIfMinimumNotMet: { type: Boolean, default: true },
+  status: { type: String, enum: PRO_WRESTLING_MATCH_STATUSES, default: 'DRAFT', index: true },
+  officialStats: {
+    competitorA: { type: wrestlingActionStatsSchema, default: () => ({}) },
+    competitorB: { type: wrestlingActionStatsSchema, default: () => ({}) },
+  },
+  officialWinner: { type: String, enum: [...WRESTLING_WINNER_VALUES, 'NO_CONTEST', null], default: null },
+  finishType: {
+    type: String,
+    enum: ['PINFALL', 'SUBMISSION', 'DQ', 'COUNT_OUT', 'DRAW', 'NO_CONTEST', 'OTHER', null],
+    default: null,
+  },
+  statsVersion: { type: Number, min: 0, default: 0 },
+  description: String,
+  bannerImage: String,
+  bannerImageDeleteUrl: String,
+  featured: { type: Boolean, default: false },
+  publicVisible: { type: Boolean, default: true },
+  affiliateId: { type: mongoose.Schema.Types.ObjectId, ref: 'Affiliate' },
+  affiliateCommissionPercentage: { type: Number, min: 0, max: 100, default: 0 },
+  referralCode: String,
+  seo: {
+    title: String,
+    description: String,
+    keywords: [String],
+  },
+  settlement: {
+    status: {
+      type: String,
+      enum: ['NOT_STARTED', 'PROCESSING', 'PAID', 'REFUNDED'],
+      default: 'NOT_STARTED',
+    },
+    winnerCount: { type: Number, min: 0, default: 0 },
+    grossPot: { type: Number, min: 0, default: 0 },
+    platformFeeTokens: { type: Number, min: 0, default: 0 },
+    affiliateCommissionTokens: { type: Number, min: 0, default: 0 },
+    playerPayoutTokens: { type: Number, min: 0, default: 0 },
+    completedAt: Date,
+  },
+  publishedAt: Date,
+  lockedAt: Date,
+  liveStartedAt: Date,
+  scoringStartedAt: Date,
+  finalizedAt: Date,
+  cancelledAt: Date,
+  cancellationReason: String,
+  startingSoonNotificationSent: { type: Boolean, default: false },
+  liveNotificationSent: { type: Boolean, default: false },
+  createdBy: { type: mongoose.Schema.Types.ObjectId, ref: 'Admin' },
+  updatedBy: { type: mongoose.Schema.Types.ObjectId, ref: 'Admin' },
+}, { timestamps: true });
+proWrestlingMatchSchema.index({ status: 1, matchDate: 1 });
+proWrestlingMatchSchema.index({ publicVisible: 1, featured: -1, matchDate: 1 });
+proWrestlingMatchSchema.index({ affiliateId: 1, status: 1 });
+
+const proWrestlingEntrySchema = new mongoose.Schema({
+  gameMode: { type: String, default: PRO_WRESTLING_GAME_MODE },
+  matchId: { type: mongoose.Schema.Types.ObjectId, ref: 'ProWrestlingMatch', required: true, index: true },
+  userId: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true, index: true },
+  affiliateId: { type: mongoose.Schema.Types.ObjectId, ref: 'Affiliate' },
+  referralCode: String,
+  entryFeeTokens: { type: Number, min: 0, required: true },
+  status: { type: String, enum: PRO_WRESTLING_ENTRY_STATUSES, default: 'JOINED' },
+  idempotencyKey: { type: String, required: true, unique: true },
+  userSnapshot: {
+    displayName: String,
+    profileUrl: String,
+  },
+  joinedAt: { type: Date, default: Date.now },
+  lockedAt: Date,
+  settledAt: Date,
+  refundedAt: Date,
+  rank: { type: Number, min: 1 },
+  payoutAmount: { type: Number, min: 0, default: 0 },
+}, { timestamps: true });
+proWrestlingEntrySchema.index({ matchId: 1, userId: 1 }, { unique: true });
+proWrestlingEntrySchema.index({ userId: 1, createdAt: -1 });
+
+const proWrestlingPredictionSchema = new mongoose.Schema({
+  gameMode: { type: String, default: PRO_WRESTLING_GAME_MODE },
+  matchId: { type: mongoose.Schema.Types.ObjectId, ref: 'ProWrestlingMatch', required: true, index: true },
+  userId: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true, index: true },
+  competitorA: { type: wrestlingActionStatsSchema, required: true },
+  competitorB: { type: wrestlingActionStatsSchema, required: true },
+  winnerPrediction: { type: String, enum: WRESTLING_WINNER_VALUES, required: true },
+  finishTypePrediction: { type: String, enum: ['PINFALL', 'SUBMISSION', 'DQ', 'COUNT_OUT', 'OTHER', 'NO_CONTEST'], default: 'PINFALL' },
+  predictionStatus: { type: String, enum: PRO_WRESTLING_PREDICTION_STATUSES, default: 'DRAFT' },
+  submittedAt: Date,
+  lockedAt: Date,
+  score: { type: Number, default: 0 },
+  scoreBreakdown: { type: mongoose.Schema.Types.Mixed },
+  normalizedError: { type: Number, default: 0 },
+  exactPredictionCount: { type: Number, default: 0 },
+  finisherError: { type: Number, default: 0 },
+  rank: { type: Number, min: 1 },
+  previousRank: { type: Number, min: 1 },
+  payoutAmount: { type: Number, min: 0, default: 0 },
+  scoringRuleVersion: String,
+}, { timestamps: true });
+proWrestlingPredictionSchema.index({ matchId: 1, userId: 1 }, { unique: true });
+proWrestlingPredictionSchema.index({ matchId: 1, rank: 1 });
+proWrestlingPredictionSchema.index({ userId: 1, createdAt: -1 });
+
+const proWrestlingWalletLedgerSchema = new mongoose.Schema({
+  accountType: { type: String, enum: ['USER', 'AFFILIATE', 'PLATFORM'], default: 'USER' },
+  userId: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
+  affiliateId: { type: mongoose.Schema.Types.ObjectId, ref: 'Affiliate' },
+  matchId: { type: mongoose.Schema.Types.ObjectId, ref: 'ProWrestlingMatch', index: true },
+  entryId: { type: mongoose.Schema.Types.ObjectId, ref: 'ProWrestlingEntry' },
+  type: {
+    type: String,
+    enum: ['WRESTLING_ENTRY', 'WRESTLING_WINNING', 'WRESTLING_REFUND', 'WRESTLING_AFFILIATE_COMMISSION', 'WRESTLING_PLATFORM_FEE', 'WRESTLING_ADMIN_ADJUSTMENT'],
+    required: true,
+  },
+  amount: { type: Number, required: true },
+  balanceBefore: Number,
+  balanceAfter: Number,
+  idempotencyKey: { type: String, required: true, unique: true },
+  status: { type: String, enum: ['COMPLETED', 'FAILED'], default: 'COMPLETED' },
+  metadata: { type: mongoose.Schema.Types.Mixed },
+}, { timestamps: true });
+proWrestlingWalletLedgerSchema.index({ userId: 1, createdAt: -1 });
+proWrestlingWalletLedgerSchema.index({ affiliateId: 1, createdAt: -1 });
+
+const proWrestlingAuditLogSchema = new mongoose.Schema({
+  adminId: { type: mongoose.Schema.Types.ObjectId, ref: 'Admin' },
+  action: { type: String, required: true, index: true },
+  entityType: { type: String, required: true, index: true },
+  entityId: { type: String, required: true, index: true },
+  before: { type: mongoose.Schema.Types.Mixed },
+  after: { type: mongoose.Schema.Types.Mixed },
+  reason: String,
+  ipAddress: String,
+}, { timestamps: true });
+proWrestlingAuditLogSchema.index({ entityType: 1, entityId: 1, createdAt: -1 });
+
+const proWrestlingNotificationSchema = new mongoose.Schema({
+  userId: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true, index: true },
+  matchId: { type: mongoose.Schema.Types.ObjectId, ref: 'ProWrestlingMatch', index: true },
+  gameMode: { type: String, default: PRO_WRESTLING_GAME_MODE },
+  type: {
+    type: String,
+    enum: ['CONTEST_PUBLISHED', 'STARTING_SOON', 'ENTRY_CONFIRMED', 'PREDICTION_SUBMITTED', 'PREDICTION_LOCKED', 'MATCH_LIVE', 'RANK_CHANGED', 'RESULT_FINALIZED', 'WINNINGS_CREDITED', 'ENTRY_REFUNDED'],
+    required: true,
+  },
+  title: { type: String, required: true },
+  message: { type: String, required: true },
+  read: { type: Boolean, default: false },
+  metadata: { type: mongoose.Schema.Types.Mixed },
+}, { timestamps: true });
+proWrestlingNotificationSchema.index({ userId: 1, read: 1, createdAt: -1 });
+
+const ProWrestler = mongoose.models.ProWrestler || mongoose.model('ProWrestler', proWrestlerSchema);
+const ProWrestlingScoringRule = mongoose.models.ProWrestlingScoringRule || mongoose.model('ProWrestlingScoringRule', proWrestlingScoringRuleSchema);
+const ProWrestlingPayoutRule = mongoose.models.ProWrestlingPayoutRule || mongoose.model('ProWrestlingPayoutRule', proWrestlingPayoutRuleSchema);
+const ProWrestlingMatch = mongoose.models.ProWrestlingMatch || mongoose.model('ProWrestlingMatch', proWrestlingMatchSchema);
+const ProWrestlingEntry = mongoose.models.ProWrestlingEntry || mongoose.model('ProWrestlingEntry', proWrestlingEntrySchema);
+const ProWrestlingPrediction = mongoose.models.ProWrestlingPrediction || mongoose.model('ProWrestlingPrediction', proWrestlingPredictionSchema);
+const ProWrestlingWalletLedger = mongoose.models.ProWrestlingWalletLedger || mongoose.model('ProWrestlingWalletLedger', proWrestlingWalletLedgerSchema);
+const ProWrestlingAuditLog = mongoose.models.ProWrestlingAuditLog || mongoose.model('ProWrestlingAuditLog', proWrestlingAuditLogSchema);
+const ProWrestlingNotification = mongoose.models.ProWrestlingNotification || mongoose.model('ProWrestlingNotification', proWrestlingNotificationSchema);
+
+const wrestlingHttpError = (status, message, code, details) => {
+  const error = new Error(message);
+  error.status = status;
+  error.code = code;
+  error.details = details;
+  return error;
+};
+
+const isProWrestlingEnabled = () => String(process.env.PRO_WRESTLING_ENABLED || 'true').toLowerCase() !== 'false';
+
+const requireProWrestlingEnabled = (req, res, next) => {
+  if (!isProWrestlingEnabled()) {
+    return res.status(503).json({
+      message: 'Pro Wrestling game mode is currently disabled.',
+      code: 'PRO_WRESTLING_DISABLED',
+    });
+  }
+  return next();
+};
+
+const verifyWrestlingCronOrAdmin = (req, res, next) => {
+  const authHeader = req.headers.authorization || '';
+  const bearer = authHeader.startsWith('Bearer ') ? authHeader.slice(7) : '';
+  if (process.env.CRON_SECRET && bearer === process.env.CRON_SECRET) {
+    req.admin = { id: null, cron: true };
+    return next();
+  }
+  return verifyAdminToken(req, res, next);
+};
+
+const APPAREL_ORDER_STATUSES = ['PENDING', 'CONFIRMED', 'FULFILLING', 'SHIPPED', 'CANCELLED'];
+
+function serializeApparelOrder(order = {}) {
+  const row = typeof order.toObject === 'function' ? order.toObject() : order;
+  return {
+    _id: String(row._id || ''),
+    orderNumber: row.orderNumber,
+    userId: row.userId ? String(row.userId) : '',
+    customerName: row.customerName,
+    email: row.email,
+    phone: row.phone || '',
+    shippingAddress: row.shippingAddress,
+    city: row.city,
+    state: row.state || '',
+    zipCode: row.zipCode,
+    country: row.country || 'United States',
+    notes: row.notes || '',
+    items: Array.isArray(row.items) ? row.items : [],
+    subtotal: Number(row.subtotal || 0),
+    currency: row.currency || 'USD',
+    status: row.status || 'PENDING',
+    source: row.source || 'public-apparel-page',
+    createdAt: row.createdAt,
+    updatedAt: row.updatedAt,
+  };
+}
+
+async function buildApparelOrderAdminSummary() {
+  const [statusCounts, revenueRows] = await Promise.all([
+    ApparelOrder.aggregate([{ $group: { _id: '$status', count: { $sum: 1 } } }]),
+    ApparelOrder.aggregate([
+      { $match: { status: { $ne: 'CANCELLED' } } },
+      { $group: { _id: null, revenue: { $sum: '$subtotal' } } },
+    ]),
+  ]);
+
+  const summary = {
+    total: 0,
+    pending: 0,
+    confirmed: 0,
+    fulfilling: 0,
+    shipped: 0,
+    cancelled: 0,
+    revenue: Number((revenueRows?.[0]?.revenue || 0).toFixed(2)),
+  };
+
+  for (const row of statusCounts || []) {
+    const key = String(row._id || 'PENDING').toLowerCase();
+    summary[key] = Number(row.count || 0);
+    summary.total += Number(row.count || 0);
+  }
+
+  return summary;
+}
+
+function buildApparelOrderAdminFilter(query = {}) {
+  const filter = {};
+  const requestedStatus = String(query.status || '').trim().toUpperCase();
+  if (requestedStatus && APPAREL_ORDER_STATUSES.includes(requestedStatus)) {
+    filter.status = requestedStatus;
+  }
+
+  const search = String(query.search || '').trim();
+  if (search) {
+    const regex = new RegExp(search.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'i');
+    filter.$or = [
+      { orderNumber: regex },
+      { customerName: regex },
+      { email: regex },
+      { phone: regex },
+      { 'items.sku': regex },
+      { 'items.name': regex },
+    ];
+  }
+  return filter;
+}
+
+app.get('/api/admin/apparel-orders', verifyAdminToken, async (req, res) => {
+  try {
+    const page = Math.max(1, Number.parseInt(req.query.page, 10) || 1);
+    const limit = Math.max(1, Math.min(200, Number.parseInt(req.query.limit, 10) || 100));
+    const filter = buildApparelOrderAdminFilter(req.query);
+    const [orders, total, summary] = await Promise.all([
+      ApparelOrder.find(filter).sort({ createdAt: -1 }).skip((page - 1) * limit).limit(limit).lean(),
+      ApparelOrder.countDocuments(filter),
+      buildApparelOrderAdminSummary(),
+    ]);
+
+    res.set('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate');
+    return res.json({
+      ok: true,
+      orders: orders.map(serializeApparelOrder),
+      summary,
+      pagination: { page, limit, total, pages: Math.max(1, Math.ceil(total / limit)) },
+    });
+  } catch (error) {
+    console.error('Error loading admin apparel orders:', error);
+    return res.status(500).json({ ok: false, message: 'Failed to load apparel orders.' });
+  }
+});
+
+app.patch('/api/admin/apparel-orders/:orderId/status', verifyAdminToken, async (req, res) => {
+  try {
+    const { orderId } = req.params;
+    const status = String(req.body?.status || '').trim().toUpperCase();
+    if (!mongoose.isValidObjectId(orderId)) {
+      return res.status(400).json({ ok: false, message: 'Invalid apparel order id.' });
+    }
+    if (!APPAREL_ORDER_STATUSES.includes(status)) {
+      return res.status(400).json({ ok: false, message: 'Invalid apparel order status.' });
+    }
+
+    const order = await ApparelOrder.findByIdAndUpdate(orderId, { status }, { new: true, runValidators: true }).lean();
+    if (!order) {
+      return res.status(404).json({ ok: false, message: 'Apparel order not found.' });
+    }
+
+    clearPublicResponseCache();
+    return res.json({ ok: true, order: serializeApparelOrder(order), summary: await buildApparelOrderAdminSummary() });
+  } catch (error) {
+    console.error('Error updating admin apparel order:', error);
+    return res.status(500).json({ ok: false, message: 'Failed to update apparel order.' });
+  }
+});
+
+const wrestlingRequestIp = (req) => String(req.headers['x-forwarded-for'] || req.socket?.remoteAddress || '').split(',')[0].trim();
+
+const wrestlingPlainObject = (value) => {
+  if (!value) return value;
+  if (typeof value.toObject === 'function') return value.toObject({ depopulate: true });
+  return JSON.parse(JSON.stringify(value));
+};
+
+const wrestlingSlugify = (value) => String(value || '')
+  .toLowerCase()
+  .trim()
+  .replace(/[^a-z0-9]+/g, '-')
+  .replace(/^-+|-+$/g, '')
+  .slice(0, 100);
+
+const wrestlingArray = (value) => {
+  if (Array.isArray(value)) return value;
+  if (typeof value === 'string') {
+    try {
+      const parsed = JSON.parse(value);
+      if (Array.isArray(parsed)) return parsed;
+    } catch (error) {
+      return value.split(',').map((item) => item.trim()).filter(Boolean);
+    }
+  }
+  return [];
+};
+
+const wrestlingObject = (value, fallback = {}) => {
+  if (value && typeof value === 'object') return value;
+  if (typeof value === 'string') {
+    try {
+      const parsed = JSON.parse(value);
+      return parsed && typeof parsed === 'object' ? parsed : fallback;
+    } catch (error) {
+      return fallback;
+    }
+  }
+  return fallback;
+};
+
+const wrestlingBoolean = (value, fallback = false) => {
+  if (value === undefined || value === null || value === '') return fallback;
+  if (typeof value === 'boolean') return value;
+  return ['true', '1', 'yes', 'on'].includes(String(value).toLowerCase());
+};
+
+const wrestlingNumber = (value, fallback = 0) => {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : fallback;
+};
+
+const wrestlingTokenBalance = (value) => {
+  const parsed = Number.parseInt(String(value || '0'), 10);
+  return Number.isFinite(parsed) ? Math.max(0, parsed) : 0;
+};
+
+const applyWrestlingSession = (query, session) => (session ? query.session(session) : query);
+
+const uploadWrestlingImage = (file, folder) => {
+  if (!file || !file.buffer) return Promise.resolve(null);
+  return new Promise((resolve, reject) => {
+    const stream = cloudinary.uploader.upload_stream(
+      { folder, resource_type: 'image' },
+      (error, result) => {
+        if (error) return reject(error);
+        return resolve({ url: result.secure_url, deleteUrl: result.public_id });
+      },
+    );
+    stream.end(file.buffer);
+  });
+};
+
+const safeWrestlingTrigger = async (eventName, payload) => {
+  try {
+    if (typeof pusher !== 'undefined' && pusher) {
+      await pusher.trigger('Fantasy-mmadness-wrestling', eventName, payload);
+    }
+  } catch (error) {
+    console.error('Pro Wrestling Pusher event failed:', error.message);
+  }
+};
+
+const writeWrestlingAudit = async ({ req, adminId, action, entityType, entityId, before, after, reason, session }) => {
+  const values = [{
+    adminId: adminId || req?.admin?.id || null,
+    action,
+    entityType,
+    entityId: String(entityId),
+    before: wrestlingPlainObject(before),
+    after: wrestlingPlainObject(after),
+    reason: reason || null,
+    ipAddress: req ? wrestlingRequestIp(req) : null,
+  }];
+  return ProWrestlingAuditLog.create(values, session ? { session } : undefined);
+};
+
+const handleWrestlingError = (res, error) => {
+  console.error('Pro Wrestling API error:', error);
+  if (error && error.code === 11000) {
+    return res.status(409).json({ message: 'A record with the same unique identity already exists.', code: 'DUPLICATE_RECORD' });
+  }
+  return res.status(error.status || 500).json({
+    message: error.message || 'Pro Wrestling request failed.',
+    code: error.code || 'PRO_WRESTLING_ERROR',
+    details: error.details,
+  });
+};
+
+const runWrestlingTransaction = async (work) => {
+  const session = await mongoose.startSession();
+  try {
+    let result;
+    try {
+      await session.withTransaction(async () => {
+        result = await work(session);
+      });
+      return result;
+    } catch (error) {
+      const unsupported = /Transaction numbers are only allowed|replica set|transactions are not supported/i.test(String(error.message || ''));
+      if (unsupported && String(process.env.PRO_WRESTLING_ALLOW_NON_TRANSACTIONAL || '').toLowerCase() === 'true') {
+        console.warn('Running Pro Wrestling wallet operation without a MongoDB transaction because PRO_WRESTLING_ALLOW_NON_TRANSACTIONAL=true.');
+        return work(null);
+      }
+      throw error;
+    }
+  } finally {
+    await session.endSession();
+  }
+};
+
+const ensureWrestlingDefaultRules = async () => {
+  const scoring = normalizeScoringRule(DEFAULT_WRESTLING_SCORING_RULE);
+  const payout = normalizePayoutRule(DEFAULT_WRESTLING_PAYOUT_RULE);
+  await Promise.all([
+    ProWrestlingScoringRule.findOneAndUpdate(
+      { ruleId: scoring.ruleId },
+      {
+        $set: { name: scoring.name, active: true, config: scoring },
+        $setOnInsert: { ruleId: scoring.ruleId },
+      },
+      { upsert: true, new: true },
+    ),
+    ProWrestlingPayoutRule.findOneAndUpdate(
+      { ruleId: payout.ruleId },
+      { $setOnInsert: { ruleId: payout.ruleId, name: payout.name, active: true, config: payout } },
+      { upsert: true, new: true },
+    ),
+  ]);
+};
+
+mongoose.connection.once('open', () => {
+  ensureWrestlingDefaultRules().catch((error) => console.error('Unable to seed Pro Wrestling rules:', error.message));
+});
+
+const getWrestlingScoringRule = async (ruleId) => {
+  const requestedRuleId = ruleId ? String(ruleId).toUpperCase() : null;
+  const normalizedRuleId = requestedRuleId || DEFAULT_WRESTLING_SCORING_RULE.ruleId;
+  const record = await ProWrestlingScoringRule.findOne({ ruleId: normalizedRuleId, active: true }).lean();
+  if (!record && requestedRuleId) {
+    throw wrestlingHttpError(404, `Active wrestling scoring rule ${requestedRuleId} was not found.`, 'SCORING_RULE_NOT_FOUND');
+  }
+  return normalizeScoringRule(record?.config || DEFAULT_WRESTLING_SCORING_RULE);
+};
+
+const getWrestlingPayoutRule = async (ruleId) => {
+  const requestedRuleId = ruleId ? String(ruleId).toUpperCase() : null;
+  const normalizedRuleId = requestedRuleId || DEFAULT_WRESTLING_PAYOUT_RULE.ruleId;
+  const record = await ProWrestlingPayoutRule.findOne({ ruleId: normalizedRuleId, active: true }).lean();
+  if (!record && requestedRuleId) {
+    throw wrestlingHttpError(404, `Active wrestling payout rule ${requestedRuleId} was not found.`, 'PAYOUT_RULE_NOT_FOUND');
+  }
+  return normalizePayoutRule(record?.config || DEFAULT_WRESTLING_PAYOUT_RULE);
+};
+
+const uniqueWrestlingSlug = async (Model, candidate, existingId) => {
+  const base = wrestlingSlugify(candidate) || `wrestling-${Date.now()}`;
+  let slug = base;
+  let suffix = 1;
+  while (await Model.exists({ slug, ...(existingId ? { _id: { $ne: existingId } } : {}) })) {
+    slug = `${base}-${suffix}`;
+    suffix += 1;
+  }
+  return slug;
+};
+
+const resolveWrestlingCompetitor = async (input, wrestlerId) => {
+  const source = wrestlingObject(input, {});
+  const id = wrestlerId || source.wrestlerId || source.id;
+  let wrestler = null;
+  if (id && mongoose.isValidObjectId(id)) wrestler = await ProWrestler.findById(id).lean();
+  const displayName = String(source.displayName || source.name || wrestler?.displayName || '').trim();
+  if (!displayName) throw wrestlingHttpError(400, 'Both wrestling competitors require a display name.', 'COMPETITOR_NAME_REQUIRED');
+  return {
+    wrestlerId: wrestler?._id || (mongoose.isValidObjectId(id) ? id : undefined),
+    displayName,
+    image: source.image || source.profileImage || wrestler?.profileImage || '',
+    promotion: source.promotion || wrestler?.promotion || '',
+  };
+};
+
+const publicWrestlingMatch = (match, options = {}) => {
+  const document = wrestlingPlainObject(match);
+  const revealStats = options.revealStats || ['LIVE', 'SCORING', 'FINALIZED'].includes(document.status);
+  if (!revealStats) {
+    delete document.officialStats;
+    delete document.officialWinner;
+    delete document.finishType;
+  }
+  delete document.createdBy;
+  delete document.updatedBy;
+  if (!options.includeRules) {
+    delete document.scoringRules;
+    delete document.payoutRules;
+  }
+  return document;
+};
+
+const createWrestlingNotification = async ({ userId, matchId, type, title, message, metadata, session }) => {
+  if (!userId) return null;
+  const documents = [{ userId, matchId, type, title, message, metadata }];
+  return ProWrestlingNotification.create(documents, session ? { session } : undefined);
+};
+
+const notifyWrestlingEntrants = async ({ match, type, title, message, metadata, session }) => {
+  const query = ProWrestlingEntry.find({ matchId: match._id }).select('userId');
+  const entries = await applyWrestlingSession(query, session).lean();
+  if (!entries.length) return 0;
+  const documents = entries.map((entry) => ({
+    userId: entry.userId,
+    matchId: match._id,
+    type,
+    title,
+    message,
+    metadata,
+  }));
+  await ProWrestlingNotification.insertMany(documents, session ? { session } : undefined);
+  return documents.length;
+};
+
+const lockWrestlingMatch = async (match, session) => {
+  if (!match || match.status !== 'OPEN') return match;
+  match.status = 'LOCKED';
+  match.lockedAt = new Date();
+  await match.save(session ? { session } : undefined);
+  await Promise.all([
+    ProWrestlingEntry.updateMany(
+      { matchId: match._id, status: { $in: ['JOINED', 'PREDICTION_SUBMITTED'] } },
+      { $set: { status: 'LOCKED', lockedAt: match.lockedAt } },
+      session ? { session } : undefined,
+    ),
+    ProWrestlingPrediction.updateMany(
+      { matchId: match._id, predictionStatus: 'SUBMITTED' },
+      { $set: { predictionStatus: 'LOCKED', lockedAt: match.lockedAt } },
+      session ? { session } : undefined,
+    ),
+  ]);
+  await notifyWrestlingEntrants({
+    match,
+    type: 'PREDICTION_LOCKED',
+    title: 'Wrestling predictions locked',
+    message: `${match.matchTitle} is now locked. Your submitted predictions are final.`,
+    session,
+  });
+  return match;
+};
+
+const autoLockWrestlingMatches = async () => {
+  const now = new Date();
+  const dueMatches = await ProWrestlingMatch.find({ status: 'OPEN', lockAt: { $lte: now } }).limit(100);
+  let locked = 0;
+  for (const match of dueMatches) {
+    if (match.minimumParticipants > match.participantCount && match.autoCancelIfMinimumNotMet) continue;
+    await runWrestlingTransaction(async (session) => {
+      const fresh = await applyWrestlingSession(ProWrestlingMatch.findById(match._id), session);
+      if (fresh?.status === 'OPEN') {
+        await lockWrestlingMatch(fresh, session);
+        locked += 1;
+      }
+    });
+  }
+  return locked;
+};
+
+const adjustWrestlingUserTokens = async ({ userId, delta, session }) => {
+  const user = await applyWrestlingSession(User.findById(userId), session);
+  if (!user) throw wrestlingHttpError(404, 'User not found.', 'USER_NOT_FOUND');
+  const balanceBefore = wrestlingTokenBalance(user.tokens);
+  const balanceAfter = balanceBefore + Number(delta);
+  if (balanceAfter < 0) throw wrestlingHttpError(400, 'Insufficient fight-wallet tokens.', 'INSUFFICIENT_TOKENS', { balance: balanceBefore });
+  user.tokens = String(balanceAfter);
+  await recordWalletMove({
+    userId: user._id, amount: balanceAfter - balanceBefore, balanceBefore, balanceAfter,
+    reason: 'wrestling_wallet_adjustment', reference: String(Date.now()),
+  });
+  await user.save(session ? { session } : undefined);
+  return { user, balanceBefore, balanceAfter };
+};
+
+const adjustWrestlingAffiliateTokens = async ({ affiliateId, delta, session }) => {
+  const affiliate = await applyWrestlingSession(Affiliate.findById(affiliateId), session);
+  if (!affiliate) throw wrestlingHttpError(404, 'Affiliate not found.', 'AFFILIATE_NOT_FOUND');
+  const balanceBefore = wrestlingTokenBalance(affiliate.tokens);
+  const balanceAfter = balanceBefore + Number(delta);
+  if (balanceAfter < 0) throw wrestlingHttpError(400, 'Affiliate token adjustment would produce a negative balance.', 'INVALID_AFFILIATE_BALANCE');
+  affiliate.tokens = String(balanceAfter);
+  await affiliate.save(session ? { session } : undefined);
+  return { affiliate, balanceBefore, balanceAfter };
+};
+
+const recalculateWrestlingScores = async (match, session) => {
+  const predictionQuery = ProWrestlingPrediction.find({
+    matchId: match._id,
+    predictionStatus: { $in: ['SUBMITTED', 'LOCKED', 'SCORED', 'SETTLED'] },
+  });
+  const predictions = await applyWrestlingSession(predictionQuery, session).lean();
+  const actualResult = {
+    competitorA: normalizeWrestlingStats(match.officialStats?.competitorA),
+    competitorB: normalizeWrestlingStats(match.officialStats?.competitorB),
+    officialWinner: match.officialWinner,
+    finishType: match.finishType,
+  };
+
+  const calculated = predictions.map((prediction) => {
+    const breakdown = calculateProWrestlingScore(prediction, actualResult, match.scoringRules);
+    return {
+      id: String(prediction._id),
+      predictionId: prediction._id,
+      userId: prediction.userId,
+      submittedAt: prediction.submittedAt || prediction.createdAt,
+      previousRank: prediction.rank,
+      totalScore: breakdown.totalScore,
+      normalizedError: breakdown.normalizedError,
+      exactPredictionCount: breakdown.exactPredictionCount,
+      finisherError: breakdown.finisherError,
+      breakdown,
+    };
+  });
+  const ranked = rankWrestlingPredictions(calculated);
+
+  if (ranked.length) {
+    const predictionOperations = ranked.map((row) => ({
+      updateOne: {
+        filter: { _id: row.predictionId },
+        update: {
+          $set: {
+            previousRank: row.previousRank || row.rank,
+            rank: row.rank,
+            score: row.totalScore,
+            normalizedError: row.normalizedError,
+            exactPredictionCount: row.exactPredictionCount,
+            finisherError: row.finisherError,
+            scoreBreakdown: row.breakdown,
+            scoringRuleVersion: match.scoringRuleVersion,
+            predictionStatus: match.status === 'FINALIZED' ? 'SETTLED' : 'SCORED',
+          },
+        },
+      },
+    }));
+    const entryOperations = ranked.map((row) => ({
+      updateOne: {
+        filter: { matchId: match._id, userId: row.userId, status: { $ne: 'REFUNDED' } },
+        update: { $set: { rank: row.rank } },
+      },
+    }));
+
+    await Promise.all([
+      ProWrestlingPrediction.bulkWrite(predictionOperations, session ? { session } : undefined),
+      ProWrestlingEntry.bulkWrite(entryOperations, session ? { session } : undefined),
+    ]);
+
+    const rankChanges = ranked.filter((row) => row.previousRank && row.previousRank !== row.rank);
+    if (rankChanges.length) {
+      const notifications = rankChanges.map((row) => ({
+        userId: row.userId,
+        matchId: match._id,
+        type: 'RANK_CHANGED',
+        title: 'Your Pro Wrestling rank changed',
+        message: `You moved from #${row.previousRank} to #${row.rank} in ${match.matchTitle}.`,
+        metadata: { previousRank: row.previousRank, rank: row.rank, score: row.totalScore },
+      }));
+      await ProWrestlingNotification.insertMany(notifications, session ? { session } : undefined);
+    }
+  }
+
+  return ranked;
+};
+
+const refundWrestlingMatch = async ({ matchId, status, reason, req, adminId }) => runWrestlingTransaction(async (session) => {
+  const match = await applyWrestlingSession(ProWrestlingMatch.findById(matchId), session);
+  if (!match) throw wrestlingHttpError(404, 'Wrestling match not found.', 'MATCH_NOT_FOUND');
+  if (match.status === 'FINALIZED') throw wrestlingHttpError(409, 'A finalized contest cannot be refunded.', 'MATCH_ALREADY_FINALIZED');
+  if (match.settlement?.status === 'REFUNDED') return match;
+
+  const before = wrestlingPlainObject(match);
+  const entries = await applyWrestlingSession(ProWrestlingEntry.find({ matchId: match._id, status: { $ne: 'REFUNDED' } }), session);
+  for (const entry of entries) {
+    const idempotencyKey = `wrestling:refund:${match._id}:${entry.userId}`;
+    const existingLedger = await applyWrestlingSession(ProWrestlingWalletLedger.findOne({ idempotencyKey }), session).lean();
+    if (!existingLedger && entry.entryFeeTokens > 0) {
+      const balance = await adjustWrestlingUserTokens({ userId: entry.userId, delta: entry.entryFeeTokens, session });
+      await ProWrestlingWalletLedger.create([{
+        accountType: 'USER',
+        userId: entry.userId,
+        matchId: match._id,
+        entryId: entry._id,
+        type: 'WRESTLING_REFUND',
+        amount: entry.entryFeeTokens,
+        balanceBefore: balance.balanceBefore,
+        balanceAfter: balance.balanceAfter,
+        idempotencyKey,
+        metadata: { reason },
+      }], session ? { session } : undefined);
+    }
+    entry.status = 'REFUNDED';
+    entry.refundedAt = new Date();
+    entry.payoutAmount = 0;
+    entry.rank = undefined;
+    await entry.save(session ? { session } : undefined);
+    await createWrestlingNotification({
+      userId: entry.userId,
+      matchId: match._id,
+      type: 'ENTRY_REFUNDED',
+      title: 'Wrestling contest entry refunded',
+      message: `${entry.entryFeeTokens} token${entry.entryFeeTokens === 1 ? '' : 's'} were returned for ${match.matchTitle}.`,
+      metadata: { reason },
+      session,
+    });
+  }
+
+  await ProWrestlingPrediction.updateMany(
+    { matchId: match._id },
+    { $set: { predictionStatus: 'REFUNDED', payoutAmount: 0 }, $unset: { rank: '', previousRank: '' } },
+    session ? { session } : undefined,
+  );
+
+  match.status = status;
+  match.cancelledAt = new Date();
+  match.cancellationReason = reason;
+  match.settlement = {
+    ...(wrestlingPlainObject(match.settlement) || {}),
+    status: 'REFUNDED',
+    winnerCount: 0,
+    grossPot: match.currentPot,
+    platformFeeTokens: 0,
+    affiliateCommissionTokens: 0,
+    playerPayoutTokens: 0,
+    completedAt: new Date(),
+  };
+  await match.save(session ? { session } : undefined);
+  await writeWrestlingAudit({
+    req,
+    adminId,
+    action: status === 'NO_CONTEST' ? 'WRESTLING_MATCH_NO_CONTEST_REFUND' : 'WRESTLING_MATCH_CANCEL_REFUND',
+    entityType: 'ProWrestlingMatch',
+    entityId: match._id,
+    before,
+    after: match,
+    reason,
+    session,
+  });
+  await safeWrestlingTrigger('match-refunded', { matchId: String(match._id), status, reason });
+  return match;
+});
+
+// --------------------------------------------------------------------------
+// Public Pro Wrestling discovery endpoints
+// --------------------------------------------------------------------------
+
+app.get('/api/wrestling/health', requireProWrestlingEnabled, async (req, res) => {
+  try {
+    await ensureWrestlingDefaultRules();
+    res.status(200).json({
+      enabled: true,
+      gameMode: PRO_WRESTLING_GAME_MODE,
+      predictionFormat: PRO_WRESTLING_PREDICTION_FORMAT,
+      statCategories: WRESTLING_STAT_KEYS,
+      statuses: PRO_WRESTLING_MATCH_STATUSES,
+    });
+  } catch (error) {
+    handleWrestlingError(res, error);
+  }
+});
+
+app.get('/api/wrestling/config', requireProWrestlingEnabled, async (req, res) => {
+  try {
+    const [scoringRules, payoutRules] = await Promise.all([
+      ProWrestlingScoringRule.find({ active: true }).sort({ createdAt: 1 }).lean(),
+      ProWrestlingPayoutRule.find({ active: true }).sort({ createdAt: 1 }).lean(),
+    ]);
+    res.json({
+      gameMode: PRO_WRESTLING_GAME_MODE,
+      predictionFormat: PRO_WRESTLING_PREDICTION_FORMAT,
+      categories: normalizeScoringRule(scoringRules[0]?.config || DEFAULT_WRESTLING_SCORING_RULE).categories,
+      scoringRules: scoringRules.map((rule) => ({ ruleId: rule.ruleId, name: rule.name })),
+      payoutRules: payoutRules.map((rule) => ({ ruleId: rule.ruleId, name: rule.name })),
+    });
+  } catch (error) {
+    handleWrestlingError(res, error);
+  }
+});
+
+const listWrestlingMatches = async (req, res) => {
+  try {
+    await autoLockWrestlingMatches();
+    const page = Math.max(1, Number.parseInt(req.query.page || '1', 10));
+    const limit = Math.min(100, Math.max(1, Number.parseInt(req.query.limit || '20', 10)));
+    const query = { publicVisible: true };
+    if (req.query.status) {
+      const statuses = String(req.query.status).split(',').map((value) => value.trim().toUpperCase()).filter((value) => PRO_WRESTLING_MATCH_STATUSES.includes(value));
+      if (statuses.length) query.status = { $in: statuses };
+    } else {
+      query.status = { $ne: 'DRAFT' };
+    }
+    if (req.query.featured !== undefined) query.featured = wrestlingBoolean(req.query.featured);
+    if (req.query.affiliateId && mongoose.isValidObjectId(req.query.affiliateId)) query.affiliateId = req.query.affiliateId;
+    if (req.query.upcoming === 'true') query.matchDate = { $gte: new Date() };
+    if (req.query.search) {
+      const search = String(req.query.search).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+      query.$or = [
+        { eventName: { $regex: search, $options: 'i' } },
+        { matchTitle: { $regex: search, $options: 'i' } },
+        { 'competitorA.displayName': { $regex: search, $options: 'i' } },
+        { 'competitorB.displayName': { $regex: search, $options: 'i' } },
+      ];
+    }
+
+    const [matches, total] = await Promise.all([
+      ProWrestlingMatch.find(query)
+        .sort({ featured: -1, matchDate: 1, createdAt: -1 })
+        .skip((page - 1) * limit)
+        .limit(limit)
+        .lean(),
+      ProWrestlingMatch.countDocuments(query),
+    ]);
+    res.json({
+      data: matches.map((match) => publicWrestlingMatch(match)),
+      pagination: { page, limit, total, totalPages: Math.max(1, Math.ceil(total / limit)) },
+    });
+  } catch (error) {
+    handleWrestlingError(res, error);
+  }
+};
+app.get('/api/wrestling/matches', requireProWrestlingEnabled, listWrestlingMatches);
+app.get('/api/wrestling/contests', requireProWrestlingEnabled, listWrestlingMatches);
+
+const getWrestlingMatch = async (req, res) => {
+  try {
+    await autoLockWrestlingMatches();
+    const identifier = req.params.matchId || req.params.contestId;
+    const query = mongoose.isValidObjectId(identifier) ? { _id: identifier } : { slug: identifier };
+    const match = await ProWrestlingMatch.findOne({ ...query, publicVisible: true }).lean();
+    if (!match) throw wrestlingHttpError(404, 'Wrestling match not found.', 'MATCH_NOT_FOUND');
+    res.json(publicWrestlingMatch(match, { includeRules: true }));
+  } catch (error) {
+    handleWrestlingError(res, error);
+  }
+};
+app.get('/api/wrestling/matches/:matchId', requireProWrestlingEnabled, getWrestlingMatch);
+app.get('/api/wrestling/contests/:contestId', requireProWrestlingEnabled, getWrestlingMatch);
+
+app.get('/api/wrestling/wrestlers', requireProWrestlingEnabled, async (req, res) => {
+  try {
+    const page = Math.max(1, Number.parseInt(req.query.page || '1', 10));
+    const limit = Math.min(100, Math.max(1, Number.parseInt(req.query.limit || '24', 10)));
+    const query = { active: true };
+    if (req.query.featured !== undefined) query.featured = wrestlingBoolean(req.query.featured);
+    if (req.query.search) {
+      const search = String(req.query.search).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+      query.$or = [
+        { displayName: { $regex: search, $options: 'i' } },
+        { promotion: { $regex: search, $options: 'i' } },
+        { wrestlingStyle: { $regex: search, $options: 'i' } },
+      ];
+    }
+    const [data, total] = await Promise.all([
+      ProWrestler.find(query).sort({ featured: -1, displayName: 1 }).skip((page - 1) * limit).limit(limit).lean(),
+      ProWrestler.countDocuments(query),
+    ]);
+    res.json({ data, pagination: { page, limit, total, totalPages: Math.max(1, Math.ceil(total / limit)) } });
+  } catch (error) {
+    handleWrestlingError(res, error);
+  }
+});
+
+app.get('/api/wrestling/wrestlers/:idOrSlug', requireProWrestlingEnabled, async (req, res) => {
+  try {
+    const identifier = req.params.idOrSlug;
+    const query = mongoose.isValidObjectId(identifier) ? { _id: identifier } : { slug: identifier };
+    const wrestler = await ProWrestler.findOne(query).lean();
+    if (!wrestler) throw wrestlingHttpError(404, 'Wrestler not found.', 'WRESTLER_NOT_FOUND');
+    const recentMatches = await ProWrestlingMatch.find({
+      $or: [{ 'competitorA.wrestlerId': wrestler._id }, { 'competitorB.wrestlerId': wrestler._id }],
+      publicVisible: true,
+      status: { $ne: 'DRAFT' },
+    }).sort({ matchDate: -1 }).limit(10).lean();
+    res.json({ wrestler, recentMatches: recentMatches.map((match) => publicWrestlingMatch(match)) });
+  } catch (error) {
+    handleWrestlingError(res, error);
+  }
+});
+
+// --------------------------------------------------------------------------
+// Player entry, prediction, live scoring, results and history
+// --------------------------------------------------------------------------
+
+const joinWrestlingMatch = async (req, res) => {
+  try {
+    const matchId = req.params.matchId || req.params.contestId;
+    if (!mongoose.isValidObjectId(matchId)) throw wrestlingHttpError(400, 'Invalid wrestling match ID.', 'INVALID_MATCH_ID');
+    const userId = req.user.id;
+    const deterministicKey = `wrestling:join:${matchId}:${userId}`;
+    const requestedKey = String(req.headers['idempotency-key'] || req.body?.idempotencyKey || deterministicKey).slice(0, 180);
+
+    const existing = await ProWrestlingEntry.findOne({ matchId, userId }).lean();
+    if (existing) return res.status(200).json({ entry: existing, idempotent: true });
+
+    const result = await runWrestlingTransaction(async (session) => {
+      const match = await applyWrestlingSession(ProWrestlingMatch.findById(matchId), session);
+      if (!match) throw wrestlingHttpError(404, 'Wrestling match not found.', 'MATCH_NOT_FOUND');
+      if (match.status !== 'OPEN' || isWrestlingPredictionLocked(match)) {
+        throw wrestlingHttpError(409, 'This wrestling contest is not open for entry.', 'CONTEST_NOT_OPEN');
+      }
+      if (match.maximumParticipants > 0 && match.participantCount >= match.maximumParticipants) {
+        throw wrestlingHttpError(409, 'This wrestling contest has reached its participant limit.', 'CONTEST_FULL');
+      }
+
+      const duplicate = await applyWrestlingSession(ProWrestlingEntry.findOne({ matchId, userId }), session).lean();
+      if (duplicate) return { entry: duplicate, idempotent: true };
+
+      const balance = await adjustWrestlingUserTokens({ userId, delta: -match.entryFeeTokens, session });
+      const affiliateId = match.affiliateId || (mongoose.isValidObjectId(req.body?.affiliateId) ? req.body.affiliateId : null);
+      const entryDocuments = await ProWrestlingEntry.create([{
+        matchId: match._id,
+        userId,
+        affiliateId,
+        referralCode: req.body?.referralCode || match.referralCode || null,
+        entryFeeTokens: match.entryFeeTokens,
+        status: 'JOINED',
+        idempotencyKey: requestedKey,
+        userSnapshot: {
+          displayName: balance.user.playerName || `${balance.user.firstName || ''} ${balance.user.lastName || ''}`.trim(),
+          profileUrl: balance.user.profileUrl,
+        },
+      }], session ? { session } : undefined);
+      const entry = entryDocuments[0];
+
+      await ProWrestlingWalletLedger.create([{
+        accountType: 'USER',
+        userId,
+        matchId: match._id,
+        entryId: entry._id,
+        type: 'WRESTLING_ENTRY',
+        amount: -match.entryFeeTokens,
+        balanceBefore: balance.balanceBefore,
+        balanceAfter: balance.balanceAfter,
+        idempotencyKey: `wrestling:ledger:${requestedKey}`,
+        metadata: { gameMode: PRO_WRESTLING_GAME_MODE },
+      }], session ? { session } : undefined);
+
+      match.participantCount += 1;
+      match.currentPot += match.entryFeeTokens;
+      await match.save(session ? { session } : undefined);
+
+      if (affiliateId) {
+        const affiliate = await applyWrestlingSession(Affiliate.findById(affiliateId), session);
+        if (affiliate && !affiliate.usersJoined.some((item) => String(item.userId) === String(userId))) {
+          affiliate.usersJoined.push({ userId, email: balance.user.email, joinedAt: new Date() });
+          await affiliate.save(session ? { session } : undefined);
+        }
+      }
+
+      await createWrestlingNotification({
+        userId,
+        matchId: match._id,
+        type: 'ENTRY_CONFIRMED',
+        title: 'Wrestling contest entry confirmed',
+        message: `You entered ${match.matchTitle} for ${match.entryFeeTokens} token${match.entryFeeTokens === 1 ? '' : 's'}.`,
+        session,
+      });
+      return { entry: wrestlingPlainObject(entry), match: publicWrestlingMatch(match), balance: balance.balanceAfter };
+    });
+
+    await safeWrestlingTrigger('contest-entry', { matchId, userId, participantCount: result.match?.participantCount });
+    return res.status(result.idempotent ? 200 : 201).json(result);
+  } catch (error) {
+    const existing = await ProWrestlingEntry.findOne({ matchId: req.params.matchId || req.params.contestId, userId: req.user?.id }).lean().catch(() => null);
+    if (error.code === 11000 && existing) return res.status(200).json({ entry: existing, idempotent: true });
+    return handleWrestlingError(res, error);
+  }
+};
+app.post('/api/wrestling/matches/:matchId/join', requireProWrestlingEnabled, verifyToken, joinWrestlingMatch);
+app.post('/api/wrestling/contests/:contestId/join', requireProWrestlingEnabled, verifyToken, joinWrestlingMatch);
+
+app.get('/api/wrestling/matches/:matchId/my-entry', requireProWrestlingEnabled, verifyToken, async (req, res) => {
+  try {
+    const entry = await ProWrestlingEntry.findOne({ matchId: req.params.matchId, userId: req.user.id }).lean();
+    if (!entry) throw wrestlingHttpError(404, 'You have not entered this wrestling contest.', 'ENTRY_NOT_FOUND');
+    const prediction = await ProWrestlingPrediction.findOne({ matchId: req.params.matchId, userId: req.user.id }).lean();
+    res.json({ entry, prediction });
+  } catch (error) {
+    handleWrestlingError(res, error);
+  }
+});
+
+const saveWrestlingPrediction = async (req, res) => {
+  try {
+    const matchId = req.params.matchId;
+    const userId = req.user.id;
+    const match = await ProWrestlingMatch.findById(matchId);
+    if (!match) throw wrestlingHttpError(404, 'Wrestling match not found.', 'MATCH_NOT_FOUND');
+    if (isWrestlingPredictionLocked(match)) throw wrestlingHttpError(409, 'Predictions are locked for this wrestling contest.', 'PREDICTIONS_LOCKED');
+
+    const entry = await ProWrestlingEntry.findOne({ matchId, userId });
+    if (!entry) throw wrestlingHttpError(403, 'Join the wrestling contest before submitting predictions.', 'ENTRY_REQUIRED');
+    if (!['JOINED', 'PREDICTION_SUBMITTED'].includes(entry.status)) {
+      throw wrestlingHttpError(409, 'This contest entry can no longer be edited.', 'ENTRY_LOCKED');
+    }
+
+    const payload = {
+      competitorA: normalizeWrestlingStats(req.body.competitorA || req.body.wrestlerA),
+      competitorB: normalizeWrestlingStats(req.body.competitorB || req.body.wrestlerB),
+      winnerPrediction: String(req.body.winnerPrediction || '').toUpperCase(),
+      finishTypePrediction: String(req.body.finishTypePrediction || 'PINFALL').toUpperCase(),
+    };
+    const errors = validateWrestlingPredictionPayload(payload);
+    if (errors.length) throw wrestlingHttpError(400, 'Invalid wrestling prediction payload.', 'INVALID_PREDICTION', errors);
+
+    const requestedStatus = String(req.body.predictionStatus || 'SUBMITTED').toUpperCase();
+    const predictionStatus = requestedStatus === 'DRAFT' ? 'DRAFT' : 'SUBMITTED';
+    const now = new Date();
+    const prediction = await ProWrestlingPrediction.findOneAndUpdate(
+      { matchId, userId },
+      {
+        $set: {
+          ...payload,
+          predictionStatus,
+          submittedAt: predictionStatus === 'SUBMITTED' ? now : undefined,
+          scoringRuleVersion: match.scoringRuleVersion,
+        },
+        $setOnInsert: { gameMode: PRO_WRESTLING_GAME_MODE },
+      },
+      { upsert: true, new: true, runValidators: true },
+    );
+
+    entry.status = predictionStatus === 'SUBMITTED' ? 'PREDICTION_SUBMITTED' : 'JOINED';
+    await entry.save();
+
+    if (predictionStatus === 'SUBMITTED') {
+      await createWrestlingNotification({
+        userId,
+        matchId,
+        type: 'PREDICTION_SUBMITTED',
+        title: 'Wrestling prediction submitted',
+        message: `Your predictions for ${match.matchTitle} are saved and can be edited until lock time.`,
+      });
+    }
+    res.status(req.method === 'POST' ? 201 : 200).json({ prediction, lockAt: match.lockAt });
+  } catch (error) {
+    handleWrestlingError(res, error);
+  }
+};
+app.post('/api/wrestling/matches/:matchId/prediction', requireProWrestlingEnabled, verifyToken, saveWrestlingPrediction);
+app.put('/api/wrestling/matches/:matchId/prediction', requireProWrestlingEnabled, verifyToken, saveWrestlingPrediction);
+
+app.get('/api/wrestling/matches/:matchId/prediction', requireProWrestlingEnabled, verifyToken, async (req, res) => {
+  try {
+    const prediction = await ProWrestlingPrediction.findOne({ matchId: req.params.matchId, userId: req.user.id }).lean();
+    if (!prediction) throw wrestlingHttpError(404, 'No wrestling prediction found for this user and match.', 'PREDICTION_NOT_FOUND');
+    res.json(prediction);
+  } catch (error) {
+    handleWrestlingError(res, error);
+  }
+});
+
+app.get('/api/wrestling/matches/:matchId/live', requireProWrestlingEnabled, async (req, res) => {
+  try {
+    const match = await ProWrestlingMatch.findById(req.params.matchId).lean();
+    if (!match) throw wrestlingHttpError(404, 'Wrestling match not found.', 'MATCH_NOT_FOUND');
+    if (!['LIVE', 'SCORING', 'FINALIZED'].includes(match.status)) {
+      return res.status(409).json({ message: 'Live wrestling statistics are not available yet.', status: match.status });
+    }
+    let myPosition = null;
+    const authHeader = req.headers.authorization;
+    if (authHeader?.startsWith('Bearer ')) {
+      try {
+        const decoded = jwt.verify(authHeader.slice(7), process.env.JWT_SECRET);
+        myPosition = await ProWrestlingPrediction.findOne({ matchId: match._id, userId: decoded.id })
+          .select('score rank previousRank scoreBreakdown predictionStatus')
+          .lean();
+      } catch (error) {
+        myPosition = null;
+      }
+    }
+    res.json({
+      match: publicWrestlingMatch(match, { revealStats: true, includeRules: true }),
+      statsVersion: match.statsVersion,
+      myPosition,
+      pollAfterSeconds: 15,
+    });
+  } catch (error) {
+    handleWrestlingError(res, error);
+  }
+});
+
+app.get('/api/wrestling/matches/:matchId/leaderboard', requireProWrestlingEnabled, async (req, res) => {
+  try {
+    const match = await ProWrestlingMatch.findById(req.params.matchId).lean();
+    if (!match) throw wrestlingHttpError(404, 'Wrestling match not found.', 'MATCH_NOT_FOUND');
+    if (!['LIVE', 'SCORING', 'FINALIZED'].includes(match.status)) {
+      return res.json({ matchId: match._id, status: match.status, data: [], pagination: { page: 1, limit: 50, total: 0, totalPages: 1 } });
+    }
+    const page = Math.max(1, Number.parseInt(req.query.page || '1', 10));
+    const limit = Math.min(100, Math.max(1, Number.parseInt(req.query.limit || '50', 10)));
+    const query = { matchId: match._id, rank: { $exists: true } };
+    const [predictions, total] = await Promise.all([
+      ProWrestlingPrediction.find(query).sort({ rank: 1 }).skip((page - 1) * limit).limit(limit).lean(),
+      ProWrestlingPrediction.countDocuments(query),
+    ]);
+    const userIds = predictions.map((prediction) => prediction.userId);
+    const users = await User.find({ _id: { $in: userIds } }).select('firstName lastName playerName profileUrl').lean();
+    const userMap = new Map(users.map((user) => [String(user._id), user]));
+    const data = predictions.map((prediction) => {
+      const user = userMap.get(String(prediction.userId));
+      return {
+        playerId: prediction.userId,
+        playerName: user?.playerName || `${user?.firstName || ''} ${user?.lastName || ''}`.trim() || 'Fantasy player',
+        profileUrl: user?.profileUrl || null,
+        score: prediction.score,
+        rank: prediction.rank,
+        previousRank: prediction.previousRank,
+        rankMovement: prediction.previousRank ? prediction.previousRank - prediction.rank : 0,
+        exactPredictionCount: prediction.exactPredictionCount,
+        payoutAmount: match.status === 'FINALIZED' ? prediction.payoutAmount : undefined,
+      };
+    });
+    res.json({ matchId: match._id, status: match.status, data, pagination: { page, limit, total, totalPages: Math.max(1, Math.ceil(total / limit)) } });
+  } catch (error) {
+    handleWrestlingError(res, error);
+  }
+});
+
+app.get('/api/wrestling/matches/:matchId/results', requireProWrestlingEnabled, async (req, res) => {
+  try {
+    const match = await ProWrestlingMatch.findById(req.params.matchId).lean();
+    if (!match) throw wrestlingHttpError(404, 'Wrestling match not found.', 'MATCH_NOT_FOUND');
+    if (!['SCORING', 'FINALIZED'].includes(match.status)) {
+      throw wrestlingHttpError(409, 'Official wrestling results are not available yet.', 'RESULTS_NOT_AVAILABLE');
+    }
+    let myResult = null;
+    const authHeader = req.headers.authorization;
+    if (authHeader?.startsWith('Bearer ')) {
+      try {
+        const decoded = jwt.verify(authHeader.slice(7), process.env.JWT_SECRET);
+        myResult = await ProWrestlingPrediction.findOne({ matchId: match._id, userId: decoded.id }).lean();
+      } catch (error) {
+        myResult = null;
+      }
+    }
+    res.json({ match: publicWrestlingMatch(match, { revealStats: true, includeRules: true }), myResult });
+  } catch (error) {
+    handleWrestlingError(res, error);
+  }
+});
+
+app.get('/api/users/me/wrestling-history', requireProWrestlingEnabled, verifyToken, async (req, res) => {
+  try {
+    const page = Math.max(1, Number.parseInt(req.query.page || '1', 10));
+    const limit = Math.min(100, Math.max(1, Number.parseInt(req.query.limit || '20', 10)));
+    const entryQuery = { userId: req.user.id };
+    if (req.query.status) entryQuery.status = String(req.query.status).toUpperCase();
+    const [entries, total] = await Promise.all([
+      ProWrestlingEntry.find(entryQuery).sort({ createdAt: -1 }).skip((page - 1) * limit).limit(limit).lean(),
+      ProWrestlingEntry.countDocuments(entryQuery),
+    ]);
+    const matchIds = entries.map((entry) => entry.matchId);
+    const [matches, predictions] = await Promise.all([
+      ProWrestlingMatch.find({ _id: { $in: matchIds } }).lean(),
+      ProWrestlingPrediction.find({ userId: req.user.id, matchId: { $in: matchIds } }).lean(),
+    ]);
+    const matchMap = new Map(matches.map((match) => [String(match._id), match]));
+    const predictionMap = new Map(predictions.map((prediction) => [String(prediction.matchId), prediction]));
+    const data = entries.map((entry) => ({
+      entry,
+      match: publicWrestlingMatch(matchMap.get(String(entry.matchId)) || {}, { revealStats: true }),
+      prediction: predictionMap.get(String(entry.matchId)) || null,
+    }));
+    res.json({ data, pagination: { page, limit, total, totalPages: Math.max(1, Math.ceil(total / limit)) } });
+  } catch (error) {
+    handleWrestlingError(res, error);
+  }
+});
+
+app.get('/api/users/me/wrestling-wallet-ledger', requireProWrestlingEnabled, verifyToken, async (req, res) => {
+  try {
+    const page = Math.max(1, Number.parseInt(req.query.page || '1', 10));
+    const limit = Math.min(100, Math.max(1, Number.parseInt(req.query.limit || '30', 10)));
+    const query = { accountType: 'USER', userId: req.user.id };
+    if (req.query.matchId && mongoose.isValidObjectId(req.query.matchId)) query.matchId = req.query.matchId;
+    if (req.query.type) query.type = String(req.query.type).toUpperCase();
+    const [data, total] = await Promise.all([
+      ProWrestlingWalletLedger.find(query).sort({ createdAt: -1 }).skip((page - 1) * limit).limit(limit).lean(),
+      ProWrestlingWalletLedger.countDocuments(query),
+    ]);
+    res.json({ data, pagination: { page, limit, total, totalPages: Math.max(1, Math.ceil(total / limit)) } });
+  } catch (error) {
+    handleWrestlingError(res, error);
+  }
+});
+
+app.get('/api/users/me/wrestling-notifications', requireProWrestlingEnabled, verifyToken, async (req, res) => {
+  try {
+    const limit = Math.min(100, Math.max(1, Number.parseInt(req.query.limit || '50', 10)));
+    const query = { userId: req.user.id };
+    if (req.query.unread === 'true') query.read = false;
+    const notifications = await ProWrestlingNotification.find(query).sort({ createdAt: -1 }).limit(limit).lean();
+    res.json(notifications);
+  } catch (error) {
+    handleWrestlingError(res, error);
+  }
+});
+
+app.patch('/api/users/me/wrestling-notifications/:id/read', requireProWrestlingEnabled, verifyToken, async (req, res) => {
+  try {
+    const notification = await ProWrestlingNotification.findOneAndUpdate(
+      { _id: req.params.id, userId: req.user.id },
+      { $set: { read: true } },
+      { new: true },
+    );
+    if (!notification) throw wrestlingHttpError(404, 'Wrestling notification not found.', 'NOTIFICATION_NOT_FOUND');
+    res.json(notification);
+  } catch (error) {
+    handleWrestlingError(res, error);
+  }
+});
+
+// --------------------------------------------------------------------------
+// Admin wrestler, contest, scoring, settlement, migration and analytics APIs
+// --------------------------------------------------------------------------
+
+app.get('/api/admin/wrestling/wrestlers', requireProWrestlingEnabled, verifyAdminToken, async (req, res) => {
+  try {
+    const page = Math.max(1, Number.parseInt(req.query.page || '1', 10));
+    const limit = Math.min(100, Math.max(1, Number.parseInt(req.query.limit || '50', 10)));
+    const query = {};
+    if (req.query.active !== undefined) query.active = wrestlingBoolean(req.query.active);
+    if (req.query.search) {
+      const search = String(req.query.search).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+      query.$or = [
+        { displayName: { $regex: search, $options: 'i' } },
+        { promotion: { $regex: search, $options: 'i' } },
+        { wrestlingStyle: { $regex: search, $options: 'i' } },
+      ];
+    }
+    const [data, total] = await Promise.all([
+      ProWrestler.find(query).sort({ active: -1, featured: -1, displayName: 1 }).skip((page - 1) * limit).limit(limit).lean(),
+      ProWrestler.countDocuments(query),
+    ]);
+    res.json({ data, pagination: { page, limit, total, totalPages: Math.max(1, Math.ceil(total / limit)) } });
+  } catch (error) {
+    handleWrestlingError(res, error);
+  }
+});
+
+app.post('/api/admin/wrestling/wrestlers', requireProWrestlingEnabled, verifyAdminToken, upload.fields([{ name: 'profileImage', maxCount: 1 }, { name: 'bannerImage', maxCount: 1 }]), async (req, res) => {
+  try {
+    const profileUpload = await uploadWrestlingImage(req.files?.profileImage?.[0], 'fantasy-mmadness/pro-wrestling/wrestlers');
+    const bannerUpload = await uploadWrestlingImage(req.files?.bannerImage?.[0], 'fantasy-mmadness/pro-wrestling/wrestlers');
+    const slug = await uniqueWrestlingSlug(ProWrestler, req.body.slug || req.body.displayName);
+    const wrestler = await ProWrestler.create({
+      displayName: req.body.displayName,
+      slug,
+      profileImage: profileUpload?.url || req.body.profileImageUrl || req.body.profileImage,
+      profileImageDeleteUrl: profileUpload?.deleteUrl,
+      bannerImage: bannerUpload?.url || req.body.bannerImageUrl || req.body.bannerImage,
+      bannerImageDeleteUrl: bannerUpload?.deleteUrl,
+      promotion: req.body.promotion,
+      country: req.body.country,
+      height: req.body.height,
+      weight: req.body.weight,
+      wrestlingStyle: req.body.wrestlingStyle,
+      signatureMoves: wrestlingArray(req.body.signatureMoves),
+      finishingMoves: wrestlingArray(req.body.finishingMoves),
+      careerRecord: wrestlingObject(req.body.careerRecord, {}),
+      historicalStatistics: wrestlingObject(req.body.historicalStatistics, {}),
+      biography: req.body.biography,
+      active: wrestlingBoolean(req.body.active, true),
+      featured: wrestlingBoolean(req.body.featured, false),
+      seo: wrestlingObject(req.body.seo, {}),
+      createdBy: req.admin.id,
+      updatedBy: req.admin.id,
+    });
+    await writeWrestlingAudit({ req, action: 'WRESTLER_CREATED', entityType: 'ProWrestler', entityId: wrestler._id, after: wrestler });
+    app.locals.swarmPhase2?.triggerAutomationEvent?.({
+      trigger: 'wrestler_added',
+      vertical: 'pro_wrestling',
+      admin: req.admin,
+      sourceEntity: { type: 'pro_wrestling_wrestler', id: String(wrestler._id), label: wrestler.displayName },
+      input: {
+        wrestlerId: String(wrestler._id),
+        wrestlerName: wrestler.displayName,
+        title: wrestler.displayName,
+        promotion: wrestler.promotion,
+        wrestlingStyle: wrestler.wrestlingStyle,
+        biography: wrestler.biography,
+      },
+      metadata: { route: '/api/admin/wrestling/wrestlers', action: 'wrestler-added' },
+      reason: 'wrestler-created-in-backend',
+    }).catch((error) => console.error('Swarm wrestler added automation failed:', error.message));
+    res.status(201).json(wrestler);
+  } catch (error) {
+    handleWrestlingError(res, error);
+  }
+});
+
+app.put('/api/admin/wrestling/wrestlers/:id', requireProWrestlingEnabled, verifyAdminToken, upload.fields([{ name: 'profileImage', maxCount: 1 }, { name: 'bannerImage', maxCount: 1 }]), async (req, res) => {
+  try {
+    const wrestler = await ProWrestler.findById(req.params.id);
+    if (!wrestler) throw wrestlingHttpError(404, 'Wrestler not found.', 'WRESTLER_NOT_FOUND');
+    const before = wrestlingPlainObject(wrestler);
+    const profileUpload = await uploadWrestlingImage(req.files?.profileImage?.[0], 'fantasy-mmadness/pro-wrestling/wrestlers');
+    const bannerUpload = await uploadWrestlingImage(req.files?.bannerImage?.[0], 'fantasy-mmadness/pro-wrestling/wrestlers');
+    const fields = ['displayName', 'promotion', 'country', 'height', 'weight', 'wrestlingStyle', 'biography'];
+    fields.forEach((field) => {
+      if (req.body[field] !== undefined) wrestler[field] = req.body[field];
+    });
+    if (req.body.slug || req.body.displayName) wrestler.slug = await uniqueWrestlingSlug(ProWrestler, req.body.slug || req.body.displayName, wrestler._id);
+    if (profileUpload || req.body.profileImageUrl) {
+      wrestler.profileImage = profileUpload?.url || req.body.profileImageUrl;
+      if (profileUpload?.deleteUrl) wrestler.profileImageDeleteUrl = profileUpload.deleteUrl;
+    }
+    if (bannerUpload || req.body.bannerImageUrl) {
+      wrestler.bannerImage = bannerUpload?.url || req.body.bannerImageUrl;
+      if (bannerUpload?.deleteUrl) wrestler.bannerImageDeleteUrl = bannerUpload.deleteUrl;
+    }
+    if (req.body.signatureMoves !== undefined) wrestler.signatureMoves = wrestlingArray(req.body.signatureMoves);
+    if (req.body.finishingMoves !== undefined) wrestler.finishingMoves = wrestlingArray(req.body.finishingMoves);
+    if (req.body.careerRecord !== undefined) wrestler.careerRecord = wrestlingObject(req.body.careerRecord, {});
+    if (req.body.historicalStatistics !== undefined) wrestler.historicalStatistics = wrestlingObject(req.body.historicalStatistics, {});
+    if (req.body.active !== undefined) wrestler.active = wrestlingBoolean(req.body.active);
+    if (req.body.featured !== undefined) wrestler.featured = wrestlingBoolean(req.body.featured);
+    if (req.body.seo !== undefined) wrestler.seo = wrestlingObject(req.body.seo, {});
+    wrestler.updatedBy = req.admin.id;
+    await wrestler.save();
+    await writeWrestlingAudit({ req, action: 'WRESTLER_UPDATED', entityType: 'ProWrestler', entityId: wrestler._id, before, after: wrestler, reason: req.body.reason });
+    res.json(wrestler);
+  } catch (error) {
+    handleWrestlingError(res, error);
+  }
+});
+
+app.delete('/api/admin/wrestling/wrestlers/:id', requireProWrestlingEnabled, verifyAdminToken, async (req, res) => {
+  try {
+    const wrestler = await ProWrestler.findById(req.params.id);
+    if (!wrestler) throw wrestlingHttpError(404, 'Wrestler not found.', 'WRESTLER_NOT_FOUND');
+    const before = wrestlingPlainObject(wrestler);
+    wrestler.active = false;
+    wrestler.updatedBy = req.admin.id;
+    await wrestler.save();
+    await writeWrestlingAudit({ req, action: 'WRESTLER_DEACTIVATED', entityType: 'ProWrestler', entityId: wrestler._id, before, after: wrestler, reason: req.body?.reason });
+    res.json({ message: 'Wrestler deactivated without deleting historical match data.', wrestler });
+  } catch (error) {
+    handleWrestlingError(res, error);
+  }
+});
+
+app.post('/api/admin/wrestling/matches', requireProWrestlingEnabled, verifyAdminToken, upload.single('bannerImage'), async (req, res) => {
+  try {
+    const competitorA = await resolveWrestlingCompetitor(req.body.competitorA, req.body.competitorAId);
+    const competitorB = await resolveWrestlingCompetitor(req.body.competitorB, req.body.competitorBId);
+    if (competitorA.wrestlerId && competitorB.wrestlerId && String(competitorA.wrestlerId) === String(competitorB.wrestlerId)) {
+      throw wrestlingHttpError(400, 'The two competitors must be different wrestlers.', 'DUPLICATE_COMPETITOR');
+    }
+    const scoringRules = await getWrestlingScoringRule(req.body.scoringRuleVersion);
+    const payoutRules = await getWrestlingPayoutRule(req.body.payoutRuleVersion);
+    const matchDate = new Date(req.body.matchDate);
+    const lockAt = new Date(req.body.lockAt);
+    if (Number.isNaN(matchDate.getTime()) || Number.isNaN(lockAt.getTime())) {
+      throw wrestlingHttpError(400, 'Valid matchDate and lockAt values are required.', 'INVALID_MATCH_DATES');
+    }
+    if (lockAt >= matchDate) throw wrestlingHttpError(400, 'Prediction lock time must occur before match time.', 'INVALID_LOCK_TIME');
+    const status = String(req.body.status || 'DRAFT').toUpperCase();
+    if (!['DRAFT', 'OPEN'].includes(status)) throw wrestlingHttpError(400, 'New wrestling matches can only start as DRAFT or OPEN.', 'INVALID_INITIAL_STATUS');
+    const basePot = Math.max(0, Math.round(wrestlingNumber(req.body.basePot ?? req.body.pot, 0)));
+    const minimumParticipants = Math.max(0, Math.round(wrestlingNumber(req.body.minimumParticipants, 0)));
+    const maximumParticipants = Math.max(0, Math.round(wrestlingNumber(req.body.maximumParticipants, 0)));
+    if (maximumParticipants > 0 && minimumParticipants > maximumParticipants) {
+      throw wrestlingHttpError(400, 'minimumParticipants cannot exceed maximumParticipants.', 'INVALID_PARTICIPANT_LIMITS');
+    }
+    const bannerUpload = await uploadWrestlingImage(req.file, 'fantasy-mmadness/pro-wrestling/matches');
+    const matchTitle = String(req.body.matchTitle || `${competitorA.displayName} vs ${competitorB.displayName}`).trim();
+    const slug = await uniqueWrestlingSlug(ProWrestlingMatch, req.body.slug || `${req.body.eventName}-${matchTitle}`);
+    const match = await ProWrestlingMatch.create({
+      eventName: req.body.eventName,
+      promotionName: req.body.promotionName,
+      matchTitle,
+      slug,
+      matchFormat: String(req.body.matchFormat || 'SINGLES').toUpperCase(),
+      competitorA,
+      competitorB,
+      matchDate,
+      matchTime: req.body.matchTime,
+      lockAt,
+      entryFeeTokens: Math.max(0, Math.round(wrestlingNumber(req.body.entryFeeTokens, 0))),
+      basePot,
+      currentPot: basePot,
+      minimumParticipants,
+      maximumParticipants,
+      autoCancelIfMinimumNotMet: wrestlingBoolean(req.body.autoCancelIfMinimumNotMet, true),
+      status,
+      description: req.body.description,
+      bannerImage: bannerUpload?.url || req.body.bannerImageUrl || req.body.bannerImage,
+      bannerImageDeleteUrl: bannerUpload?.deleteUrl,
+      featured: wrestlingBoolean(req.body.featured, false),
+      publicVisible: wrestlingBoolean(req.body.publicVisible, true),
+      affiliateId: mongoose.isValidObjectId(req.body.affiliateId) ? req.body.affiliateId : undefined,
+      affiliateCommissionPercentage: Math.min(100, Math.max(0, wrestlingNumber(req.body.affiliateCommissionPercentage, 0))),
+      referralCode: req.body.referralCode,
+      seo: wrestlingObject(req.body.seo, {}),
+      scoringRuleVersion: scoringRules.ruleId,
+      payoutRuleVersion: payoutRules.ruleId,
+      scoringRules,
+      payoutRules,
+      publishedAt: status === 'OPEN' ? new Date() : undefined,
+      createdBy: req.admin.id,
+      updatedBy: req.admin.id,
+    });
+    await writeWrestlingAudit({ req, action: 'WRESTLING_MATCH_CREATED', entityType: 'ProWrestlingMatch', entityId: match._id, after: match });
+    res.status(201).json(match);
+  } catch (error) {
+    handleWrestlingError(res, error);
+  }
+});
+
+app.get('/api/admin/wrestling/matches', requireProWrestlingEnabled, verifyAdminToken, async (req, res) => {
+  try {
+    const query = {};
+    if (req.query.status) query.status = { $in: String(req.query.status).split(',').map((value) => value.trim().toUpperCase()) };
+    if (req.query.search) {
+      const search = String(req.query.search).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+      query.$or = [{ eventName: { $regex: search, $options: 'i' } }, { matchTitle: { $regex: search, $options: 'i' } }];
+    }
+    const matches = await ProWrestlingMatch.find(query).sort({ createdAt: -1 }).lean();
+    res.json(matches);
+  } catch (error) {
+    handleWrestlingError(res, error);
+  }
+});
+
+app.get('/api/admin/wrestling/matches/:id', requireProWrestlingEnabled, verifyAdminToken, async (req, res) => {
+  try {
+    const match = await ProWrestlingMatch.findById(req.params.id).lean();
+    if (!match) throw wrestlingHttpError(404, 'Wrestling match not found.', 'MATCH_NOT_FOUND');
+    const [entries, predictions] = await Promise.all([
+      ProWrestlingEntry.countDocuments({ matchId: match._id }),
+      ProWrestlingPrediction.countDocuments({ matchId: match._id, predictionStatus: { $ne: 'DRAFT' } }),
+    ]);
+    res.json({ match, counts: { entries, predictions } });
+  } catch (error) {
+    handleWrestlingError(res, error);
+  }
+});
+
+app.put('/api/admin/wrestling/matches/:id', requireProWrestlingEnabled, verifyAdminToken, upload.single('bannerImage'), async (req, res) => {
+  try {
+    const match = await ProWrestlingMatch.findById(req.params.id);
+    if (!match) throw wrestlingHttpError(404, 'Wrestling match not found.', 'MATCH_NOT_FOUND');
+    if (['FINALIZED', 'CANCELLED', 'NO_CONTEST'].includes(match.status)) {
+      throw wrestlingHttpError(409, 'Closed wrestling matches cannot be edited.', 'MATCH_CLOSED');
+    }
+    const before = wrestlingPlainObject(match);
+    const protectedFields = new Set(['status', 'settlement', 'officialStats', 'officialWinner', 'participantCount', 'currentPot']);
+    const editableFields = ['eventName', 'promotionName', 'matchTitle', 'matchTime', 'description', 'referralCode'];
+    editableFields.forEach((field) => {
+      if (req.body[field] !== undefined && !protectedFields.has(field)) match[field] = req.body[field];
+    });
+    if (req.body.matchDate !== undefined) match.matchDate = new Date(req.body.matchDate);
+    if (req.body.lockAt !== undefined) match.lockAt = new Date(req.body.lockAt);
+    if (Number.isNaN(match.matchDate.getTime()) || Number.isNaN(match.lockAt.getTime()) || match.lockAt >= match.matchDate) {
+      throw wrestlingHttpError(400, 'Match and lock dates are invalid.', 'INVALID_MATCH_DATES');
+    }
+    if (match.participantCount === 0 && match.status === 'DRAFT') {
+      if (req.body.competitorA !== undefined || req.body.competitorAId) match.competitorA = await resolveWrestlingCompetitor(req.body.competitorA, req.body.competitorAId);
+      if (req.body.competitorB !== undefined || req.body.competitorBId) match.competitorB = await resolveWrestlingCompetitor(req.body.competitorB, req.body.competitorBId);
+      if (req.body.entryFeeTokens !== undefined) match.entryFeeTokens = Math.max(0, Math.round(wrestlingNumber(req.body.entryFeeTokens, 0)));
+      if (req.body.basePot !== undefined || req.body.pot !== undefined) {
+        match.basePot = Math.max(0, Math.round(wrestlingNumber(req.body.basePot ?? req.body.pot, 0)));
+        match.currentPot = match.basePot;
+      }
+      if (req.body.scoringRuleVersion) {
+        match.scoringRules = await getWrestlingScoringRule(req.body.scoringRuleVersion);
+        match.scoringRuleVersion = match.scoringRules.ruleId;
+      }
+      if (req.body.payoutRuleVersion) {
+        match.payoutRules = await getWrestlingPayoutRule(req.body.payoutRuleVersion);
+        match.payoutRuleVersion = match.payoutRules.ruleId;
+      }
+    }
+    if (req.body.minimumParticipants !== undefined) match.minimumParticipants = Math.max(0, Math.round(wrestlingNumber(req.body.minimumParticipants, 0)));
+    if (req.body.maximumParticipants !== undefined) match.maximumParticipants = Math.max(0, Math.round(wrestlingNumber(req.body.maximumParticipants, 0)));
+    if (match.maximumParticipants > 0 && match.minimumParticipants > match.maximumParticipants) {
+      throw wrestlingHttpError(400, 'minimumParticipants cannot exceed maximumParticipants.', 'INVALID_PARTICIPANT_LIMITS');
+    }
+    if (req.body.autoCancelIfMinimumNotMet !== undefined) match.autoCancelIfMinimumNotMet = wrestlingBoolean(req.body.autoCancelIfMinimumNotMet);
+    if (req.body.matchFormat !== undefined && match.status === 'DRAFT' && match.participantCount === 0) {
+      match.matchFormat = String(req.body.matchFormat).toUpperCase();
+    }
+    if (req.body.affiliateId !== undefined) {
+      if (!req.body.affiliateId) match.affiliateId = undefined;
+      else if (mongoose.isValidObjectId(req.body.affiliateId)) match.affiliateId = req.body.affiliateId;
+      else throw wrestlingHttpError(400, 'affiliateId must be a valid identifier.', 'INVALID_AFFILIATE_ID');
+    }
+    if (req.body.featured !== undefined) match.featured = wrestlingBoolean(req.body.featured);
+    if (req.body.publicVisible !== undefined) match.publicVisible = wrestlingBoolean(req.body.publicVisible);
+    if (req.body.affiliateCommissionPercentage !== undefined) match.affiliateCommissionPercentage = Math.min(100, Math.max(0, wrestlingNumber(req.body.affiliateCommissionPercentage, 0)));
+    if (req.body.seo !== undefined) match.seo = wrestlingObject(req.body.seo, {});
+    if (req.body.slug || req.body.matchTitle || req.body.eventName) match.slug = await uniqueWrestlingSlug(ProWrestlingMatch, req.body.slug || `${match.eventName}-${match.matchTitle}`, match._id);
+    const bannerUpload = await uploadWrestlingImage(req.file, 'fantasy-mmadness/pro-wrestling/matches');
+    if (bannerUpload || req.body.bannerImageUrl) {
+      match.bannerImage = bannerUpload?.url || req.body.bannerImageUrl;
+      if (bannerUpload?.deleteUrl) match.bannerImageDeleteUrl = bannerUpload.deleteUrl;
+    }
+    match.updatedBy = req.admin.id;
+    await match.save();
+    await writeWrestlingAudit({ req, action: 'WRESTLING_MATCH_UPDATED', entityType: 'ProWrestlingMatch', entityId: match._id, before, after: match, reason: req.body.reason });
+    res.json(match);
+  } catch (error) {
+    handleWrestlingError(res, error);
+  }
+});
+
+app.delete('/api/admin/wrestling/matches/:id', requireProWrestlingEnabled, verifyAdminToken, async (req, res) => {
+  try {
+    const match = await ProWrestlingMatch.findById(req.params.id);
+    if (!match) throw wrestlingHttpError(404, 'Wrestling match not found.', 'MATCH_NOT_FOUND');
+    if (match.participantCount > 0 || match.status !== 'DRAFT') {
+      throw wrestlingHttpError(409, 'Only empty draft wrestling matches can be permanently deleted. Cancel active contests instead.', 'MATCH_DELETE_BLOCKED');
+    }
+    const before = wrestlingPlainObject(match);
+    await match.deleteOne();
+    await writeWrestlingAudit({ req, action: 'WRESTLING_MATCH_DELETED', entityType: 'ProWrestlingMatch', entityId: req.params.id, before, reason: req.body?.reason });
+    res.json({ message: 'Draft wrestling match deleted.' });
+  } catch (error) {
+    handleWrestlingError(res, error);
+  }
+});
+
+app.put('/api/admin/wrestling/matches/:id/status', requireProWrestlingEnabled, verifyAdminToken, async (req, res) => {
+  try {
+    const nextStatus = String(req.body.status || '').toUpperCase();
+    if (!PRO_WRESTLING_MATCH_STATUSES.includes(nextStatus)) throw wrestlingHttpError(400, 'Invalid wrestling match status.', 'INVALID_STATUS');
+    if (['FINALIZED', 'CANCELLED', 'NO_CONTEST'].includes(nextStatus)) {
+      throw wrestlingHttpError(400, 'Use the finalize or cancel endpoints for terminal match states.', 'TERMINAL_STATUS_REQUIRES_WORKFLOW');
+    }
+    const result = await runWrestlingTransaction(async (session) => {
+      const match = await applyWrestlingSession(ProWrestlingMatch.findById(req.params.id), session);
+      if (!match) throw wrestlingHttpError(404, 'Wrestling match not found.', 'MATCH_NOT_FOUND');
+      if (!canTransitionWrestlingStatus(match.status, nextStatus)) {
+        throw wrestlingHttpError(409, `Cannot transition wrestling match from ${match.status} to ${nextStatus}.`, 'INVALID_STATUS_TRANSITION');
+      }
+      const before = wrestlingPlainObject(match);
+      if (nextStatus === 'OPEN') match.publishedAt = new Date();
+      if (nextStatus === 'LOCKED') {
+        await lockWrestlingMatch(match, session);
+      } else {
+        match.status = nextStatus;
+        if (nextStatus === 'LIVE') match.liveStartedAt = new Date();
+        if (nextStatus === 'SCORING') match.scoringStartedAt = new Date();
+        match.updatedBy = req.admin.id;
+        await match.save(session ? { session } : undefined);
+      }
+      if (nextStatus === 'LIVE') {
+        await notifyWrestlingEntrants({
+          match,
+          type: 'MATCH_LIVE',
+          title: 'Pro Wrestling match is live',
+          message: `${match.matchTitle} is live. Follow your provisional score and rank.`,
+          session,
+        });
+        match.liveNotificationSent = true;
+        await match.save(session ? { session } : undefined);
+      }
+      await writeWrestlingAudit({ req, action: 'WRESTLING_MATCH_STATUS_UPDATED', entityType: 'ProWrestlingMatch', entityId: match._id, before, after: match, reason: req.body.reason, session });
+      return match;
+    });
+    await safeWrestlingTrigger('match-status', { matchId: String(result._id), status: result.status });
+    if (result.status === 'OPEN') {
+      app.locals.swarmPhase2?.triggerAutomationEvent?.({
+        trigger: 'pro_wrestling_match_published',
+        vertical: 'pro_wrestling',
+        admin: req.admin,
+        sourceEntity: { type: 'pro_wrestling_match', id: String(result._id), label: result.matchTitle || result.eventName },
+        input: {
+          matchId: String(result._id),
+          title: result.matchTitle,
+          eventName: result.eventName,
+          promotionName: result.promotionName,
+          matchDate: result.matchDate,
+          matchTime: result.matchTime,
+          competitorA: result.competitorA,
+          competitorB: result.competitorB,
+          status: result.status,
+        },
+        metadata: { route: '/api/admin/wrestling/matches/:id/status', action: 'wrestling-match-published' },
+        reason: 'pro-wrestling-match-opened-in-backend',
+      }).catch((error) => console.error('Swarm pro-wrestling publish automation failed:', error.message));
+    }
+    res.json(result);
+  } catch (error) {
+    handleWrestlingError(res, error);
+  }
+});
+
+app.put('/api/admin/wrestling/matches/:id/live-stats', requireProWrestlingEnabled, verifyAdminToken, async (req, res) => {
+  try {
+    const statsA = normalizeWrestlingStats(req.body.competitorA || req.body.wrestlerA);
+    const statsB = normalizeWrestlingStats(req.body.competitorB || req.body.wrestlerB);
+    const officialWinner = req.body.officialWinner ? String(req.body.officialWinner).toUpperCase() : undefined;
+    if (officialWinner && ![...WRESTLING_WINNER_VALUES, 'NO_CONTEST'].includes(officialWinner)) {
+      throw wrestlingHttpError(400, 'officialWinner must be A, B, or NO_CONTEST.', 'INVALID_WINNER');
+    }
+    const result = await runWrestlingTransaction(async (session) => {
+      const match = await applyWrestlingSession(ProWrestlingMatch.findById(req.params.id), session);
+      if (!match) throw wrestlingHttpError(404, 'Wrestling match not found.', 'MATCH_NOT_FOUND');
+      if (['FINALIZED', 'CANCELLED', 'NO_CONTEST'].includes(match.status)) throw wrestlingHttpError(409, 'Closed wrestling match statistics cannot be edited.', 'MATCH_CLOSED');
+      const before = wrestlingPlainObject(match);
+      match.officialStats = { competitorA: statsA, competitorB: statsB };
+      if (officialWinner) match.officialWinner = officialWinner;
+      if (req.body.finishType) match.finishType = String(req.body.finishType).toUpperCase();
+      match.statsVersion += 1;
+      if (['OPEN', 'LOCKED'].includes(match.status)) {
+        match.status = 'LIVE';
+        match.liveStartedAt = new Date();
+      }
+      match.updatedBy = req.admin.id;
+      await match.save(session ? { session } : undefined);
+      const ranked = await recalculateWrestlingScores(match, session);
+      await writeWrestlingAudit({ req, action: 'WRESTLING_LIVE_STATS_UPDATED', entityType: 'ProWrestlingMatch', entityId: match._id, before, after: match, reason: req.body.reason, session });
+      return { match, rankedCount: ranked.length };
+    });
+    await safeWrestlingTrigger('live-stats', { matchId: String(result.match._id), statsVersion: result.match.statsVersion });
+    res.json(result);
+  } catch (error) {
+    handleWrestlingError(res, error);
+  }
+});
+
+app.put('/api/admin/wrestling/matches/:id/result', requireProWrestlingEnabled, verifyAdminToken, async (req, res) => {
+  try {
+    const officialWinner = String(req.body.officialWinner || '').toUpperCase();
+    if (!WRESTLING_WINNER_VALUES.includes(officialWinner)) throw wrestlingHttpError(400, 'Official winner must be A or B.', 'INVALID_WINNER');
+    const result = await runWrestlingTransaction(async (session) => {
+      const match = await applyWrestlingSession(ProWrestlingMatch.findById(req.params.id), session);
+      if (!match) throw wrestlingHttpError(404, 'Wrestling match not found.', 'MATCH_NOT_FOUND');
+      if (['FINALIZED', 'CANCELLED', 'NO_CONTEST'].includes(match.status)) throw wrestlingHttpError(409, 'Closed wrestling match result cannot be edited.', 'MATCH_CLOSED');
+      const before = wrestlingPlainObject(match);
+      if (req.body.competitorA || req.body.wrestlerA) match.officialStats.competitorA = normalizeWrestlingStats(req.body.competitorA || req.body.wrestlerA);
+      if (req.body.competitorB || req.body.wrestlerB) match.officialStats.competitorB = normalizeWrestlingStats(req.body.competitorB || req.body.wrestlerB);
+      match.officialWinner = officialWinner;
+      match.finishType = String(req.body.finishType || 'OTHER').toUpperCase();
+      match.status = 'SCORING';
+      match.scoringStartedAt = new Date();
+      match.statsVersion += 1;
+      match.updatedBy = req.admin.id;
+      await match.save(session ? { session } : undefined);
+      const ranked = await recalculateWrestlingScores(match, session);
+      await writeWrestlingAudit({ req, action: 'WRESTLING_OFFICIAL_RESULT_SET', entityType: 'ProWrestlingMatch', entityId: match._id, before, after: match, reason: req.body.reason, session });
+      return { match, rankedCount: ranked.length };
+    });
+    await safeWrestlingTrigger('official-result', { matchId: String(result.match._id), officialWinner: result.match.officialWinner });
+    app.locals.swarmPhase2?.triggerAutomationEvent?.({
+      trigger: 'pro_wrestling_result_updated',
+      vertical: 'pro_wrestling',
+      admin: req.admin,
+      sourceEntity: { type: 'pro_wrestling_match', id: String(result.match._id), label: result.match.matchTitle || result.match.eventName },
+      input: {
+        matchId: String(result.match._id),
+        title: result.match.matchTitle,
+        eventName: result.match.eventName,
+        promotionName: result.match.promotionName,
+        officialWinner: result.match.officialWinner,
+        finishType: result.match.finishType,
+        statsVersion: result.match.statsVersion,
+      },
+      metadata: { route: '/api/admin/wrestling/matches/:id/result', action: 'wrestling-result-updated' },
+      reason: 'pro-wrestling-result-set-in-backend',
+    }).catch((error) => console.error('Swarm pro-wrestling result automation failed:', error.message));
+    res.json(result);
+  } catch (error) {
+    handleWrestlingError(res, error);
+  }
+});
+
+app.post('/api/admin/wrestling/matches/:id/recalculate', requireProWrestlingEnabled, verifyAdminToken, async (req, res) => {
+  try {
+    const result = await runWrestlingTransaction(async (session) => {
+      const match = await applyWrestlingSession(ProWrestlingMatch.findById(req.params.id), session);
+      if (!match) throw wrestlingHttpError(404, 'Wrestling match not found.', 'MATCH_NOT_FOUND');
+      if (!['LIVE', 'SCORING'].includes(match.status)) throw wrestlingHttpError(409, 'Only live or scoring wrestling matches can be recalculated.', 'INVALID_RECALCULATION_STATUS');
+      const ranked = await recalculateWrestlingScores(match, session);
+      await writeWrestlingAudit({ req, action: 'WRESTLING_SCORES_RECALCULATED', entityType: 'ProWrestlingMatch', entityId: match._id, after: { rankedCount: ranked.length }, reason: req.body.reason, session });
+      return ranked;
+    });
+    res.json({ rankedCount: result.length, leaderboard: result.map((row) => ({ userId: row.userId, rank: row.rank, score: row.totalScore })) });
+  } catch (error) {
+    handleWrestlingError(res, error);
+  }
+});
+
+app.post('/api/admin/wrestling/matches/:id/finalize', requireProWrestlingEnabled, verifyAdminToken, async (req, res) => {
+  try {
+    const result = await runWrestlingTransaction(async (session) => {
+      const match = await applyWrestlingSession(ProWrestlingMatch.findById(req.params.id), session);
+      if (!match) throw wrestlingHttpError(404, 'Wrestling match not found.', 'MATCH_NOT_FOUND');
+      if (match.settlement?.status === 'PAID' && match.status === 'FINALIZED') return { match, idempotent: true };
+      if (!['LIVE', 'SCORING', 'LOCKED'].includes(match.status)) throw wrestlingHttpError(409, 'Wrestling match is not ready for finalization.', 'INVALID_FINALIZATION_STATUS');
+      if (!WRESTLING_WINNER_VALUES.includes(match.officialWinner)) throw wrestlingHttpError(400, 'Set the official wrestling winner before finalizing.', 'OFFICIAL_WINNER_REQUIRED');
+      const before = wrestlingPlainObject(match);
+      match.status = 'SCORING';
+      match.scoringStartedAt = match.scoringStartedAt || new Date();
+      match.settlement.status = 'PROCESSING';
+      await match.save(session ? { session } : undefined);
+      await recalculateWrestlingScores(match, session);
+      const predictions = await applyWrestlingSession(ProWrestlingPrediction.find({ matchId: match._id, rank: { $exists: true } }).sort({ rank: 1 }), session);
+      if (!predictions.length) throw wrestlingHttpError(409, 'No submitted wrestling predictions are available for settlement.', 'NO_PREDICTIONS_TO_SETTLE');
+
+      const initialDistribution = calculatePayoutDistribution(match.currentPot, predictions.length, match.payoutRules);
+      const affiliateCommissionTokens = match.affiliateId
+        ? Math.floor(initialDistribution.distributablePot * (match.affiliateCommissionPercentage / 100))
+        : 0;
+      const playerPot = Math.max(0, initialDistribution.distributablePot - affiliateCommissionTokens);
+      const playerDistribution = calculatePayoutDistribution(playerPot, predictions.length, { ...match.payoutRules, platformFeePercentage: 0 });
+      const payoutByRank = new Map(playerDistribution.payouts.map((payout) => [payout.rank, payout.amount]));
+
+      for (const prediction of predictions) {
+        const payoutAmount = payoutByRank.get(prediction.rank) || 0;
+        prediction.payoutAmount = payoutAmount;
+        prediction.predictionStatus = 'SETTLED';
+        if (payoutAmount > 0) {
+          const idempotencyKey = `wrestling:payout:${match._id}:${prediction.userId}`;
+          const existingLedger = await applyWrestlingSession(ProWrestlingWalletLedger.findOne({ idempotencyKey }), session).lean();
+          if (!existingLedger) {
+            const balance = await adjustWrestlingUserTokens({ userId: prediction.userId, delta: payoutAmount, session });
+            await ProWrestlingWalletLedger.create([{
+              accountType: 'USER',
+              userId: prediction.userId,
+              matchId: match._id,
+              type: 'WRESTLING_WINNING',
+              amount: payoutAmount,
+              balanceBefore: balance.balanceBefore,
+              balanceAfter: balance.balanceAfter,
+              idempotencyKey,
+              metadata: { rank: prediction.rank, scoringRuleVersion: match.scoringRuleVersion, payoutRuleVersion: match.payoutRuleVersion },
+            }], session ? { session } : undefined);
+          }
+          await createWrestlingNotification({
+            userId: prediction.userId,
+            matchId: match._id,
+            type: 'WINNINGS_CREDITED',
+            title: 'Pro Wrestling winnings credited',
+            message: `You finished #${prediction.rank} and won ${payoutAmount} token${payoutAmount === 1 ? '' : 's'} in ${match.matchTitle}.`,
+            metadata: { rank: prediction.rank, payoutAmount },
+            session,
+          });
+        } else {
+          await createWrestlingNotification({
+            userId: prediction.userId,
+            matchId: match._id,
+            type: 'RESULT_FINALIZED',
+            title: 'Pro Wrestling result finalized',
+            message: `Your final rank in ${match.matchTitle} is #${prediction.rank}.`,
+            metadata: { rank: prediction.rank, score: prediction.score },
+            session,
+          });
+        }
+        await prediction.save(session ? { session } : undefined);
+      }
+
+      if (match.affiliateId && affiliateCommissionTokens > 0) {
+        const idempotencyKey = `wrestling:affiliate:${match._id}:${match.affiliateId}`;
+        const existingLedger = await applyWrestlingSession(ProWrestlingWalletLedger.findOne({ idempotencyKey }), session).lean();
+        if (!existingLedger) {
+          const balance = await adjustWrestlingAffiliateTokens({ affiliateId: match.affiliateId, delta: affiliateCommissionTokens, session });
+          await ProWrestlingWalletLedger.create([{
+            accountType: 'AFFILIATE',
+            affiliateId: match.affiliateId,
+            matchId: match._id,
+            type: 'WRESTLING_AFFILIATE_COMMISSION',
+            amount: affiliateCommissionTokens,
+            balanceBefore: balance.balanceBefore,
+            balanceAfter: balance.balanceAfter,
+            idempotencyKey,
+            metadata: { percentage: match.affiliateCommissionPercentage },
+          }], session ? { session } : undefined);
+        }
+      }
+
+      if (initialDistribution.platformFeeTokens > 0) {
+        const platformKey = `wrestling:platform-fee:${match._id}`;
+        const existingPlatformLedger = await applyWrestlingSession(ProWrestlingWalletLedger.findOne({ idempotencyKey: platformKey }), session).lean();
+        if (!existingPlatformLedger) {
+          await ProWrestlingWalletLedger.create([{
+            accountType: 'PLATFORM',
+            matchId: match._id,
+            type: 'WRESTLING_PLATFORM_FEE',
+            amount: initialDistribution.platformFeeTokens,
+            idempotencyKey: platformKey,
+            metadata: { percentage: match.payoutRules.platformFeePercentage || 0 },
+          }], session ? { session } : undefined);
+        }
+      }
+
+      const settledAt = new Date();
+      await ProWrestlingEntry.updateMany(
+        { matchId: match._id, status: { $ne: 'REFUNDED' } },
+        { $set: { status: 'SETTLED', settledAt, payoutAmount: 0 }, $unset: { rank: '' } },
+        session ? { session } : undefined,
+      );
+      const entrySettlementOperations = predictions.map((prediction) => ({
+        updateOne: {
+          filter: { matchId: match._id, userId: prediction.userId, status: { $ne: 'REFUNDED' } },
+          update: {
+            $set: {
+              status: 'SETTLED',
+              settledAt,
+              rank: prediction.rank,
+              payoutAmount: prediction.payoutAmount || 0,
+            },
+          },
+        },
+      }));
+      if (entrySettlementOperations.length) {
+        await ProWrestlingEntry.bulkWrite(entrySettlementOperations, session ? { session } : undefined);
+      }
+      const payoutTotal = playerDistribution.payouts.reduce((sum, payout) => sum + payout.amount, 0);
+      match.status = 'FINALIZED';
+      match.finalizedAt = new Date();
+      match.settlement = {
+        status: 'PAID',
+        winnerCount: playerDistribution.winnerCount,
+        grossPot: match.currentPot,
+        platformFeeTokens: initialDistribution.platformFeeTokens,
+        affiliateCommissionTokens,
+        playerPayoutTokens: payoutTotal,
+        completedAt: new Date(),
+      };
+      match.updatedBy = req.admin.id;
+      await match.save(session ? { session } : undefined);
+      await writeWrestlingAudit({ req, action: 'WRESTLING_MATCH_FINALIZED', entityType: 'ProWrestlingMatch', entityId: match._id, before, after: match, reason: req.body.reason, session });
+      return { match, payoutDistribution: playerDistribution, affiliateCommissionTokens, idempotent: false };
+    });
+    await safeWrestlingTrigger('match-finalized', { matchId: String(result.match._id), settlement: result.match.settlement });
+    app.locals.swarmPhase2?.triggerAutomationEvent?.({
+      trigger: 'contest_completed',
+      vertical: 'pro_wrestling',
+      admin: req.admin,
+      sourceEntity: { type: 'pro_wrestling_contest', id: String(result.match._id), label: result.match.matchTitle || result.match.eventName },
+      input: {
+        matchId: String(result.match._id),
+        contestId: String(result.match._id),
+        title: result.match.matchTitle,
+        eventName: result.match.eventName,
+        settlement: result.match.settlement,
+      },
+      metadata: { route: '/api/admin/wrestling/matches/:id/finalize', action: 'wrestling-contest-completed' },
+      reason: 'pro-wrestling-contest-finalized-in-backend',
+    }).catch((error) => console.error('Swarm contest completed automation failed:', error.message));
+    res.json(result);
+  } catch (error) {
+    handleWrestlingError(res, error);
+  }
+});
+
+app.post('/api/admin/wrestling/matches/:id/cancel', requireProWrestlingEnabled, verifyAdminToken, async (req, res) => {
+  try {
+    const status = String(req.body.status || 'CANCELLED').toUpperCase();
+    if (!['CANCELLED', 'NO_CONTEST'].includes(status)) throw wrestlingHttpError(400, 'Cancellation status must be CANCELLED or NO_CONTEST.', 'INVALID_CANCELLATION_STATUS');
+    const reason = String(req.body.reason || (status === 'NO_CONTEST' ? 'Match declared a no contest.' : 'Match cancelled by administrator.'));
+    const match = await refundWrestlingMatch({ matchId: req.params.id, status, reason, req, adminId: req.admin.id });
+    res.json({ message: 'Wrestling contest closed and eligible entry fees refunded.', match });
+  } catch (error) {
+    handleWrestlingError(res, error);
+  }
+});
+
+app.post('/api/admin/wrestling/matches/:id/refund', requireProWrestlingEnabled, verifyAdminToken, async (req, res) => {
+  try {
+    const reason = String(req.body.reason || 'Wrestling contest entry refund issued by administrator.');
+    const match = await refundWrestlingMatch({ matchId: req.params.id, status: 'CANCELLED', reason, req, adminId: req.admin.id });
+    res.json({ message: 'Wrestling contest entry fees refunded.', match });
+  } catch (error) {
+    handleWrestlingError(res, error);
+  }
+});
+
+app.post('/api/admin/wrestling/matches/:id/notify', requireProWrestlingEnabled, verifyAdminToken, async (req, res) => {
+  try {
+    const match = await ProWrestlingMatch.findById(req.params.id).lean();
+    if (!match) throw wrestlingHttpError(404, 'Wrestling match not found.', 'MATCH_NOT_FOUND');
+    const users = await User.find({ isNotificationsEnabled: { $ne: false } }).select('_id').limit(10000).lean();
+    const documents = users.map((user) => ({
+      userId: user._id,
+      matchId: match._id,
+      type: 'CONTEST_PUBLISHED',
+      title: req.body.title || 'New Pro Wrestling contest',
+      message: req.body.message || `${match.matchTitle} is now open for predictions.`,
+      metadata: { slug: match.slug, lockAt: match.lockAt },
+    }));
+    if (documents.length) await ProWrestlingNotification.insertMany(documents);
+    await writeWrestlingAudit({ req, action: 'WRESTLING_CONTEST_NOTIFICATION_SENT', entityType: 'ProWrestlingMatch', entityId: match._id, after: { recipients: documents.length } });
+    res.json({ sent: documents.length });
+  } catch (error) {
+    handleWrestlingError(res, error);
+  }
+});
+
+app.get('/api/admin/wrestling/scoring-rules', requireProWrestlingEnabled, verifyAdminToken, async (req, res) => {
+  try {
+    res.json(await ProWrestlingScoringRule.find().sort({ createdAt: 1 }).lean());
+  } catch (error) {
+    handleWrestlingError(res, error);
+  }
+});
+
+app.post('/api/admin/wrestling/scoring-rules', requireProWrestlingEnabled, verifyAdminToken, async (req, res) => {
+  try {
+    const config = normalizeScoringRule({ ...wrestlingObject(req.body.config, req.body), ruleId: req.body.ruleId, name: req.body.name });
+    const rule = await ProWrestlingScoringRule.create({ ruleId: config.ruleId, name: config.name, active: wrestlingBoolean(req.body.active, true), config, createdBy: req.admin.id, updatedBy: req.admin.id });
+    await writeWrestlingAudit({ req, action: 'WRESTLING_SCORING_RULE_CREATED', entityType: 'ProWrestlingScoringRule', entityId: rule._id, after: rule });
+    res.status(201).json(rule);
+  } catch (error) {
+    handleWrestlingError(res, error);
+  }
+});
+
+app.put('/api/admin/wrestling/scoring-rules/:ruleId', requireProWrestlingEnabled, verifyAdminToken, async (req, res) => {
+  try {
+    const existing = await ProWrestlingScoringRule.findOne({ ruleId: String(req.params.ruleId).toUpperCase() });
+    if (!existing) throw wrestlingHttpError(404, 'Wrestling scoring rule not found.', 'SCORING_RULE_NOT_FOUND');
+    const before = wrestlingPlainObject(existing);
+    const config = normalizeScoringRule({ ...wrestlingObject(req.body.config, req.body), ruleId: existing.ruleId, name: req.body.name || existing.name });
+    existing.name = config.name;
+    existing.config = config;
+    if (req.body.active !== undefined) existing.active = wrestlingBoolean(req.body.active);
+    existing.updatedBy = req.admin.id;
+    await existing.save();
+    await writeWrestlingAudit({ req, action: 'WRESTLING_SCORING_RULE_UPDATED', entityType: 'ProWrestlingScoringRule', entityId: existing._id, before, after: existing, reason: req.body.reason });
+    res.json(existing);
+  } catch (error) {
+    handleWrestlingError(res, error);
+  }
+});
+
+app.get('/api/admin/wrestling/payout-rules', requireProWrestlingEnabled, verifyAdminToken, async (req, res) => {
+  try {
+    res.json(await ProWrestlingPayoutRule.find().sort({ createdAt: 1 }).lean());
+  } catch (error) {
+    handleWrestlingError(res, error);
+  }
+});
+
+app.post('/api/admin/wrestling/payout-rules', requireProWrestlingEnabled, verifyAdminToken, async (req, res) => {
+  try {
+    const config = normalizePayoutRule({ ...wrestlingObject(req.body.config, req.body), ruleId: req.body.ruleId, name: req.body.name });
+    const rule = await ProWrestlingPayoutRule.create({ ruleId: config.ruleId, name: config.name, active: wrestlingBoolean(req.body.active, true), config, createdBy: req.admin.id, updatedBy: req.admin.id });
+    await writeWrestlingAudit({ req, action: 'WRESTLING_PAYOUT_RULE_CREATED', entityType: 'ProWrestlingPayoutRule', entityId: rule._id, after: rule });
+    res.status(201).json(rule);
+  } catch (error) {
+    handleWrestlingError(res, error);
+  }
+});
+
+app.put('/api/admin/wrestling/payout-rules/:ruleId', requireProWrestlingEnabled, verifyAdminToken, async (req, res) => {
+  try {
+    const existing = await ProWrestlingPayoutRule.findOne({ ruleId: String(req.params.ruleId).toUpperCase() });
+    if (!existing) throw wrestlingHttpError(404, 'Wrestling payout rule not found.', 'PAYOUT_RULE_NOT_FOUND');
+    const before = wrestlingPlainObject(existing);
+    const config = normalizePayoutRule({ ...wrestlingObject(req.body.config, req.body), ruleId: existing.ruleId, name: req.body.name || existing.name });
+    existing.name = config.name;
+    existing.config = config;
+    if (req.body.active !== undefined) existing.active = wrestlingBoolean(req.body.active);
+    existing.updatedBy = req.admin.id;
+    await existing.save();
+    await writeWrestlingAudit({ req, action: 'WRESTLING_PAYOUT_RULE_UPDATED', entityType: 'ProWrestlingPayoutRule', entityId: existing._id, before, after: existing, reason: req.body.reason });
+    res.json(existing);
+  } catch (error) {
+    handleWrestlingError(res, error);
+  }
+});
+
+app.get('/api/admin/wrestling/analytics', requireProWrestlingEnabled, verifyAdminToken, async (req, res) => {
+  try {
+    const [statusCounts, totalEntries, uniqueUsers, potTotals, predictionSummary, ledgerSummary] = await Promise.all([
+      ProWrestlingMatch.aggregate([{ $group: { _id: '$status', count: { $sum: 1 } } }]),
+      ProWrestlingEntry.countDocuments(),
+      ProWrestlingEntry.distinct('userId'),
+      ProWrestlingMatch.aggregate([{ $group: { _id: null, grossPot: { $sum: '$currentPot' }, finalizedPot: { $sum: { $cond: [{ $eq: ['$status', 'FINALIZED'] }, '$currentPot', 0] } } } }]),
+      ProWrestlingPrediction.aggregate([{ $match: { rank: { $exists: true } } }, { $group: { _id: null, averageScore: { $avg: '$score' }, averageNormalizedError: { $avg: '$normalizedError' }, scoredPredictions: { $sum: 1 } } }]),
+      ProWrestlingWalletLedger.aggregate([{ $match: { status: 'COMPLETED' } }, { $group: { _id: '$type', amount: { $sum: '$amount' }, transactions: { $sum: 1 } } }]),
+    ]);
+    res.json({
+      gameMode: PRO_WRESTLING_GAME_MODE,
+      matchesByStatus: Object.fromEntries(statusCounts.map((item) => [item._id, item.count])),
+      totalEntries,
+      uniquePlayers: uniqueUsers.length,
+      pots: potTotals[0] || { grossPot: 0, finalizedPot: 0 },
+      predictions: predictionSummary[0] || { averageScore: 0, averageNormalizedError: 0, scoredPredictions: 0 },
+      wallet: Object.fromEntries(ledgerSummary.map((item) => [item._id, { amount: item.amount, transactions: item.transactions }])),
+    });
+  } catch (error) {
+    handleWrestlingError(res, error);
+  }
+});
+
+app.get('/api/admin/wrestling/audit-logs', requireProWrestlingEnabled, verifyAdminToken, async (req, res) => {
+  try {
+    const page = Math.max(1, Number.parseInt(req.query.page || '1', 10));
+    const limit = Math.min(100, Math.max(1, Number.parseInt(req.query.limit || '50', 10)));
+    const query = {};
+    if (req.query.entityType) query.entityType = req.query.entityType;
+    if (req.query.entityId) query.entityId = String(req.query.entityId);
+    if (req.query.action) query.action = req.query.action;
+    const [data, total] = await Promise.all([
+      ProWrestlingAuditLog.find(query).sort({ createdAt: -1 }).skip((page - 1) * limit).limit(limit).lean(),
+      ProWrestlingAuditLog.countDocuments(query),
+    ]);
+    res.json({ data, pagination: { page, limit, total, totalPages: Math.max(1, Math.ceil(total / limit)) } });
+  } catch (error) {
+    handleWrestlingError(res, error);
+  }
+});
+
+app.get('/api/admin/wrestling/wallet-ledger', requireProWrestlingEnabled, verifyAdminToken, async (req, res) => {
+  try {
+    const page = Math.max(1, Number.parseInt(req.query.page || '1', 10));
+    const limit = Math.min(200, Math.max(1, Number.parseInt(req.query.limit || '50', 10)));
+    const query = {};
+    if (req.query.matchId && mongoose.isValidObjectId(req.query.matchId)) query.matchId = req.query.matchId;
+    if (req.query.userId && mongoose.isValidObjectId(req.query.userId)) query.userId = req.query.userId;
+    if (req.query.affiliateId && mongoose.isValidObjectId(req.query.affiliateId)) query.affiliateId = req.query.affiliateId;
+    if (req.query.accountType) query.accountType = String(req.query.accountType).toUpperCase();
+    if (req.query.type) query.type = String(req.query.type).toUpperCase();
+    const [data, total] = await Promise.all([
+      ProWrestlingWalletLedger.find(query).sort({ createdAt: -1 }).skip((page - 1) * limit).limit(limit).lean(),
+      ProWrestlingWalletLedger.countDocuments(query),
+    ]);
+    res.json({ data, pagination: { page, limit, total, totalPages: Math.max(1, Math.ceil(total / limit)) } });
+  } catch (error) {
+    handleWrestlingError(res, error);
+  }
+});
+
+app.get('/api/admin/wrestling/matches/:id/entries', verifyAdminToken, requireProWrestlingEnabled, verifyAdminToken, async (req, res) => {
+  try {
+    const page = Math.max(1, Number.parseInt(req.query.page || '1', 10));
+    const limit = Math.min(200, Math.max(1, Number.parseInt(req.query.limit || '50', 10)));
+    const query = { matchId: req.params.id };
+    if (req.query.status) query.status = String(req.query.status).toUpperCase();
+    const [entries, total] = await Promise.all([
+      ProWrestlingEntry.find(query).sort({ rank: 1, joinedAt: 1 }).skip((page - 1) * limit).limit(limit).lean(),
+      ProWrestlingEntry.countDocuments(query),
+    ]);
+    const userIds = entries.map((entry) => entry.userId);
+    const users = await User.find({ _id: { $in: userIds } }).select('firstName lastName playerName email profileUrl tokens').lean();
+    const userMap = new Map(users.map((user) => [String(user._id), user]));
+    res.json({
+      data: entries.map((entry) => ({ ...entry, user: userMap.get(String(entry.userId)) || null })),
+      pagination: { page, limit, total, totalPages: Math.max(1, Math.ceil(total / limit)) },
+    });
+  } catch (error) {
+    handleWrestlingError(res, error);
+  }
+});
+
+app.get('/api/admin/wrestling/matches/:id/predictions', verifyAdminToken, requireProWrestlingEnabled, verifyAdminToken, async (req, res) => {
+  try {
+    const page = Math.max(1, Number.parseInt(req.query.page || '1', 10));
+    const limit = Math.min(200, Math.max(1, Number.parseInt(req.query.limit || '50', 10)));
+    const query = { matchId: req.params.id };
+    if (req.query.status) query.predictionStatus = String(req.query.status).toUpperCase();
+    const [predictions, total] = await Promise.all([
+      ProWrestlingPrediction.find(query).sort({ rank: 1, submittedAt: 1 }).skip((page - 1) * limit).limit(limit).lean(),
+      ProWrestlingPrediction.countDocuments(query),
+    ]);
+    const userIds = predictions.map((prediction) => prediction.userId);
+    const users = await User.find({ _id: { $in: userIds } }).select('firstName lastName playerName email profileUrl').lean();
+    const userMap = new Map(users.map((user) => [String(user._id), user]));
+    res.json({
+      data: predictions.map((prediction) => ({ ...prediction, user: userMap.get(String(prediction.userId)) || null })),
+      pagination: { page, limit, total, totalPages: Math.max(1, Math.ceil(total / limit)) },
+    });
+  } catch (error) {
+    handleWrestlingError(res, error);
+  }
+});
+
+app.put('/api/admin/wrestling/matches/:id/predictions/:userId', requireProWrestlingEnabled, verifyAdminToken, async (req, res) => {
+  try {
+    const result = await runWrestlingTransaction(async (session) => {
+      const match = await applyWrestlingSession(ProWrestlingMatch.findById(req.params.id), session);
+      if (!match) throw wrestlingHttpError(404, 'Wrestling match not found.', 'MATCH_NOT_FOUND');
+      if (['FINALIZED', 'CANCELLED', 'NO_CONTEST'].includes(match.status)) {
+        throw wrestlingHttpError(409, 'Predictions in a closed wrestling contest cannot be changed.', 'MATCH_CLOSED');
+      }
+      const prediction = await applyWrestlingSession(ProWrestlingPrediction.findOne({ matchId: match._id, userId: req.params.userId }), session);
+      if (!prediction) throw wrestlingHttpError(404, 'Wrestling prediction not found.', 'PREDICTION_NOT_FOUND');
+      const payload = {
+        competitorA: normalizeWrestlingStats(req.body.competitorA || prediction.competitorA),
+        competitorB: normalizeWrestlingStats(req.body.competitorB || prediction.competitorB),
+        winnerPrediction: String(req.body.winnerPrediction || prediction.winnerPrediction).toUpperCase(),
+        finishTypePrediction: String(req.body.finishTypePrediction || prediction.finishTypePrediction || 'PINFALL').toUpperCase(),
+      };
+      const errors = validateWrestlingPredictionPayload(payload);
+      if (errors.length) throw wrestlingHttpError(400, 'Invalid wrestling prediction payload.', 'INVALID_PREDICTION', errors);
+      const before = wrestlingPlainObject(prediction);
+      prediction.competitorA = payload.competitorA;
+      prediction.competitorB = payload.competitorB;
+      prediction.winnerPrediction = payload.winnerPrediction;
+      prediction.finishTypePrediction = payload.finishTypePrediction;
+      prediction.predictionStatus = ['LIVE', 'SCORING'].includes(match.status) ? 'SCORED' : 'SUBMITTED';
+      prediction.submittedAt = prediction.submittedAt || new Date();
+      await prediction.save(session ? { session } : undefined);
+      if (['LIVE', 'SCORING'].includes(match.status)) await recalculateWrestlingScores(match, session);
+      await writeWrestlingAudit({
+        req,
+        action: 'WRESTLING_PREDICTION_ADMIN_CORRECTED',
+        entityType: 'ProWrestlingPrediction',
+        entityId: prediction._id,
+        before,
+        after: prediction,
+        reason: req.body.reason,
+        session,
+      });
+      return prediction;
+    });
+    res.json(result);
+  } catch (error) {
+    handleWrestlingError(res, error);
+  }
+});
+
+app.post('/api/admin/wrestling/wallet-adjustment', verifyAdminToken, requireProWrestlingEnabled, verifyAdminToken, async (req, res) => {
+  try {
+    const userId = req.body.userId;
+    const matchId = req.body.matchId;
+    const amount = Math.max(1, Math.round(Math.abs(wrestlingNumber(req.body.amount, 0))));
+    const direction = String(req.body.direction || 'CREDIT').toUpperCase();
+    if (!mongoose.isValidObjectId(userId)) throw wrestlingHttpError(400, 'A valid userId is required.', 'INVALID_USER_ID');
+    if (!mongoose.isValidObjectId(matchId)) throw wrestlingHttpError(400, 'A valid wrestling matchId is required.', 'INVALID_MATCH_ID');
+    if (!['CREDIT', 'DEBIT'].includes(direction)) throw wrestlingHttpError(400, 'direction must be CREDIT or DEBIT.', 'INVALID_DIRECTION');
+    if (!req.body.reason) throw wrestlingHttpError(400, 'A reason is required for wallet adjustments.', 'REASON_REQUIRED');
+    const key = String(req.headers['idempotency-key'] || req.body.idempotencyKey || `wrestling:admin-adjustment:${matchId}:${userId}:${Date.now()}`).slice(0, 180);
+    const result = await runWrestlingTransaction(async (session) => {
+      const existing = await applyWrestlingSession(ProWrestlingWalletLedger.findOne({ idempotencyKey: key }), session).lean();
+      if (existing) return { transaction: existing, idempotent: true };
+      const match = await applyWrestlingSession(ProWrestlingMatch.findById(matchId), session);
+      if (!match) throw wrestlingHttpError(404, 'Wrestling match not found.', 'MATCH_NOT_FOUND');
+      const delta = direction === 'CREDIT' ? amount : -amount;
+      const balance = await adjustWrestlingUserTokens({ userId, delta, session });
+      const documents = await ProWrestlingWalletLedger.create([{
+        accountType: 'USER',
+        userId,
+        matchId,
+        type: 'WRESTLING_ADMIN_ADJUSTMENT',
+        amount: delta,
+        balanceBefore: balance.balanceBefore,
+        balanceAfter: balance.balanceAfter,
+        idempotencyKey: key,
+        metadata: { reason: req.body.reason, adminId: req.admin.id, direction },
+      }], session ? { session } : undefined);
+      await writeWrestlingAudit({
+        req,
+        action: 'WRESTLING_WALLET_ADMIN_ADJUSTMENT',
+        entityType: 'User',
+        entityId: userId,
+        before: { tokens: balance.balanceBefore },
+        after: { tokens: balance.balanceAfter, transactionId: documents[0]._id },
+        reason: req.body.reason,
+        session,
+      });
+      return { transaction: documents[0], idempotent: false };
+    });
+    res.json(result);
+  } catch (error) {
+    handleWrestlingError(res, error);
+  }
+});
+
+app.get('/api/admin/wrestling/system-check', requireProWrestlingEnabled, verifyAdminToken, async (req, res) => {
+  try {
+    const [rules, payoutRules, indexes] = await Promise.all([
+      ProWrestlingScoringRule.countDocuments({ active: true }),
+      ProWrestlingPayoutRule.countDocuments({ active: true }),
+      Promise.all([
+        ProWrestlingMatch.collection.indexes(),
+        ProWrestlingEntry.collection.indexes(),
+        ProWrestlingPrediction.collection.indexes(),
+        ProWrestlingWalletLedger.collection.indexes(),
+      ]),
+    ]);
+    res.json({
+      enabled: isProWrestlingEnabled(),
+      databaseState: mongoose.connection.readyState,
+      activeScoringRules: rules,
+      activePayoutRules: payoutRules,
+      transactionFallbackEnabled: String(process.env.PRO_WRESTLING_ALLOW_NON_TRANSACTIONAL || '').toLowerCase() === 'true',
+      indexCounts: {
+        matches: indexes[0].length,
+        entries: indexes[1].length,
+        predictions: indexes[2].length,
+        walletLedger: indexes[3].length,
+      },
+    });
+  } catch (error) {
+    handleWrestlingError(res, error);
+  }
+});
+
+app.post('/api/admin/wrestling/migrate-existing-matches', requireProWrestlingEnabled, verifyAdminToken, async (req, res) => {
+  try {
+    const applyMigration = wrestlingBoolean(req.body.apply, false);
+    const legacyMatches = await Match.collection.find({ gameMode: { $exists: false } }, { projection: { _id: 1, matchCategory: 1, matchCategoryTwo: 1 } }).toArray();
+    const inferMode = (match) => {
+      const category = `${match.matchCategory || ''} ${match.matchCategoryTwo || ''}`.toLowerCase();
+      if (category.includes('bare')) return 'BARE_KNUCKLE';
+      if (category.includes('kick')) return 'KICKBOXING';
+      if (category.includes('box')) return 'BOXING';
+      return 'MMA';
+    };
+    const counts = {};
+    const operations = legacyMatches.map((match) => {
+      const gameMode = inferMode(match);
+      counts[gameMode] = (counts[gameMode] || 0) + 1;
+      return {
+        updateOne: {
+          filter: { _id: match._id, gameMode: { $exists: false } },
+          update: { $set: { gameMode, predictionFormat: 'ROUND_BY_ROUND', scoringRuleVersion: 'LEGACY_V1' } },
+        },
+      };
+    });
+    let migrationResult = null;
+    if (applyMigration && operations.length) migrationResult = await Match.collection.bulkWrite(operations, { ordered: false });
+    await writeWrestlingAudit({ req, action: applyMigration ? 'LEGACY_GAME_MODE_MIGRATION_APPLIED' : 'LEGACY_GAME_MODE_MIGRATION_PREVIEWED', entityType: 'Match', entityId: 'legacy-match-collection', after: { counts, records: legacyMatches.length } });
+    res.json({ dryRun: !applyMigration, records: legacyMatches.length, inferredGameModes: counts, modifiedCount: migrationResult?.modifiedCount || 0 });
+  } catch (error) {
+    handleWrestlingError(res, error);
+  }
+});
+
+const verifyWrestlingAffiliateToken = (req, res, next) => {
+  const authHeader = req.headers.authorization;
+  const token = authHeader && authHeader.startsWith('Bearer ') ? authHeader.slice(7) : null;
+  if (!token) return res.status(401).json({ message: 'Affiliate authentication is required.' });
+  try {
+    const decoded = jwt.verify(token, process.env.JWT_SECRET);
+    return Affiliate.findById(decoded.id).then((affiliate) => {
+      if (!affiliate) return res.status(403).json({ message: 'Affiliate account not found.' });
+      req.wrestlingAffiliate = affiliate;
+      return next();
+    }).catch(() => res.status(500).json({ message: 'Affiliate authentication failed.' }));
+  } catch (error) {
+    return res.status(403).json({ message: 'Invalid or expired affiliate token.' });
+  }
+};
+
+app.get('/api/affiliates/me/wrestling-summary', requireProWrestlingEnabled, verifyWrestlingAffiliateToken, async (req, res) => {
+  try {
+    const affiliateId = req.wrestlingAffiliate._id;
+    const [matches, entries, commissions] = await Promise.all([
+      ProWrestlingMatch.find({ affiliateId }).sort({ createdAt: -1 }).lean(),
+      ProWrestlingEntry.countDocuments({ affiliateId }),
+      ProWrestlingWalletLedger.find({ accountType: 'AFFILIATE', affiliateId, type: 'WRESTLING_AFFILIATE_COMMISSION' }).sort({ createdAt: -1 }).lean(),
+    ]);
+    const totalCommissionTokens = commissions.reduce((sum, item) => sum + Number(item.amount || 0), 0);
+    res.json({
+      affiliate: {
+        id: affiliateId,
+        playerName: req.wrestlingAffiliate.playerName,
+        tokens: req.wrestlingAffiliate.tokens,
+      },
+      matches: matches.map((match) => publicWrestlingMatch(match, { revealStats: true })),
+      attributedEntries: entries,
+      totalCommissionTokens,
+      commissions,
+    });
+  } catch (error) {
+    handleWrestlingError(res, error);
+  }
+});
+
+app.get('/api/admin/wrestling/docs', requireProWrestlingEnabled, verifyAdminToken, async (req, res) => {
+  res.json({
+    gameMode: PRO_WRESTLING_GAME_MODE,
+    predictionFormat: PRO_WRESTLING_PREDICTION_FORMAT,
+    lifecycle: PRO_WRESTLING_MATCH_STATUSES,
+    actionStats: WRESTLING_STAT_KEYS,
+    userFlow: ['discover', 'join', 'predict', 'lock', 'live scoring', 'leaderboard', 'results', 'wallet settlement'],
+    safeguards: ['feature flag', 'JWT authorization', 'unique contest entry', 'idempotent wallet ledger', 'MongoDB transactions', 'versioned rule snapshots', 'audit logs', 'terminal-state protection'],
+  });
+});
+
+app.get('/api/wrestling/cron/process', requireProWrestlingEnabled, verifyWrestlingCronOrAdmin, async (req, res) => {
+  try {
+    const now = new Date();
+    const dueMatches = await ProWrestlingMatch.find({ status: 'OPEN', lockAt: { $lte: now } }).limit(100).lean();
+    let locked = 0;
+    let cancelled = 0;
+    for (const due of dueMatches) {
+      if (due.minimumParticipants > due.participantCount && due.autoCancelIfMinimumNotMet) {
+        await refundWrestlingMatch({
+          matchId: due._id,
+          status: 'CANCELLED',
+          reason: 'Minimum participant requirement was not met before prediction lock.',
+          req,
+          adminId: req.admin?.id,
+        });
+        cancelled += 1;
+      } else {
+        await runWrestlingTransaction(async (session) => {
+          const match = await applyWrestlingSession(ProWrestlingMatch.findById(due._id), session);
+          if (match?.status === 'OPEN') {
+            await lockWrestlingMatch(match, session);
+            locked += 1;
+          }
+        });
+      }
+    }
+
+    const startingSoonLimit = new Date(now.getTime() + 60 * 60 * 1000);
+    const startingSoonMatches = await ProWrestlingMatch.find({
+      status: 'OPEN',
+      matchDate: { $gt: now, $lte: startingSoonLimit },
+      startingSoonNotificationSent: false,
+    });
+    let startingSoonNotifications = 0;
+    for (const match of startingSoonMatches) {
+      startingSoonNotifications += await notifyWrestlingEntrants({
+        match,
+        type: 'STARTING_SOON',
+        title: 'Pro Wrestling contest starts soon',
+        message: `${match.matchTitle} starts within one hour. Submit or review your predictions before lock time.`,
+      });
+      match.startingSoonNotificationSent = true;
+      await match.save();
+    }
+
+    res.json({ processedAt: now, locked, cancelled, startingSoonNotifications });
+  } catch (error) {
+    handleWrestlingError(res, error);
+  }
+});
+
+
+function parseHomepagePromotionBoolean(value, fallback = true) {
+  if (value === undefined || value === null || value === '') return fallback;
+  if (typeof value === 'boolean') return value;
+  const normalized = String(value).trim().toLowerCase();
+  if (['true', '1', 'yes', 'on', 'promote', 'promoted'].includes(normalized)) return true;
+  if (['false', '0', 'no', 'off', 'unpromote', 'remove'].includes(normalized)) return false;
+  return fallback;
+}
+
+function parseOptionalPromotionDate(value) {
+  if (!value) return undefined;
+  const date = new Date(value);
+  return Number.isNaN(date.getTime()) ? undefined : date;
+}
+
+function buildAutoHomepagePromotionFields({ body = {}, admin = null, actor = '' } = {}) {
+  const now = new Date();
+  const update = {
+    homepagePromoted: true,
+    homepagePromotionRank: Number(body.homepagePromotionRank ?? body.rank ?? 0) || 0,
+    homepagePromotionUpdatedAt: now,
+    homepagePromotionUpdatedBy: admin?.id || admin?._id || admin?.email || actor || body.matchBy || body.createdBy || 'admin-create',
+  };
+  const title = body.homepagePromotionTitle ?? body.promotionTitle ?? body.title;
+  const subtitle = body.homepagePromotionSubtitle ?? body.promotionSubtitle ?? body.subtitle;
+  const ctaLabel = body.homepagePromotionCtaLabel ?? body.ctaLabel;
+  const calendarSource = body.homepagePromotionCalendarSource ?? body.calendarSource;
+  const externalSourceUrl = body.homepagePromotionExternalSourceUrl ?? body.externalSourceUrl;
+  if (title !== undefined) update.homepagePromotionTitle = String(title || '').trim();
+  if (subtitle !== undefined) update.homepagePromotionSubtitle = String(subtitle || '').trim();
+  if (ctaLabel !== undefined) update.homepagePromotionCtaLabel = String(ctaLabel || '').trim();
+  if (calendarSource !== undefined) update.homepagePromotionCalendarSource = String(calendarSource || '').trim();
+  if (externalSourceUrl !== undefined) update.homepagePromotionExternalSourceUrl = String(externalSourceUrl || '').trim();
+  const startsAt = parseOptionalPromotionDate(body.homepagePromotionStartsAt ?? body.startsAt);
+  const endsAt = parseOptionalPromotionDate(body.homepagePromotionEndsAt ?? body.endsAt);
+  if (startsAt !== undefined) update.homepagePromotionStartsAt = startsAt;
+  if (endsAt !== undefined) update.homepagePromotionEndsAt = endsAt;
+  return update;
+}
+
+function isHomepagePromotionVisible(fight = {}, now = new Date()) {
+  if (!fight || (!fight.homepagePromoted && !fight.featuredThisWeek && !fight.featuredFight) || isDraftFightRecord(fight)) return false;
+  const startsAt = fight.homepagePromotionStartsAt ? new Date(fight.homepagePromotionStartsAt) : null;
+  const endsAt = fight.homepagePromotionEndsAt ? new Date(fight.homepagePromotionEndsAt) : null;
+  if (startsAt && !Number.isNaN(startsAt.getTime()) && startsAt.getTime() > now.getTime()) return false;
+  if (endsAt && !Number.isNaN(endsAt.getTime()) && endsAt.getTime() < now.getTime()) return false;
+  return true;
+}
+
+function compareHomepagePromotedFights(a = {}, b = {}) {
+  const rankDiff = Number(b.homepagePromotionRank || 0) - Number(a.homepagePromotionRank || 0);
+  if (rankDiff) return rankDiff;
+  const toTime = (value) => {
+    const date = value ? new Date(value) : null;
+    return date && !Number.isNaN(date.getTime()) ? date.getTime() : 0;
+  };
+  const aMatch = toTime(a.matchDate);
+  const bMatch = toTime(b.matchDate);
+  if (aMatch && bMatch && aMatch !== bMatch) return aMatch - bMatch;
+  return Math.max(toTime(b.homepagePromotionUpdatedAt), toTime(b.updatedAt), toTime(b.createdAt))
+    - Math.max(toTime(a.homepagePromotionUpdatedAt), toTime(a.updatedAt), toTime(a.createdAt));
+}
+
+async function resolveFightDocumentForAdminPromotion(id, requestedSourceType = '') {
+  if (!mongoose.Types.ObjectId.isValid(id)) return null;
+  const source = String(requestedSourceType || '').toLowerCase();
+  if (source === 'shadow') {
+    const shadow = await Shadow.findById(id).populate('fighterAId fighterBId');
+    return shadow ? { model: Shadow, doc: shadow, sourceType: 'shadow' } : null;
+  }
+  if (source === 'match' || source === 'live') {
+    const match = await Match.findById(id).populate('fighterAId fighterBId');
+    return match ? { model: Match, doc: match, sourceType: 'match' } : null;
+  }
+  const match = await Match.findById(id).populate('fighterAId fighterBId');
+  if (match) return { model: Match, doc: match, sourceType: 'match' };
+  const shadow = await Shadow.findById(id).populate('fighterAId fighterBId');
+  if (shadow) return { model: Shadow, doc: shadow, sourceType: 'shadow' };
+  return null;
+}
+
+function getHomepagePromotionUpdate(req) {
+  const promoted = parseHomepagePromotionBoolean(
+    req.body?.homepagePromoted ?? req.body?.promoted ?? req.body?.isPromoted,
+    true,
+  );
+  const now = new Date();
+  const update = {
+    homepagePromoted: promoted,
+    homepagePromotionUpdatedAt: now,
+    homepagePromotionUpdatedBy: req.admin?.id || req.admin?._id || req.admin?.email || 'admin',
+  };
+  // A mystery/hidden-identity shadow fight put on the homepage defeats its own
+  // purpose \u2014 the spotlight slot showed "MYSTERY RED CORNER / MYSTERY BLUE
+  // CORNER" instead of the fighter the admin picked. Promoting a fight reveals it.
+  if (promoted) update.shadowIdentityHidden = false;
+  if (req.body?.rank !== undefined || req.body?.homepagePromotionRank !== undefined) {
+    update.homepagePromotionRank = Number(req.body?.homepagePromotionRank ?? req.body?.rank) || 0;
+  }
+  // Explicit slot (1-5) the admin picked directly. 0 means unassigned — the
+  // homepage falls back to weight/date ordering for those fights.
+  if (req.body?.homepageSlot !== undefined) {
+    update.homepageSlot = Math.max(0, Math.min(5, Number(req.body.homepageSlot) || 0));
+  }
+  if (req.body?.title !== undefined || req.body?.homepagePromotionTitle !== undefined) update.homepagePromotionTitle = String(req.body?.homepagePromotionTitle ?? req.body?.title ?? '').trim();
+  if (req.body?.subtitle !== undefined || req.body?.homepagePromotionSubtitle !== undefined) update.homepagePromotionSubtitle = String(req.body?.homepagePromotionSubtitle ?? req.body?.subtitle ?? '').trim();
+  if (req.body?.ctaLabel !== undefined || req.body?.homepagePromotionCtaLabel !== undefined) update.homepagePromotionCtaLabel = String(req.body?.homepagePromotionCtaLabel ?? req.body?.ctaLabel ?? '').trim();
+  if (req.body?.calendarSource !== undefined || req.body?.homepagePromotionCalendarSource !== undefined) update.homepagePromotionCalendarSource = String(req.body?.homepagePromotionCalendarSource ?? req.body?.calendarSource ?? '').trim();
+  if (req.body?.externalSourceUrl !== undefined || req.body?.homepagePromotionExternalSourceUrl !== undefined) update.homepagePromotionExternalSourceUrl = String(req.body?.homepagePromotionExternalSourceUrl ?? req.body?.externalSourceUrl ?? '').trim();
+  const startsAt = parseOptionalPromotionDate(req.body?.startsAt ?? req.body?.homepagePromotionStartsAt);
+  const endsAt = parseOptionalPromotionDate(req.body?.endsAt ?? req.body?.homepagePromotionEndsAt);
+  if (startsAt !== undefined) update.homepagePromotionStartsAt = startsAt;
+  if (endsAt !== undefined) update.homepagePromotionEndsAt = endsAt;
+  return update;
+}
+
+app.patch('/api/admin/fights/:id/homepage-promotion', verifyAdminToken, async (req, res) => {
+  try {
+    const resolved = await resolveFightDocumentForAdminPromotion(req.params.id, req.body?.sourceType || req.query.sourceType);
+    if (!resolved) return res.status(404).json({ ok: false, message: 'Fight not found.' });
+    const update = getHomepagePromotionUpdate(req);
+    Object.assign(resolved.doc, update);
+    await resolved.doc.save();
+    clearPublicResponseCache();
+    res.json({
+      ok: true,
+      sourceType: resolved.sourceType,
+      fight: pickPublicFightFields(resolved.doc, resolved.sourceType),
+      message: update.homepagePromoted ? 'Fight promoted on homepage banner.' : 'Fight removed from homepage banner.',
+    });
+  } catch (error) {
+    console.error('Error updating homepage promotion:', error);
+    res.status(500).json({ ok: false, message: 'Failed to update homepage promotion.' });
+  }
+});
+
+app.post('/api/admin/fights/:id/homepage-promotion', verifyAdminToken, async (req, res) => {
+  try {
+    const resolved = await resolveFightDocumentForAdminPromotion(req.params.id, req.body?.sourceType || req.query.sourceType);
+    if (!resolved) return res.status(404).json({ ok: false, message: 'Fight not found.' });
+    const update = getHomepagePromotionUpdate({ body: { ...(req.body || {}), homepagePromoted: req.body?.homepagePromoted ?? req.body?.promoted ?? true }, admin: req.admin });
+    Object.assign(resolved.doc, update);
+    await resolved.doc.save();
+    clearPublicResponseCache();
+    res.status(201).json({
+      ok: true,
+      sourceType: resolved.sourceType,
+      fight: pickPublicFightFields(resolved.doc, resolved.sourceType),
+      message: 'Fight promoted on homepage banner.',
+    });
+  } catch (error) {
+    console.error('Error creating homepage promotion:', error);
+    res.status(500).json({ ok: false, message: 'Failed to create homepage promotion.' });
+  }
+});
+
+// Independent v7 homepage placements. Selecting one surface never changes the
+// other; Upcoming Events remains the automatic future-date feed.
+app.patch('/api/admin/fights/:id/homepage-placement', verifyAdminToken, async (req, res) => {
+  try {
+    const surface = String(req.body?.surface || '').trim().toLowerCase();
+    const placementField = surface === 'featured-this-week'
+      ? 'featuredThisWeek'
+      : surface === 'featured-fight'
+        ? 'featuredFight'
+        : '';
+    if (!placementField) return res.status(400).json({ ok: false, message: 'Surface must be featured-this-week or featured-fight.' });
+    const resolved = await resolveFightDocumentForAdminPromotion(req.params.id, req.body?.sourceType || req.query.sourceType);
+    if (!resolved) return res.status(404).json({ ok: false, message: 'Fight not found.' });
+    const selected = parseHomepagePromotionBoolean(req.body?.selected, true);
+    if (selected) {
+      const clear = { $set: { [placementField]: false } };
+      await Promise.all([
+        Match.updateMany({ _id: { $ne: resolved.doc._id }, [placementField]: true }, clear),
+        Shadow.updateMany({ _id: { $ne: resolved.doc._id }, [placementField]: true }, clear),
+      ]);
+    }
+    resolved.doc[placementField] = selected;
+    // Same reveal rule as homepage-promotion: a mystery fight put into a
+    // named spotlight surface should show its real fighters, not the hidden
+    // placeholder.
+    if (selected) resolved.doc.shadowIdentityHidden = false;
+    if (surface === 'featured-this-week' && req.body?.image !== undefined) resolved.doc.featuredThisWeekImage = String(req.body.image || '').trim();
+    if (surface === 'featured-fight') {
+      if (req.body?.backgroundImage !== undefined) resolved.doc.featuredFightBackgroundImage = String(req.body.backgroundImage || '').trim();
+      if (req.body?.fighterAImage !== undefined) resolved.doc.featuredFightFighterAImage = String(req.body.fighterAImage || '').trim();
+      if (req.body?.fighterBImage !== undefined) resolved.doc.featuredFightFighterBImage = String(req.body.fighterBImage || '').trim();
+      if (req.body?.division !== undefined) resolved.doc.division = String(req.body.division || '').trim();
+      if (req.body?.weightClass !== undefined) resolved.doc.weightClass = String(req.body.weightClass || '').trim();
+    }
+    resolved.doc.homepagePromotionUpdatedAt = new Date();
+    resolved.doc.homepagePromotionUpdatedBy = req.admin?.id || req.admin?._id || req.admin?.email || 'admin';
+    await resolved.doc.save();
+    clearPublicResponseCache();
+    return res.json({ ok: true, surface, selected, sourceType: resolved.sourceType, fight: pickPublicFightFields(resolved.doc, resolved.sourceType) });
+  } catch (error) {
+    console.error('Error updating homepage placement:', error);
+    return res.status(500).json({ ok: false, message: 'Failed to update homepage placement.' });
+  }
+});
+
+function parseScoutingModelJson(value = '') {
+  const raw = String(value || '').trim();
+  if (!raw) return null;
+  const withoutFence = raw.replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/i, '').trim();
+  try {
+    const parsed = JSON.parse(withoutFence);
+    return parsed && typeof parsed === 'object' ? parsed : null;
+  } catch (_error) {
+    return null;
+  }
+}
+
+async function generateValidatedScoutingReport(payload = {}) {
+  const fallback = buildTemplateScoutingReport(payload);
+  const apiKey = String(process.env.OPENAI_API_KEY || '').trim();
+  if (!apiKey || !fallback) return fallback;
+
+  const systemPrompt = [
+    'You write a concise combat-sports scouting preview from only the supplied JSON.',
+    'Return JSON with exactly summary, pickSplitNote, and underdogAngle string fields.',
+    'Never invent records, odds, injuries, news, rankings, dates, percentages, or statistics.',
+    'Use no numbers except numbers that appear in the supplied JSON. If the data is insufficient, say so plainly.',
+  ].join(' ');
+
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    try {
+      const response = await fetch('https://api.openai.com/v1/chat/completions', {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${apiKey}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          model: process.env.OPENAI_SCOUTING_MODEL || 'gpt-4o-mini',
+          temperature: 0.2,
+          response_format: { type: 'json_object' },
+          messages: [
+            { role: 'system', content: systemPrompt },
+            { role: 'user', content: JSON.stringify(payload) },
+          ],
+        }),
+      });
+      if (!response.ok) continue;
+      const body = await response.json();
+      const candidate = parseScoutingModelJson(body?.choices?.[0]?.message?.content);
+      if (!candidate || !validateScoutingReportNumbers(candidate, payload)) continue;
+      return {
+        summary: String(candidate.summary || '').trim(),
+        pickSplitNote: String(candidate.pickSplitNote || '').trim(),
+        underdogAngle: String(candidate.underdogAngle || '').trim(),
+        source: 'validated-model',
+        payloadVersion: 1,
+        generatedAt: new Date().toISOString(),
+      };
+    } catch (error) {
+      console.warn('[ai-scouting] Generation attempt failed:', error.message);
+    }
+  }
+  return fallback;
+}
+
+// Admin-triggered, per-fight generation. The saved report is always derived
+// from the registered fight and submitted scorecards; invalid model output is
+// discarded in favor of the validated deterministic fallback.
+app.post('/api/admin/fights/:id/ai-scouting-report', verifyAdminToken, async (req, res) => {
+  try {
+    const resolved = await resolveFightDocumentForAdminPromotion(req.params.id, req.body?.sourceType || req.query.sourceType);
+    if (!resolved) return res.status(404).json({ ok: false, message: 'Fight not found.' });
+    const scores = await Score.find({ matchId: String(resolved.doc._id) }).select('predictions').lean();
+    const payload = buildScoutingPayload(resolved.doc, scores);
+    const generatedReport = await generateValidatedScoutingReport(payload);
+    if (!generatedReport) return res.status(422).json({ ok: false, message: 'The fight needs both registered fighter names before a report can be generated.' });
+    const report = { ...generatedReport, pickCount: payload.pickCount, pickSplit: payload.pickSplit };
+    resolved.doc.aiScoutingReport = report;
+    await resolved.doc.save();
+    clearPublicResponseCache();
+    return res.json({ ok: true, sourceType: resolved.sourceType, report, pickCount: payload.pickCount, pickSplit: payload.pickSplit });
+  } catch (error) {
+    console.error('[ai-scouting] Failed to generate report:', error);
+    return res.status(500).json({ ok: false, message: 'Unable to generate this fight scouting report.' });
+  }
+});
+
+app.get('/api/public/fight-calendar', async (req, res) => {
+  try {
+    const limit = parsePositiveInteger(req.query.limit, 500, 1000);
+    let baseFilter = {};
+    if (!isAllFilterValue(req.query.category)) baseFilter = appendAndFilter(baseFilter, buildEffectiveFightCategoryFilter(req.query.category));
+    const visibleFilter = applyFightPublicVisibilityFilter(baseFilter, req.query);
+    const [matches, shadows] = await Promise.all([
+      Match.find(visibleFilter).populate('fighterAId fighterBId').sort({ matchDate: 1, updatedAt: -1 }).limit(limit).lean(),
+      Shadow.find(visibleFilter).populate('fighterAId fighterBId').sort({ matchDate: 1, updatedAt: -1 }).limit(limit).lean().catch(() => []),
+    ]);
+    let items = [
+      ...matches.map((fight) => pickPublicFightFields(fight, 'match')),
+      ...shadows.map((fight) => pickPublicFightFields(fight, 'shadow')),
+    ].filter((fight) => !isDraftFightRecord(fight) && parseFightDateTime(fight));
+    items = applyPublicFightStatusIntent(items, req.query);
+    const groupedByDate = items.reduce((acc, fight) => {
+      const date = parseFightDateTime(fight);
+      if (!date) return acc;
+      const key = date.toISOString().slice(0, 10);
+      if (!acc[key]) acc[key] = [];
+      acc[key].push({
+        id: String(fight._id || fight.id),
+        sourceType: fight.sourceType,
+        title: fight.matchName || `${fight.matchFighterA || 'Fighter A'} vs ${fight.matchFighterB || 'Fighter B'}`,
+        fighterA: fight.matchFighterA,
+        fighterB: fight.matchFighterB,
+        category: fight.displayCategory || fight.matchCategoryTwo || fight.matchCategory,
+        matchTime: fight.matchTime,
+        timelineBucket: fight.timelineBucket || getFightTimelineBucket(fight),
+      });
+      return acc;
+    }, {});
+    res.json({ ok: true, items, groupedByDate, dates: Object.keys(groupedByDate).sort(), count: items.length, generatedAt: new Date().toISOString() });
+  } catch (error) {
+    console.error('Error loading fight calendar:', error);
+    res.status(500).json({ ok: false, message: 'Failed to load fight calendar.' });
+  }
+});
+
+app.get('/api/public/homepage/promoted-fights', async (req, res) => {
+  try {
+    const limit = parsePositiveInteger(req.query.limit, 8, 24);
+    const now = new Date();
+    const visiblePromotedFilter = applyFightPublicVisibilityFilter({
+      $or: [{ homepagePromoted: true }, { featuredThisWeek: true }, { featuredFight: true }],
+    }, { playable: 'true' });
+    const queryLimit = Math.min(Math.max(limit * 4, limit), 120);
+    const [matches, shadows] = await Promise.all([
+      applyFightFreshSortLean(Match.find(visiblePromotedFilter).populate('fighterAId fighterBId')).limit(queryLimit),
+      applyFightFreshSortLean(Shadow.find(visiblePromotedFilter).populate('fighterAId fighterBId')).limit(queryLimit).catch(() => []),
+    ]);
+    const items = [
+      ...matches.map((fight) => pickPublicFightFields(fight, 'match')),
+      ...shadows.map((fight) => pickPublicFightFields(fight, 'shadow')),
+    ]
+      .filter((fight) => isHomepagePromotionVisible(fight, now) && isPublicHomeActiveFightRecord(fight, now))
+      .sort(compareHomepagePromotedFights)
+      .slice(0, limit);
+
+    res.setHeader('Cache-Control', 'private, no-store, no-cache, max-age=0, must-revalidate');
+    res.setHeader('Pragma', 'no-cache');
+    res.setHeader('Expires', '0');
+    res.setHeader('X-Backend-Cache', 'BYPASS');
+    res.json({ ok: true, items, count: items.length, generatedAt: now.toISOString() });
+  } catch (error) {
+    console.error('Error loading promoted homepage fights:', error);
+    res.status(500).json({ ok: false, message: 'Failed to load promoted homepage fights.' });
+  }
+});
+
+app.get('/api/affiliate/:affiliateId/promoted-fights', async (req, res) => {
+  try {
+    const affiliateId = String(req.params.affiliateId || '').trim();
+    if (!affiliateId) return res.status(400).json({ ok: false, message: 'Affiliate id is required.' });
+
+    const activeOnly = ['true', '1', 'yes'].includes(String(req.query.activeOnly || req.query.openOnly || '').toLowerCase());
+    const affiliateObjectId = mongoose.Types.ObjectId.isValid(affiliateId) ? new mongoose.Types.ObjectId(affiliateId) : null;
+    const shadowFilter = affiliateObjectId
+      ? { 'AffiliateIds.AffiliateId': affiliateObjectId }
+      : { 'AffiliateIds.AffiliateId': affiliateId };
+
+    const [directMatches, promotedShadowTemplates, allShadowTemplates] = await Promise.all([
+      Match.find({ $or: [{ affiliateId }, { sourceShadowId: { $exists: true }, affiliateId }] }).populate('fighterAId fighterBId').sort({ updatedAt: -1, createdAt: -1 }).limit(300).lean(),
+      Shadow.find(shadowFilter).populate('fighterAId fighterBId').sort({ updatedAt: -1, createdAt: -1 }).limit(300).lean().catch(() => []),
+      Shadow.find(applyFightPublicVisibilityFilter({}, { includeDrafts: req.query.includeDrafts })).populate('fighterAId fighterBId').sort({ updatedAt: -1, createdAt: -1 }).limit(500).lean().catch(() => []),
+    ]);
+
+    const linkedMatchIds = [...new Set(promotedShadowTemplates.flatMap((shadow) => (Array.isArray(shadow.AffiliateIds) ? shadow.AffiliateIds : [])
+      .filter((item) => String(item?.AffiliateId || '') === affiliateId || String(item?.AffiliateId?._id || '') === affiliateId)
+      .map((item) => String(item?.matchId || item?.matchId?._id || ''))
+      .filter((id) => mongoose.Types.ObjectId.isValid(id))))];
+
+    const linkedMatches = linkedMatchIds.length
+      ? await Match.find({ _id: { $in: linkedMatchIds } }).populate('fighterAId fighterBId').sort({ updatedAt: -1, createdAt: -1 }).lean()
+      : [];
+
+    const byKey = new Map();
+    const addItem = (fight, sourceType, extra = {}) => {
+      if (!fight || isDraftFightRecord(fight)) return;
+      if (activeOnly && getFightTimelineBucket({ ...fight, sourceType }) === 'past') return;
+      const key = `${sourceType}:${String(fight._id)}`;
+      byKey.set(key, {
+        ...pickPublicFightFields(fight, sourceType),
+        affiliatePromotion: {
+          isPromoted: true,
+          affiliateId,
+          sourceType,
+          ...extra,
+        },
+      });
+    };
+
+    directMatches.forEach((match) => addItem(match, 'match', { mode: 'affiliate-created-match' }));
+    linkedMatches.forEach((match) => addItem(match, 'match', { mode: 'linked-shadow-match' }));
+    promotedShadowTemplates.forEach((shadow) => addItem(shadow, 'shadow', { mode: 'promoted-shadow-template' }));
+
+    const promotedShadowIds = new Set(promotedShadowTemplates.map((shadow) => String(shadow._id)));
+    const availableShadowTemplates = allShadowTemplates
+      .filter((shadow) => !isDraftFightRecord(shadow) && hasOfficialShadowScores(shadow))
+      .map((shadow) => ({
+        ...pickPublicFightFields(shadow, 'shadow'),
+        affiliatePromotion: {
+          isPromoted: promotedShadowIds.has(String(shadow._id)),
+          affiliateId,
+          sourceType: 'shadow',
+        },
+      }));
+
+    res.json({
+      ok: true,
+      affiliateId,
+      items: Array.from(byKey.values()).sort(compareHomepagePromotedFights),
+      promotedShadowTemplates: promotedShadowTemplates.map((shadow) => pickPublicFightFields(shadow, 'shadow')),
+      availableShadowTemplates,
+      shadowTemplates: availableShadowTemplates,
+      generatedAt: new Date().toISOString(),
+    });
+  } catch (error) {
+    console.error('Error loading affiliate promoted fights:', error);
+    res.status(500).json({ ok: false, message: 'Failed to load affiliate promoted fights.' });
+  }
+});
+
+app.get('/api/affiliate/:affiliateId/shadow-fights', async (req, res) => {
+  try {
+    const affiliateId = String(req.params.affiliateId || '').trim();
+    const promoted = await Shadow.find({
+      ...(mongoose.Types.ObjectId.isValid(affiliateId)
+        ? { 'AffiliateIds.AffiliateId': new mongoose.Types.ObjectId(affiliateId) }
+        : { 'AffiliateIds.AffiliateId': affiliateId }),
+    }).select('_id').lean().catch(() => []);
+    const promotedIds = new Set(promoted.map((item) => String(item._id)));
+    const shadows = await Shadow.find(applyFightPublicVisibilityFilter({}, req.query)).populate('fighterAId fighterBId').sort({ updatedAt: -1, createdAt: -1 }).limit(500).lean();
+    res.json({
+      ok: true,
+      affiliateId,
+      items: shadows.filter((shadow) => !isDraftFightRecord(shadow) && hasOfficialShadowScores(shadow)).map((shadow) => ({
+        ...pickPublicFightFields(shadow, 'shadow'),
+        affiliatePromotion: { isPromoted: promotedIds.has(String(shadow._id)), affiliateId, sourceType: 'shadow' },
+      })),
+      generatedAt: new Date().toISOString(),
+    });
+  } catch (error) {
+    console.error('Error loading affiliate shadow fights:', error);
+    res.status(500).json({ ok: false, message: 'Failed to load affiliate shadow fights.' });
+  }
+});
+
+
+
+// PHASE 2: Centralized IONOS swarm gateway routes. Kept isolated in swarm-phase2.js
+// so the existing backend code, models, and business rules remain authoritative.
+registerSwarmPhase2Routes({
+  app,
+  mongoose,
+  axios,
+  crypto,
+  verifyAdminToken,
+  Blog,
+  Notification,
+  upload,
+  cloudinary,
+});
+
+// Google News -> UFC event discovery. This keeps the existing fight calendar and
+// Swarm workflow intact while removing the expired RSS aggregator dependency.
+const ufcEventDiscovery = registerUfcEventDiscovery({
+  app,
+  cron,
+  parser,
+  fetch,
+  Match,
+  Notification,
+  verifyAdminToken,
+  triggerUpcomingEventAutomationForMatch,
+  clearPublicResponseCache,
+});
+app.locals.ufcEventDiscovery = ufcEventDiscovery;
+
+
+
+// PHASE 2 SEO/PERFORMANCE: Public SEO data, pagination, sitemap/schema helpers,
+// and admin approval endpoints for swarm SEO intelligence. Kept isolated so the
+// existing backend routes and business rules remain unchanged.
+registerSeoPerformancePhase2Routes({
+  app,
+  mongoose,
+  verifyAdminToken,
+  models: {
+    Match,
+    Shadow,
+    Blog,
+    News,
+    YoutubeVideos,
+    Score,
+    User,
+    ProWrestler,
+    ProWrestlingMatch,
+  },
+});
+
+// PHASE: Safe fight data-quality + combat fighter library helpers. Additive only;
+// old match fields/routes stay unchanged and remain the fallback for public pages.
+registerFightDataQualityRoutes({
+  app,
+  mongoose,
+  axios,
+  upload,
+  cloudinary,
+  verifyAdminToken,
+  Match,
+  Score,
+  Shadow,
+});
+
+// PHASE: Admin push alerts — lets an admin install the back office to their
+// phone home screen and get a real push (not just email) on new signups.
+({ sendAdminPush } = registerAdminPushRoutes({ app, mongoose, verifyAdminToken }));
+
+// ==========================================================================
+// ATOMIC FIGHT ENTRY — charges the entry fee and saves the prediction together
+// --------------------------------------------------------------------------
+// Replaces the unsafe pair (POST /api/scores + POST /api/matches/:id/
+// updatePredictionStatus), which saved a prediction WITHOUT ever debiting the
+// wallet — players could enter paid contests for free.
+//
+// Guarantees:
+//   * fee is read from the fight record, never from the request body
+//   * wallet debit + prediction save + pot increment succeed or fail together
+//   * idempotent: a repeat submit returns the original result, never re-charges
+//   * every debit writes an audit row
+// Modelled on joinWrestlingMatch, which already did this correctly.
+// ==========================================================================
+
+const fightEntryLedgerSchema = new mongoose.Schema({
+  userId: { type: mongoose.Schema.Types.ObjectId, ref: 'User', index: true },
+  matchId: { type: String, index: true },
+  sourceType: { type: String, enum: ['match', 'shadow'], default: 'match' },
+  type: { type: String, enum: ['FIGHT_ENTRY', 'FIGHT_ENTRY_REFUND'], default: 'FIGHT_ENTRY' },
+  amount: { type: Number, required: true },
+  balanceBefore: { type: Number, required: true },
+  balanceAfter: { type: Number, required: true },
+  idempotencyKey: { type: String, required: true, unique: true },
+  metadata: mongoose.Schema.Types.Mixed,
+}, { timestamps: true });
+const FightEntryLedger = mongoose.models.FightEntryLedger
+  || mongoose.model('FightEntryLedger', fightEntryLedgerSchema);
+
+const fightTokenBalance = (value) => {
+  const parsed = Number.parseInt(String(value ?? '0'), 10);
+  return Number.isFinite(parsed) ? Math.max(0, parsed) : 0;
+};
+
+const runFightEntryTransaction = async (work) => {
+  const session = await mongoose.startSession();
+  try {
+    let result;
+    try {
+      await session.withTransaction(async () => { result = await work(session); });
+      return result;
+    } catch (error) {
+      // Standalone mongo (no replica set) cannot run transactions. Allow an
+      // explicit opt-out for local dev only — never enable this in production,
+      // because a mid-sequence failure could charge without saving an entry.
+      const unsupported = /Transaction numbers are only allowed|replica set|transactions are not supported/i
+        .test(String(error.message || ''));
+
+      // The opt-out is for local development only. Honouring it in production
+      // would let a mid-sequence failure charge a player without recording the
+      // entry — the exact bug transactions exist to prevent.
+      if (unsupported && process.env.NODE_ENV === 'production') {
+        console.error('FATAL DATA RISK: a money operation was attempted against a non-transactional MongoDB. Make the database a replica set.');
+        throw fightEntryError(
+          503,
+          'Entries are temporarily unavailable. Our team has been alerted.',
+          'DATABASE_NOT_TRANSACTIONAL',
+        );
+      }
+      if (unsupported && String(process.env.FIGHT_ENTRY_ALLOW_NON_TRANSACTIONAL || '').toLowerCase() === 'true') {
+        console.warn('WARNING: running fight entry without a MongoDB transaction (FIGHT_ENTRY_ALLOW_NON_TRANSACTIONAL=true). Development only.');
+        return work(null);
+      }
+      throw error;
+    }
+  } finally {
+    await session.endSession();
+  }
+};
+
+const withFightSession = (query, session) => (session ? query.session(session) : query);
+
+const fightEntryError = (status, message, code, extra = {}) => {
+  const error = new Error(message);
+  error.status = status;
+  error.code = code;
+  error.extra = extra;
+  return error;
+};
+
+// Entry is closed once the fight is finished/closed, a shadow is closed, or the
+// scheduled start time has passed.
+const isFightOpenForEntry = (fight) => {
+  const status = String(fight?.matchStatus || '').toLowerCase();
+  if (['finished', 'closed', 'draft'].includes(status)) return false;
+  if (String(fight?.matchShadowOpenStatus || 'open').toLowerCase() === 'closed') return false;
+  if (String(fight?.matchShadowStatus || 'active').toLowerCase() === 'inactive') return false;
+  const lockAt = fight?.lockAt || fight?.matchDate;
+  if (lockAt && new Date(lockAt).getTime() < Date.now()) return false;
+  return true;
+};
+
+// Shared by BOTH the new endpoint and the legacy POST /api/scores, so there is
+// exactly one code path that can create a paid entry. Declared as a hoisted
+// `function` so the older route above can call it.
+async function createFightEntry({ userId, fightId, predictions, idempotencyKey }) {
+  if (!userId) throw fightEntryError(401, 'Authentication is required to enter a fight.', 'UNAUTHENTICATED');
+  if (!fightId) throw fightEntryError(400, 'A fight id is required.', 'INVALID_FIGHT_ID');
+  if (!Array.isArray(predictions) || !predictions.length) {
+    throw fightEntryError(422, 'A predictions array is required.', 'INVALID_PREDICTION');
+  }
+
+  const key = String(idempotencyKey || `fight:entry:${fightId}:${userId}`).slice(0, 180);
+
+  // Fast path: already entered. Never re-charge, never duplicate.
+  // Refunded entries are voided, so they must NOT count as "already entered" —
+  // otherwise a refunded player re-entering would be treated as a free edit.
+  const alreadyEntered = await Score.findOne({ playerId: userId, matchId: fightId, refunded: { $ne: true } }).lean();
+  if (alreadyEntered) {
+    const existingUser = await User.findById(userId).select('tokens').lean();
+    return {
+      entry: alreadyEntered,
+      idempotent: true,
+      entryFeeCharged: 0,
+      balanceAfter: fightTokenBalance(existingUser?.tokens),
+      fight: null,
+    };
+  }
+
+  const result = await runFightEntryTransaction(async (session) => {
+    let sourceType = 'match';
+    let fight = await withFightSession(Match.findById(fightId), session);
+    if (!fight) {
+      sourceType = 'shadow';
+      fight = await withFightSession(Shadow.findById(fightId), session);
+    }
+    if (!fight) throw fightEntryError(404, 'Fight not found.', 'FIGHT_NOT_FOUND');
+    if (!isFightOpenForEntry(fight)) {
+      throw fightEntryError(409, 'This fight is no longer open for entry.', 'FIGHT_LOCKED');
+    }
+
+    // Re-check inside the transaction to close the double-submit race.
+    const duplicate = await withFightSession(Score.findOne({ playerId: userId, matchId: fightId, refunded: { $ne: true } }), session).lean();
+    if (duplicate) {
+      return { entry: duplicate, idempotent: true, entryFeeCharged: 0, sourceType, fight };
+    }
+
+    // AUTHORITATIVE FEE. Deliberately ignores anything the client sent.
+    const entryFee = Math.max(0, Math.round(Number(fight.matchTokens) || 0));
+
+    // SELF-ENTRY BAN. An affiliate may not enter a contest they promote.
+    // Enforced server-side because the client-side check is trivially bypassed,
+    // and a promoter entering their own pot is fraud against their own members.
+    const promoterIds = [
+      fight.affiliateId,
+      ...(Array.isArray(fight.AffiliateIds) ? fight.AffiliateIds.map((a) => a?.AffiliateId) : []),
+    ].filter(Boolean).map((x) => String(x));
+    if (promoterIds.includes(String(userId))) {
+      throw fightEntryError(403, 'You promote this contest, so you cannot enter it.', 'AFFILIATE_SELF_ENTRY');
+    }
+
+    // Eligibility gate — PAID contests only. Free entries stay open so a new
+    // player can try the game before supplying a date of birth.
+    if (entryFee > 0) {
+      const gateUser = await withFightSession(
+        User.findById(userId).select('dateOfBirth residenceState selfExcludedUntil'), session
+      ).lean();
+      const blocked = checkPlayEligibility(gateUser);
+      if (blocked) throw fightEntryError(403, blocked.message, blocked.code);
+    }
+
+    let balanceBefore = 0;
+    let balanceAfter = 0;
+
+    if (entryFee > 0) {
+      const user = await withFightSession(User.findById(userId), session);
+      if (!user) throw fightEntryError(404, 'User not found.', 'USER_NOT_FOUND');
+
+      balanceBefore = fightTokenBalance(user.tokens);
+      balanceAfter = balanceBefore - entryFee;
+      if (balanceAfter < 0) {
+        throw fightEntryError(402, 'Not enough FM coins to enter this fight.', 'INSUFFICIENT_FUNDS', {
+          balance: balanceBefore,
+          entryFee,
+          shortfall: entryFee - balanceBefore,
+        });
+      }
+
+      user.tokens = String(balanceAfter);
+      await user.save(session ? { session } : undefined);
+
+      // Recorded per fight so settlement can show declared prize vs fees taken —
+      // the number that grows with entrants.
+      fight.collectedFees = Math.max(0, Number(fight.collectedFees) || 0) + entryFee;
+      await fight.save(session ? { session } : undefined);
+
+      await FightEntryLedger.create([{
+        userId,
+        matchId: fightId,
+        sourceType,
+        type: 'FIGHT_ENTRY',
+        amount: -entryFee,
+        balanceBefore,
+        balanceAfter,
+        idempotencyKey: `fight:ledger:${key}`,
+        metadata: { category: fight.matchCategory || null },
+      }], session ? { session } : undefined);
+    } else {
+      const user = await withFightSession(User.findById(userId).select('tokens'), session).lean();
+      balanceBefore = fightTokenBalance(user?.tokens);
+      balanceAfter = balanceBefore;
+    }
+
+    const scoreDocs = await Score.create([{
+      playerId: userId,
+      matchId: fightId,
+      predictions,
+    }], session ? { session } : undefined);
+    const entry = scoreDocs[0];
+
+    if (!Array.isArray(fight.userPredictions)) fight.userPredictions = [];
+    const existingMarker = fight.userPredictions.find((item) => String(item?.userId) === String(userId));
+    if (existingMarker) existingMarker.predictionStatus = 'submitted';
+    else fight.userPredictions.push({ userId, predictionStatus: 'submitted' });
+
+    fight.pot = Math.max(0, Number(fight.pot) || 0) + entryFee;
+
+    // Shadow Fight profit zone: the promoter stakes a pot up front and only
+    // starts earning once entries have covered it. Flip the flag the first time
+    // the pot clears the target so the affiliate dashboard can show it live.
+    const potTarget = Math.max(0, Number(fight.potTarget) || 0);
+    if (potTarget > 0 && !fight.profitZoneReachedAt && Number(fight.pot) >= potTarget) {
+      fight.profitZoneReachedAt = new Date();
+    }
+
+    await fight.save(session ? { session } : undefined);
+
+    return { entry, entryFeeCharged: entryFee, balanceBefore, balanceAfter, sourceType, fight };
+  });
+
+  clearPublicResponseCache();
+
+  if (!result.idempotent && result.fight) {
+    User.findById(userId).select('email').lean()
+      .then((entrant) => {
+        if (!entrant?.email) return;
+        const fee = Number(result.entryFeeCharged || 0);
+        sendMoneyNotice({
+          to: entrant.email,
+          subject: 'Your predictions are locked in',
+          heading: 'YOU ARE IN',
+          lines: [
+            `Your card for <strong>${(result.fight.matchFighterA || 'Fighter A')} vs ${(result.fight.matchFighterB || 'Fighter B')}</strong> has been submitted.`,
+            fee > 0
+              ? `Entry fee: <strong>${fee.toLocaleString()} FM</strong>. New balance: <strong>${Number(result.balanceAfter || 0).toLocaleString()} FM</strong>.`
+              : 'This was a free entry — no coins were charged.',
+            'You can edit your picks right up until the fight locks.',
+          ],
+        });
+      })
+      .catch(() => {});
+  }
+
+  return result;
+}
+
+app.post('/api/fights/:fightId/entries', verifyToken, requireScope(TOKEN_SCOPES.PLAYER), async (req, res) => {
+  try {
+    const result = await createFightEntry({
+      userId: String(req.user?.id || req.user?._id || '').trim(),
+      fightId: String(req.params.fightId || '').trim(),
+      predictions: req.body?.predictions,
+      idempotencyKey: req.headers['idempotency-key'] || req.body?.idempotencyKey,
+    });
+
+    if (result.idempotent) {
+      return res.status(200).json({
+        entryId: result.entry._id,
+        idempotent: true,
+        alreadyEntered: true,
+        entryFeeCharged: 0,
+        walletBalance: result.balanceAfter,
+        message: 'You have already entered this fight.',
+      });
+    }
+
+    return res.status(201).json({
+      entryId: result.entry._id,
+      entryFeeCharged: result.entryFeeCharged,
+      walletBalance: result.balanceAfter,
+      potTotal: Math.max(0, Number(result.fight?.pot) || 0),
+      playerCount: Array.isArray(result.fight?.userPredictions)
+        ? result.fight.userPredictions.filter((item) => String(item?.predictionStatus) === 'submitted').length
+        : 0,
+      predictionStatus: 'submitted',
+    });
+  } catch (error) {
+    if (error?.code === 11000) {
+      return res.status(200).json({ idempotent: true, message: 'This entry was already processed.' });
+    }
+    const status = error?.status || 500;
+    if (status >= 500) console.error('Fight entry failed:', error);
+    return res.status(status).json({
+      message: error?.message || 'Could not complete your fight entry.',
+      code: error?.code || 'ENTRY_FAILED',
+      ...(error?.extra || {}),
+    });
+  }
+});
+
+// --------------------------------------------------------------------------
+// REFUNDS — used when a fight is cancelled, or to settle a single dispute.
+//
+// The refund amount comes from the LEDGER, not from fight.matchTokens. The fee
+// can be edited after players enter, so the ledger is the only record of what
+// each player was actually charged. Refunding the current fee would give some
+// players too much and others too little.
+// --------------------------------------------------------------------------
+async function refundFightEntries({ fightId, userId = null, reason = 'Fight cancelled', adminId = null }) {
+  if (!fightId) throw fightEntryError(400, 'A fight id is required.', 'INVALID_FIGHT_ID');
+
+  return runFightEntryTransaction(async (session) => {
+    let sourceType = 'match';
+    let fight = await withFightSession(Match.findById(fightId), session);
+    if (!fight) {
+      sourceType = 'shadow';
+      fight = await withFightSession(Shadow.findById(fightId), session);
+    }
+    if (!fight) throw fightEntryError(404, 'Fight not found.', 'FIGHT_NOT_FOUND');
+
+    const scoreFilter = { matchId: String(fightId), refunded: { $ne: true } };
+    if (userId) scoreFilter.playerId = String(userId);
+
+    const entries = await withFightSession(Score.find(scoreFilter), session);
+    if (!entries.length) {
+      return { refundedCount: 0, totalRefunded: 0, alreadySettled: true, sourceType, fight };
+    }
+
+    let totalRefunded = 0;
+    const refunds = [];
+
+    for (const entry of entries) {
+      const idempotencyKey = `fight:refund:${fightId}:${entry.playerId}`;
+
+      // Already refunded in a previous run — skip, never pay twice.
+      const existingRefund = await withFightSession(
+        FightEntryLedger.findOne({ idempotencyKey }), session
+      ).lean();
+
+      if (!existingRefund) {
+        // What were they actually charged? Read the original debit.
+        const originalDebit = await withFightSession(
+          FightEntryLedger.findOne({
+            matchId: String(fightId),
+            userId: entry.playerId,
+            type: 'FIGHT_ENTRY',
+          }), session
+        ).lean();
+
+        // No debit row means the entry predates the charging fix (it was free),
+        // so there is nothing to give back.
+        const refundAmount = Math.max(0, Math.round(Math.abs(Number(originalDebit?.amount) || 0)));
+
+        if (refundAmount > 0) {
+          const user = await withFightSession(User.findById(entry.playerId), session);
+          if (user) {
+            const balanceBefore = fightTokenBalance(user.tokens);
+            const balanceAfter = balanceBefore + refundAmount;
+            user.tokens = String(balanceAfter);
+            await user.save(session ? { session } : undefined);
+
+            await FightEntryLedger.create([{
+              userId: entry.playerId,
+              matchId: String(fightId),
+              sourceType,
+              type: 'FIGHT_ENTRY_REFUND',
+              amount: refundAmount,
+              balanceBefore,
+              balanceAfter,
+              idempotencyKey,
+              metadata: { reason, adminId, originalLedgerId: originalDebit?._id || null },
+            }], session ? { session } : undefined);
+
+            totalRefunded += refundAmount;
+            refunds.push({ userId: entry.playerId, amount: refundAmount, balanceAfter, email: user.email });
+          } else {
+            console.warn(`Refund skipped: user ${entry.playerId} not found for fight ${fightId}.`);
+          }
+        } else {
+          refunds.push({ userId: entry.playerId, amount: 0, note: 'no charge on record' });
+        }
+      }
+
+      entry.refunded = true;
+      entry.refundedAt = new Date();
+      entry.refundReason = reason;
+      await entry.save(session ? { session } : undefined);
+
+      // Void the entry marker so the player no longer counts as entered.
+      if (Array.isArray(fight.userPredictions)) {
+        const marker = fight.userPredictions.find((item) => String(item?.userId) === String(entry.playerId));
+        if (marker) marker.predictionStatus = 'notSubmitted';
+      }
+    }
+
+    // Take the refunded money back out of the pot.
+    fight.pot = Math.max(0, (Math.max(0, Number(fight.pot) || 0)) - totalRefunded);
+    await fight.save(session ? { session } : undefined);
+
+    // Queued for after commit — a mail failure must never roll back a refund.
+    process.nextTick(() => {
+      refunds.filter((r) => r.amount > 0 && r.email).forEach((r) => {
+        sendMoneyNotice({
+          to: r.email,
+          subject: 'Your entry fee has been refunded',
+          heading: 'REFUND ISSUED',
+          lines: [
+            `Your entry for <strong>${(fight.matchFighterA || 'Fighter A')} vs ${(fight.matchFighterB || 'Fighter B')}</strong> has been refunded.`,
+            `<strong>${r.amount.toLocaleString()} FM</strong> is back in your wallet.`,
+            `Reason: ${reason}`,
+          ],
+        });
+      });
+    });
+
+    return { refundedCount: refunds.length, totalRefunded, refunds, sourceType, fight };
+  });
+}
+
+// Refund every unrefunded entry on a fight (cancellation).
+app.post('/api/admin/fights/:fightId/refund', verifyAdminToken, async (req, res) => {
+  try {
+    const result = await refundFightEntries({
+      fightId: String(req.params.fightId || '').trim(),
+      reason: String(req.body?.reason || 'Fight cancelled').slice(0, 300),
+      adminId: req.admin?.id || null,
+    });
+    clearPublicResponseCache();
+    return res.status(200).json({
+      message: result.alreadySettled
+        ? 'No outstanding entries to refund.'
+        : `Refunded ${result.refundedCount} entr${result.refundedCount === 1 ? 'y' : 'ies'}.`,
+      ...result,
+      fight: undefined,
+      potTotal: Math.max(0, Number(result.fight?.pot) || 0),
+    });
+  } catch (error) {
+    const status = error?.status || 500;
+    if (status >= 500) console.error('Fight refund failed:', error);
+    return res.status(status).json({
+      message: error?.message || 'Could not refund this fight.',
+      code: error?.code || 'REFUND_FAILED',
+    });
+  }
+});
+
+// Refund one player's entry (dispute, or removing a single player).
+app.post('/api/admin/fights/:fightId/refund/:userId', verifyAdminToken, async (req, res) => {
+  try {
+    const result = await refundFightEntries({
+      fightId: String(req.params.fightId || '').trim(),
+      userId: String(req.params.userId || '').trim(),
+      reason: String(req.body?.reason || 'Entry refunded by admin').slice(0, 300),
+      adminId: req.admin?.id || null,
+    });
+    clearPublicResponseCache();
+    return res.status(200).json({
+      message: result.alreadySettled
+        ? 'That entry was already refunded or does not exist.'
+        : 'Entry refunded.',
+      ...result,
+      fight: undefined,
+      potTotal: Math.max(0, Number(result.fight?.pot) || 0),
+    });
+  } catch (error) {
+    const status = error?.status || 500;
+    if (status >= 500) console.error('Single fight refund failed:', error);
+    return res.status(status).json({
+      message: error?.message || 'Could not refund this entry.',
+      code: error?.code || 'REFUND_FAILED',
+    });
+  }
+});
+
+// --------------------------------------------------------------------------
+// AFFILIATE PAYOUT ADMINISTRATION
+//
+// A payout request DEBITS the affiliate's balance immediately (so the same
+// earnings cannot be claimed twice while a request is outstanding). That makes
+// a reject/cancel path mandatory: without it, a declined payout silently
+// destroys the affiliate's balance.
+// --------------------------------------------------------------------------
+
+// Every pending request across all affiliates — the admin work queue.
+app.get('/api/admin/affiliate-payouts', verifyAdminToken, async (req, res) => {
+  try {
+    const status = String(req.query.status || 'pending').toLowerCase();
+    const affiliates = await Affiliate.find({ 'payouts.0': { $exists: true } })
+      .select('_id firstName lastName playerName email tokens payouts preferredPaymentMethod')
+      .lean();
+
+    const rows = [];
+    affiliates.forEach((affiliate) => {
+      (affiliate.payouts || []).forEach((payout, index) => {
+        const payoutStatus = String(payout?.status || 'pending').toLowerCase();
+        if (status !== 'all' && payoutStatus !== status) return;
+        rows.push({
+          affiliateId: affiliate._id,
+          payoutIndex: index,
+          payoutId: payout?._id || null,
+          name: affiliate.playerName || [affiliate.firstName, affiliate.lastName].filter(Boolean).join(' '),
+          email: affiliate.email,
+          preferredPaymentMethod: affiliate.preferredPaymentMethod || null,
+          currentBalance: Number.parseInt(String(affiliate.tokens || '0'), 10) || 0,
+          amount: Number(payout?.amount) || 0,
+          status: payoutStatus,
+          createdAt: payout?.createdAt || null,
+        });
+      });
+    });
+
+    rows.sort((a, b) => new Date(b.createdAt || 0) - new Date(a.createdAt || 0));
+    return res.status(200).json({ count: rows.length, payouts: rows });
+  } catch (error) {
+    console.error('Listing affiliate payouts failed:', error);
+    return res.status(500).json({ message: 'Could not load payout requests.' });
+  }
+});
+
+// Every fight an affiliate has created, live or not — the admin's own view into
+// affiliate-run cards. Staking a guaranteed pot is optional (promoterStake > 0);
+// most affiliate fights build their pot purely from entries.
+app.get('/api/admin/affiliate-fights', verifyAdminToken, async (req, res) => {
+  try {
+    const affiliateFilter = { $or: [{ affiliateId: { $exists: true, $ne: '' } }, { 'AffiliateIds.0': { $exists: true } }] };
+    const fields = 'matchName matchFighterA matchFighterB matchCategory matchCategoryTwo matchStatus matchDate matchTokens pot potTarget promoterStake profitZoneReachedAt affiliateId AffiliateIds fighterAId fighterBId';
+    const [matches, shadows, affiliates] = await Promise.all([
+      Match.find(affiliateFilter).select(fields).populate('fighterAId fighterBId').lean(),
+      Shadow.find(affiliateFilter).select(fields).populate('fighterAId fighterBId').lean(),
+      Affiliate.find().select('_id firstName lastName playerName email verified').lean(),
+    ]);
+    const affiliateById = new Map(affiliates.map((affiliate) => [String(affiliate._id), affiliate]));
+    const rowsFor = (docs, sourceType) => docs.map((fight) => {
+      const item = attachCombatFighterReadFallbacks(fight, sourceType);
+      const ownerIds = [
+        item.affiliateId,
+        ...(Array.isArray(item.AffiliateIds) ? item.AffiliateIds.map((entry) => entry?.AffiliateId) : []),
+      ].filter(Boolean).map(String);
+      const owner = ownerIds.map((id) => affiliateById.get(id)).find(Boolean) || null;
+      const stake = Math.max(0, Number(item.promoterStake) || 0);
+      const potTarget = Math.max(0, Number(item.potTarget) || 0);
+      return {
+        _id: item._id,
+        sourceType,
+        matchName: item.matchName || `${item.matchFighterA || 'Fighter A'} vs ${item.matchFighterB || 'Fighter B'}`,
+        matchFighterA: item.matchFighterA,
+        matchFighterB: item.matchFighterB,
+        matchCategory: item.matchCategoryTwo || item.matchCategory,
+        matchStatus: item.matchStatus,
+        matchDate: item.matchDate,
+        entryFee: Math.max(0, Number(item.matchTokens) || 0),
+        pot: Math.max(0, Number(item.pot) || 0),
+        potTarget,
+        promoterStake: stake,
+        guaranteed: stake > 0,
+        profitZoneReached: Boolean(item.profitZoneReachedAt),
+        affiliateId: owner ? String(owner._id) : (ownerIds[0] || null),
+        affiliateName: owner ? (owner.playerName || [owner.firstName, owner.lastName].filter(Boolean).join(' ')) : 'Unknown affiliate',
+        affiliateEmail: owner?.email || '',
+        affiliateVerified: Boolean(owner?.verified),
+      };
+    });
+    const rows = [...rowsFor(matches, 'match'), ...rowsFor(shadows, 'shadow')]
+      .sort((a, b) => new Date(b.matchDate || 0) - new Date(a.matchDate || 0));
+    return res.status(200).json({ count: rows.length, fights: rows });
+  } catch (error) {
+    console.error('Listing affiliate fights failed:', error);
+    return res.status(500).json({ message: 'Could not load affiliate fights.' });
+  }
+});
+
+const resolveAffiliatePayout = async ({ affiliateId, payoutIndex, nextStatus, reason, adminId, creditBack }) => {
+  const affiliate = await Affiliate.findById(affiliateId);
+  if (!affiliate) throw fightEntryError(404, 'Affiliate not found.', 'AFFILIATE_NOT_FOUND');
+
+  const payout = Array.isArray(affiliate.payouts) ? affiliate.payouts[payoutIndex] : null;
+  if (!payout) throw fightEntryError(404, 'Payout request not found.', 'PAYOUT_NOT_FOUND');
+
+  const currentStatus = String(payout.status || 'pending').toLowerCase();
+  if (currentStatus !== 'pending') {
+    // Idempotent: re-running a completed action must not move money again.
+    return { affiliate, payout, alreadyResolved: true, status: currentStatus };
+  }
+
+  const amount = Math.max(0, Math.floor(Number(payout.amount) || 0));
+
+  if (creditBack && amount > 0) {
+    const balance = Number.parseInt(String(affiliate.tokens || '0'), 10) || 0;
+    affiliate.tokens = String(balance + amount);
+    await recordWalletMove({
+      userId: affiliate._id,
+      amount,
+      balanceBefore: balance,
+      balanceAfter: balance + amount,
+      reason: 'payout_rejected_credit_back',
+      reference: String(payoutIndex),
+    });
+  }
+
+  payout.status = nextStatus;
+  payout.resolvedAt = new Date();
+  if (reason) payout.reason = reason;
+  if (adminId) payout.resolvedBy = String(adminId);
+
+  await affiliate.save();
+
+  const paid = nextStatus === 'paid';
+  await sendMoneyNotice({
+    to: affiliate.email,
+    subject: paid ? 'Your payout has been sent' : 'Your payout request was declined',
+    heading: paid ? 'PAYOUT SENT' : 'PAYOUT DECLINED',
+    lines: paid
+      ? [
+          `Your payout of <strong>${amount.toLocaleString()} FM</strong> has been processed.`,
+          reason ? `Reference: ${reason}` : 'It should arrive via your preferred payment method shortly.',
+        ]
+      : [
+          `Your payout request for <strong>${amount.toLocaleString()} FM</strong> was not approved.`,
+          `<strong>${amount.toLocaleString()} FM</strong> has been returned to your balance, so nothing was lost.`,
+          `Reason: ${reason}`,
+        ],
+  });
+
+  return { affiliate, payout, alreadyResolved: false, creditedBack: Boolean(creditBack) && amount > 0, amount };
+};
+
+// Approve — the money was actually sent. Balance stays debited.
+app.post('/api/admin/affiliate-payouts/:affiliateId/:payoutIndex/approve', verifyAdminToken, async (req, res) => {
+  try {
+    const result = await resolveAffiliatePayout({
+      affiliateId: String(req.params.affiliateId || '').trim(),
+      payoutIndex: Number.parseInt(req.params.payoutIndex, 10),
+      nextStatus: 'paid',
+      reason: String(req.body?.reference || req.body?.reason || '').slice(0, 300),
+      adminId: req.admin?.id || null,
+      creditBack: false,
+    });
+    return res.status(200).json({
+      message: result.alreadyResolved ? 'That payout was already resolved.' : 'Payout marked as paid.',
+      alreadyResolved: result.alreadyResolved,
+      status: result.payout.status,
+      balance: Number.parseInt(String(result.affiliate.tokens || '0'), 10) || 0,
+    });
+  } catch (error) {
+    const status = error?.status || 500;
+    if (status >= 500) console.error('Approving payout failed:', error);
+    return res.status(status).json({ message: error?.message || 'Could not approve payout.', code: error?.code || 'APPROVE_FAILED' });
+  }
+});
+
+// Reject / cancel — CREDITS THE AMOUNT BACK. Without this the affiliate simply
+// loses the balance that was debited when they requested it.
+app.post('/api/admin/affiliate-payouts/:affiliateId/:payoutIndex/reject', verifyAdminToken, async (req, res) => {
+  try {
+    const result = await resolveAffiliatePayout({
+      affiliateId: String(req.params.affiliateId || '').trim(),
+      payoutIndex: Number.parseInt(req.params.payoutIndex, 10),
+      nextStatus: 'rejected',
+      reason: String(req.body?.reason || 'Payout request declined.').slice(0, 300),
+      adminId: req.admin?.id || null,
+      creditBack: true,
+    });
+    return res.status(200).json({
+      message: result.alreadyResolved
+        ? 'That payout was already resolved — nothing was credited.'
+        : `Payout rejected and ${result.amount} FM returned to the affiliate.`,
+      alreadyResolved: result.alreadyResolved,
+      creditedBack: result.creditedBack || false,
+      status: result.payout.status,
+      balance: Number.parseInt(String(result.affiliate.tokens || '0'), 10) || 0,
+    });
+  } catch (error) {
+    const status = error?.status || 500;
+    if (status >= 500) console.error('Rejecting payout failed:', error);
+    return res.status(status).json({ message: error?.message || 'Could not reject payout.', code: error?.code || 'REJECT_FAILED' });
+  }
+});
+
+// --------------------------------------------------------------------------
+// FEATURE WAITLIST
+// Head-to-Head is not built. Rather than ship a button that does nothing, the
+// app collects interest: who wants it, and what stake they say they would use.
+// Nothing here moves money — it is a signal store, deliberately dumb.
+// --------------------------------------------------------------------------
+const WAITLIST_FEATURES = Object.freeze({
+  'head-to-head': { label: 'Head-to-Head Challenges' },
+});
+
+const featureWaitlistSchema = new mongoose.Schema({
+  feature: { type: String, required: true, index: true },
+  userId: { type: String, default: null, index: true },
+  email: { type: String, default: '' },
+  normalizedEmail: { type: String, default: '', index: true },
+  displayName: { type: String, default: '' },
+  // Self-reported, for sizing only. Never used as a limit.
+  wagerBand: { type: String, default: '' },
+  note: { type: String, default: '' },
+  source: { type: String, default: 'mobile-app' },
+}, { timestamps: true });
+
+featureWaitlistSchema.index({ feature: 1, normalizedEmail: 1 }, { unique: true, partialFilterExpression: { normalizedEmail: { $type: 'string', $ne: '' } } });
+
+const FeatureWaitlist = mongoose.models.FeatureWaitlist
+  || mongoose.model('FeatureWaitlist', featureWaitlistSchema);
+
+app.post('/api/waitlist/:feature', submitLimiter, optionalVerifyToken, async (req, res) => {
+  try {
+    const feature = String(req.params.feature || '').trim().toLowerCase();
+    if (!WAITLIST_FEATURES[feature]) {
+      return res.status(404).json({ ok: false, message: 'Unknown feature.' });
+    }
+
+    const userId = String(req.user?.id || req.user?._id || '').trim() || null;
+    let email = String(req.body?.email || '').trim();
+    let displayName = String(req.body?.name || '').trim();
+
+    // Prefer the signed-in account over anything the client sent.
+    if (userId) {
+      const account = await User.findById(userId).select('email firstName playerName').lean();
+      if (account) {
+        email = account.email || email;
+        displayName = account.playerName || account.firstName || displayName;
+      }
+    }
+    if (!email || !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) {
+      return res.status(400).json({ ok: false, message: 'An email address is required to join the waitlist.' });
+    }
+
+    const normalizedEmail = email.toLowerCase();
+    const wagerBand = String(req.body?.wagerBand || '').trim().slice(0, 24);
+    const note = String(req.body?.note || '').trim().slice(0, 400);
+
+    await FeatureWaitlist.findOneAndUpdate(
+      { feature, normalizedEmail },
+      {
+        $set: {
+          feature,
+          normalizedEmail,
+          email,
+          userId,
+          displayName: displayName.slice(0, 80),
+          ...(wagerBand ? { wagerBand } : {}),
+          ...(note ? { note } : {}),
+          source: String(req.body?.source || 'mobile-app').slice(0, 40),
+        },
+      },
+      { upsert: true, new: true, setDefaultsOnInsert: true },
+    );
+
+    const total = await FeatureWaitlist.countDocuments({ feature });
+    return res.status(200).json({
+      ok: true,
+      feature,
+      joined: true,
+      total,
+      message: `You're on the list for ${WAITLIST_FEATURES[feature].label}. We'll email you when it opens.`,
+    });
+  } catch (error) {
+    console.error('Waitlist signup failed:', error);
+    return res.status(500).json({ ok: false, message: 'Could not add you to the waitlist just now.' });
+  }
+});
+
+app.get('/api/waitlist/:feature/me', optionalVerifyToken, async (req, res) => {
+  try {
+    const feature = String(req.params.feature || '').trim().toLowerCase();
+    if (!WAITLIST_FEATURES[feature]) return res.status(404).json({ ok: false, message: 'Unknown feature.' });
+
+    const userId = String(req.user?.id || req.user?._id || '').trim();
+    const queryEmail = String(req.query.email || '').trim().toLowerCase();
+    let normalizedEmail = queryEmail;
+    if (userId) {
+      const account = await User.findById(userId).select('email').lean();
+      if (account?.email) normalizedEmail = String(account.email).toLowerCase();
+    }
+
+    const [joined, total] = await Promise.all([
+      normalizedEmail
+        ? FeatureWaitlist.exists({ feature, normalizedEmail })
+        : Promise.resolve(null),
+      FeatureWaitlist.countDocuments({ feature }),
+    ]);
+    return res.json({ ok: true, feature, joined: Boolean(joined), total });
+  } catch (error) {
+    return res.status(500).json({ ok: false, message: 'Waitlist status is unavailable.' });
+  }
+});
+
+app.get('/api/admin/waitlist', verifyAdminToken, async (req, res) => {
+  try {
+    const feature = String(req.query.feature || '').trim().toLowerCase();
+    const filter = feature ? { feature } : {};
+    const [totals, recent] = await Promise.all([
+      FeatureWaitlist.aggregate([
+        { $match: filter },
+        {
+          $group: {
+            _id: '$feature',
+            total: { $sum: 1 },
+            signedIn: { $sum: { $cond: [{ $ifNull: ['$userId', false] }, 1, 0] } },
+          },
+        },
+        { $sort: { total: -1 } },
+      ]),
+      FeatureWaitlist.find(filter).sort({ createdAt: -1 }).limit(200)
+        .select('feature email displayName wagerBand note source createdAt').lean(),
+    ]);
+
+    // What stake bands people say they would use — the number worth reading
+    // before deciding to build the escrow.
+    const bands = recent.reduce((acc, row) => {
+      if (!row.wagerBand) return acc;
+      acc[row.wagerBand] = (acc[row.wagerBand] || 0) + 1;
+      return acc;
+    }, {});
+
+    return res.json({ ok: true, totals, bands, recent, features: Object.keys(WAITLIST_FEATURES) });
+  } catch (error) {
+    console.error('Waitlist report failed:', error);
+    return res.status(500).json({ ok: false, message: 'Could not load the waitlist.' });
+  }
+});
+
+// Silent session renewal. The app calls this on launch; a still-valid token is
+// exchanged for a fresh one so an active player is never logged out mid-session.
+app.post('/api/auth/refresh', verifyToken, async (req, res) => {
+  try {
+    const userId = String(req.user?.id || req.user?._id || '').trim();
+    if (!userId) return res.status(401).json({ message: 'Session could not be renewed.' });
+    // Carry the original scope through the refresh. Renewing must never widen a
+    // session's audience.
+    const scope = String(req.user?.scope || '').trim();
+    const token = jwt.sign(
+      scope ? { id: userId, scope } : { id: userId },
+      process.env.JWT_SECRET,
+      { expiresIn: SESSION_TOKEN_TTL },
+    );
+    res.cookie('token', token, { httpOnly: true, maxAge: SESSION_COOKIE_MAX_AGE });
+    return res.status(200).json({ token });
+  } catch (error) {
+    return res.status(500).json({ message: 'Session could not be renewed.' });
+  }
+});
+
+
+// --------------------------------------------------------------------------
+// MONEY NOTIFICATIONS
+// Every balance change should leave the player or affiliate a written record.
+// Failures are logged, never thrown — an email problem must not roll back or
+// block a completed money operation.
+// --------------------------------------------------------------------------
+const sendMoneyNotice = async ({ to, subject, heading, lines = [], footer }) => {
+  if (!to) return;
+  try {
+    await transporter.sendMail({
+      from: FMM_MAIL_FROM,
+      to,
+      subject,
+      html: `
+        <div style="font-family:Arial,Helvetica,sans-serif;max-width:600px;margin:auto;background:#0b0c10;color:#fff;padding:24px;border-radius:12px;">
+          <h2 style="color:#f2b544;margin:0 0 12px;">${heading}</h2>
+          ${lines.map((line) => `<p style="margin:0 0 10px;line-height:1.6;color:rgba(255,255,255,.85);">${line}</p>`).join('')}
+          <p style="margin:18px 0 0;font-size:12px;color:rgba(255,255,255,.45);">${footer || 'Fantasy MMAdness'}</p>
+        </div>`,
+    });
+  } catch (error) {
+    console.warn('Money notification failed to send:', subject, error.message);
+  }
+};
+
+// --------------------------------------------------------------------------
+// FM+ SUBSCRIPTION CANCEL / REFUND
+// Coin entries and affiliate payouts were reversible; FM+ was not. A chargeback
+// or a support cancellation had no path, leaving the subscription active.
+// --------------------------------------------------------------------------
+app.post('/api/admin/fm-plus/:userId/cancel', verifyAdminToken, async (req, res) => {
+  try {
+    const userId = String(req.params.userId || '').trim();
+    const refundCoins = Math.max(0, Math.floor(Number(req.body?.refundCoins) || 0));
+    const reason = String(req.body?.reason || 'Subscription cancelled by administrator.').slice(0, 300);
+
+    const user = await User.findById(userId);
+    if (!user) return res.status(404).json({ message: 'User not found.', code: 'USER_NOT_FOUND' });
+
+    const wasSubscribed = Boolean(user.isSubscribed);
+    if (!wasSubscribed && !refundCoins) {
+      return res.status(200).json({ message: 'That account has no active FM+ subscription.', alreadyCancelled: true });
+    }
+
+    user.isSubscribed = false;
+    user.currentPlan = '';
+    user.subscriptionEndsAt = new Date();
+
+    let balanceAfter = Number.parseInt(String(user.tokens || '0'), 10) || 0;
+    if (refundCoins > 0) {
+      const balanceBefore = balanceAfter;
+      balanceAfter = balanceBefore + refundCoins;
+      user.tokens = String(balanceAfter);
+      await FightEntryLedger.create([{
+        userId,
+        matchId: 'fm-plus',
+        sourceType: 'match',
+        type: 'FIGHT_ENTRY_REFUND',
+        amount: refundCoins,
+        balanceBefore,
+        balanceAfter,
+        idempotencyKey: `fmplus:refund:${userId}:${Date.now()}`,
+        metadata: { reason, product: 'fm-plus' },
+      }]);
+    }
+
+    await user.save();
+
+    await sendMoneyNotice({
+      to: user.email,
+      subject: 'Your FM+ subscription has been cancelled',
+      heading: 'FM+ CANCELLED',
+      lines: [
+        'Your FM+ subscription has been cancelled and will not renew.',
+        refundCoins > 0 ? `<strong>${refundCoins.toLocaleString()} FM</strong> has been returned to your wallet.` : 'No coins were refunded with this cancellation.',
+        `Reason: ${reason}`,
+      ],
+    });
+
+    return res.status(200).json({
+      message: refundCoins > 0
+        ? `FM+ cancelled and ${refundCoins} FM refunded.`
+        : 'FM+ cancelled.',
+      wasSubscribed,
+      refundedCoins: refundCoins,
+      walletBalance: balanceAfter,
+    });
+  } catch (error) {
+    console.error('FM+ cancellation failed:', error);
+    return res.status(500).json({ message: 'Could not cancel that subscription.', code: 'FM_PLUS_CANCEL_FAILED' });
+  }
+});
+
+// --------------------------------------------------------------------------
+// GUEST PURCHASE CLAIM
+// Guests may buy coins before creating an account (deliberate, for conversion).
+// This attaches any completed guest order made with the same email to the new
+// account, so a purchase is never stranded.
+// --------------------------------------------------------------------------
+app.post('/api/checkout/claim-guest-orders', verifyToken, async (req, res) => {
+  try {
+    const userId = String(req.user?.id || req.user?._id || '').trim();
+    const user = await User.findById(userId);
+    if (!user) return res.status(404).json({ message: 'User not found.' });
+
+    const email = String(user.email || '').trim().toLowerCase();
+    if (!email) return res.status(400).json({ message: 'This account has no email on file.' });
+
+    const CheckoutOrder = mongoose.models.CheckoutOrder;
+    if (!CheckoutOrder) {
+      return res.status(200).json({ claimed: 0, message: 'No guest orders to claim.' });
+    }
+
+    const orders = await CheckoutOrder.find({
+      email: new RegExp(`^${email.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`, 'i'),
+      $or: [{ userId: { $exists: false } }, { userId: null }],
+      status: 'CREDITED',
+    });
+
+    if (!orders.length) return res.status(200).json({ claimed: 0, message: 'No guest orders to claim.' });
+
+    let totalCoins = 0;
+    for (const order of orders) {
+      const alreadyClaimed = await FightEntryLedger.findOne({ idempotencyKey: `guestclaim:${order._id}` }).lean();
+      if (alreadyClaimed) continue;
+
+      const coins = Math.max(0, Math.floor(Number(order.creditedCoins || order.coins || 0)));
+      const balanceBefore = Number.parseInt(String(user.tokens || '0'), 10) || 0;
+      const balanceAfter = balanceBefore + coins;
+
+      if (coins > 0) {
+        user.tokens = String(balanceAfter);
+        await FightEntryLedger.create([{
+          userId,
+          matchId: 'guest-claim',
+          sourceType: 'match',
+          type: 'FIGHT_ENTRY_REFUND',
+          amount: coins,
+          balanceBefore,
+          balanceAfter,
+          idempotencyKey: `guestclaim:${order._id}`,
+          metadata: { orderNumber: order.orderNumber || null, product: 'guest-coin-claim' },
+        }]);
+        totalCoins += coins;
+      }
+
+      order.userId = userId;
+      await order.save();
+    }
+
+    if (totalCoins > 0) {
+      await user.save();
+      await sendMoneyNotice({
+        to: user.email,
+        subject: 'Your earlier purchase has been added',
+        heading: 'COINS ADDED',
+        lines: [
+          `We found a purchase made with this email before you created your account.`,
+          `<strong>${totalCoins.toLocaleString()} FM</strong> has been added to your wallet.`,
+        ],
+      });
+    }
+
+    return res.status(200).json({
+      claimed: orders.length,
+      coinsAdded: totalCoins,
+      walletBalance: Number.parseInt(String(user.tokens || '0'), 10) || 0,
+    });
+  } catch (error) {
+    console.error('Guest order claim failed:', error);
+    return res.status(500).json({ message: 'Could not check for earlier purchases.' });
+  }
+});
+
+
+// --------------------------------------------------------------------------
+// ELIGIBILITY, RESPONSIBLE PLAY, TAX & SUPPORT
+// --------------------------------------------------------------------------
+
+// Minimum age for paid entry. Configurable because some jurisdictions differ.
+const MINIMUM_PLAY_AGE = Number(process.env.MINIMUM_PLAY_AGE || 18);
+
+// States where paid fantasy is restricted. Populate after legal review —
+// left empty deliberately so nothing is blocked on a guess. Add 2-letter codes.
+const RESTRICTED_STATES = String(process.env.RESTRICTED_STATES || '')
+  .split(',').map((x) => x.trim().toUpperCase()).filter(Boolean);
+
+const ageFromDob = (dob) => {
+  if (!dob) return null;
+  const birth = new Date(dob);
+  if (Number.isNaN(birth.getTime())) return null;
+  const now = new Date();
+  let age = now.getFullYear() - birth.getFullYear();
+  const m = now.getMonth() - birth.getMonth();
+  if (m < 0 || (m === 0 && now.getDate() < birth.getDate())) age -= 1;
+  return age;
+};
+
+// ==========================================================================
+// JURISDICTION MODES
+//
+// One codebase, three modes per state. Everyone can play the same fights on the
+// same scorecards; what changes is whether money is involved.
+//
+//   paid       entry fees, coin purchases and cash-value prizes
+//   free       free entry, no coin purchases, no cash-value prizes — coins are
+//              status only. No consideration, so it is not a wager.
+//   blocked    no access at all, for states where even free play is unwelcome
+//
+// The free mode only holds if coins genuinely have no cash value for those
+// players. If they could buy or redeem coins it would be the same paid product
+// with extra steps, which is exactly the arrangement several states pursue. So
+// purchases and cash-value prizes are refused server-side, not hidden in the UI.
+//
+// Default is FREE, not paid: a state must be named in PAID_STATES to take money.
+// Failing closed is the only safe default for this.
+// ==========================================================================
+const parseStateList = (value) => String(value || '')
+  .split(',').map((x) => x.trim().toUpperCase()).filter(Boolean);
+
+// HARD INTERLOCK. These five states prohibit paid daily-fantasy contests, so they
+// are free-play no matter what any environment variable says. Listing a state in
+// PAID_STATES cannot override this — a misconfigured deploy must not be able to
+// start taking entry fees in a state that forbids them.
+const FREE_ONLY_STATES = Object.freeze(['HI', 'ID', 'MT', 'NV', 'WA']);
+
+// Everywhere else DFS operates. Paid by default; an attorney can narrow it.
+const DEFAULT_PAID_STATES = Object.freeze([
+  'AL', 'AK', 'AZ', 'AR', 'CA', 'CO', 'CT', 'DE', 'DC', 'FL', 'GA', 'IL', 'IN',
+  'IA', 'KS', 'KY', 'LA', 'ME', 'MD', 'MA', 'MI', 'MN', 'MS', 'MO', 'NE', 'NH',
+  'NJ', 'NM', 'NY', 'NC', 'ND', 'OH', 'OK', 'OR', 'PA', 'RI', 'SC', 'SD', 'TN',
+  'TX', 'UT', 'VT', 'VA', 'WV', 'WI', 'WY',
+]);
+
+const configuredPaidStates = parseStateList(process.env.PAID_STATES);
+// The interlock is applied here as well as in resolveStateMode, so the resolved
+// list itself is never wrong — not just the decision made from it.
+const PAID_STATES = (configuredPaidStates.length ? configuredPaidStates : [...DEFAULT_PAID_STATES])
+  .filter((code) => !FREE_ONLY_STATES.includes(code));
+
+const BLOCKED_STATES = parseStateList(process.env.BLOCKED_STATES);
+// Legacy variable kept working: anything listed there is treated as free-play.
+const LEGACY_RESTRICTED = parseStateList(process.env.RESTRICTED_STATES);
+
+if (configuredPaidStates.some((code) => FREE_ONLY_STATES.includes(code))) {
+  console.warn(`WARNING: PAID_STATES named ${configuredPaidStates.filter((c) => FREE_ONLY_STATES.includes(c)).join(', ')} — ignored. Those states are free-play only.`);
+}
+
+// Most jurisdictions are 18+; these require 21+.
+const AGE_21_STATES = Object.freeze(parseStateList(
+  process.env.AGE_21_STATES || 'MA,AZ,IA,LA,AL,NE',
+));
+
+const minimumAgeForState = (state) => (AGE_21_STATES.includes(String(state || '').toUpperCase()) ? 21 : 18);
+
+const resolveStateMode = (state) => {
+  const code = String(state || '').trim().toUpperCase();
+  if (!code) return 'unknown';
+  if (BLOCKED_STATES.includes(code)) return 'blocked';
+  // Interlock first: nothing downstream can promote these to paid.
+  if (FREE_ONLY_STATES.includes(code)) return 'free';
+  if (LEGACY_RESTRICTED.includes(code)) return 'free';
+  if (PAID_STATES.includes(code)) return 'paid';
+  // Anything unrecognised (or a territory) stays free rather than being assumed
+  // paid. Unknown must never mean chargeable.
+  return 'free';
+};
+
+// What this player may actually do, in one object.
+const playerJurisdiction = (user) => {
+  const state = String(user?.residenceState || '').trim().toUpperCase();
+  const mode = resolveStateMode(state);
+  const minimumAge = minimumAgeForState(state);
+  return {
+    state,
+    mode,
+    minimumAge,
+    canPayEntryFees: mode === 'paid',
+    canBuyCoins: mode === 'paid',
+    canWinCashValue: mode === 'paid',
+    canPlayFree: mode !== 'blocked',
+  };
+};
+
+// Single gate used before any PAID action. Returns null when the user may play.
+const checkPlayEligibility = (user) => {
+  if (!user) return { code: 'USER_NOT_FOUND', message: 'Account not found.' };
+
+  if (user.selfExcludedUntil && new Date(user.selfExcludedUntil) > new Date()) {
+    return {
+      code: 'SELF_EXCLUDED',
+      message: `You have self-excluded until ${new Date(user.selfExcludedUntil).toLocaleDateString()}.`,
+    };
+  }
+
+  const jurisdiction = playerJurisdiction(user);
+
+  if (!jurisdiction.state) {
+    return { code: 'STATE_UNVERIFIED', message: 'Add your state of residence before entering a paid contest.' };
+  }
+  if (jurisdiction.mode === 'blocked') {
+    return { code: 'STATE_BLOCKED', message: `Fantasy MMAdness is not available in ${jurisdiction.state}.` };
+  }
+
+  const age = ageFromDob(user.dateOfBirth);
+  if (age === null) {
+    return { code: 'AGE_UNVERIFIED', message: 'Add your date of birth before entering a paid contest.' };
+  }
+  // Per-state threshold: 21+ where the state requires it, 18+ elsewhere.
+  const requiredAge = Math.max(jurisdiction.minimumAge, MINIMUM_PLAY_AGE || 18);
+  if (age < requiredAge) {
+    return {
+      code: 'UNDERAGE',
+      message: `You must be ${requiredAge} or older to enter a paid contest in ${jurisdiction.state}.`,
+    };
+  }
+
+  if (!jurisdiction.canPayEntryFees) {
+    return {
+      code: 'FREE_PLAY_ONLY',
+      message: `Paid contests are not available in ${jurisdiction.state}. Free contests are open to you and coins can still be won — they just have no cash value there.`,
+    };
+  }
+
+  return null;
+};
+
+// Player supplies date of birth and state of residence.
+app.post('/api/users/me/eligibility', verifyToken, async (req, res) => {
+  try {
+    const user = await User.findById(String(req.user?.id || req.user?._id || ''));
+    if (!user) return res.status(404).json({ message: 'User not found.' });
+
+    const dob = req.body?.dateOfBirth;
+    const state = String(req.body?.residenceState || '').trim().toUpperCase();
+
+    if (dob) {
+      const age = ageFromDob(dob);
+      if (age === null) return res.status(400).json({ message: 'That date of birth is not valid.', code: 'INVALID_DOB' });
+      if (age < MINIMUM_PLAY_AGE) {
+        return res.status(403).json({ message: `You must be ${MINIMUM_PLAY_AGE} or older to play.`, code: 'UNDERAGE' });
+      }
+      user.dateOfBirth = new Date(dob);
+      user.ageVerifiedAt = new Date();
+    }
+    if (state) {
+      if (!/^[A-Z]{2}$/.test(state)) return res.status(400).json({ message: 'Use a two-letter state code.', code: 'INVALID_STATE' });
+      user.residenceState = state;
+    }
+    user.eligibilityCheckedAt = new Date();
+    await user.save();
+
+    const blocked = checkPlayEligibility(user);
+    return res.status(200).json({
+      eligible: !blocked,
+      reason: blocked?.code || null,
+      message: blocked?.message || 'You are eligible to enter paid contests.',
+    });
+  } catch (error) {
+    console.error('Eligibility update failed:', error);
+    return res.status(500).json({ message: 'Could not save your details.' });
+  }
+});
+
+app.get('/api/users/me/eligibility', verifyToken, async (req, res) => {
+  try {
+    const user = await User.findById(String(req.user?.id || req.user?._id || '')).lean();
+    const blocked = checkPlayEligibility(user);
+    return res.status(200).json({
+      eligible: !blocked,
+      reason: blocked?.code || null,
+      message: blocked?.message || 'Eligible.',
+      minimumAge: MINIMUM_PLAY_AGE,
+      hasDateOfBirth: Boolean(user?.dateOfBirth),
+      residenceState: user?.residenceState || null,
+      selfExcludedUntil: user?.selfExcludedUntil || null,
+    });
+  } catch (error) {
+    return res.status(500).json({ message: 'Could not check eligibility.' });
+  }
+});
+
+// Self-exclusion. Deliberately one-way: a player can start or extend it, but
+// cannot shorten it themselves — that is the entire point of the tool.
+app.post('/api/users/me/self-exclude', verifyToken, async (req, res) => {
+  try {
+    const days = Math.min(3650, Math.max(1, Math.floor(Number(req.body?.days) || 30)));
+    const user = await User.findById(String(req.user?.id || req.user?._id || ''));
+    if (!user) return res.status(404).json({ message: 'User not found.' });
+
+    const until = new Date(Date.now() + days * 24 * 60 * 60 * 1000);
+    const existing = user.selfExcludedUntil ? new Date(user.selfExcludedUntil) : null;
+    if (existing && existing > until) {
+      return res.status(409).json({
+        message: 'You already have a longer self-exclusion in place. Contact support to discuss it.',
+        code: 'ALREADY_EXCLUDED_LONGER',
+        selfExcludedUntil: existing,
+      });
+    }
+
+    user.selfExcludedUntil = until;
+    user.selfExclusionReason = String(req.body?.reason || '').slice(0, 300);
+    await user.save();
+
+    await sendMoneyNotice({
+      to: user.email,
+      subject: 'Your self-exclusion is active',
+      heading: 'SELF-EXCLUSION ACTIVE',
+      lines: [
+        `You will not be able to enter paid contests until <strong>${until.toLocaleDateString()}</strong>.`,
+        'Any coins already in your wallet stay there. This cannot be reversed early from your account — contact support if your circumstances change.',
+      ],
+    });
+
+    return res.status(200).json({ selfExcludedUntil: until });
+  } catch (error) {
+    console.error('Self-exclusion failed:', error);
+    return res.status(500).json({ message: 'Could not set self-exclusion.' });
+  }
+});
+
+// Deposit limits, in cents. Lowering takes effect immediately; raising is
+// delayed 24h so a limit cannot be removed in the moment it starts to bite.
+app.post('/api/users/me/deposit-limits', verifyToken, async (req, res) => {
+  try {
+    const user = await User.findById(String(req.user?.id || req.user?._id || ''));
+    if (!user) return res.status(404).json({ message: 'User not found.' });
+
+    const daily = Math.max(0, Math.floor(Number(req.body?.dailyCents) || 0));
+    const monthly = Math.max(0, Math.floor(Number(req.body?.monthlyCents) || 0));
+    const raising = (daily > (user.dailyDepositLimitCents || 0) && (user.dailyDepositLimitCents || 0) > 0)
+      || (monthly > (user.monthlyDepositLimitCents || 0) && (user.monthlyDepositLimitCents || 0) > 0);
+
+    if (raising) {
+      return res.status(202).json({
+        message: 'Increases take effect after 24 hours. Your current limit stays in place until then.',
+        code: 'INCREASE_PENDING',
+        effectiveAt: new Date(Date.now() + 24 * 60 * 60 * 1000),
+      });
+    }
+
+    user.dailyDepositLimitCents = daily;
+    user.monthlyDepositLimitCents = monthly;
+    await user.save();
+    return res.status(200).json({ dailyCents: daily, monthlyCents: monthly });
+  } catch (error) {
+    return res.status(500).json({ message: 'Could not update your limits.' });
+  }
+});
+
+// --- Affiliate tax details (W-9) ------------------------------------------
+// The tax id is encrypted at rest and never returned. Only the last 4 digits
+// are readable, which is all an admin screen needs.
+const encryptTaxId = (value) => {
+  try {
+    const key = crypto.createHash('sha256').update(String(process.env.JWT_SECRET || 'fmm')).digest();
+    const ivLocal = crypto.randomBytes(16);
+    const cipher = crypto.createCipheriv('aes-256-cbc', key, ivLocal);
+    return ivLocal.toString('hex') + ':' + Buffer.concat([cipher.update(String(value), 'utf8'), cipher.final()]).toString('hex');
+  } catch (error) {
+    return null;
+  }
+};
+
+app.post('/api/affiliates/me/tax-details', verifyToken, requireScope(TOKEN_SCOPES.AFFILIATE), async (req, res) => {
+  try {
+    const affiliate = await Affiliate.findById(String(req.user?.id || req.user?._id || ''));
+    if (!affiliate) return res.status(404).json({ message: 'Affiliate account not found.' });
+
+    const rawId = String(req.body?.taxId || '').replace(/[^0-9]/g, '');
+    const taxIdType = String(req.body?.taxIdType || '').toUpperCase();
+
+    if (rawId && rawId.length !== 9) {
+      return res.status(400).json({ message: 'A US tax ID is 9 digits.', code: 'INVALID_TAX_ID' });
+    }
+    if (rawId && !['SSN', 'EIN'].includes(taxIdType)) {
+      return res.status(400).json({ message: 'Specify whether this is an SSN or an EIN.', code: 'INVALID_TAX_ID_TYPE' });
+    }
+
+    if (rawId) {
+      const encrypted = encryptTaxId(rawId);
+      if (!encrypted) return res.status(500).json({ message: 'Could not store that securely. Try again.' });
+      affiliate.taxIdEncrypted = encrypted;
+      affiliate.taxIdLast4 = rawId.slice(-4);
+      affiliate.taxIdType = taxIdType;
+      affiliate.taxFormW9SignedAt = new Date();
+    }
+
+    if (req.body?.legalName) affiliate.taxLegalName = String(req.body.legalName).slice(0, 200);
+    if (req.body?.businessName) affiliate.taxBusinessName = String(req.body.businessName).slice(0, 200);
+    if (req.body?.address) affiliate.taxAddress = String(req.body.address).slice(0, 400);
+
+    await affiliate.save();
+    return res.status(200).json({
+      message: 'Tax details saved.',
+      taxIdLast4: affiliate.taxIdLast4 || null,
+      w9SignedAt: affiliate.taxFormW9SignedAt || null,
+    });
+  } catch (error) {
+    console.error('Tax details save failed:', error);
+    return res.status(500).json({ message: 'Could not save tax details.' });
+  }
+});
+
+// Admin: who has crossed the $600 1099 threshold, and who is missing a W-9.
+app.get('/api/admin/affiliate-tax-report', verifyAdminToken, async (req, res) => {
+  try {
+    const year = Number(req.query.year) || new Date().getFullYear();
+    const thresholdCents = Number(process.env.TAX_1099_THRESHOLD_CENTS || 60000); // $600
+    const affiliates = await Affiliate.find({})
+      .select('_id firstName lastName playerName email taxIdLast4 taxFormW9SignedAt taxLegalName earningsYtdCents taxYear payouts')
+      .lean();
+
+    const rows = affiliates.map((a) => {
+      const paidCents = (a.payouts || [])
+        .filter((p) => String(p?.status || '').toLowerCase() === 'paid'
+          && new Date(p?.createdAt || 0).getFullYear() === year)
+        .reduce((sum, p) => sum + (Number(p.amount) || 0) * 100, 0);
+      return {
+        affiliateId: a._id,
+        name: a.taxLegalName || a.playerName || [a.firstName, a.lastName].filter(Boolean).join(' '),
+        email: a.email,
+        paidCents,
+        paid: `$${(paidCents / 100).toFixed(2)}`,
+        requires1099: paidCents >= thresholdCents,
+        hasW9: Boolean(a.taxFormW9SignedAt && a.taxIdLast4),
+        taxIdLast4: a.taxIdLast4 || null,
+      };
+    }).filter((r) => r.paidCents > 0);
+
+    rows.sort((a, b) => b.paidCents - a.paidCents);
+    const blocked = rows.filter((r) => r.requires1099 && !r.hasW9);
+
+    return res.status(200).json({
+      year,
+      thresholdUsd: thresholdCents / 100,
+      affiliates: rows,
+      requiring1099: rows.filter((r) => r.requires1099).length,
+      missingW9: blocked.length,
+      warning: blocked.length ? `${blocked.length} affiliate(s) need a 1099 but have no W-9 on file.` : null,
+    });
+  } catch (error) {
+    console.error('Tax report failed:', error);
+    return res.status(500).json({ message: 'Could not build the tax report.' });
+  }
+});
+
+// ==========================================================================
+// TESTER FEEDBACK
+//
+// Kept separate from support tickets on purpose. A support ticket is "help me" —
+// it needs a reply. Test feedback is "here is what broke", and it needs a
+// different shape: which step, what you expected, what happened, on what phone.
+//
+// The expected-vs-actual pair is the whole point. "It's broken" cannot be acted
+// on; "I expected my balance to drop 500 and it dropped 1000" can be fixed in
+// minutes. The endpoint asks for both.
+//
+// Open to guests (optionalVerifyToken) so whoever is testing the signed-out
+// experience can report too — they are the ones who see the first impression.
+// ==========================================================================
+const FEEDBACK_AREAS = Object.freeze([
+  'signup', 'signin', 'scorecard', 'entry-fee', 'team-card', 'season-card',
+  'standings', 'leagues', 'promoter-tools', 'notifications', 'coins-purchase',
+  'wallet', 'apparel', 'rewards', 'back-office', 'looks-wrong', 'slow', 'other',
+]);
+const FEEDBACK_SEVERITY = Object.freeze(['blocker', 'wrong', 'confusing', 'cosmetic', 'praise']);
+
+const testerFeedbackSchema = new mongoose.Schema({
+  reference: { type: String, unique: true, index: true },
+  // Who, as loosely as possible — a tester should never be blocked from
+  // reporting because they were signed out when it happened.
+  userId: { type: String, default: '' },
+  reportedBy: { type: String, default: '' },
+  role: { type: String, enum: ['player', 'league', 'admin', 'guest'], default: 'player' },
+
+  area: { type: String, default: 'other' },
+  severity: { type: String, default: 'wrong', index: true },
+  step: { type: String, default: '' },
+
+  expected: { type: String, default: '' },
+  actual: { type: String, required: true },
+  screenshotUrl: { type: String, default: '' },
+
+  // Captured automatically — a tester should not have to know their own browser.
+  device: { type: String, default: '' },
+  screen: { type: String, default: '' },
+  appPath: { type: String, default: '' },
+
+  status: { type: String, enum: ['new', 'triaged', 'fixed', 'wontfix', 'cannot-reproduce'], default: 'new', index: true },
+  ownerNote: { type: String, default: '' },
+}, { timestamps: true });
+
+const TesterFeedback = mongoose.models.TesterFeedback || mongoose.model('TesterFeedback', testerFeedbackSchema);
+
+app.post('/api/feedback', submitLimiter, optionalVerifyToken, async (req, res) => {
+  try {
+    const actual = String(req.body?.actual || '').trim();
+    if (actual.length < 3) {
+      return res.status(422).json({ ok: false, message: 'Tell us what happened.', code: 'ACTUAL_REQUIRED' });
+    }
+
+    const reference = 'FB-' + Date.now().toString(36).toUpperCase().slice(-6)
+      + '-' + Math.random().toString(36).slice(2, 5).toUpperCase();
+
+    // Resolve the reporter from the token where possible, so the report is
+    // attributable without asking them to type their own email.
+    let reportedBy = String(req.body?.reportedBy || '').trim().slice(0, 160);
+    let role = 'guest';
+    const callerId = String(req.user?.id || req.user?._id || '').trim();
+    if (callerId) {
+      const scope = String(req.user?.scope || '').trim();
+      role = scope === 'affiliate' ? 'league' : 'player';
+      if (!reportedBy) {
+        const who = scope === 'affiliate'
+          ? await Affiliate.findById(callerId).select('email leagueName').lean()
+          : await User.findById(callerId).select('email playerName').lean();
+        reportedBy = who?.email || '';
+      }
+    }
+
+    const ticket = await TesterFeedback.create({
+      reference,
+      userId: callerId,
+      reportedBy,
+      role,
+      area: FEEDBACK_AREAS.includes(String(req.body?.area)) ? req.body.area : 'other',
+      severity: FEEDBACK_SEVERITY.includes(String(req.body?.severity)) ? req.body.severity : 'wrong',
+      step: String(req.body?.step || '').trim().slice(0, 40),
+      expected: String(req.body?.expected || '').trim().slice(0, 1000),
+      actual: actual.slice(0, 2000),
+      screenshotUrl: String(req.body?.screenshotUrl || '').trim().slice(0, 500),
+      device: String(req.body?.device || req.headers['user-agent'] || '').slice(0, 300),
+      screen: String(req.body?.screen || '').slice(0, 40),
+      appPath: String(req.body?.appPath || '').slice(0, 200),
+    });
+
+    // A blocker should not wait for someone to check a dashboard.
+    if (ticket.severity === 'blocker') {
+      try {
+        await transporter.sendMail({
+          from: FMM_MAIL_FROM,
+          to: OWNER_EMAIL,
+          subject: `BLOCKER from testing — ${ticket.reference}`,
+          html: `<div style="font-family:Arial,sans-serif">
+            <p><strong>${escapeHtml(ticket.area)}</strong>${ticket.step ? ' · step ' + escapeHtml(ticket.step) : ''}</p>
+            ${ticket.expected ? `<p><em>Expected:</em> ${escapeHtml(ticket.expected)}</p>` : ''}
+            <p><em>Happened:</em> ${escapeHtml(ticket.actual)}</p>
+            <p style="color:#666;font-size:12px">${escapeHtml(ticket.reportedBy || 'guest')} · ${escapeHtml(ticket.device)}</p>
+          </div>`,
+        });
+      } catch (mailError) { /* never fail the report because mail failed */ }
+    }
+
+    return res.status(201).json({
+      ok: true,
+      reference,
+      message: 'Thanks — logged as ' + reference + '.',
+    });
+  } catch (error) {
+    console.error('Feedback submission failed:', error);
+    return res.status(500).json({ ok: false, message: 'Could not save that. Try again, or text it to me.' });
+  }
+});
+
+app.get('/api/admin/feedback', verifyAdminToken, async (req, res) => {
+  try {
+    const status = String(req.query.status || 'new');
+    const query = status === 'all' ? {} : { status };
+    const items = await TesterFeedback.find(query)
+      .sort({ severity: 1, createdAt: -1 }).limit(300).lean();
+    const counts = await TesterFeedback.aggregate([
+      { $group: { _id: '$severity', n: { $sum: 1 } } },
+    ]);
+    return res.json({
+      ok: true,
+      counts: counts.reduce((acc, row) => ({ ...acc, [row._id]: row.n }), {}),
+      items,
+    });
+  } catch (error) {
+    return res.status(500).json({ ok: false, message: 'Could not load feedback.' });
+  }
+});
+
+app.patch('/api/admin/feedback/:id', verifyAdminToken, async (req, res) => {
+  try {
+    const next = String(req.body?.status || '').trim();
+    const allowed = ['new', 'triaged', 'fixed', 'wontfix', 'cannot-reproduce'];
+    const update = {};
+    if (allowed.includes(next)) update.status = next;
+    if (typeof req.body?.ownerNote === 'string') update.ownerNote = req.body.ownerNote.slice(0, 1000);
+    const item = await TesterFeedback.findByIdAndUpdate(req.params.id, { $set: update }, { new: true }).lean();
+    if (!item) return res.status(404).json({ ok: false, message: 'Not found.' });
+    return res.json({ ok: true, reference: item.reference, status: item.status });
+  } catch (error) {
+    return res.status(500).json({ ok: false, message: 'Could not update that.' });
+  }
+});
+
+// THE POINT OF ALL THIS: a plain-text digest, grouped by severity, that can be
+// copied straight into a conversation with whoever is fixing things. JSON is for
+// machines; this is for pasting.
+app.get('/api/admin/feedback/digest', verifyAdminToken, async (req, res) => {
+  try {
+    const status = String(req.query.status || 'new');
+    const query = status === 'all' ? {} : { status };
+    const items = await TesterFeedback.find(query).sort({ createdAt: 1 }).limit(300).lean();
+
+    const order = ['blocker', 'wrong', 'confusing', 'cosmetic', 'praise'];
+    const label = {
+      blocker: 'BLOCKERS — could not continue',
+      wrong: 'WRONG — it did the wrong thing',
+      confusing: 'CONFUSING — worked, but unclear',
+      cosmetic: 'COSMETIC — looks off',
+      praise: 'WORKED WELL',
+    };
+
+    const lines = [
+      '# Tester feedback — ' + new Date().toISOString().slice(0, 10),
+      '',
+      items.length + ' report' + (items.length === 1 ? '' : 's') + ' (' + status + ')',
+      '',
+    ];
+
+    order.forEach((sev) => {
+      const group = items.filter((row) => row.severity === sev);
+      if (!group.length) return;
+      lines.push('## ' + label[sev] + ' (' + group.length + ')', '');
+      group.forEach((row) => {
+        lines.push('### ' + row.reference + ' · ' + row.area + (row.step ? ' · step ' + row.step : ''));
+        if (row.expected) lines.push('- Expected: ' + row.expected);
+        lines.push('- Happened: ' + row.actual);
+        if (row.appPath) lines.push('- Screen: ' + row.appPath);
+        if (row.screenshotUrl) lines.push('- Screenshot: ' + row.screenshotUrl);
+        lines.push('- Reporter: ' + (row.reportedBy || 'guest') + ' (' + row.role + ')');
+        // Device string trimmed — the full user-agent is noise in a digest.
+        const device = String(row.device || '').replace(/Mozilla\/[\d.]+ /, '').slice(0, 90);
+        if (device) lines.push('- Device: ' + device + (row.screen ? ' · ' + row.screen : ''));
+        lines.push('');
+      });
+    });
+
+    if (!items.length) lines.push('_No reports yet._');
+
+    res.setHeader('Content-Type', 'text/plain; charset=utf-8');
+    return res.send(lines.join('\n'));
+  } catch (error) {
+    console.error('Feedback digest failed:', error);
+    return res.status(500).send('Could not build the digest.');
+  }
+});
+
+// --- Support tickets -------------------------------------------------------
+const supportTicketSchema = new mongoose.Schema({
+  ticketNumber: { type: String, unique: true, index: true },
+  userId: { type: mongoose.Schema.Types.ObjectId, ref: 'User', index: true },
+  email: { type: String, required: true, lowercase: true, trim: true, index: true },
+  name: String,
+  category: { type: String, enum: ['payment', 'scoring', 'account', 'affiliate', 'other'], default: 'other' },
+  subject: { type: String, required: true },
+  message: { type: String, required: true },
+  status: { type: String, enum: ['open', 'in_progress', 'resolved', 'closed'], default: 'open', index: true },
+  priority: { type: String, enum: ['low', 'normal', 'high'], default: 'normal' },
+  assignedTo: { type: String, trim: true, default: '' },
+  assignedAt: Date,
+  lastResponseAt: Date,
+  relatedOrderNumber: String,
+  relatedFightId: String,
+  responses: [{ body: String, fromAdmin: Boolean, createdAt: { type: Date, default: Date.now } }],
+  resolvedAt: Date,
+}, { timestamps: true });
+const SupportTicket = mongoose.models.SupportTicket || mongoose.model('SupportTicket', supportTicketSchema);
+
+app.post('/api/support/tickets', submitLimiter, optionalVerifyToken, async (req, res) => {
+  try {
+    const email = String(req.body?.email || '').trim().toLowerCase();
+    const subject = String(req.body?.subject || '').trim().slice(0, 200);
+    const message = String(req.body?.message || '').trim().slice(0, 5000);
+    if (!email || !subject || !message) {
+      return res.status(400).json({ message: 'Email, subject and message are required.' });
+    }
+
+    const ticketNumber = 'FMM-' + Date.now().toString(36).toUpperCase() + '-' + Math.random().toString(36).slice(2, 6).toUpperCase();
+    const category = ['payment', 'scoring', 'account', 'affiliate', 'other'].includes(String(req.body?.category))
+      ? req.body.category : 'other';
+
+    const ticket = await SupportTicket.create({
+      ticketNumber,
+      userId: req.user?.id || null,
+      email,
+      name: String(req.body?.name || '').slice(0, 120),
+      category,
+      subject,
+      message,
+      // Money problems go to the top of the queue.
+      priority: category === 'payment' ? 'high' : 'normal',
+      relatedOrderNumber: String(req.body?.orderNumber || '').slice(0, 60),
+      relatedFightId: String(req.body?.fightId || '').slice(0, 60),
+    });
+
+    await sendMoneyNotice({
+      to: email,
+      subject: `We received your message — ${ticketNumber}`,
+      heading: 'SUPPORT REQUEST RECEIVED',
+      lines: [
+        `Your reference is <strong>${ticketNumber}</strong>. Quote it in any reply.`,
+        `Subject: ${subject}`,
+        category === 'payment'
+          ? 'Payment issues are prioritised — we will come back to you as soon as we can.'
+          : 'We will come back to you as soon as we can.',
+      ],
+    });
+
+    await sendMoneyNotice({
+      to: SUPPORT_EMAIL,
+      subject: `[${category.toUpperCase()}] ${ticketNumber} — ${subject}`,
+      heading: 'NEW SUPPORT TICKET',
+      lines: [`From: ${email}`, `Category: ${category}`, message],
+    });
+
+    return res.status(201).json({ ticketNumber, status: ticket.status });
+  } catch (error) {
+    console.error('Support ticket failed:', error);
+    return res.status(500).json({ message: 'Could not submit your request.' });
+  }
+});
+
+app.get('/api/admin/support/tickets', verifyAdminToken, async (req, res) => {
+  try {
+    const status = String(req.query.status || 'open');
+    const query = status === 'all' ? {} : { status };
+    const search = String(req.query.search || '').trim().slice(0, 120);
+    if (search) {
+      const safeSearch = search.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+      query.$or = [
+        { ticketNumber: { $regex: safeSearch, $options: 'i' } },
+        { email: { $regex: safeSearch, $options: 'i' } },
+        { name: { $regex: safeSearch, $options: 'i' } },
+        { subject: { $regex: safeSearch, $options: 'i' } },
+      ];
+    }
+    const tickets = await SupportTicket.find(query).sort({ priority: -1, createdAt: -1 }).limit(200).lean();
+    const counts = await SupportTicket.aggregate([{ $group: { _id: '$status', count: { $sum: 1 } } }]);
+    const summary = { all: 0, open: 0, in_progress: 0, resolved: 0, closed: 0 };
+    counts.forEach((row) => {
+      if (Object.prototype.hasOwnProperty.call(summary, row._id)) summary[row._id] = row.count;
+      summary.all += row.count;
+    });
+    return res.status(200).json({ count: tickets.length, summary, tickets });
+  } catch (error) {
+    return res.status(500).json({ message: 'Could not load tickets.' });
+  }
+});
+
+app.patch('/api/admin/support/tickets/:id', verifyAdminToken, async (req, res) => {
+  try {
+    const ticket = await SupportTicket.findById(req.params.id);
+    if (!ticket) return res.status(404).json({ message: 'Ticket not found.' });
+
+    const reply = String(req.body?.reply || '').trim();
+    const nextStatus = String(req.body?.status || '').toLowerCase();
+    const nextPriority = String(req.body?.priority || '').toLowerCase();
+    const hasAssignment = Object.prototype.hasOwnProperty.call(req.body || {}, 'assignedTo');
+    const assignedTo = String(req.body?.assignedTo || '').trim().slice(0, 120);
+
+    if (reply) {
+      ticket.responses.push({ body: reply, fromAdmin: true });
+      ticket.lastResponseAt = new Date();
+      await sendMoneyNotice({
+        to: ticket.email,
+        subject: `Re: ${ticket.subject} — ${ticket.ticketNumber}`,
+        heading: 'REPLY FROM SUPPORT',
+        lines: [reply],
+      });
+    }
+    if (['open', 'in_progress', 'resolved', 'closed'].includes(nextStatus)) {
+      ticket.status = nextStatus;
+      if (nextStatus === 'resolved') ticket.resolvedAt = new Date();
+      if (nextStatus !== 'resolved') ticket.resolvedAt = undefined;
+    }
+    if (['low', 'normal', 'high'].includes(nextPriority)) ticket.priority = nextPriority;
+    if (hasAssignment) {
+      ticket.assignedTo = assignedTo;
+      ticket.assignedAt = assignedTo ? new Date() : undefined;
+      if (assignedTo && ticket.status === 'open') ticket.status = 'in_progress';
+    }
+    await ticket.save();
+    return res.status(200).json({
+      ticketNumber: ticket.ticketNumber,
+      status: ticket.status,
+      priority: ticket.priority,
+      assignedTo: ticket.assignedTo,
+      responses: ticket.responses,
+    });
+  } catch (error) {
+    return res.status(500).json({ message: 'Could not update that ticket.' });
+  }
+});
+
+
+// --------------------------------------------------------------------------
+// PAYMENT FAILURE ALERTING
+// Without this, a processor outage is silent — you find out from angry
+// customers. Alerts are throttled so one bad hour cannot flood the inbox.
+// --------------------------------------------------------------------------
+const paymentFailureState = { count: 0, windowStart: Date.now(), lastAlertAt: 0 };
+const PAYMENT_FAILURE_THRESHOLD = Number(process.env.PAYMENT_FAILURE_THRESHOLD || 3);
+const PAYMENT_FAILURE_WINDOW_MS = Number(process.env.PAYMENT_FAILURE_WINDOW_MS || 15 * 60 * 1000);
+const PAYMENT_ALERT_COOLDOWN_MS = Number(process.env.PAYMENT_ALERT_COOLDOWN_MS || 60 * 60 * 1000);
+
+const recordPaymentFailure = (context = {}) => {
+  const now = Date.now();
+  if (now - paymentFailureState.windowStart > PAYMENT_FAILURE_WINDOW_MS) {
+    paymentFailureState.count = 0;
+    paymentFailureState.windowStart = now;
+  }
+  paymentFailureState.count += 1;
+
+  const overThreshold = paymentFailureState.count >= PAYMENT_FAILURE_THRESHOLD;
+  const cooledDown = now - paymentFailureState.lastAlertAt > PAYMENT_ALERT_COOLDOWN_MS;
+  if (!overThreshold || !cooledDown) return;
+
+  paymentFailureState.lastAlertAt = now;
+  const minutes = Math.round(PAYMENT_FAILURE_WINDOW_MS / 60000);
+  sendMoneyNotice({
+    to: ADMIN_ALERT_EMAILS,
+    subject: `[ALERT] ${paymentFailureState.count} payment failures in ${minutes} minutes`,
+    heading: 'PAYMENT FAILURES DETECTED',
+    lines: [
+      `<strong>${paymentFailureState.count}</strong> payments failed in the last ${minutes} minutes.`,
+      'This usually means a processor outage or a credential problem. Customers are being turned away right now.',
+      context.orderNumber ? `Most recent order: ${context.orderNumber}` : '',
+      context.reason ? `Reason given: ${context.reason}` : '',
+      'Check your payment processor dashboard.',
+    ].filter(Boolean),
+  });
+};
+
+// --------------------------------------------------------------------------
+// DUPLICATE ACCOUNT PREVENTION
+// Blocks the obvious cases: reusing a device for a second signup bonus, and
+// email aliasing (gmail dots / +tags) to register "new" accounts.
+// --------------------------------------------------------------------------
+const signupDeviceSchema = new mongoose.Schema({
+  deviceId: { type: String, required: true, index: true },
+  normalizedEmail: { type: String, required: true, index: true },
+  userId: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
+  ip: String,
+  accountCount: { type: Number, default: 1 },
+}, { timestamps: true });
+const SignupDevice = mongoose.models.SignupDevice || mongoose.model('SignupDevice', signupDeviceSchema);
+
+// gmail treats dots and +tags as the same inbox, so "a.b+x@gmail.com" and
+// "ab@gmail.com" are one person. Normalise before comparing.
+const normalizeEmailForDupes = (email) => {
+  const raw = String(email || '').trim().toLowerCase();
+  const [local, domain] = raw.split('@');
+  if (!local || !domain) return raw;
+  const base = local.split('+')[0];
+  const isGoogle = ['gmail.com', 'googlemail.com'].includes(domain);
+  return `${isGoogle ? base.replace(/\./g, '') : base}@${domain}`;
+};
+
+const MAX_ACCOUNTS_PER_DEVICE = Number(process.env.MAX_ACCOUNTS_PER_DEVICE || 2);
+
+// Returns a blocking reason, or null when the signup looks legitimate.
+const checkDuplicateSignup = async ({ email, deviceId, ip }) => {
+  const normalizedEmail = normalizeEmailForDupes(email);
+
+  // Was: a discarded findOne() immediately followed by an unconditional
+  // full-collection email scan (up to 5000 docs) on EVERY signup attempt —
+  // one wasted round trip plus a large one, both before the user's account is
+  // even created. On a large user base this is slow enough to time out the
+  // whole /register request on serverless, which is what "can't sign up"
+  // reports traced back to. Query is now direct (no wasted call), and capped
+  // with a hard timeout so a slow scan fails OPEN instead of hanging signup.
+  const aliasMatch = await Promise.race([
+    User.find({}).select('email').limit(5000).lean()
+      .then((candidates) => candidates.find((u) => normalizeEmailForDupes(u.email) === normalizedEmail)),
+    new Promise((resolve) => setTimeout(() => resolve(null), 2500)),
+  ]).catch(() => null);
+
+  if (aliasMatch) {
+    return {
+      code: 'DUPLICATE_EMAIL_ALIAS',
+      message: 'An account already exists for this email address.',
+    };
+  }
+
+  if (deviceId) {
+    const seen = await SignupDevice.find({ deviceId }).lean().catch(() => []);
+    if (seen.length >= MAX_ACCOUNTS_PER_DEVICE) {
+      return {
+        code: 'DEVICE_LIMIT_REACHED',
+        message: 'This device has already been used to create an account. Contact support if you believe this is wrong.',
+      };
+    }
+  }
+  return null;
+};
+
+// Called after a successful signup so the device is remembered.
+const recordSignupDevice = async ({ email, deviceId, ip, userId }) => {
+  if (!deviceId) return;
+  try {
+    await SignupDevice.create({
+      deviceId,
+      normalizedEmail: normalizeEmailForDupes(email),
+      userId: userId || null,
+      ip: String(ip || '').slice(0, 64),
+    });
+  } catch (error) {
+    console.warn('Signup device record failed:', error.message);
+  }
+};
+
+// Endpoint the app calls BEFORE creating an account, so a blocked signup fails
+// fast instead of half-creating a user.
+app.post('/api/auth/check-duplicate', submitLimiter, async (req, res) => {
+  try {
+    const email = String(req.body?.email || '').trim();
+    if (!email) return res.status(400).json({ message: 'Email is required.' });
+    const blocked = await checkDuplicateSignup({
+      email,
+      deviceId: String(req.body?.deviceId || '').slice(0, 128),
+      ip: req.headers['x-forwarded-for'] || req.socket?.remoteAddress,
+    });
+    return res.status(200).json({
+      allowed: !blocked,
+      code: blocked?.code || null,
+      message: blocked?.message || 'Looks good.',
+    });
+  } catch (error) {
+    // Fail open — never block a real signup because this check errored.
+    return res.status(200).json({ allowed: true });
+  }
+});
+
+// Admin view of devices tied to more than one account.
+app.get('/api/admin/duplicate-signups', verifyAdminToken, async (req, res) => {
+  try {
+    const rows = await SignupDevice.aggregate([
+      { $group: { _id: '$deviceId', accounts: { $sum: 1 }, emails: { $addToSet: '$normalizedEmail' }, lastSeen: { $max: '$createdAt' } } },
+      { $match: { accounts: { $gt: 1 } } },
+      { $sort: { accounts: -1, lastSeen: -1 } },
+      { $limit: 200 },
+    ]);
+    return res.status(200).json({ count: rows.length, devices: rows });
+  } catch (error) {
+    return res.status(500).json({ message: 'Could not build the duplicate report.' });
+  }
+});
+
+
+// --------------------------------------------------------------------------
+// WALLET SPENDS & DAILY REWARD
+// Prices live HERE, not in the request. The app sends a purpose, never a cost —
+// otherwise a caller sets their own price for a streak save.
+// --------------------------------------------------------------------------
+const WALLET_SPEND_PRICES = Object.freeze({
+  streak_save: { base: 50, fmPlus: 25, label: 'Streak save' },
+  skip_wait:   { base: 75, fmPlus: 75, label: 'Skip the wait' },
+});
+
+app.post('/api/wallet/spend', verifyToken, requireScope(TOKEN_SCOPES.PLAYER), async (req, res) => {
+  try {
+    const userId = String(req.user?.id || req.user?._id || '').trim();
+    const purpose = String(req.body?.purpose || '').trim();
+    const price = WALLET_SPEND_PRICES[purpose];
+    if (!price) {
+      return res.status(400).json({ message: 'Unknown purchase.', code: 'UNKNOWN_PURPOSE' });
+    }
+
+    const user = await User.findById(userId);
+    if (!user) return res.status(404).json({ message: 'User not found.' });
+
+    // FM+ pricing is decided by the server from the real subscription state.
+    const isSubscribed = Boolean(user.isSubscribed);
+    const cost = isSubscribed ? price.fmPlus : price.base;
+
+    const balanceBefore = Number.parseInt(String(user.tokens || '0'), 10) || 0;
+    if (balanceBefore < cost) {
+      return res.status(402).json({
+        message: `Not enough FM coins for ${price.label.toLowerCase()}.`,
+        code: 'INSUFFICIENT_FUNDS',
+        balance: balanceBefore,
+        cost,
+        shortfall: cost - balanceBefore,
+      });
+    }
+
+    const balanceAfter = balanceBefore - cost;
+    // Atomic: only applies if tokens still equals what we read. A concurrent
+    // request that already spent changes the value, so this matches nothing.
+    const applied = await User.findOneAndUpdate(
+      { _id: userId, tokens: String(balanceBefore) },
+      { tokens: String(balanceAfter) },
+      { new: true }
+    );
+    if (!applied) {
+      return res.status(409).json({
+        message: 'Your balance just changed. Please try again.',
+        code: 'BALANCE_CHANGED',
+      });
+    }
+
+    await FightEntryLedger.create([{
+      userId,
+      matchId: purpose,
+      sourceType: 'match',
+      type: 'FIGHT_ENTRY',
+      amount: -cost,
+      balanceBefore,
+      balanceAfter,
+      idempotencyKey: `spend:${purpose}:${userId}:${Date.now()}`,
+      metadata: { purpose, label: price.label, fmPlus: isSubscribed },
+    }]);
+
+    return res.status(200).json({
+      ok: true,
+      purpose,
+      cost,
+      coins: balanceAfter,
+      streakExpiresIn: purpose === 'streak_save' ? 24 * 3600 : undefined,
+    });
+  } catch (error) {
+    console.error('Wallet spend failed:', error);
+    return res.status(500).json({ message: 'Could not complete that purchase.' });
+  }
+});
+
+// Daily reward. Server owns the once-per-day rule — a client-side check is
+// trivially bypassed by clearing local storage.
+const DAILY_REWARD_COINS = Number(process.env.DAILY_REWARD_COINS || 25);
+
+app.post('/api/rewards/claim-daily', verifyToken, requireScope(TOKEN_SCOPES.PLAYER), async (req, res) => {
+  try {
+    const userId = String(req.user?.id || req.user?._id || '').trim();
+    const user = await User.findById(userId);
+    if (!user) return res.status(404).json({ message: 'User not found.' });
+
+    const now = new Date();
+    const last = user.lastDailyRewardAt ? new Date(user.lastDailyRewardAt) : null;
+    if (last) {
+      const sameDay = last.toDateString() === now.toDateString();
+      if (sameDay) {
+        const tomorrow = new Date(now); tomorrow.setHours(24, 0, 0, 0);
+        return res.status(409).json({
+          message: 'You have already claimed today. Come back tomorrow.',
+          code: 'ALREADY_CLAIMED',
+          nextClaimAt: tomorrow,
+        });
+      }
+      // Consecutive-day streak, reset if a day was missed.
+      const yesterday = new Date(now); yesterday.setDate(yesterday.getDate() - 1);
+      user.dailyRewardStreak = last.toDateString() === yesterday.toDateString()
+        ? (Number(user.dailyRewardStreak) || 0) + 1
+        : 1;
+    } else {
+      user.dailyRewardStreak = 1;
+    }
+
+    const streak = Number(user.dailyRewardStreak) || 1;
+    // Small streak bonus, capped so it cannot run away.
+    const coins = DAILY_REWARD_COINS + Math.min(75, (streak - 1) * 5);
+
+    const balanceBefore = Number.parseInt(String(user.tokens || '0'), 10) || 0;
+    const balanceAfter = balanceBefore + coins;
+    // Atomic claim: matches only while lastDailyRewardAt is still the value we
+    // read, so a second simultaneous tap finds nothing and cannot double-credit.
+    const claimed = await User.findOneAndUpdate(
+      { _id: userId, lastDailyRewardAt: last || { $in: [null, undefined] } },
+      { tokens: String(balanceAfter), lastDailyRewardAt: now, dailyRewardStreak: user.dailyRewardStreak },
+      { new: true }
+    );
+    if (!claimed) {
+      return res.status(409).json({
+        message: 'You have already claimed today.',
+        code: 'ALREADY_CLAIMED',
+      });
+    }
+
+    await FightEntryLedger.create([{
+      userId,
+      matchId: 'daily-reward',
+      sourceType: 'match',
+      type: 'FIGHT_ENTRY_REFUND',
+      amount: coins,
+      balanceBefore,
+      balanceAfter,
+      idempotencyKey: `daily:${userId}:${now.toISOString().slice(0, 10)}`,
+      metadata: { streak },
+    }]);
+
+    return res.status(200).json({ ok: true, coins: balanceAfter, awarded: coins, streak });
+  } catch (error) {
+    if (error?.code === 11000) {
+      return res.status(409).json({ message: 'You have already claimed today.', code: 'ALREADY_CLAIMED' });
+    }
+    console.error('Daily reward failed:', error);
+    return res.status(500).json({ message: 'Could not claim your reward.' });
+  }
+});
+
+
+// --------------------------------------------------------------------------
+// NOTIFICATION READ STATE
+// The badge was cleared in phone memory only, so it reappeared on every reopen
+// and players learned to ignore it. Store a read timestamp per user instead.
+// --------------------------------------------------------------------------
+app.post('/api/users/me/notifications/read', verifyToken, async (req, res) => {
+  try {
+    const userId = String(req.user?.id || req.user?._id || '').trim();
+    const readAt = new Date();
+    const user = await User.findByIdAndUpdate(
+      userId,
+      { notificationsReadAt: readAt },
+      { new: true, select: 'notificationsReadAt' }
+    );
+    if (!user) return res.status(404).json({ message: 'User not found.' });
+    return res.status(200).json({ ok: true, notificationsReadAt: readAt });
+  } catch (error) {
+    console.error('Marking notifications read failed:', error);
+    return res.status(500).json({ message: 'Could not update notifications.' });
+  }
+});
+
+// ==========================================================================
+// DEMO CARD — something for testers to actually spend coins on
+//
+// Test accounts with 25,000 coins are useless against an empty database. This
+// seeds a full card so a tester can exercise every path without waiting for a
+// real fight night:
+//
+//   - one upcoming fight in each of the five disciplines, mixed free and paid
+//   - one fight ALREADY SCORED, so results, standings and "results are in"
+//     notifications work the moment they sign in rather than after a settle
+//   - a league they can join
+//   - a Team Card over the upcoming bouts, and a free Season Card
+//
+// Gated behind the same TEST_ACCOUNTS_ENABLED switch, so it cannot create
+// fictional fights on production.
+// ==========================================================================
+const DEMO_TAG = '[DEMO]';
+
+// Round stats in the shape the scorecards and Season/Team scoring already read.
+const demoRounds = (family, rounds, bias = 1) => Array.from({ length: rounds }, (_, index) => {
+  const r = index + 1;
+  if (family === 'boxing') {
+    return {
+      round: r,
+      HP: Math.round((14 + r * 2) * bias),
+      BP: Math.round((9 + r) * bias),
+      TP: Math.round((31 + r * 3) * bias),
+      RW: bias >= 1 && r % 2 === 1 ? 1 : 0,
+      KO: 0,
+    };
+  }
+  if (family === 'wrestling') {
+    return { round: r, SIG: Math.round(3 * bias), NF: Math.round(2 * bias), RV: Math.round(2 * bias), PIN: 0 };
+  }
+  return {
+    round: r,
+    ST: Math.round((22 + r * 3) * bias),
+    KI: Math.round((6 + r) * bias),
+    KN: Math.round(2 * bias),
+    EL: Math.round(1 * bias),
+    RW: bias >= 1 && r % 2 === 1 ? 1 : 0,
+    KO: 0,
+  };
+});
+
+// A stakes ladder, not five near-identical fees. The top rung is deliberately a
+// large share of the starting balance so entering it is an actual decision —
+// which is the only way a tester behaves like a player.
+const DEMO_CARD = Object.freeze([
+  // Free: anyone can enter, tests the no-consideration path.
+  { cat: 'kickboxing', a: 'SOMCHAI PETCH', b: 'LARS EIDE', rounds: 3, fee: 0, days: 3 },
+  // Cheap: enter without thinking.
+  { cat: 'wrestling', a: 'THE ARCHITECT', b: 'KID DYNAMO', rounds: 1, fee: 100, days: 4 },
+  // Mid: worth a look at the pot first.
+  { cat: 'bareknuckle', a: 'DUSTY WHEELER', b: 'MARCUS VANE', rounds: 5, fee: 500, days: 5 },
+  // Main event with a GUARANTEED pot the promoter has staked. Entries fill it;
+  // past break-even the promoter profits. This is the Shadow Fight mechanic, so
+  // testers exercise it rather than a mocked-up number.
+  {
+    cat: 'boxing', a: 'IRON JACKSON', b: 'DEXTER FOLD', rounds: 12, fee: 1500, days: 6,
+    featured: true, potTarget: 20000, promoterStake: 20000,
+  },
+  // High roller: a serious share of the stack. Tests the shortfall guard too —
+  // if too few enter, it must void and refund rather than pay a thin prize.
+  { cat: 'mma', a: 'RAFAEL MENDES', b: 'COLE BRANNIGAN', rounds: 3, fee: 4000, days: 7, minimumEntrants: 4 },
+]);
+
+app.post('/api/admin/demo-card', verifyAdminToken, requireTestAccounts, async (req, res) => {
+  try {
+    const created = { upcoming: [], scored: null, league: null, teamContest: null, season: null };
+
+    // 1. Upcoming fights, one per discipline. Dated in the future so entry is
+    //    open — isFightOpenForEntry locks on matchDate.
+    for (const spec of DEMO_CARD) {
+      const matchName = `${DEMO_TAG} ${spec.a} vs ${spec.b}`;
+      const existing = await Match.findOne({ matchName }).select('_id').lean();
+      if (existing) { created.upcoming.push({ id: existing._id, name: matchName, reused: true }); continue; }
+
+      const matchDate = new Date(Date.now() + spec.days * 86400000);
+      const fight = await Match.create({
+        matchName,
+        matchCategory: spec.cat,
+        matchFighterA: spec.a,
+        matchFighterB: spec.b,
+        matchDate,
+        matchTime: '21:00',
+        maxRounds: spec.rounds,
+        matchTokens: spec.fee,
+        matchStatus: 'active',
+        matchShadowStatus: 'active',
+        // Default low enough that a handful of testers clears it, but the high
+        // roller sets its own so the void-and-refund guard gets exercised.
+        minimumEntrants: spec.minimumEntrants ?? 2,
+        autoRefundIfShort: true,
+        // A declared pot the promoter has put up. Entries fill it; the promoter
+        // takes the surplus past break-even.
+        ...(spec.potTarget ? { potTarget: spec.potTarget, pot: spec.potTarget } : {}),
+        ...(spec.promoterStake ? { promoterStake: spec.promoterStake } : {}),
+        featuredThisWeek: Boolean(spec.featured),
+        venue: 'Demo Arena',
+        matchDescription: 'Seeded demo fight for the private testing group.',
+      });
+      created.upcoming.push({ id: fight._id, name: matchName, category: spec.cat, fee: spec.fee, reused: false });
+
+      // Keep the roster in step, so fighter profiles exist for these names.
+      try {
+        await upsertFighterProfile({ name: spec.a, sport: spec.cat });
+        await upsertFighterProfile({ name: spec.b, sport: spec.cat });
+      } catch (rosterError) { /* non-fatal */ }
+    }
+
+    // 2. One fight already in the past WITH stats, so a tester sees a finished
+    //    result immediately instead of waiting for someone to settle something.
+    const scoredName = `${DEMO_TAG} VICTOR HALE vs OMAR SAIF`;
+    let scored = await Match.findOne({ matchName: scoredName }).select('_id').lean();
+    if (!scored) {
+      scored = await Match.create({
+        matchName: scoredName,
+        matchCategory: 'mma',
+        matchFighterA: 'VICTOR HALE',
+        matchFighterB: 'OMAR SAIF',
+        matchDate: new Date(Date.now() - 2 * 86400000),
+        maxRounds: 3,
+        matchTokens: 0,
+        matchStatus: 'finished',
+        matchShadowStatus: 'active',
+        minimumEntrants: 0,
+        venue: 'Demo Arena',
+        MMAMatch: {
+          fighterOneStats: demoRounds('mma', 3, 1.15),
+          fighterTwoStats: demoRounds('mma', 3, 0.85),
+        },
+      });
+    }
+    created.scored = { id: scored._id, name: scoredName };
+
+    // 3. A league to join. Attached to the first test league account if one
+    //    exists, so the promoter panel has something real behind it.
+    // Spread the fights across the league accounts. One promoter owning all six
+    // cannot show what a player sees when two leagues promote the same night.
+    const leagueOwners = await Affiliate.find({ isTestAccount: true })
+      .select('_id leagueName').sort({ createdAt: 1 }).lean();
+    if (leagueOwners.length) {
+      created.league = { id: leagueOwners[0]._id, name: leagueOwners[0].leagueName };
+      created.leagues = leagueOwners.map((row) => ({ id: row._id, name: row.leagueName }));
+      const demoFights = await Match.find({ matchName: demoTagRegex() }).select('_id').lean();
+      for (let i = 0; i < demoFights.length; i += 1) {
+        const owner = leagueOwners[i % leagueOwners.length];
+        await Match.updateOne({ _id: demoFights[i]._id }, { $set: { affiliateId: String(owner._id) } });
+      }
+    }
+
+    // 3b. FEATURE FLAGS. Without these the app's "Featured This Week" and
+    //     "Featured Fight" sections have nothing to render, and the website's
+    //     promoted-fights query — which filters on homepagePromoted /
+    //     featuredThisWeek / featuredFight — returns an empty list. The seed
+    //     created fights but never flagged any, so both surfaces looked broken
+    //     while the data was actually there.
+    {
+      const seeded = await Match.find({ matchName: demoTagRegex() })
+        .select('_id matchDate').sort({ matchDate: 1 }).lean();
+      if (seeded.length) {
+        // First upcoming bout carries the big card; second fills the compact
+        // featured-fight strip. Both are homepage-promoted so the website shows
+        // them too.
+        await Match.updateOne({ _id: seeded[0]._id }, {
+          $set: { featuredThisWeek: true, homepagePromoted: true },
+        });
+        if (seeded[1]) {
+          await Match.updateOne({ _id: seeded[1]._id }, {
+            $set: { featuredFight: true, homepagePromoted: true },
+          });
+        }
+        // Everything else still appears in the open-cards grid.
+        const rest = seeded.slice(2).map((row) => row._id);
+        if (rest.length) {
+          await Match.updateMany({ _id: { $in: rest } }, { $set: { homepagePromoted: true } });
+        }
+        created.featured = {
+          featuredThisWeek: String(seeded[0]._id),
+          featuredFight: seeded[1] ? String(seeded[1]._id) : null,
+          homepagePromoted: seeded.length,
+        };
+      }
+    }
+
+    // 4. A Team Card over the upcoming bouts. Needs at least as many bouts as
+    //    picks, which is why all five disciplines are seeded.
+    const upcomingIds = created.upcoming.map((row) => String(row.id));
+    if (TEAM_CARDS_ENABLED && upcomingIds.length >= 5) {
+      const name = `${DEMO_TAG} Fight Night Team Card`;
+      let contest = await TeamContest.findOne({ name }).select('_id').lean();
+      if (!contest) {
+        contest = await TeamContest.create({
+          name,
+          eventName: 'Demo Fight Night',
+          fightIds: upcomingIds,
+          picksRequired: 5,
+          // Free, so nobody is blocked by a state rule while testing.
+          entryFee: 0,
+          affiliateId: leagueOwner ? String(leagueOwner._id) : '',
+        });
+      }
+      created.teamContest = { id: contest._id, name };
+    }
+
+    // 5. A free season, drafting open, so Season Cards can be exercised too.
+    if (SEASON_CARDS_ENABLED) {
+      const name = `${DEMO_TAG} Test Season`;
+      let season = await Season.findOne({ name }).select('_id').lean();
+      if (!season) {
+        season = await Season.create({
+          name,
+          description: 'Seeded season for the private testing group.',
+          startsAt: new Date(Date.now() - 86400000),
+          endsAt: new Date(Date.now() + 30 * 86400000),
+          draftClosesAt: new Date(Date.now() + 2 * 86400000),
+          entryFee: 0,
+          status: 'DRAFT_OPEN',
+        });
+      }
+      created.season = { id: season._id, name };
+    }
+
+    clearPublicResponseCache();
+    console.warn(`[demo-card] seeded by admin ${req.admin?.id || 'unknown'}`);
+
+    return res.status(201).json({
+      ok: true,
+      created,
+      next: [
+        'Testers can now enter fights in all five disciplines.',
+        'One fight is already scored, so results and standings work immediately.',
+        created.teamContest ? 'A free Team Card is open over the five upcoming bouts.' : 'Team Cards are disabled.',
+        created.season ? 'A free Season is open for drafting.' : 'Season Cards are disabled.',
+      ],
+      reminder: 'Run DELETE /api/admin/demo-card before going live.',
+    });
+  } catch (error) {
+    console.error('Demo card seed failed:', error);
+    return res.status(500).json({ ok: false, message: 'Could not seed the demo card.', detail: String(error?.message || '').slice(0, 200) });
+  }
+});
+
+// Live pot state for the demo card. The whole point of a stakes ladder is that
+// testers watch the pot move as people enter — without this they would have to
+// take it on trust.
+app.get('/api/public/demo-card/pots', async (req, res) => {
+  try {
+    const fights = await Match.find({ matchName: demoTagRegex() })
+      .select('matchName matchCategory matchTokens pot potTarget promoterStake minimumEntrants matchDate prizesSettledAt')
+      .sort({ matchDate: 1 }).lean();
+    if (!fights.length) return res.json({ ok: true, fights: [] });
+
+    const ids = fights.map((row) => String(row._id));
+    // Entry counts from the real Score rows, so the number cannot drift from
+    // what settlement will actually see.
+    const counts = await Score.aggregate([
+      { $match: { matchId: { $in: ids }, refunded: { $ne: true } } },
+      { $group: { _id: '$matchId', entries: { $sum: 1 } } },
+    ]);
+    const byFight = new Map(counts.map((row) => [String(row._id), row.entries]));
+
+    return res.json({
+      ok: true,
+      fights: fights.map((fight) => {
+        const entries = byFight.get(String(fight._id)) || 0;
+        const fee = Math.max(0, Number(fight.matchTokens) || 0);
+        const collected = entries * fee;
+        const guaranteed = Math.max(0, Number(fight.potTarget) || 0);
+        const minimum = Math.max(0, Number(fight.minimumEntrants) || 0);
+        return {
+          id: fight._id,
+          name: String(fight.matchName).replace(DEMO_TAG, '').trim(),
+          category: fight.matchCategory,
+          entryFee: fee,
+          entries,
+          // What a winner would actually be playing for right now.
+          livePot: guaranteed > 0 ? Math.max(guaranteed, collected) : collected,
+          guaranteedPot: guaranteed || null,
+          // Honest about whether this contest can pay yet.
+          entriesNeeded: Math.max(0, minimum - entries),
+          willVoidIfSettledNow: minimum > 0 && entries < minimum,
+          settled: Boolean(fight.prizesSettledAt),
+        };
+      }),
+    });
+  } catch (error) {
+    console.error('Demo pot state failed:', error);
+    return res.status(500).json({ ok: false, message: 'Could not load pot state.' });
+  }
+});
+
+// --------------------------------------------------------------------------
+// FAST-FORWARD — collapse a whole fight night into one call
+//
+// Testers should not have to wait days to see a score. This fills in official
+// round stats, moves the demo fights into the past, and settles everything, so
+// points, prizes and standings all appear immediately.
+//
+// It settles through the REAL endpoint rather than a shortcut — the admin's own
+// Authorization header is forwarded to POST /api/admin/fights/:id/settle. That
+// matters: a demo path that fakes settlement would prove nothing about the code
+// that will actually pay people.
+// --------------------------------------------------------------------------
+const demoTagRegex = () => new RegExp('^\\' + DEMO_TAG.replace(/[[\]]/g, '\\$&'));
+
+// Sets the feature flags on already-seeded demo fights. The first version of the
+// seed created fights but never flagged any, so a database seeded before this
+// shows empty "Featured This Week" and "Featured Fight" sections in the app and
+// an empty promoted list on the website — the data was fine, nothing was flagged.
+app.post('/api/admin/demo-card/repair-featured', verifyAdminToken, requireTestAccounts, async (req, res) => {
+  try {
+    const seeded = await Match.find({ matchName: demoTagRegex() })
+      .select('_id matchName matchDate').sort({ matchDate: 1 }).lean();
+    if (!seeded.length) {
+      return res.status(404).json({ ok: false, message: 'No demo fights found — seed the card first.' });
+    }
+    await Match.updateOne({ _id: seeded[0]._id }, { $set: { featuredThisWeek: true, homepagePromoted: true } });
+    if (seeded[1]) {
+      await Match.updateOne({ _id: seeded[1]._id }, { $set: { featuredFight: true, homepagePromoted: true } });
+    }
+    await Match.updateMany({ _id: { $in: seeded.map((row) => row._id) } }, { $set: { homepagePromoted: true } });
+    clearPublicResponseCache();
+    return res.json({
+      ok: true,
+      featuredThisWeek: seeded[0].matchName,
+      featuredFight: seeded[1] ? seeded[1].matchName : null,
+      homepagePromoted: seeded.length,
+      message: 'Featured flags set. Reload the app and the website.',
+    });
+  } catch (error) {
+    console.error('Repair featured failed:', error);
+    return res.status(500).json({ ok: false, message: 'Could not set the featured flags.' });
+  }
+});
+
+app.post('/api/admin/demo-card/fast-forward', verifyAdminToken, requireTestAccounts, async (req, res) => {
+  try {
+    const fights = await Match.find({ matchName: demoTagRegex() })
+      .select('_id matchName matchCategory maxRounds prizesSettledAt').lean();
+    if (!fights.length) {
+      return res.status(404).json({ ok: false, message: 'No demo fights found. Seed the card first.', code: 'NO_DEMO_CARD' });
+    }
+
+    const prepared = [];
+    for (const fight of fights) {
+      if (fight.prizesSettledAt) { prepared.push({ name: fight.matchName, skipped: 'already settled' }); continue; }
+      const family = String(fight.matchCategory || '').toLowerCase().includes('box')
+        || String(fight.matchCategory || '').toLowerCase().includes('knuckle') ? 'boxing'
+        : String(fight.matchCategory || '').toLowerCase().includes('wrestl') ? 'wrestling' : 'mma';
+      const rounds = Math.max(1, Number(fight.maxRounds) || 3);
+
+      // Fighter A slightly ahead, so there is a clear winner to read.
+      const update = {
+        // In the past, so the fight reads as complete and entry is locked.
+        matchDate: new Date(Date.now() - 3600000),
+        matchStatus: 'finished',
+      };
+      const statsBlock = {
+        fighterOneStats: demoRounds(family, rounds, 1.2),
+        fighterTwoStats: demoRounds(family, rounds, 0.85),
+      };
+      if (family === 'boxing') update.BoxingMatch = statsBlock;
+      else update.MMAMatch = statsBlock;
+
+      await Match.updateOne({ _id: fight._id }, { $set: update });
+      prepared.push({ id: String(fight._id), name: fight.matchName });
+    }
+
+    // Settle through the real route, forwarding the caller's own admin token.
+    const base = `${req.protocol}://${req.get('host')}`;
+    const authHeader = req.headers.authorization || '';
+    const settled = [];
+    for (const entry of prepared) {
+      if (!entry.id) continue;
+      try {
+        const response = await fetch(`${base}/api/admin/fights/${entry.id}/settle`, {
+          method: 'POST',
+          headers: { Authorization: authHeader, 'Content-Type': 'application/json' },
+        });
+        const payload = await response.json().catch(() => ({}));
+        settled.push({ name: entry.name, status: response.status, paid: payload?.payout ?? payload?.prizePoolPaid ?? null });
+      } catch (error) {
+        settled.push({ name: entry.name, error: String(error?.message || '').slice(0, 120) });
+      }
+    }
+
+    // Team Cards settle once every bout on the card is scored, which has just
+    // happened — so they can be swept now rather than waiting for the cron.
+    const teamResults = [];
+    if (TEAM_CARDS_ENABLED) {
+      const contests = await TeamContest.find({ name: demoTagRegex(), status: { $in: ['OPEN', 'LOCKED'] } }).select('_id name').lean();
+      for (const contest of contests) {
+        try {
+          const summary = await settleTeamContest(String(contest._id));
+          teamResults.push({ name: contest.name, ...summary });
+        } catch (error) {
+          teamResults.push({ name: contest.name, error: String(error?.message || '').slice(0, 120) });
+        }
+      }
+    }
+
+    // Seasons need to be RUNNING before they can settle.
+    const seasonResults = [];
+    if (SEASON_CARDS_ENABLED) {
+      const seasons = await Season.find({ name: demoTagRegex(), status: { $in: ['DRAFT_OPEN', 'RUNNING'] } }).select('_id name').lean();
+      for (const season of seasons) {
+        try {
+          await Season.updateOne({ _id: season._id }, { $set: { status: 'RUNNING' } });
+          const summary = await settleSeason(String(season._id));
+          seasonResults.push({ name: season.name, ...summary });
+        } catch (error) {
+          seasonResults.push({ name: season.name, error: String(error?.message || '').slice(0, 120) });
+        }
+      }
+    }
+
+    clearPublicResponseCache();
+    return res.json({
+      ok: true,
+      fights: settled,
+      teamContests: teamResults,
+      seasons: seasonResults,
+      next: 'Testers can now see their scores and standings. Call /api/admin/demo-card/replay to reset and go again.',
+    });
+  } catch (error) {
+    console.error('Demo fast-forward failed:', error);
+    return res.status(500).json({ ok: false, message: 'Fast-forward failed.', detail: String(error?.message || '').slice(0, 200) });
+  }
+});
+
+// --------------------------------------------------------------------------
+// REPLAY — reset the demo card so the same testers can go again
+//
+// Clears every demo entry, reopens the fights with fresh future dates, wipes the
+// settlement stamps, and tops the test accounts back up. Touches only [DEMO]
+// fights and only isTestAccount players.
+// --------------------------------------------------------------------------
+app.post('/api/admin/demo-card/replay', verifyAdminToken, requireTestAccounts, async (req, res) => {
+  try {
+    const coins = Math.max(0, Math.round(Number(req.body?.coins ?? TEST_ACCOUNT_START_COINS)));
+    const fights = await Match.find({ matchName: demoTagRegex() }).select('_id matchName').lean();
+    const fightIds = fights.map((row) => String(row._id));
+    if (!fightIds.length) {
+      return res.status(404).json({ ok: false, message: 'No demo fights found. Seed the card first.', code: 'NO_DEMO_CARD' });
+    }
+
+    // 1. Clear the entries so everyone can enter again. Scoped to demo fights.
+    const clearedScores = await Score.deleteMany({ matchId: { $in: fightIds } });
+
+    const contests = await TeamContest.find({ name: demoTagRegex() }).select('_id').lean();
+    const contestIds = contests.map((row) => String(row._id));
+    const clearedTeams = contestIds.length
+      ? await TeamEntry.deleteMany({ contestId: { $in: contestIds } })
+      : { deletedCount: 0 };
+
+    const seasons = await Season.find({ name: demoTagRegex() }).select('_id').lean();
+    const seasonIds = seasons.map((row) => String(row._id));
+    const clearedRosters = seasonIds.length
+      ? await SeasonRoster.deleteMany({ seasonId: { $in: seasonIds } })
+      : { deletedCount: 0 };
+
+    // 2. Reopen the fights. Staggered future dates so the card looks real, and
+    //    the settlement stamps are cleared or settle would refuse next time.
+    let day = 3;
+    for (const fight of fights) {
+      await Match.updateOne({ _id: fight._id }, {
+        $set: {
+          matchDate: new Date(Date.now() + day * 86400000),
+          matchStatus: 'active',
+          matchShadowStatus: 'active',
+        },
+        $unset: {
+          prizesSettledAt: '', prizePoolPaid: '', houseCutTaken: '',
+          voidedAt: '', voidReason: '', collectedFees: '', profit: '',
+        },
+      });
+      day += 1;
+    }
+
+    // 3. Reopen the contests, clearing their pots — the coins in them were just
+    //    refunded to the testers, so leaving a pot behind would double-count.
+    if (contestIds.length) {
+      await TeamContest.updateMany({ _id: { $in: contestIds } }, {
+        $set: { status: 'OPEN', prizePool: 0, settledAt: null, voidReason: '' },
+      });
+    }
+    if (seasonIds.length) {
+      await Season.updateMany({ _id: { $in: seasonIds } }, {
+        $set: {
+          status: 'DRAFT_OPEN',
+          prizePool: 0,
+          settledAt: null,
+          draftClosesAt: new Date(Date.now() + 2 * 86400000),
+          endsAt: new Date(Date.now() + 30 * 86400000),
+        },
+      });
+    }
+
+    // 4. Top the testers back up. Only isTestAccount rows.
+    const refilled = await User.updateMany({ isTestAccount: true }, { $set: { tokens: String(coins) } });
+
+    // 5. Clear their notification read marks so the bell lights up again.
+    await User.updateMany({ isTestAccount: true }, { $set: { notificationsReadAt: null } });
+
+    clearPublicResponseCache();
+    return res.json({
+      ok: true,
+      reset: {
+        fights: fights.length,
+        predictionsCleared: clearedScores?.deletedCount || 0,
+        teamEntriesCleared: clearedTeams?.deletedCount || 0,
+        seasonRostersCleared: clearedRosters?.deletedCount || 0,
+        testersRefilled: refilled?.modifiedCount || 0,
+        coins,
+      },
+      next: 'Card is open again. Testers can enter, then call fast-forward to see results.',
+    });
+  } catch (error) {
+    console.error('Demo replay failed:', error);
+    return res.status(500).json({ ok: false, message: 'Replay failed.', detail: String(error?.message || '').slice(0, 200) });
+  }
+});
+
+// Removes everything the seed created, and only that — matched on the [DEMO]
+// prefix, so a real fight can never be caught by it.
+app.delete('/api/admin/demo-card', verifyAdminToken, requireBulkConfirmation('DEMOCARD'), async (req, res) => {
+  try {
+    const tagRegex = new RegExp('^\\' + DEMO_TAG.replace(/[[\]]/g, '\\$&'));
+    const fights = await Match.find({ matchName: tagRegex }).select('_id').lean();
+    const fightIds = fights.map((row) => String(row._id));
+
+    // Collect the demo contest and season ids BEFORE deleting them, so their
+    // entries can be scoped precisely.
+    const [demoContests, demoSeasons] = await Promise.all([
+      TeamContest.find({ name: tagRegex }).select('_id').lean(),
+      Season.find({ name: tagRegex }).select('_id').lean(),
+    ]);
+    const contestIds = demoContests.map((row) => String(row._id));
+    const seasonIds = demoSeasons.map((row) => String(row._id));
+
+    const [scores, teamEntries, rosters, contests, seasons, matches] = await Promise.all([
+      Score.deleteMany({ matchId: { $in: fightIds } }),
+      // Scoped to the demo contests. An unscoped filter here would have wiped
+      // every team entry on the platform.
+      contestIds.length ? TeamEntry.deleteMany({ contestId: { $in: contestIds } }) : Promise.resolve({ deletedCount: 0 }),
+      seasonIds.length ? SeasonRoster.deleteMany({ seasonId: { $in: seasonIds } }) : Promise.resolve({ deletedCount: 0 }),
+      TeamContest.deleteMany({ name: tagRegex }),
+      Season.deleteMany({ name: tagRegex }),
+      Match.deleteMany({ matchName: tagRegex }),
+    ]);
+
+    return res.json({
+      ok: true,
+      deleted: {
+        fights: matches?.deletedCount || 0,
+        predictions: scores?.deletedCount || 0,
+        teamContests: contests?.deletedCount || 0,
+        teamEntries: teamEntries?.deletedCount || 0,
+        seasons: seasons?.deletedCount || 0,
+        seasonRosters: rosters?.deletedCount || 0,
+      },
+    });
+  } catch (error) {
+    console.error('Demo card purge failed:', error);
+    return res.status(500).json({ ok: false, message: 'Could not remove the demo card.' });
+  }
+});
+
+// ==========================================================================
+// TEST ACCOUNTS — for a private testing group
+//
+// The obvious approach — one shared login handed to everyone — does not work for
+// this app. Testers would overwrite each other's predictions, spend the same
+// coins, and every entry would collide on the one-entry-per-player rule. It also
+// cannot exercise duplicate-account prevention, per-user notifications, or
+// head-to-head, all of which need two distinct people.
+//
+// So this mints a SEPARATE pre-verified, pre-funded account per tester, and
+// returns the credentials once so they can be handed out.
+//
+// It is a login generator, which is a backdoor if it ever ships enabled. Three
+// guards: off unless TEST_ACCOUNTS_ENABLED=true, admin-only, and it refuses to
+// run in production unless ALLOW_TEST_ACCOUNTS_IN_PRODUCTION is also set. Every
+// account it creates is flagged isTestAccount so they can be excluded from
+// public numbers and purged in one call afterwards.
+// ==========================================================================
+const TEST_ACCOUNTS_ENABLED = String(process.env.TEST_ACCOUNTS_ENABLED || 'false').trim().toLowerCase() === 'true';
+const TEST_ACCOUNT_DOMAIN = String(process.env.TEST_ACCOUNT_DOMAIN || 'fmmtest.com').trim().toLowerCase();
+// Deliberately modest. With 25,000 coins nothing on the card is a decision, and a
+// tester who cannot run out never behaves like a player. 6,000 makes the main
+// event a quarter of the stack and the high roller two thirds of it — so they
+// have to choose, which is when the interesting bugs surface.
+const TEST_ACCOUNT_START_COINS = Math.max(0, Number(process.env.TEST_ACCOUNT_START_COINS || 6000));
+
+// Hoisted function, NOT a const arrow: the demo-card routes register earlier in
+// this file than this line, and a const would still be in the temporal dead zone
+// at that point — which is exactly what crashed the server on the last guard.
+function requireTestAccounts(req, res, next) {
+  if (!TEST_ACCOUNTS_ENABLED) {
+    return res.status(404).json({
+      ok: false,
+      message: 'Test account creation is disabled. Set TEST_ACCOUNTS_ENABLED=true on the preview environment.',
+      code: 'TEST_ACCOUNTS_DISABLED',
+    });
+  }
+  if (process.env.NODE_ENV === 'production' && process.env.ALLOW_TEST_ACCOUNTS_IN_PRODUCTION !== 'true') {
+    return res.status(403).json({
+      ok: false,
+      message: 'Refusing to mint test logins in production. Use the preview environment.',
+      code: 'PRODUCTION_BLOCKED',
+    });
+  }
+  return next();
+}
+
+// Predictable so they can be relayed by text message without a password manager.
+// Safe only because the whole feature is env-gated and the accounts are
+// disposable — never enable this on production.
+// Distinct names, because six leagues called "Test League N" tells you nothing
+// about which one a tester actually joined.
+const DEMO_LEAGUE_NAMES = Object.freeze([
+  'Southside Fight Club', 'The Cutmen', 'Iron Row Collective',
+  'Backyard Brawlers', 'Championship Circle', 'The Corner Crew',
+]);
+
+const testCredentials = (role, index) => ({
+  email: `${role}${index}@${TEST_ACCOUNT_DOMAIN}`,
+  password: `FightNight-${role}${index}`,
+});
+
+app.post('/api/admin/test-accounts', verifyAdminToken, requireTestAccounts, async (req, res) => {
+  try {
+    const players = Math.max(0, Math.min(25, Math.round(Number(req.body?.players ?? 6))));
+    const affiliates = Math.max(0, Math.min(10, Math.round(Number(req.body?.affiliates ?? 6))));
+    // A paid-contest state by default, or nothing paid can be tested at all.
+    const state = String(req.body?.state || 'GA').trim().toUpperCase().slice(0, 2);
+    const coins = Math.max(0, Math.round(Number(req.body?.coins ?? TEST_ACCOUNT_START_COINS)));
+    // Comfortably over the 21+ threshold in every state that has one.
+    const dateOfBirth = new Date('1990-01-15');
+
+    const created = { players: [], affiliates: [] };
+
+    for (let index = 1; index <= players; index += 1) {
+      const { email, password } = testCredentials('tester', index);
+      const existing = await User.findOne({ email }).select('_id').lean();
+      if (existing) {
+        // Re-issue rather than skip: a tester who forgot their password should be
+        // recoverable without deleting their entries.
+        await User.updateOne({ _id: existing._id }, {
+          $set: {
+            password: await bcrypt.hash(password, 10),
+            verified: true,
+            tokens: String(coins),
+            isTestAccount: true,
+          },
+        });
+        created.players.push({ email, password, reset: true });
+        continue;
+      }
+      await User.create({
+        email,
+        password: await bcrypt.hash(password, 10),
+        firstName: 'Tester',
+        lastName: String(index),
+        playerName: `TESTER${index}`,
+        // Pre-verified: an email-verification step would block testers on
+        // addresses that do not receive mail.
+        verified: true,
+        tokens: String(coins),
+        residenceState: state,
+        isUSCitizen: true,
+        dateOfBirth,
+        isTestAccount: true,
+      });
+      created.players.push({ email, password, reset: false });
+    }
+
+    for (let index = 1; index <= affiliates; index += 1) {
+      const { email, password } = testCredentials('league', index);
+      const existing = await Affiliate.findOne({ email }).select('_id').lean();
+      if (existing) {
+        await Affiliate.updateOne({ _id: existing._id }, {
+          $set: {
+            password: await bcrypt.hash(password, 10),
+            // Verified, or they cannot run a contest or send a league notice.
+            verified: true,
+            isTestAccount: true,
+          },
+        });
+        created.affiliates.push({ email, password, reset: true });
+        continue;
+      }
+      await Affiliate.create({
+        email,
+        password: await bcrypt.hash(password, 10),
+        firstName: 'League',
+        lastName: String(index),
+        playerName: `TESTLEAGUE${index}`,
+        leagueName: DEMO_LEAGUE_NAMES[index - 1] || `Test League ${index}`,
+        verified: true,
+        residenceState: state,
+        dateOfBirth,
+        // Seeded balance so a payout request is testable immediately, instead of
+        // waiting for rake to build up across several settled contests.
+        tokens: String(coins),
+        isTestAccount: true,
+      });
+      created.affiliates.push({ email, password, reset: false });
+    }
+
+    // One admin login, so the back office can be walked end to end — settle a
+    // fight, refund a player, approve a payout — without using the real admin
+    // account. Single, because a second admin proves nothing extra and every
+    // extra privileged login is another thing to remember to delete.
+    if (req.body?.admin !== false) {
+      const { email, password } = testCredentials('backoffice', 1);
+      const existing = await Admin.findOne({ email }).select('_id').lean();
+      if (existing) {
+        await Admin.updateOne({ _id: existing._id }, {
+          $set: { password: await bcrypt.hash(password, 10), isTestAccount: true },
+        });
+        created.admin = { email, password, reset: true };
+      } else {
+        await Admin.create({
+          firstName: 'Back',
+          lastName: 'Office',
+          email,
+          password: await bcrypt.hash(password, 10),
+          isTestAccount: true,
+        });
+        created.admin = { email, password, reset: false };
+      }
+    }
+
+    console.warn(`[test-accounts] ${players} player + ${affiliates} affiliate + ${created.admin ? 1 : 0} admin logins minted by admin ${req.admin?.id || 'unknown'}`);
+
+    return res.status(201).json({
+      ok: true,
+      state,
+      coins,
+      created,
+      reminder: 'Set TEST_ACCOUNTS_ENABLED=false and purge these before going live.',
+    });
+  } catch (error) {
+    console.error('Test account creation failed:', error);
+    return res.status(500).json({ ok: false, message: 'Could not create test accounts.' });
+  }
+});
+
+// What exists, without re-issuing anything.
+app.get('/api/admin/test-accounts', verifyAdminToken, async (req, res) => {
+  try {
+    const [players, affiliates, admins] = await Promise.all([
+      User.find({ isTestAccount: true }).select('email playerName tokens residenceState createdAt').lean(),
+      Affiliate.find({ isTestAccount: true }).select('email leagueName verified createdAt').lean(),
+      Admin.find({ isTestAccount: true }).select('email createdAt').lean(),
+    ]);
+    return res.json({
+      ok: true,
+      enabled: TEST_ACCOUNTS_ENABLED,
+      players: players.map((row) => ({
+        email: row.email,
+        name: row.playerName,
+        coins: Number.parseInt(String(row.tokens || '0'), 10) || 0,
+        state: row.residenceState,
+      })),
+      affiliates: affiliates.map((row) => ({ email: row.email, league: row.leagueName, verified: row.verified })),
+      admins: admins.map((row) => ({ email: row.email })),
+    });
+  } catch (error) {
+    return res.status(500).json({ ok: false, message: 'Could not load test accounts.' });
+  }
+});
+
+// --------------------------------------------------------------------------
+// RECONCILE — proof that a simultaneous session did not corrupt anything
+//
+// Every money bug found in this codebase was a race: two settles paying the same
+// pot, two accepts debiting the same stake, an entry charged without being
+// recorded. Races only appear under concurrency, which makes a group session the
+// most valuable test available — and useless without a way to check afterwards.
+//
+// A tester will not notice 100 missing coins. This does: it re-derives every test
+// account's balance from the ledger and compares it to the stored balance. If
+// those agree for everyone, no race lost or duplicated money.
+// --------------------------------------------------------------------------
+app.get('/api/admin/test-accounts/reconcile', verifyAdminToken, async (req, res) => {
+  try {
+    const players = await User.find({ isTestAccount: true }).select('_id email tokens').lean();
+    if (!players.length) {
+      return res.json({ ok: true, message: 'No test accounts found.', players: [] });
+    }
+    const ids = players.map((row) => String(row._id));
+
+    // Ledger rows are the source of truth: every credit and debit that any money
+    // path claims to have made.
+    const ledgerRows = await FightEntryLedger.find({ userId: { $in: ids } })
+      .select('userId amount balanceAfter reason createdAt').lean();
+    const byUser = new Map();
+    ledgerRows.forEach((row) => {
+      const list = byUser.get(String(row.userId)) || [];
+      list.push(row);
+      byUser.set(String(row.userId), list);
+    });
+
+    const startCoins = Math.max(0, Number(req.query.startCoins ?? TEST_ACCOUNT_START_COINS));
+    const findings = [];
+
+    const report = players.map((player) => {
+      const rows = (byUser.get(String(player._id)) || [])
+        .sort((a, b) => new Date(a.createdAt) - new Date(b.createdAt));
+      const net = rows.reduce((sum, row) => sum + (Number(row.amount) || 0), 0);
+      const actual = Number.parseInt(String(player.tokens || '0'), 10) || 0;
+      const expected = startCoins + net;
+      const drift = actual - expected;
+
+      // balanceAfter on each row should chain: every row's after-value must equal
+      // the next row's before-value. A break means two writes interleaved.
+      let chainBreak = null;
+      for (let i = 1; i < rows.length; i += 1) {
+        const prevAfter = Number(rows[i - 1].balanceAfter);
+        const thisBefore = Number(rows[i].balanceAfter) - (Number(rows[i].amount) || 0);
+        if (Number.isFinite(prevAfter) && Number.isFinite(thisBefore) && prevAfter !== thisBefore) {
+          chainBreak = { at: rows[i].createdAt, reason: rows[i].reason, expected: prevAfter, saw: thisBefore };
+          break;
+        }
+      }
+
+      if (drift !== 0) {
+        findings.push(`${player.email}: balance is ${actual}, ledger says ${expected} (off by ${drift > 0 ? '+' : ''}${drift})`);
+      }
+      if (chainBreak) {
+        findings.push(`${player.email}: ledger chain breaks at "${chainBreak.reason}" — two writes interleaved`);
+      }
+
+      return {
+        email: player.email,
+        balance: actual,
+        ledgerExpected: expected,
+        drift,
+        movements: rows.length,
+        chainBreak,
+      };
+    });
+
+    // Duplicate entries: the one-entry-per-player rule should make this
+    // impossible, so any hit is a race that got through.
+    const dupes = await Score.aggregate([
+      { $match: { playerId: { $in: ids }, refunded: { $ne: true } } },
+      { $group: { _id: { playerId: '$playerId', matchId: '$matchId' }, count: { $sum: 1 } } },
+      { $match: { count: { $gt: 1 } } },
+    ]);
+    if (dupes.length) findings.push(`${dupes.length} duplicate fight entries — the one-entry rule was bypassed`);
+
+    // Contest pots should equal what was actually collected.
+    const contests = await TeamContest.find({ name: demoTagRegex() }).select('_id name entryFee prizePool status').lean();
+    const potChecks = [];
+    for (const contest of contests) {
+      const paidEntries = await TeamEntry.countDocuments({ contestId: String(contest._id), entryFeePaid: { $gt: 0 } });
+      const expectedPot = paidEntries * Math.max(0, Number(contest.entryFee) || 0);
+      const actualPot = Math.max(0, Number(contest.prizePool) || 0);
+      // A settled contest has paid its pot out, so a zero there is correct.
+      const mismatch = contest.status !== 'SETTLED' && actualPot !== expectedPot;
+      if (mismatch) findings.push(`${contest.name}: pot is ${actualPot}, ${paidEntries} paid entries should make it ${expectedPot}`);
+      potChecks.push({ name: contest.name, status: contest.status, paidEntries, expectedPot, actualPot, mismatch });
+    }
+
+    return res.json({
+      ok: true,
+      clean: findings.length === 0,
+      // The headline: one line the owner can read without interpreting the rest.
+      verdict: findings.length === 0
+        ? 'Books balance. Every test account matches its ledger, no duplicate entries, pots correct.'
+        : `${findings.length} problem${findings.length === 1 ? '' : 's'} found — see findings.`,
+      findings,
+      assumedStartingCoins: startCoins,
+      players: report,
+      duplicateEntries: dupes.length,
+      pots: potChecks,
+    });
+  } catch (error) {
+    console.error('Reconcile failed:', error);
+    return res.status(500).json({ ok: false, message: 'Reconcile failed.', detail: String(error?.message || '').slice(0, 200) });
+  }
+});
+
+// Top everyone back up mid-session, so a tester who spent their coins is not
+// stuck waiting on you.
+app.post('/api/admin/test-accounts/refill', verifyAdminToken, requireTestAccounts, async (req, res) => {
+  try {
+    const coins = Math.max(0, Math.round(Number(req.body?.coins ?? TEST_ACCOUNT_START_COINS)));
+    const result = await User.updateMany({ isTestAccount: true }, { $set: { tokens: String(coins) } });
+    return res.json({ ok: true, refilled: result?.modifiedCount || 0, coins });
+  } catch (error) {
+    return res.status(500).json({ ok: false, message: 'Could not refill test accounts.' });
+  }
+});
+
+// Purge. Uses the same confirmation guard as the other destructive routes, and
+// only ever touches rows flagged isTestAccount — a real player cannot be caught
+// by it.
+app.delete('/api/admin/test-accounts', verifyAdminToken, requireBulkConfirmation('TESTACCOUNTS'), async (req, res) => {
+  try {
+    const players = await User.find({ isTestAccount: true }).select('_id').lean();
+    const ids = players.map((row) => String(row._id));
+    const [scores, ledger, users, affiliates, admins] = await Promise.all([
+      Score.deleteMany({ playerId: { $in: ids } }),
+      FightEntryLedger.deleteMany({ userId: { $in: ids } }),
+      User.deleteMany({ isTestAccount: true }),
+      Affiliate.deleteMany({ isTestAccount: true }),
+      // A leftover privileged login is the worst thing to forget, so it goes
+      // with the same purge rather than needing a separate step.
+      Admin.deleteMany({ isTestAccount: true }),
+    ]);
+    return res.json({
+      ok: true,
+      deleted: {
+        players: users?.deletedCount || 0,
+        affiliates: affiliates?.deletedCount || 0,
+        admins: admins?.deletedCount || 0,
+        predictions: scores?.deletedCount || 0,
+        ledgerRows: ledger?.deletedCount || 0,
+      },
+    });
+  } catch (error) {
+    console.error('Test account purge failed:', error);
+    return res.status(500).json({ ok: false, message: 'Could not purge test accounts.' });
+  }
+});
+
+// ==========================================================================
+// FIGHTER PROFILES — the roster foundation
+//
+// A CombatFighter library already exists (fights carry fighterAId/fighterBId),
+// but its schema lives in a sibling module, and it holds none of the roster
+// identity a branding pipeline needs. Rather than modify a model defined
+// elsewhere, this is a COMPANION collection keyed by a normalised fighter name.
+//
+// Why keyed by name and not by CombatFighter id: most existing fights carry only
+// matchFighterA / matchFighterB strings, so a name key covers the whole back
+// catalogue. Where a CombatFighter row exists it is linked too.
+//
+// Deliberately holds no AI generation. This is the filing system: permanent IDs,
+// appearance counts computed from real fights, gear tiers as data, version
+// history, and a consent gate that any future generation must pass.
+// ==========================================================================
+const fighterKeyOf = (name) => String(name || '')
+  .toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
+
+const FIGHTER_LEVELS = Object.freeze([
+  { key: 'ROOKIE', minAppearances: 0 },
+  { key: 'CONTENDER', minAppearances: 3 },
+  { key: 'VETERAN', minAppearances: 6 },
+  { key: 'ELITE', minAppearances: 10 },
+  { key: 'LEGEND', minAppearances: 25 },
+]);
+
+const fighterProfileSchema = new mongoose.Schema({
+  // Permanent, never reused. Allocated from an atomic counter.
+  fmId: { type: String, required: true, unique: true },
+  fighterKey: { type: String, required: true, unique: true, index: true },
+  displayName: { type: String, required: true },
+  combatFighterId: { type: String, default: '' },
+  sport: { type: String, default: '' },
+
+  // Images. The original is never overwritten — that is the whole point.
+  originalImageUrl: { type: String, default: '' },
+  brandedImageUrl: { type: String, default: '' },
+  useBrandedImage: { type: Boolean, default: false },
+  imageStatus: {
+    type: String,
+    enum: ['not_started', 'queued', 'processing', 'review', 'completed', 'failed'],
+    default: 'not_started',
+  },
+  imageError: { type: String, default: '' },
+
+  // LIKENESS CONSENT. No generation may run without this. Recorded with a date
+  // and a source so it is auditable, not a checkbox someone remembers ticking.
+  likenessConsent: {
+    granted: { type: Boolean, default: false },
+    grantedAt: { type: Date, default: null },
+    source: { type: String, default: '' },
+    recordedBy: { type: String, default: '' },
+  },
+
+  // Computed from real fights, never typed in.
+  appearances: { type: Number, default: 0 },
+  appearancesUpdatedAt: { type: Date, default: null },
+  gearTier: { type: Number, default: 1 },
+  level: { type: String, default: 'ROOKIE' },
+
+  affiliateStatus: { type: Boolean, default: false },
+  affiliateSince: { type: Date, default: null },
+  foundingAffiliate: { type: Boolean, default: false },
+}, { timestamps: true });
+
+const fighterImageVersionSchema = new mongoose.Schema({
+  fighterKey: { type: String, required: true, index: true },
+  sourceImageUrl: { type: String, default: '' },
+  generatedImageUrl: { type: String, default: '' },
+  sport: { type: String, default: '' },
+  gearDesignId: { type: String, default: '' },
+  promptVersion: { type: String, default: '' },
+  provider: { type: String, default: '' },
+  status: { type: String, default: 'review' },
+  approved: { type: Boolean, default: false },
+  note: { type: String, default: '' },
+}, { timestamps: true });
+
+const gearDesignSchema = new mongoose.Schema({
+  name: { type: String, required: true },
+  sport: { type: String, default: 'all' },
+  tier: { type: Number, default: 1 },
+  minimumAppearances: { type: Number, default: 0 },
+  maximumAppearances: { type: Number, default: 0 },
+  primaryColor: { type: String, default: '#000000' },
+  secondaryColor: { type: String, default: '#df111b' },
+  accentColor: { type: String, default: '#f2b544' },
+  designPrompt: { type: String, default: '' },
+  logoPlacement: { type: String, default: 'shorts_lower_leg' },
+  logoScale: { type: Number, default: 0.06 },
+  specialRequirement: { type: String, default: '' },
+  active: { type: Boolean, default: true },
+}, { timestamps: true });
+
+const fighterIdCounterSchema = new mongoose.Schema({
+  _id: { type: String, default: 'fighter' },
+  seq: { type: Number, default: 0 },
+});
+
+const FighterProfile = mongoose.models.FighterProfile || mongoose.model('FighterProfile', fighterProfileSchema);
+const FighterImageVersion = mongoose.models.FighterImageVersion || mongoose.model('FighterImageVersion', fighterImageVersionSchema);
+const GearDesign = mongoose.models.GearDesign || mongoose.model('GearDesign', gearDesignSchema);
+const FighterIdCounter = mongoose.models.FighterIdCounter || mongoose.model('FighterIdCounter', fighterIdCounterSchema);
+
+// Atomic, so two simultaneous fighter creations cannot collide on an id.
+const allocateFighterId = async () => {
+  const counter = await FighterIdCounter.findByIdAndUpdate(
+    'fighter',
+    { $inc: { seq: 1 } },
+    { new: true, upsert: true },
+  );
+  return 'FM-' + String(counter.seq).padStart(6, '0');
+};
+
+const levelForAppearances = (appearances) => {
+  let level = 'ROOKIE';
+  FIGHTER_LEVELS.forEach((entry) => { if (appearances >= entry.minAppearances) level = entry.key; });
+  return level;
+};
+
+// Tiers as thresholds here, but the DESIGNS are rows in GearDesign — so a new
+// look is a back-office record, not a code change.
+const tierForAppearances = (appearances) => {
+  if (appearances >= 10) return 4;
+  if (appearances >= 6) return 3;
+  if (appearances >= 3) return 2;
+  return 1;
+};
+
+// Find or create by name. Called whenever a fight names a fighter, so the roster
+// builds itself from the fights that already exist.
+const upsertFighterProfile = async ({ name, sport = '', imageUrl = '', combatFighterId = '' }) => {
+  const fighterKey = fighterKeyOf(name);
+  if (!fighterKey) return null;
+
+  const existing = await FighterProfile.findOne({ fighterKey });
+  if (existing) {
+    let dirty = false;
+    // Fill blanks only. Never overwrite an original image, and never rename a
+    // fighter from a fight record — an admin owns those fields.
+    if (!existing.originalImageUrl && imageUrl) { existing.originalImageUrl = imageUrl; dirty = true; }
+    if (!existing.sport && sport) { existing.sport = sport; dirty = true; }
+    if (!existing.combatFighterId && combatFighterId) { existing.combatFighterId = String(combatFighterId); dirty = true; }
+    if (dirty) await existing.save();
+    return existing;
+  }
+
+  try {
+    return await FighterProfile.create({
+      fmId: await allocateFighterId(),
+      fighterKey,
+      displayName: String(name).trim().slice(0, 120),
+      sport,
+      originalImageUrl: imageUrl,
+      combatFighterId: String(combatFighterId || ''),
+    });
+  } catch (error) {
+    // Unique index race: another request created it a moment ago.
+    if (error?.code === 11000) return FighterProfile.findOne({ fighterKey });
+    throw error;
+  }
+};
+
+// Appearances counted from actual fights, as the spec asks — a number nobody can
+// inflate by typing.
+const recountFighterAppearances = async (fighterKey) => {
+  const profile = await FighterProfile.findOne({ fighterKey });
+  if (!profile) return null;
+  const nameRegex = new RegExp('^' + profile.displayName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '$', 'i');
+  const [asA, asB] = await Promise.all([
+    Match.countDocuments({ matchFighterA: nameRegex }),
+    Match.countDocuments({ matchFighterB: nameRegex }),
+  ]);
+  const appearances = asA + asB;
+  const tier = tierForAppearances(appearances);
+  const tierChanged = tier !== profile.gearTier;
+
+  profile.appearances = appearances;
+  profile.appearancesUpdatedAt = new Date();
+  profile.gearTier = tier;
+  profile.level = levelForAppearances(appearances);
+  await profile.save();
+
+  return { profile, tierChanged };
+};
+
+// THE RESOLVER. One place decides which picture represents a fighter, so a
+// switch from original to branded changes every screen at once.
+const getActiveFighterImage = (profile) => {
+  if (!profile) return '';
+  if (profile.useBrandedImage && profile.brandedImageUrl) return profile.brandedImageUrl;
+  return profile.originalImageUrl || '';
+};
+
+// --------------------------------------------------------------------------
+// PUBLIC
+// --------------------------------------------------------------------------
+app.get('/api/fighters/:key', async (req, res) => {
+  try {
+    const fighterKey = fighterKeyOf(req.params.key);
+    const profile = await FighterProfile.findOne({ fighterKey }).lean();
+    if (!profile) return res.status(404).json({ ok: false, message: 'Fighter not found.' });
+    return res.json({
+      ok: true,
+      fighter: {
+        fmId: profile.fmId,
+        name: profile.displayName,
+        sport: profile.sport,
+        image: getActiveFighterImage(profile),
+        appearances: profile.appearances,
+        level: profile.level,
+        gearTier: profile.gearTier,
+        affiliate: profile.affiliateStatus,
+        foundingAffiliate: profile.foundingAffiliate,
+      },
+    });
+  } catch (error) {
+    console.error('Fighter lookup failed:', error);
+    return res.status(500).json({ ok: false, message: 'Could not load that fighter.' });
+  }
+});
+
+app.get('/api/fighters', async (req, res) => {
+  try {
+    const filter = {};
+    const sport = String(req.query.sport || '').trim();
+    if (sport) filter.sport = sport;
+    const fighters = await FighterProfile.find(filter)
+      .sort({ appearances: -1, displayName: 1 })
+      .limit(parsePositiveInteger(req.query.limit, 100, 300))
+      .lean();
+    return res.json({
+      ok: true,
+      fighters: fighters.map((profile) => ({
+        fmId: profile.fmId,
+        key: profile.fighterKey,
+        name: profile.displayName,
+        sport: profile.sport,
+        image: getActiveFighterImage(profile),
+        appearances: profile.appearances,
+        level: profile.level,
+        affiliate: profile.affiliateStatus,
+      })),
+    });
+  } catch (error) {
+    console.error('Fighter list failed:', error);
+    return res.status(500).json({ ok: false, message: 'Could not load fighters.' });
+  }
+});
+
+// --------------------------------------------------------------------------
+// ADMIN
+// --------------------------------------------------------------------------
+// Builds the roster from every fight already in the database. Safe to re-run:
+// upsertFighterProfile fills blanks and never overwrites.
+app.post('/api/admin/fighters/backfill', verifyAdminToken, async (req, res) => {
+  try {
+    const fights = await Match.find({})
+      .select('matchFighterA matchFighterB fighterAImage fighterBImage matchCategory fighterAId fighterBId')
+      .limit(5000).lean();
+
+    let created = 0;
+    const seen = new Set();
+    for (const fight of fights) {
+      for (const [name, image, id] of [
+        [fight.matchFighterA, fight.fighterAImage, fight.fighterAId],
+        [fight.matchFighterB, fight.fighterBImage, fight.fighterBId],
+      ]) {
+        const key = fighterKeyOf(name);
+        if (!key || seen.has(key)) continue;
+        seen.add(key);
+        const before = await FighterProfile.countDocuments({ fighterKey: key });
+        await upsertFighterProfile({
+          name,
+          sport: String(fight.matchCategory || '').toLowerCase(),
+          imageUrl: image || '',
+          combatFighterId: id ? String(id) : '',
+        });
+        if (!before) created += 1;
+      }
+    }
+
+    // Then count appearances for everyone found.
+    let recounted = 0;
+    for (const key of seen) {
+      try { await recountFighterAppearances(key); recounted += 1; } catch (error) { /* keep going */ }
+    }
+
+    return res.json({ ok: true, fightsScanned: fights.length, fightersFound: seen.size, created, recounted });
+  } catch (error) {
+    console.error('Fighter backfill failed:', error);
+    return res.status(500).json({ ok: false, message: 'Backfill failed.' });
+  }
+});
+
+// Consent. Deliberately its own endpoint with its own audit fields — this is the
+// gate any future generation must pass, so it should be hard to set by accident.
+app.post('/api/admin/fighters/:key/consent', verifyAdminToken, async (req, res) => {
+  try {
+    const fighterKey = fighterKeyOf(req.params.key);
+    const granted = req.body?.granted === true;
+    const source = String(req.body?.source || '').trim();
+    if (granted && !source) {
+      return res.status(422).json({
+        ok: false,
+        message: 'Record where the consent came from (signed agreement, email, affiliate contract).',
+        code: 'CONSENT_SOURCE_REQUIRED',
+      });
+    }
+    const profile = await FighterProfile.findOneAndUpdate(
+      { fighterKey },
+      {
+        $set: {
+          'likenessConsent.granted': granted,
+          'likenessConsent.grantedAt': granted ? new Date() : null,
+          'likenessConsent.source': granted ? source.slice(0, 200) : '',
+          'likenessConsent.recordedBy': String(req.admin?.id || 'admin'),
+        },
+      },
+      { new: true },
+    ).lean();
+    if (!profile) return res.status(404).json({ ok: false, message: 'Fighter not found.' });
+    console.log(`[consent] ${fighterKey} likeness consent ${granted ? 'GRANTED' : 'revoked'} by ${req.admin?.id || 'admin'}`);
+    return res.json({ ok: true, fmId: profile.fmId, likenessConsent: profile.likenessConsent });
+  } catch (error) {
+    console.error('Consent update failed:', error);
+    return res.status(500).json({ ok: false, message: 'Could not record consent.' });
+  }
+});
+
+// The gate itself, so it exists before anything can generate.
+const assertLikenessConsent = async (fighterKey) => {
+  const profile = await FighterProfile.findOne({ fighterKey }).select('likenessConsent displayName').lean();
+  if (!profile) throw new Error('FIGHTER_NOT_FOUND');
+  if (!profile.likenessConsent?.granted) {
+    const error = new Error(`No likeness consent recorded for ${profile.displayName}. Generation refused.`);
+    error.code = 'LIKENESS_CONSENT_MISSING';
+    throw error;
+  }
+  return profile;
+};
+
+app.post('/api/admin/fighters/:key/image', verifyAdminToken, async (req, res) => {
+  try {
+    const fighterKey = fighterKeyOf(req.params.key);
+    const profile = await FighterProfile.findOne({ fighterKey });
+    if (!profile) return res.status(404).json({ ok: false, message: 'Fighter not found.' });
+
+    // A branded image may only be attached to a fighter who consented — the same
+    // gate a generator would hit, applied to a manual upload too.
+    if (req.body?.brandedImageUrl) {
+      try {
+        await assertLikenessConsent(fighterKey);
+      } catch (error) {
+        return res.status(403).json({ ok: false, message: error.message, code: error.code || 'CONSENT_REQUIRED' });
+      }
+      // Keep the previous look recoverable before replacing it.
+      if (profile.brandedImageUrl) {
+        await FighterImageVersion.create({
+          fighterKey,
+          sourceImageUrl: profile.originalImageUrl,
+          generatedImageUrl: profile.brandedImageUrl,
+          sport: profile.sport,
+          status: 'superseded',
+          approved: profile.useBrandedImage,
+          note: 'Replaced by a newer branded image.',
+        });
+      }
+      profile.brandedImageUrl = String(req.body.brandedImageUrl).trim();
+      profile.imageStatus = 'review';
+    }
+
+    if (typeof req.body?.useBrandedImage === 'boolean') {
+      if (req.body.useBrandedImage && !profile.brandedImageUrl) {
+        return res.status(422).json({ ok: false, message: 'No branded image to switch to.' });
+      }
+      profile.useBrandedImage = req.body.useBrandedImage;
+      if (req.body.useBrandedImage) profile.imageStatus = 'completed';
+    }
+    if (req.body?.originalImageUrl && !profile.originalImageUrl) {
+      profile.originalImageUrl = String(req.body.originalImageUrl).trim();
+    }
+
+    await profile.save();
+    return res.json({
+      ok: true,
+      fmId: profile.fmId,
+      activeImage: getActiveFighterImage(profile),
+      imageStatus: profile.imageStatus,
+    });
+  } catch (error) {
+    console.error('Fighter image update failed:', error);
+    return res.status(500).json({ ok: false, message: 'Could not update that fighter.' });
+  }
+});
+
+app.get('/api/admin/fighters/:key/versions', verifyAdminToken, async (req, res) => {
+  try {
+    const versions = await FighterImageVersion.find({ fighterKey: fighterKeyOf(req.params.key) })
+      .sort({ createdAt: -1 }).limit(50).lean();
+    return res.json({ ok: true, versions });
+  } catch (error) {
+    return res.status(500).json({ ok: false, message: 'Could not load versions.' });
+  }
+});
+
+app.post('/api/admin/fighters/:key/recount', verifyAdminToken, async (req, res) => {
+  try {
+    const result = await recountFighterAppearances(fighterKeyOf(req.params.key));
+    if (!result) return res.status(404).json({ ok: false, message: 'Fighter not found.' });
+    return res.json({
+      ok: true,
+      fmId: result.profile.fmId,
+      appearances: result.profile.appearances,
+      gearTier: result.profile.gearTier,
+      level: result.profile.level,
+      tierChanged: result.tierChanged,
+    });
+  } catch (error) {
+    console.error('Recount failed:', error);
+    return res.status(500).json({ ok: false, message: 'Recount failed.' });
+  }
+});
+
+app.post('/api/admin/gear-designs', verifyAdminToken, async (req, res) => {
+  try {
+    const name = String(req.body?.name || '').trim();
+    if (!name) return res.status(422).json({ ok: false, message: 'A design name is required.' });
+    const design = await GearDesign.create({
+      name: name.slice(0, 120),
+      sport: String(req.body?.sport || 'all').toLowerCase(),
+      tier: Math.max(1, Math.round(Number(req.body?.tier) || 1)),
+      minimumAppearances: Math.max(0, Math.round(Number(req.body?.minimumAppearances) || 0)),
+      maximumAppearances: Math.max(0, Math.round(Number(req.body?.maximumAppearances) || 0)),
+      primaryColor: String(req.body?.primaryColor || '#000000'),
+      secondaryColor: String(req.body?.secondaryColor || '#df111b'),
+      accentColor: String(req.body?.accentColor || '#f2b544'),
+      designPrompt: String(req.body?.designPrompt || '').slice(0, 2000),
+      logoPlacement: String(req.body?.logoPlacement || 'shorts_lower_leg'),
+      logoScale: Number(req.body?.logoScale) || 0.06,
+      specialRequirement: String(req.body?.specialRequirement || '').slice(0, 200),
+    });
+    return res.status(201).json({ ok: true, designId: design._id });
+  } catch (error) {
+    console.error('Gear design create failed:', error);
+    return res.status(500).json({ ok: false, message: 'Could not create that design.' });
+  }
+});
+
+app.get('/api/admin/gear-designs', verifyAdminToken, async (req, res) => {
+  try {
+    const designs = await GearDesign.find({}).sort({ sport: 1, tier: 1 }).limit(200).lean();
+    return res.json({ ok: true, designs });
+  } catch (error) {
+    return res.status(500).json({ ok: false, message: 'Could not load designs.' });
+  }
+});
+
+// Roster overview for the back office: who needs consent, who needs an image.
+app.get('/api/admin/fighters/overview', verifyAdminToken, async (req, res) => {
+  try {
+    const [total, consented, branded, live] = await Promise.all([
+      FighterProfile.countDocuments({}),
+      FighterProfile.countDocuments({ 'likenessConsent.granted': true }),
+      FighterProfile.countDocuments({ brandedImageUrl: { $ne: '' } }),
+      FighterProfile.countDocuments({ useBrandedImage: true }),
+    ]);
+    const needsConsent = await FighterProfile.find({ 'likenessConsent.granted': { $ne: true } })
+      .select('fmId displayName appearances sport').sort({ appearances: -1 }).limit(50).lean();
+    return res.json({
+      ok: true,
+      totals: { fighters: total, withConsent: consented, withBrandedImage: branded, showingBranded: live },
+      // Highest appearance count first — the fighters worth asking first.
+      needsConsent,
+    });
+  } catch (error) {
+    console.error('Fighter overview failed:', error);
+    return res.status(500).json({ ok: false, message: 'Could not load the roster overview.' });
+  }
+});
+
+// ==========================================================================
+// LEAGUE NOTICES — how a promoter reaches the players they brought in
+//
+// Nothing existed. A promoter could put a card up and their league members had
+// no way to learn about it except opening the app and noticing. That breaks the
+// affiliate model: you ask someone to bring you players, then give them no way
+// to reach them.
+//
+// A promoter ANNOUNCES deliberately rather than the system firing on every
+// promotion. Two reasons: the promoter knows which of their cards is worth an
+// inbox, and an automatic send on every write path (creation, shadow link, admin
+// edit) would fire several times for one fight.
+//
+// Every notice reaches the league's bells. Email is rate-limited, because one
+// promoter with a large league mailing every card would burn the platform's
+// sending reputation exactly as the old platform-wide blast did.
+// ==========================================================================
+const LEAGUE_EMAIL_COOLDOWN_HOURS = Math.max(1, Number(process.env.LEAGUE_EMAIL_COOLDOWN_HOURS || 24));
+const LEAGUE_EMAIL_MAX_RECIPIENTS = Math.max(1, Number(process.env.LEAGUE_EMAIL_MAX_RECIPIENTS || 5000));
+
+const leagueNoticeSchema = new mongoose.Schema({
+  affiliateId: { type: String, required: true, index: true },
+  affiliateName: { type: String, default: '' },
+  fightId: { type: String, default: '' },
+  sourceType: { type: String, enum: ['match', 'shadow'], default: 'match' },
+  headline: { type: String, required: true },
+  body: { type: String, default: '' },
+  // Snapshot of who it went to, so reach is answerable later and the promoter
+  // can see whether it landed.
+  memberCount: { type: Number, default: 0 },
+  emailedCount: { type: Number, default: 0 },
+  emailSkippedReason: { type: String, default: '' },
+}, { timestamps: true });
+
+leagueNoticeSchema.index({ affiliateId: 1, createdAt: -1 });
+
+const LeagueNotice = mongoose.models.LeagueNotice || mongoose.model('LeagueNotice', leagueNoticeSchema);
+
+// --------------------------------------------------------------------------
+// ANNOUNCE
+// --------------------------------------------------------------------------
+app.post('/api/affiliates/me/promotions/:fightId/announce', submitLimiter, verifyToken, requireScope(TOKEN_SCOPES.AFFILIATE), async (req, res) => {
+  try {
+    const affiliateId = String(req.user?.id || req.user?._id || '').trim();
+    const fightId = String(req.params.fightId || '').trim();
+
+    const affiliate = await Affiliate.findById(affiliateId)
+      .select('_id verified playerName firstName lastName leagueName usersJoined').lean();
+    if (!affiliate) return res.status(404).json({ ok: false, message: 'Affiliate account not found.' });
+    if (!affiliate.verified) {
+      return res.status(403).json({ ok: false, message: 'Your league must be approved before you can send notices.', code: 'NOT_VERIFIED' });
+    }
+
+    // The promoter must actually be attached to this fight — otherwise a
+    // promoter could announce, and take credit for, somebody else's card.
+    let fight = null;
+    let sourceType = 'match';
+    if (mongoose.isValidObjectId(fightId)) {
+      fight = await Match.findOne({ _id: fightId, affiliateId }).select('matchFighterA matchFighterB matchDate matchTokens matchCategory').lean();
+      if (!fight) {
+        const shadow = await Shadow.findOne({
+          _id: fightId,
+          'AffiliateIds.AffiliateId': mongoose.Types.ObjectId.isValid(affiliateId) ? new mongoose.Types.ObjectId(affiliateId) : affiliateId,
+        }).select('matchFighterA matchFighterB matchDate matchTokens matchCategory').lean();
+        if (shadow) { fight = shadow; sourceType = 'shadow'; }
+      }
+    }
+    if (!fight) {
+      return res.status(403).json({ ok: false, message: 'That fight is not one of yours to announce.', code: 'NOT_YOUR_FIGHT' });
+    }
+
+    const members = Array.isArray(affiliate.usersJoined) ? affiliate.usersJoined : [];
+    if (members.length === 0) {
+      return res.status(422).json({ ok: false, message: 'Nobody has joined your league yet.', code: 'EMPTY_LEAGUE' });
+    }
+
+    const promoterName = [affiliate.leagueName, affiliate.playerName, affiliate.firstName].map((v) => String(v || '').trim()).find(Boolean) || 'Your league';
+    const pair = [fight.matchFighterA, fight.matchFighterB].filter(Boolean).join(' vs ');
+    const fee = Math.max(0, Math.round(Number(fight.matchTokens) || 0));
+    const headline = String(req.body?.headline || '').trim().slice(0, 120)
+      || (pair ? `${promoterName} put up ${pair}` : `${promoterName} has a new card`);
+    const body = String(req.body?.message || '').trim().slice(0, 300)
+      || (fee > 0 ? `${fee.toLocaleString()} FM to enter.` : 'Free to enter.');
+
+    // Email cooldown, per promoter. The notice still goes to every bell —
+    // only the inbox is throttled.
+    const cutoff = new Date(Date.now() - LEAGUE_EMAIL_COOLDOWN_HOURS * 3600 * 1000);
+    const recentEmail = await LeagueNotice.findOne({
+      affiliateId, emailedCount: { $gt: 0 }, createdAt: { $gte: cutoff },
+    }).select('createdAt').lean();
+
+    let emailedCount = 0;
+    let emailSkippedReason = '';
+
+    if (recentEmail) {
+      const hoursLeft = Math.max(1, Math.ceil((new Date(recentEmail.createdAt).getTime() + LEAGUE_EMAIL_COOLDOWN_HOURS * 3600 * 1000 - Date.now()) / 3600000));
+      emailSkippedReason = `Email cooldown — you can email your league again in about ${hoursLeft}h. This notice still went to every member's notifications.`;
+    } else {
+      // Only members who have not opted out of mail.
+      const memberIds = members.map((m) => String(m.userId)).filter((id) => mongoose.isValidObjectId(id));
+      const recipients = memberIds.length
+        ? await User.find({
+          _id: { $in: memberIds },
+          isSubscribed: { $ne: false },
+          isNotificationsEnabled: { $ne: false },
+        }).select('email firstName').limit(LEAGUE_EMAIL_MAX_RECIPIENTS).lean()
+        : [];
+
+      const appUrl = String(process.env.PUBLIC_APP_URL || 'https://www.fantasymmadness.com').replace(/\/$/, '');
+      await Promise.allSettled(recipients.filter((r) => r.email).map((recipient) => transporter.sendMail({
+        from: FMM_MAIL_FROM,
+        to: recipient.email,
+        subject: headline,
+        html: `<div style="font-family:Arial,Helvetica,sans-serif;color:#201f1d;max-width:600px;margin:auto">
+          <p>Hi ${escapeHtml(recipient.firstName || 'there')},</p>
+          <p style="font-size:17px"><strong>${escapeHtml(headline)}</strong></p>
+          <p>${escapeHtml(body)}</p>
+          ${fight.matchDate ? `<p style="color:#5d5a55">Fight date: ${escapeHtml(String(fight.matchDate).slice(0, 10))}</p>` : ''}
+          <p><a href="${appUrl}" style="display:inline-block;padding:11px 20px;background:#f2b544;color:#2b1b00;text-decoration:none;border-radius:6px;font-weight:bold">Open Fantasy MMAdness</a></p>
+          <p style="font-size:12px;color:#8a8579">You are getting this because you joined ${escapeHtml(promoterName)} on Fantasy MMAdness. You can turn league emails off in your account settings.</p>
+        </div>`,
+      }).catch((error) => { console.error('League notice mail failed:', error.message); })));
+      emailedCount = recipients.length;
+    }
+
+    const notice = await LeagueNotice.create({
+      affiliateId,
+      affiliateName: promoterName,
+      fightId: String(fight._id),
+      sourceType,
+      headline,
+      body,
+      memberCount: members.length,
+      emailedCount,
+      emailSkippedReason,
+    });
+
+    // Keep the Back Office informed without using the legacy platform-wide
+    // player blast. LeagueNotice powers the promoter/member feeds; this global
+    // Notification row is only the existing admin audit stream.
+    await new Notification({
+      title: `Affiliate Promotion: ${promoterName} announced ${pair || 'a new fight'} to ${members.length} league member${members.length === 1 ? '' : 's'}`,
+    }).save();
+
+    return res.status(201).json({
+      ok: true,
+      noticeId: notice._id,
+      reachedBells: members.length,
+      emailed: emailedCount,
+      emailSkippedReason: emailSkippedReason || undefined,
+      message: emailedCount
+        ? `Sent to ${members.length} member${members.length === 1 ? '' : 's'} — ${emailedCount} by email.`
+        : `Posted to ${members.length} member${members.length === 1 ? '' : 's'}' notifications.`,
+    });
+  } catch (error) {
+    console.error('League announce failed:', error);
+    return res.status(500).json({ ok: false, message: 'Could not send that notice.' });
+  }
+});
+
+// What the promoter can see about their own reach.
+app.get('/api/affiliates/me/promotions/reach', verifyToken, requireScope(TOKEN_SCOPES.AFFILIATE), async (req, res) => {
+  try {
+    const affiliateId = String(req.user?.id || req.user?._id || '').trim();
+    const affiliate = await Affiliate.findById(affiliateId).select('usersJoined leagueName playerName').lean();
+    if (!affiliate) return res.status(404).json({ ok: false, message: 'Affiliate account not found.' });
+
+    const members = Array.isArray(affiliate.usersJoined) ? affiliate.usersJoined : [];
+    const notices = await LeagueNotice.find({ affiliateId }).sort({ createdAt: -1 }).limit(20).lean();
+    const cutoff = new Date(Date.now() - LEAGUE_EMAIL_COOLDOWN_HOURS * 3600 * 1000);
+    const lastEmail = notices.find((n) => n.emailedCount > 0 && new Date(n.createdAt) >= cutoff);
+
+    // How many of this promoter's members have actually entered something — the
+    // number that tells them whether their league is alive.
+    const memberIds = members.map((m) => String(m.userId)).filter((id) => mongoose.isValidObjectId(id));
+    const activeMembers = memberIds.length
+      ? (await Score.distinct('playerId', { playerId: { $in: memberIds } })).length
+      : 0;
+
+    return res.json({
+      ok: true,
+      leagueName: [affiliate.leagueName, affiliate.playerName].map((v) => String(v || '').trim()).find(Boolean) || 'Your league',
+      members: members.length,
+      activeMembers,
+      joinedLast7Days: members.filter((m) => m.joinedAt && (Date.now() - new Date(m.joinedAt).getTime()) < 7 * 86400000).length,
+      emailAvailable: !lastEmail,
+      emailCooldownHours: LEAGUE_EMAIL_COOLDOWN_HOURS,
+      notices: notices.map((n) => ({
+        id: n._id,
+        headline: n.headline,
+        sentAt: n.createdAt,
+        reachedBells: n.memberCount,
+        emailed: n.emailedCount,
+        note: n.emailSkippedReason || '',
+      })),
+    });
+  } catch (error) {
+    console.error('Promoter reach failed:', error);
+    return res.status(500).json({ ok: false, message: 'Could not load your reach.' });
+  }
+});
+
+// Ready-made share text and link, so a promoter is not composing a post from
+// scratch every time. Distribution is mostly friction — this removes some.
+app.get('/api/affiliates/me/promotions/:fightId/share', verifyToken, requireScope(TOKEN_SCOPES.AFFILIATE), async (req, res) => {
+  try {
+    const affiliateId = String(req.user?.id || req.user?._id || '').trim();
+    const fightId = String(req.params.fightId || '').trim();
+    const affiliate = await Affiliate.findById(affiliateId).select('leagueName playerName profileUrl').lean();
+    if (!affiliate) return res.status(404).json({ ok: false, message: 'Affiliate account not found.' });
+
+    const fight = mongoose.isValidObjectId(fightId)
+      ? await Match.findById(fightId).select('matchFighterA matchFighterB matchDate matchTokens matchCategory').lean()
+      : null;
+
+    const appUrl = String(process.env.PUBLIC_APP_URL || 'https://www.fantasymmadness.com').replace(/\/$/, '');
+    // The ref parameter is what ties a signup back to this promoter.
+    const joinLink = `${appUrl}/?ref=${encodeURIComponent(affiliateId)}`;
+    const fightLink = fight ? `${appUrl}/?ref=${encodeURIComponent(affiliateId)}&fight=${encodeURIComponent(fightId)}` : joinLink;
+    const pair = fight ? [fight.matchFighterA, fight.matchFighterB].filter(Boolean).join(' vs ') : '';
+    const fee = fight ? Math.max(0, Math.round(Number(fight.matchTokens) || 0)) : 0;
+    const league = [affiliate.leagueName, affiliate.playerName].map((v) => String(v || '').trim()).find(Boolean) || 'my league';
+
+    return res.json({
+      ok: true,
+      joinLink,
+      fightLink,
+      // Per platform, because a post that works on X reads wrong on Facebook.
+      share: {
+        short: pair ? `${pair} — predict it with ${league}. ${fightLink}` : `Play fight predictions with ${league}. ${joinLink}`,
+        facebook: pair
+          ? `I've got ${pair} up on Fantasy MMAdness. Score it round by round against ${league}${fee > 0 ? ` — ${fee.toLocaleString()} FM to enter` : ' — free to enter'}. ${fightLink}`
+          : `Join ${league} on Fantasy MMAdness and predict the fights round by round. ${joinLink}`,
+        tiktok: pair ? `${pair}. My picks are locked. Beat me: ${fightLink}` : `Beat my fight picks: ${joinLink}`,
+        sms: pair ? `${pair} is up on Fantasy MMAdness — come score it: ${fightLink}` : `Join my Fantasy MMAdness league: ${joinLink}`,
+      },
+    });
+  } catch (error) {
+    console.error('Share payload failed:', error);
+    return res.status(500).json({ ok: false, message: 'Could not build a share link.' });
+  }
+});
+
+// --------------------------------------------------------------------------
+// PLAYER NOTIFICATION FEED
+// Publishing a fight wrote a single global Notification row with no userId, so
+// no player ever saw it and one admin marking it read cleared it for everyone.
+// The bell had a read timestamp but nothing to count against.
+//
+// Derived rather than fanned out: a row per user per fight would mean tens of
+// thousands of writes each time a card is published, and would need pruning.
+// This reads recent fights and the caller's own money events, then compares
+// against notificationsReadAt for the unread count.
+// --------------------------------------------------------------------------
+app.get('/api/users/me/notifications', verifyToken, async (req, res) => {
+  try {
+    const userId = String(req.user?.id || req.user?._id || '').trim();
+    const user = await User.findById(userId).select('notificationsReadAt residenceState').lean();
+    if (!user) return res.status(404).json({ ok: false, message: 'Account not found.' });
+
+    const readAt = user.notificationsReadAt ? new Date(user.notificationsReadAt) : new Date(0);
+    const since = new Date(Date.now() - 21 * 24 * 3600 * 1000);
+    const notifications = [];
+
+    // 1. Fights published in the last three weeks — the thing that was missing.
+    const fights = await Match.find({ createdAt: { $gte: since } })
+      .select('matchName matchFighterA matchFighterB matchDate matchCategory matchTokens createdAt prizesSettledAt')
+      .sort({ createdAt: -1 }).limit(40).lean();
+
+    fights.forEach((fight) => {
+      const pair = [fight.matchFighterA, fight.matchFighterB].filter(Boolean).join(' vs ');
+      notifications.push({
+        id: 'fight:' + fight._id,
+        type: 'NEW_FIGHT',
+        title: pair ? `New fight: ${pair}` : `New fight: ${fight.matchName || 'card published'}`,
+        body: (fight.matchCategory ? String(fight.matchCategory).toUpperCase() + ' · ' : '')
+          + (Number(fight.matchTokens) > 0 ? `${Number(fight.matchTokens).toLocaleString()} FM entry` : 'Free entry'),
+        fightId: String(fight._id),
+        at: fight.createdAt,
+      });
+    });
+
+    // 2. Results for fights this player actually entered — a settled fight they
+    //    were not in is not news for them.
+    const myEntries = await Score.find({ playerId: userId, refunded: { $ne: true } })
+      .select('matchId').limit(200).lean();
+    const myFightIds = myEntries.map((row) => String(row.matchId)).filter((id) => mongoose.isValidObjectId(id));
+    if (myFightIds.length) {
+      const settled = await Match.find({ _id: { $in: myFightIds }, prizesSettledAt: { $gte: since } })
+        .select('matchFighterA matchFighterB prizesSettledAt').sort({ prizesSettledAt: -1 }).limit(25).lean();
+      settled.forEach((fight) => {
+        notifications.push({
+          id: 'settled:' + fight._id,
+          type: 'FIGHT_SETTLED',
+          title: 'Results are in: ' + [fight.matchFighterA, fight.matchFighterB].filter(Boolean).join(' vs '),
+          body: 'Your scorecard has been scored — check where you finished.',
+          fightId: String(fight._id),
+          at: fight.prizesSettledAt,
+        });
+      });
+    }
+
+    // 3. Notices from leagues this player has joined. This is the promoter's
+    //    channel to the players they brought in — it reaches every member's bell
+    //    even when the email was held back by the cooldown.
+    const myLeagues = await Affiliate.find({ 'usersJoined.userId': userId })
+      .select('_id leagueName playerName').limit(25).lean();
+    if (myLeagues.length) {
+      const leagueNames = new Map(myLeagues.map((league) => [
+        String(league._id),
+        [league.leagueName, league.playerName].map((v) => String(v || '').trim()).find(Boolean) || 'Your league',
+      ]));
+      const notices = await LeagueNotice.find({
+        affiliateId: { $in: myLeagues.map((league) => String(league._id)) },
+        createdAt: { $gte: since },
+      }).sort({ createdAt: -1 }).limit(25).lean();
+
+      notices.forEach((notice) => {
+        notifications.push({
+          id: 'league:' + notice._id,
+          type: 'LEAGUE_NOTICE',
+          title: notice.headline,
+          body: [notice.body, leagueNames.get(String(notice.affiliateId))].filter(Boolean).join(' · '),
+          fightId: notice.fightId || undefined,
+          at: notice.createdAt,
+        });
+      });
+    }
+
+    // 4. This player's own money movements, straight off the ledger.
+    const moves = await FightEntryLedger.find({ userId, createdAt: { $gte: since } })
+      .select('type amount matchId createdAt').sort({ createdAt: -1 }).limit(25).lean();
+    moves.forEach((move) => {
+      const credit = Number(move.amount) > 0;
+      notifications.push({
+        id: 'ledger:' + move._id,
+        type: credit ? 'COINS_IN' : 'COINS_OUT',
+        title: credit
+          ? `+${Math.abs(Number(move.amount)).toLocaleString()} FM added`
+          : `${Math.abs(Number(move.amount)).toLocaleString()} FM spent`,
+        body: String(move.type || '').replace(/_/g, ' ').toLowerCase(),
+        at: move.createdAt,
+      });
+    });
+
+    notifications.sort((a, b) => new Date(b.at) - new Date(a.at));
+    const trimmed = notifications.slice(0, 50);
+    const unread = trimmed.filter((row) => new Date(row.at) > readAt).length;
+
+    return res.json({
+      ok: true,
+      unread,
+      notificationsReadAt: user.notificationsReadAt || null,
+      notifications: trimmed.map((row) => ({ ...row, unread: new Date(row.at) > readAt })),
+    });
+  } catch (error) {
+    console.error('Notification feed failed:', error);
+    return res.status(500).json({ ok: false, message: 'Could not load notifications.' });
+  }
+});
+
+app.get('/api/users/me/notifications/state', verifyToken, async (req, res) => {
+  try {
+    const user = await User.findById(String(req.user?.id || req.user?._id || ''))
+      .select('notificationsReadAt').lean();
+    return res.status(200).json({ notificationsReadAt: user?.notificationsReadAt || null });
+  } catch (error) {
+    return res.status(500).json({ message: 'Could not read notification state.' });
+  }
+});
+
+
+// --------------------------------------------------------------------------
+// WALLET AUDIT TRAIL
+// Every balance change should be answerable later ("I had 3,000 coins
+// yesterday"). recordWalletMove writes one ledger row per movement.
+// --------------------------------------------------------------------------
+const recordWalletMove = async ({ userId, amount, balanceBefore, balanceAfter, reason, reference = '', meta = {}, session = null }) => {
+  const delta = Math.round(Number(amount) || 0);
+  if (!userId || !delta) return;
+  try {
+    const key = `move:${reason}:${userId}:${reference || Date.now()}`;
+    await FightEntryLedger.create(
+      [{
+        userId,
+        matchId: String(reference || reason).slice(0, 120),
+        sourceType: 'match',
+        type: delta < 0 ? 'FIGHT_ENTRY' : 'FIGHT_ENTRY_REFUND',
+        amount: delta,
+        balanceBefore: Math.round(Number(balanceBefore) || 0),
+        balanceAfter: Math.round(Number(balanceAfter) || 0),
+        idempotencyKey: key,
+        metadata: { reason, ...meta },
+      }],
+      session ? { session } : undefined
+    );
+  } catch (error) {
+    // Duplicate key = this movement was already recorded. Anything else is a
+    // real audit failure worth seeing in the logs.
+    if (error?.code !== 11000) console.warn('Wallet audit write failed:', reason, error.message);
+  }
+};
+
+
+// Winner of a finished fight, computed with the server's own scoring engine.
+// Replaces client-side scoring in winnerUtils.js, which needed every player's
+// raw predictions in the browser to work.
+app.get('/api/matches/:matchId/winner', async (req, res) => {
+  try {
+    const matchId = String(req.params.matchId || '').trim();
+    if (!matchId) return res.status(400).json({ message: 'A match id is required.' });
+
+    let fight = await Match.findById(matchId).lean();
+    if (!fight) fight = await Shadow.findById(matchId).lean();
+    if (!fight) return res.status(404).json({ message: 'Fight not found.' });
+
+    const rows = await Score.find({ matchId }).lean();
+    if (!rows.length) return res.status(200).json({ winner: null, entrants: 0 });
+
+    const category = String(fight.matchCategory || '').toLowerCase();
+    const oneStats = category === 'boxing'
+      ? fight?.BoxingMatch?.fighterOneStats
+      : fight?.MMAMatch?.fighterOneStats;
+    const twoStats = category === 'boxing'
+      ? fight?.BoxingMatch?.fighterTwoStats
+      : fight?.MMAMatch?.fighterTwoStats;
+
+    if (!Array.isArray(oneStats) || !Array.isArray(twoStats)) {
+      return res.status(200).json({ winner: null, entrants: rows.length, message: 'Official stats are not in yet.' });
+    }
+
+    let best = null;
+    for (const row of rows) {
+      if (String(row.entryStatus || '').toLowerCase() === 'refunded') continue;
+      const points = calculateClassicPredictionPoints(row.predictions, oneStats, twoStats, category);
+      if (!best || points > best.points) best = { playerId: row.playerId, points };
+    }
+    if (!best) return res.status(200).json({ winner: null, entrants: rows.length });
+
+    const user = await User.findById(best.playerId)
+      .select('_id firstName lastName playerName profileUrl').lean();
+
+    return res.status(200).json({
+      winner: user ? {
+        userId: user._id,
+        firstName: user.firstName,
+        lastName: user.lastName,
+        playerName: user.playerName,
+        profileUrl: user.profileUrl,
+        totalPoints: best.points,
+        matchId,
+      } : null,
+      entrants: rows.length,
+    });
+  } catch (error) {
+    console.error('Winner lookup failed:', error);
+    return res.status(500).json({ message: 'Could not work out the winner.' });
+  }
+});
+
+
+// Scored, ranked leaderboard for a fight. Four frontend components previously
+// scored every entrant in the browser, which is why the API had to expose all
+// raw predictions. This computes with the real engine and returns points only.
+app.get('/api/matches/:matchId/leaderboard', async (req, res) => {
+  try {
+    const matchId = String(req.params.matchId || '').trim();
+    if (!matchId) return res.status(400).json({ message: 'A match id is required.' });
+
+    let fight = await Match.findById(matchId).lean();
+    if (!fight) fight = await Shadow.findById(matchId).lean();
+    if (!fight) return res.status(404).json({ message: 'Fight not found.' });
+
+    const rows = await Score.find({ matchId }).lean();
+    const category = String(fight.matchCategory || '').toLowerCase();
+    const oneStats = category === 'boxing' ? fight?.BoxingMatch?.fighterOneStats : fight?.MMAMatch?.fighterOneStats;
+    const twoStats = category === 'boxing' ? fight?.BoxingMatch?.fighterTwoStats : fight?.MMAMatch?.fighterTwoStats;
+    const scoreable = Array.isArray(oneStats) && Array.isArray(twoStats);
+
+    const active = rows.filter((r) => String(r.entryStatus || '').toLowerCase() !== 'refunded');
+    const ids = active.map((r) => r.playerId).filter(Boolean);
+    const users = await User.find({ _id: { $in: ids } })
+      .select('_id firstName lastName playerName profileUrl').lean();
+    const byId = new Map(users.map((u) => [String(u._id), u]));
+
+    const entries = active.map((row) => {
+      const user = byId.get(String(row.playerId));
+      return {
+        userId: row.playerId,
+        firstName: user?.firstName || '',
+        lastName: user?.lastName || '',
+        playerName: user?.playerName || '',
+        profileUrl: user?.profileUrl || '',
+        totalPoints: scoreable
+          ? calculateClassicPredictionPoints(row.predictions, oneStats, twoStats, category)
+          : 0,
+      };
+    }).sort((a, b) => b.totalPoints - a.totalPoints)
+      .map((row, index) => ({ ...row, rank: index + 1 }));
+
+    return res.status(200).json({
+      matchId,
+      scored: scoreable,
+      entrants: entries.length,
+      leaderboard: entries,
+    });
+  } catch (error) {
+    console.error('Leaderboard build failed:', error);
+    return res.status(500).json({ message: 'Could not build the leaderboard.' });
+  }
+});
+
+
+// --------------------------------------------------------------------------
+// PRIZE SETTLEMENT
+// The pot previously only ever went UP (entries) or DOWN (refunds). Nothing
+// paid a winner, so a finished contest left the money stranded.
+//
+// House cut:
+//   * Affiliate-promoted fights: 50/50 with the promoter (owner's standing rule)
+//   * Admin fights: PLATFORM_RAKE_PCT of the pot
+// Prize split scales with field size — a 3-player contest paying three places is
+// pointless, and a 200-player contest paying one is discouraging.
+// Ties share their places' combined prize equally.
+// --------------------------------------------------------------------------
+const PLATFORM_RAKE_PCT = Number(process.env.PLATFORM_RAKE_PCT || 15);
+const AFFILIATE_SPLIT_PCT = Number(process.env.AFFILIATE_SPLIT_PCT || 50);
+
+const prizeSplitFor = (entrants) => {
+  if (entrants <= 1) return [100];
+  if (entrants < 5) return [100];            // too small to spread
+  if (entrants < 20) return [60, 25, 15];
+  return [50, 30, 20];
+};
+
+// Groups entrants by points so ties can share a place's money.
+const buildPrizeAwards = (rows, prizePool) => {
+  const split = prizeSplitFor(rows.length);
+  const ranked = [...rows].sort((a, b) => b.points - a.points);
+
+  const tiers = [];
+  for (const row of ranked) {
+    const last = tiers[tiers.length - 1];
+    if (last && last.points === row.points) last.players.push(row);
+    else tiers.push({ points: row.points, players: [row] });
+  }
+
+  const awards = [];
+  let place = 0;
+  for (const tier of tiers) {
+    if (place >= split.length) break;
+    // A tie spanning several places pools those places' shares.
+    const placesCovered = Math.min(tier.players.length, split.length - place);
+    const pooledPct = split.slice(place, place + placesCovered).reduce((a, b) => a + b, 0);
+    const pooled = Math.floor((prizePool * pooledPct) / 100);
+    const each = Math.floor(pooled / tier.players.length);
+    if (each > 0) {
+      tier.players.forEach((pl) => awards.push({
+        userId: pl.userId,
+        amount: each,
+        place: place + 1,
+        tied: tier.players.length > 1,
+      }));
+    }
+    place += tier.players.length;
+  }
+  return { awards, split };
+};
+
+app.post('/api/admin/fights/:fightId/settle', verifyAdminToken, async (req, res) => {
+  try {
+    const fightId = String(req.params.fightId || '').trim();
+    if (!fightId) return res.status(400).json({ message: 'A fight id is required.' });
+
+    let fight = await Match.findById(fightId);
+    let isShadow = false;
+    if (!fight) { fight = await Shadow.findById(fightId); isShadow = true; }
+    if (!fight) return res.status(404).json({ message: 'Fight not found.', code: 'FIGHT_NOT_FOUND' });
+
+    if (fight.prizesSettledAt) {
+      return res.status(200).json({
+        message: 'This fight was already settled.',
+        alreadySettled: true,
+        settledAt: fight.prizesSettledAt,
+      });
+    }
+
+    const category = String(fight.matchCategory || '').toLowerCase();
+    const oneStats = category === 'boxing' ? fight?.BoxingMatch?.fighterOneStats : fight?.MMAMatch?.fighterOneStats;
+    const twoStats = category === 'boxing' ? fight?.BoxingMatch?.fighterTwoStats : fight?.MMAMatch?.fighterTwoStats;
+    if (!Array.isArray(oneStats) || !Array.isArray(twoStats)) {
+      return res.status(409).json({
+        message: 'Enter the official round stats before settling prizes.',
+        code: 'STATS_MISSING',
+      });
+    }
+
+    // A free contest has no pot and nothing to pay out, but it still needs
+    // settling so badges, titles and sponsor prizes are handed out.
+    const isFreeContest = Math.max(0, Number(fight.matchTokens) || 0) === 0;
+    const rows = (await Score.find({ matchId: fightId }).lean())
+      .filter((r) => String(r.entryStatus || '').toLowerCase() !== 'refunded');
+    if (!rows.length) {
+      return res.status(409).json({ message: 'No entries to settle.', code: 'NO_ENTRIES' });
+    }
+
+    // HOUSE RISK GUARD.
+    // The prize is declared before entry and never grows with registrations, so
+    // a thin contest would otherwise be paid out of platform funds — which is
+    // the "house risk" a fantasy exemption cannot include. Below the declared
+    // minimum the contest voids and every entry is refunded from the ledger.
+    // Break-even is the honest floor: enough paid entries to cover the prize the
+    // players were shown. Affiliates already size campaigns this way (the
+    // campaign screen computes pot ÷ buy-in), so when nobody sets an explicit
+    // minimum we use that figure rather than leaving old fights unprotected.
+    const declaredPot = Math.max(0, Math.round(Number(fight.pot) || 0));
+    const entryFee = Math.max(0, Math.round(Number(fight.matchTokens) || 0));
+    const committedFunding = Math.min(declaredPot,
+      Math.max(0, Math.round(Number(fight.promoterStake) || 0))
+      + Math.max(0, Math.round(Number(fight.platformContribution) || 0)));
+    const uncoveredPrize = Math.max(0, declaredPot - committedFunding);
+    const breakEvenEntrants = entryFee > 0 ? Math.ceil(uncoveredPrize / entryFee) : 0;
+    const minimumEntrants = Math.max(0, Math.round(Number(fight.minimumEntrants) || 0)) || breakEvenEntrants;
+    // Nothing was charged, so there is no shortfall to protect against.
+    const autoRefundIfShort = !isFreeContest && fight.autoRefundIfShort !== false;
+    if (minimumEntrants > 0 && rows.length < minimumEntrants && autoRefundIfShort) {
+      const refund = await refundFightEntries({
+        fightId,
+        reason: `Contest voided: ${rows.length} of ${minimumEntrants} required entries.`,
+        adminId: req.admin?.id || null,
+      });
+      await (isShadow ? Shadow : Match).updateOne({ _id: fightId }, {
+        $set: {
+          voidedAt: new Date(),
+          voidReason: `Minimum of ${minimumEntrants} entrants not met (${rows.length}).`,
+        },
+      });
+      return res.status(200).json({
+        voided: true,
+        reason: 'MINIMUM_ENTRANTS_NOT_MET',
+        entrants: rows.length,
+        minimumEntrants,
+        refundedCount: refund.refundedCount,
+        totalRefunded: refund.totalRefunded,
+        message: `Contest voided and ${refund.refundedCount} entr${refund.refundedCount === 1 ? 'y' : 'ies'} refunded. The declared prize was not covered by entries.`,
+      });
+    }
+
+    const scored = rows.map((r) => ({
+      userId: String(r.playerId),
+      points: calculateClassicPredictionPoints(r.predictions, oneStats, twoStats, category),
+    }));
+
+    const pot = Math.max(0, Math.round(Number(fight.pot) || 0));
+    const promoterId = fight.affiliateId
+      || (Array.isArray(fight.AffiliateIds) && fight.AffiliateIds[0]?.AffiliateId)
+      || null;
+
+    // House cut before anything is paid.
+    const housePct = promoterId ? AFFILIATE_SPLIT_PCT : PLATFORM_RAKE_PCT;
+    const houseCut = Math.floor((pot * housePct) / 100);
+    const prizePool = Math.max(0, pot - houseCut);
+
+    // Fees taken above the declared prize are revenue, not prize money. Keeping
+    // these separate is the whole compliance point: the PRIZE cannot depend on
+    // how many entered, but REVENUE can and should.
+    const collectedFees = Math.max(0, Math.round(Number(fight.collectedFees) || 0));
+    const surplus = Math.max(0, collectedFees - pot);
+    const promoterSurplusShare = promoterId ? Math.floor((surplus * AFFILIATE_SPLIT_PCT) / 100) : 0;
+
+    const { awards, split } = buildPrizeAwards(scored, prizePool);
+
+    // Claim the settlement atomically BEFORE any money moves. The earlier
+    // prizesSettledAt check is read-then-write: two concurrent calls (a
+    // double-click, a retried request) both passed it and both paid the full
+    // pot. Only the request that wins this update is allowed to pay.
+    const FightModel = isShadow ? Shadow : Match;
+    const settlementStartedAt = new Date();
+    const claimed = await FightModel.findOneAndUpdate(
+      { _id: fightId, $or: [{ prizesSettledAt: null }, { prizesSettledAt: { $exists: false } }] },
+      { $set: { prizesSettledAt: settlementStartedAt } },
+      { new: true },
+    );
+    if (!claimed) {
+      const current = await FightModel.findById(fightId).select('prizesSettledAt').lean();
+      return res.status(200).json({
+        message: 'This fight was already settled.',
+        alreadySettled: true,
+        settledAt: current?.prizesSettledAt || null,
+      });
+    }
+
+    // Promoter's half of the house cut on an affiliate fight.
+    let promoterPaid = 0;
+    if (promoterId && houseCut > 0) {
+      const promoter = await Affiliate.findById(promoterId);
+      if (promoter) {
+        const pBefore = Number.parseInt(String(promoter.tokens || '0'), 10) || 0;
+        // Fixed cut of the declared pot, plus their share of everything the
+        // contest took above it. This is how promoter earnings grow with entrants
+        // while the prize stays exactly as advertised.
+        promoterPaid = houseCut + promoterSurplusShare;
+        promoter.tokens = String(pBefore + promoterPaid);
+        await promoter.save();
+        await recordWalletMove({
+          userId: promoter._id,
+          amount: promoterPaid,
+          balanceBefore: pBefore,
+          balanceAfter: pBefore + promoterPaid,
+          reason: 'affiliate_pot_share',
+          reference: fightId,
+          meta: {
+            potTotal: pot, sharePct: housePct,
+            fixedCut: houseCut, surplusShare: promoterSurplusShare,
+            collectedFees, entrants: scored.length,
+          },
+        });
+      }
+    }
+
+    // Credit each winner.
+    let totalPaid = 0;
+    for (const award of awards) {
+      const winner = await User.findById(award.userId);
+      if (!winner) continue;
+      const wBefore = Number.parseInt(String(winner.tokens || '0'), 10) || 0;
+      winner.tokens = String(wBefore + award.amount);
+      await winner.save();
+      totalPaid += award.amount;
+      await recordWalletMove({
+        userId: winner._id,
+        amount: award.amount,
+        balanceBefore: wBefore,
+        balanceAfter: wBefore + award.amount,
+        reason: 'prize_award',
+        reference: fightId + ':' + award.place,
+        meta: { place: award.place, tied: award.tied, potTotal: pot },
+      });
+      sendMoneyNotice({
+        to: winner.email,
+        subject: award.place === 1 ? 'You won!' : `You finished #${award.place}`,
+        heading: award.place === 1 ? 'YOU WON' : `#${award.place} FINISH`,
+        lines: [
+          `${fight.matchFighterA || 'Fighter A'} vs ${fight.matchFighterB || 'Fighter B'} has been settled.`,
+          `<strong>${award.amount.toLocaleString()} FM</strong> has been added to your wallet${award.tied ? ' (shared with a tied player)' : ''}.`,
+        ],
+      });
+    }
+
+    // prizesSettledAt was already stamped by the atomic claim above.
+    await FightModel.updateOne(
+      { _id: fightId },
+      { $set: { prizePoolPaid: totalPaid, houseCutTaken: houseCut } },
+    );
+
+    // Team Cards: credit both fighters to every team holding them on this card.
+    let teamSummary = null;
+    if (TEAM_CARDS_ENABLED) {
+      try {
+        teamSummary = await creditTeamEntries(fight, oneStats, twoStats);
+      } catch (teamCreditError) {
+        console.error('Fight settled but team crediting failed:', teamCreditError);
+        teamSummary = { error: 'TEAM_CREDIT_FAILED' };
+      }
+    }
+
+    // Season Cards: whatever these two fighters actually did is credited to every
+    // roster that drafted them. Runs off the same official round stats, so a
+    // season can never disagree with the fight it was scored from.
+    let seasonSummary = null;
+    if (SEASON_CARDS_ENABLED) {
+      try {
+        seasonSummary = await creditSeasonRosters(fight, oneStats, twoStats);
+      } catch (seasonError2) {
+        console.error('Fight settled but season crediting failed:', seasonError2);
+        seasonSummary = { error: 'SEASON_CREDIT_FAILED' };
+      }
+    }
+
+    // Badges, titles, sponsor merch and PPV codes. Runs for every contest, paid
+    // or free — but it is what makes a FREE contest worth entering, since there
+    // is no pot to pay from. Idempotent, so a re-run cannot double-award.
+    let prizeSummary = null;
+    try {
+      prizeSummary = await awardNonCashPrizes(fightId, scored, fight);
+    } catch (prizeError) {
+      console.error('Cash prizes settled but non-cash awards failed:', prizeError);
+      prizeSummary = { error: 'AWARDS_FAILED' };
+    }
+
+    // Head-to-head challenges on this fight settle in the same action, so an
+    // admin never has to remember a second button. Own claim per challenge, so a
+    // failure here cannot unwind the pot payout above.
+    let challengeSummary = null;
+    if (HEAD_TO_HEAD_ENABLED) {
+      try {
+        challengeSummary = await settleFightChallenges(fightId);
+      } catch (challengeError) {
+        console.error('Pot settled but challenge settlement failed:', challengeError);
+        challengeSummary = { error: 'CHALLENGE_SETTLE_FAILED' };
+      }
+    }
+
+    return res.status(200).json({
+      fightId,
+      challenges: challengeSummary,
+      awardsGiven: prizeSummary,
+      seasonCards: seasonSummary,
+      teamCards: teamSummary,
+      potTotal: pot,
+      housePct,
+      houseCut,
+      promoterPaid,
+      collectedFees,
+      declaredPrizePool: prizePool,
+      surplus,
+      promoterSurplusShare,
+      platformKept: (houseCut - (promoterId ? houseCut : 0)) + (surplus - promoterSurplusShare),
+      entrants: scored.length,
+      minimumEntrants,
+      breakEvenEntrants,
+      prizePool,
+      totalPaid,
+      split,
+      awards: awards.map((a) => ({ userId: a.userId, place: a.place, amount: a.amount, tied: a.tied })),
+    });
+  } catch (error) {
+    console.error('Prize settlement failed:', error);
+    // Release the claim so an operator can retry. Money already credited is
+    // recorded in the wallet ledger, so a retry is auditable rather than silent.
+    try {
+      const fightId = String(req.params.fightId || '').trim();
+      await Promise.all([
+        Match.updateOne({ _id: fightId, prizePoolPaid: { $exists: false } }, { $unset: { prizesSettledAt: '' } }),
+        Shadow.updateOne({ _id: fightId, prizePoolPaid: { $exists: false } }, { $unset: { prizesSettledAt: '' } }),
+      ]);
+    } catch (releaseError) {
+      console.error('Could not release settlement claim:', releaseError);
+    }
+    return res.status(500).json({ message: 'Could not settle prizes.', code: 'SETTLE_FAILED' });
+  }
+});
+
+
+// Shadow Fight promoter controls. The promoter stakes a pot up front, entries
+// fill it, and only once it is covered are they in profit — which is why they,
+// not us, decide when the contest starts.
+app.post('/api/affiliates/me/shadow-fights/:fightId/stake', verifyToken, requireScope(TOKEN_SCOPES.AFFILIATE), async (req, res) => {
+  try {
+    const affiliateId = String(req.user?.id || req.user?._id || '').trim();
+    const fightId = String(req.params.fightId || '').trim();
+    const stake = Math.max(0, Math.floor(Number(req.body?.potTarget) || 0));
+    if (!stake) return res.status(400).json({ message: 'Set the pot you are putting up.', code: 'INVALID_STAKE' });
+
+    const fight = await Shadow.findById(fightId) || await Match.findById(fightId);
+    if (!fight) return res.status(404).json({ message: 'Fight not found.' });
+
+    const promoterIds = [fight.affiliateId, ...(Array.isArray(fight.AffiliateIds) ? fight.AffiliateIds.map((a) => a?.AffiliateId) : [])]
+      .filter(Boolean).map(String);
+    if (!promoterIds.includes(affiliateId)) {
+      return res.status(403).json({ message: 'You do not promote this fight.', code: 'NOT_PROMOTER' });
+    }
+    if (Number(fight.pot) > 0) {
+      return res.status(409).json({ message: 'Entries have already started — the pot cannot be changed now.', code: 'ENTRIES_STARTED' });
+    }
+
+    fight.potTarget = stake;
+    fight.promoterStake = stake;
+    fight.profitZoneReachedAt = null;
+    await fight.save();
+    return res.status(200).json({ fightId, potTarget: stake });
+  } catch (error) {
+    console.error('Stake update failed:', error);
+    return res.status(500).json({ message: 'Could not set that pot.' });
+  }
+});
+
+// Live fill status for the promoter's dashboard.
+app.get('/api/affiliates/me/shadow-fights/:fightId/status', verifyToken, requireScope(TOKEN_SCOPES.AFFILIATE), async (req, res) => {
+  try {
+    const affiliateId = String(req.user?.id || req.user?._id || '').trim();
+    const fight = await Shadow.findById(req.params.fightId).lean()
+      || await Match.findById(req.params.fightId).lean();
+    if (!fight) return res.status(404).json({ message: 'Fight not found.' });
+
+    const promoterIds = [fight.affiliateId, ...(Array.isArray(fight.AffiliateIds) ? fight.AffiliateIds.map((a) => a?.AffiliateId) : [])]
+      .filter(Boolean).map(String);
+    if (!promoterIds.includes(affiliateId)) {
+      return res.status(403).json({ message: 'You do not promote this fight.', code: 'NOT_PROMOTER' });
+    }
+
+    const pot = Math.max(0, Number(fight.pot) || 0);
+    const target = Math.max(0, Number(fight.potTarget) || 0);
+    const entrants = Array.isArray(fight.userPredictions)
+      ? fight.userPredictions.filter((u) => String(u?.predictionStatus) === 'submitted').length
+      : 0;
+    const inProfit = target > 0 && pot >= target;
+    // Everything past the staked pot is profit, split with the platform.
+    const profitAboveStake = Math.max(0, pot - target);
+    const yourShare = Math.floor((profitAboveStake * AFFILIATE_SPLIT_PCT) / 100);
+
+    return res.status(200).json({
+      fightId: String(fight._id),
+      potTarget: target,
+      potFilled: pot,
+      fillPct: target ? Math.min(100, Math.round((pot / target) * 100)) : null,
+      entrants,
+      inProfitZone: inProfit,
+      profitZoneReachedAt: fight.profitZoneReachedAt || null,
+      profitAboveStake,
+      yourProjectedShare: yourShare,
+      canStart: inProfit,
+    });
+  } catch (error) {
+    return res.status(500).json({ message: 'Could not load that status.' });
+  }
+});
+
+// ==========================================================================
+// HEAD-TO-HEAD CHALLENGES
+//
+// A head-to-head is not a new money system — it is a contest with two entrants.
+// The platform is already the referee: it escrows both stakes in its own ledger,
+// scores both cards server-side from the official round stats, and pays out.
+// So this file reuses the hardened pipeline rather than inventing a parallel one:
+//
+//   - stakes are debited through a transaction with a ledger row, like entries
+//   - both players score with calculateClassicPredictionPoints, like contests
+//   - settlement is claimed atomically before money moves, like fight settlement
+//   - refunds go back through the wallet with an audit row, like cancellations
+//
+// What is genuinely new is only the invite lifecycle: challenge, accept, decline,
+// expire — plus a tie rule, which matters here because a tie between two players
+// is common where a tie across a 40-player pot is not.
+//
+// SHIPPED OFF. HEAD_TO_HEAD_ENABLED must be 'true' to expose any of it. Peer-to-
+// peer staking is classified differently from pooled fantasy contests in some
+// states, so this stays dark until the RESTRICTED_STATES legal review lands.
+// ==========================================================================
+const HEAD_TO_HEAD_ENABLED = ['true', '1', 'yes', 'on']
+  .includes(String(process.env.HEAD_TO_HEAD_ENABLED || 'false').trim().toLowerCase());
+
+// Stricter than the platform list when set, because this is the product most
+// likely to be restricted where pooled contests are not.
+const HEAD_TO_HEAD_RESTRICTED_STATES = String(process.env.HEAD_TO_HEAD_RESTRICTED_STATES || '')
+  .split(',').map((x) => x.trim().toUpperCase()).filter(Boolean);
+
+// Platform cut on a head-to-head pot. This is how DFS operators price H2H — the
+// house takes a percentage of the two stakes rather than a share of a pool. Taken
+// ONLY on a decided result: a tie returns both stakes whole, because a drawn
+// contest is not a service we should be charging for.
+const H2H_RAKE_PERCENT = Math.min(25, Math.max(0, Number(process.env.HEAD_TO_HEAD_RAKE_PERCENT ?? 10)));
+
+const H2H_MIN_STAKE = Math.max(1, Number(process.env.HEAD_TO_HEAD_MIN_STAKE || 10));
+const H2H_MAX_STAKE = Math.max(H2H_MIN_STAKE, Number(process.env.HEAD_TO_HEAD_MAX_STAKE || 5000));
+
+const challengeSchema = new mongoose.Schema({
+  fightId: { type: String, required: true, index: true },
+  sourceType: { type: String, enum: ['match', 'shadow'], default: 'match' },
+  challengerId: { type: String, required: true, index: true },
+  opponentId: { type: String, required: true, index: true },
+  stake: { type: Number, required: true, min: 1 },
+  status: {
+    type: String,
+    enum: ['PENDING', 'ACCEPTED', 'DECLINED', 'EXPIRED', 'SETTLED', 'VOID'],
+    default: 'PENDING',
+    index: true,
+  },
+  expiresAt: { type: Date, required: true },
+  // Filled at settlement. winnerId stays null on a tie.
+  winnerId: { type: String, default: null },
+  tie: { type: Boolean, default: false },
+  payout: { type: Number, default: 0 },
+  // Platform cut actually taken, in coins. Zero on a tie or a void.
+  rake: { type: Number, default: 0 },
+  challengerPoints: { type: Number, default: null },
+  opponentPoints: { type: Number, default: null },
+  settledAt: { type: Date, default: null },
+  voidReason: { type: String, default: '' },
+}, { timestamps: true });
+
+// One live challenge per pair per fight. Settled/declined rows are excluded so a
+// rematch on a later fight — or after a decline — is still possible.
+challengeSchema.index(
+  { fightId: 1, challengerId: 1, opponentId: 1, status: 1 },
+  { partialFilterExpression: { status: { $in: ['PENDING', 'ACCEPTED'] } } },
+);
+
+const Challenge = mongoose.models.Challenge || mongoose.model('Challenge', challengeSchema);
+
+// --------------------------------------------------------------------------
+// DESTRUCTIVE BULK OPERATIONS
+// Several admin routes call deleteMany({}) — wiping an entire collection in one
+// request. Admin-only stops outsiders, but not a mis-tap, a stale browser tab, or
+// a script pointed at the wrong environment. Each now needs the collection named
+// back explicitly, and each logs who did it.
+// --------------------------------------------------------------------------
+// Declared as a hoisted function, NOT a const arrow: the routes that use it are
+// registered earlier in this file, and a const would still be in the temporal
+// dead zone at that point — which crashed the server at boot with
+// "Cannot access 'requireBulkConfirmation' before initialization".
+function requireBulkConfirmation(collectionName) {
+  return (req, res, next) => {
+    const supplied = String(req.body?.confirm || req.query?.confirm || '').trim();
+    if (supplied !== `DELETE-ALL-${collectionName}`) {
+      return res.status(400).json({
+        ok: false,
+        message: `This permanently deletes every record in ${collectionName}. Send confirm="DELETE-ALL-${collectionName}" to proceed.`,
+        code: 'BULK_CONFIRMATION_REQUIRED',
+      });
+    }
+    console.warn(`[bulk-delete] ${collectionName} wiped by admin ${req.admin?.id || 'unknown'} at ${new Date().toISOString()}`);
+    return next();
+  };
+}
+
+const h2hError = (status, message, code, extra = {}) => {
+  const error = new Error(message);
+  error.status = status;
+  error.code = code;
+  error.extra = extra;
+  return error;
+};
+
+const requireHeadToHead = (req, res, next) => {
+  if (!HEAD_TO_HEAD_ENABLED) {
+    return res.status(404).json({
+      ok: false,
+      message: 'Head-to-Head is not open yet. Join the waitlist and we will email you.',
+      code: 'FEATURE_DISABLED',
+    });
+  }
+  return next();
+};
+
+// Head-to-head is a paid, peer-to-peer action, so it clears the normal play gate
+// AND its own state list.
+const checkHeadToHeadEligibility = (user) => {
+  const blocked = checkPlayEligibility(user);
+  if (blocked) return blocked;
+  const state = String(user?.residenceState || '').trim().toUpperCase();
+  if (state && HEAD_TO_HEAD_RESTRICTED_STATES.includes(state)) {
+    return {
+      code: 'H2H_STATE_RESTRICTED',
+      message: 'Head-to-Head challenges are not available in your state.',
+    };
+  }
+  return null;
+};
+
+const loadFightForChallenge = async (fightId, session = null) => {
+  let sourceType = 'match';
+  let fight = await withFightSession(Match.findById(fightId), session);
+  if (!fight) {
+    sourceType = 'shadow';
+    fight = await withFightSession(Shadow.findById(fightId), session);
+  }
+  return { fight, sourceType };
+};
+
+// Both players wager on the scorecard they already submitted for this fight.
+// No second prediction surface, no way to score a challenge off a card the
+// player never entered.
+const requireEntryForChallenge = async (userId, fightId, session = null) => {
+  const entry = await withFightSession(
+    Score.findOne({ playerId: String(userId), matchId: String(fightId), refunded: { $ne: true } }),
+    session,
+  ).lean();
+  if (!entry) {
+    throw h2hError(409, 'You need a scorecard in this fight before you can wager on it.', 'NO_ENTRY_YET');
+  }
+  return entry;
+};
+
+// Moves stake out of a wallet and into escrow, or back again. Same ledger the
+// rest of the money paths write to, so a challenge is auditable alongside entries.
+const moveChallengeStake = async ({ userId, delta, reason, reference, session, meta = {} }) => {
+  const user = await withFightSession(User.findById(userId), session);
+  if (!user) throw h2hError(404, 'Account not found.', 'USER_NOT_FOUND');
+  const before = fightTokenBalance(user.tokens);
+  const after = before + delta;
+  if (after < 0) {
+    throw h2hError(402, 'Not enough FM coins for that stake.', 'INSUFFICIENT_FUNDS', {
+      balance: before,
+      stake: Math.abs(delta),
+      shortfall: Math.abs(delta) - before,
+    });
+  }
+  user.tokens = String(after);
+  await user.save(session ? { session } : undefined);
+  await recordWalletMove({
+    userId,
+    amount: delta,
+    balanceBefore: before,
+    balanceAfter: after,
+    reason,
+    reference,
+    meta,
+    session,
+  });
+  return { before, after };
+};
+
+// --------------------------------------------------------------------------
+// CREATE — challenger's stake is escrowed immediately, so the coins they are
+// offering cannot be spent elsewhere while the invite is outstanding.
+// --------------------------------------------------------------------------
+app.post('/api/challenges', requireHeadToHead, submitLimiter, verifyToken, requireScope(TOKEN_SCOPES.PLAYER), async (req, res) => {
+  try {
+    const challengerId = String(req.user?.id || req.user?._id || '').trim();
+    const fightId = String(req.body?.fightId || '').trim();
+    const stake = Math.floor(Number(req.body?.stake) || 0);
+    const opponentHandle = String(req.body?.opponent || '').trim();
+
+    if (!fightId) throw h2hError(400, 'A fight is required.', 'INVALID_FIGHT_ID');
+    if (!opponentHandle) throw h2hError(400, 'Choose who you are challenging.', 'INVALID_OPPONENT');
+    if (stake < H2H_MIN_STAKE || stake > H2H_MAX_STAKE) {
+      throw h2hError(422, `Stake must be between ${H2H_MIN_STAKE} and ${H2H_MAX_STAKE} FM.`, 'INVALID_STAKE', {
+        min: H2H_MIN_STAKE,
+        max: H2H_MAX_STAKE,
+      });
+    }
+
+    // Resolve the opponent by player name or email, never by an id the client
+    // supplies — so a challenge cannot be aimed at an arbitrary account row.
+    const opponent = await User.findOne({
+      $or: [
+        { playerName: new RegExp(`^${opponentHandle.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`, 'i') },
+        { email: opponentHandle.toLowerCase() },
+      ],
+    }).select('_id email playerName firstName dateOfBirth residenceState selfExcludedUntil').lean();
+
+    if (!opponent) throw h2hError(404, 'We could not find that player.', 'OPPONENT_NOT_FOUND');
+    if (String(opponent._id) === challengerId) {
+      throw h2hError(422, 'You cannot challenge yourself.', 'SELF_CHALLENGE');
+    }
+
+    const result = await runFightEntryTransaction(async (session) => {
+      const { fight, sourceType } = await loadFightForChallenge(fightId, session);
+      if (!fight) throw h2hError(404, 'Fight not found.', 'FIGHT_NOT_FOUND');
+      if (!isFightOpenForEntry(fight)) {
+        throw h2hError(409, 'Predictions are locked for this fight.', 'FIGHT_LOCKED');
+      }
+
+      const challenger = await withFightSession(
+        User.findById(challengerId).select('email playerName firstName dateOfBirth residenceState selfExcludedUntil'),
+        session,
+      ).lean();
+
+      const challengerBlocked = checkHeadToHeadEligibility(challenger);
+      if (challengerBlocked) throw h2hError(403, challengerBlocked.message, challengerBlocked.code);
+      const opponentBlocked = checkHeadToHeadEligibility(opponent);
+      if (opponentBlocked) {
+        throw h2hError(409, 'That player cannot accept challenges right now.', 'OPPONENT_INELIGIBLE');
+      }
+
+      await requireEntryForChallenge(challengerId, fightId, session);
+
+      const existing = await withFightSession(Challenge.findOne({
+        fightId,
+        status: { $in: ['PENDING', 'ACCEPTED'] },
+        $or: [
+          { challengerId, opponentId: String(opponent._id) },
+          { challengerId: String(opponent._id), opponentId: challengerId },
+        ],
+      }), session).lean();
+      if (existing) {
+        throw h2hError(409, 'You already have a challenge running with that player on this fight.', 'CHALLENGE_EXISTS');
+      }
+
+      // The invite dies at the prediction lock at the latest — an unaccepted
+      // challenge must never outlive the thing it is betting on.
+      const lockAt = fight.matchDate ? new Date(fight.matchDate) : null;
+      const in24h = new Date(Date.now() + 24 * 60 * 60 * 1000);
+      const expiresAt = lockAt && lockAt.getTime() > Date.now() && lockAt < in24h ? lockAt : in24h;
+
+      await moveChallengeStake({
+        userId: challengerId,
+        delta: -stake,
+        reason: 'h2h_stake_escrow',
+        reference: `h2h:${fightId}:${challengerId}`,
+        session,
+        meta: { opponentId: String(opponent._id), stake },
+      });
+
+      const [challenge] = await Challenge.create([{
+        fightId,
+        sourceType,
+        challengerId,
+        opponentId: String(opponent._id),
+        stake,
+        status: 'PENDING',
+        expiresAt,
+      }], session ? { session } : undefined);
+
+      return { challenge, fight, challenger, opponent };
+    });
+
+    sendMoneyNotice({
+      to: result.opponent.email,
+      subject: 'You have been challenged',
+      heading: 'HEAD-TO-HEAD CHALLENGE',
+      lines: [
+        `${result.challenger?.playerName || 'A player'} has challenged you on ${result.fight.matchFighterA || 'Fighter A'} vs ${result.fight.matchFighterB || 'Fighter B'}.`,
+        `Stake: <strong>${result.challenge.stake.toLocaleString()} FM</strong> each. Winner takes ${Math.floor((result.challenge.stake * 2) * (100 - H2H_RAKE_PERCENT) / 100).toLocaleString()} FM after a ${H2H_RAKE_PERCENT}% platform fee. A draw returns both stakes in full.`,
+        'Submit your scorecard for this fight, then accept the challenge before predictions lock.',
+      ],
+    });
+
+    return res.status(201).json({
+      ok: true,
+      challengeId: result.challenge._id,
+      status: result.challenge.status,
+      stake: result.challenge.stake,
+      pot: result.challenge.stake * 2,
+      rakePercent: H2H_RAKE_PERCENT,
+      winnerReceives: Math.floor((result.challenge.stake * 2) * (100 - H2H_RAKE_PERCENT) / 100),
+      expiresAt: result.challenge.expiresAt,
+      opponent: { id: result.opponent._id, name: result.opponent.playerName || result.opponent.firstName || 'Player' },
+    });
+  } catch (error) {
+    const status = error?.status || 500;
+    if (status >= 500) console.error('Challenge create failed:', error);
+    return res.status(status).json({
+      ok: false,
+      message: error?.message || 'Could not send that challenge.',
+      code: error?.code || 'CHALLENGE_FAILED',
+      ...(error?.extra || {}),
+    });
+  }
+});
+
+// --------------------------------------------------------------------------
+// ACCEPT — escrows the opponent's stake. Claimed atomically so a double-tap
+// cannot debit twice.
+// --------------------------------------------------------------------------
+app.post('/api/challenges/:id/accept', requireHeadToHead, verifyToken, requireScope(TOKEN_SCOPES.PLAYER), async (req, res) => {
+  try {
+    const userId = String(req.user?.id || req.user?._id || '').trim();
+    const challengeId = String(req.params.id || '').trim();
+
+    const result = await runFightEntryTransaction(async (session) => {
+      const challenge = await withFightSession(Challenge.findById(challengeId), session);
+      if (!challenge) throw h2hError(404, 'Challenge not found.', 'CHALLENGE_NOT_FOUND');
+      if (String(challenge.opponentId) !== userId) {
+        throw h2hError(403, 'This challenge was not sent to you.', 'NOT_YOUR_CHALLENGE');
+      }
+      if (challenge.status !== 'PENDING') {
+        throw h2hError(409, `This challenge is already ${challenge.status.toLowerCase()}.`, 'CHALLENGE_NOT_PENDING');
+      }
+      if (challenge.expiresAt.getTime() <= Date.now()) {
+        throw h2hError(409, 'This challenge has expired.', 'CHALLENGE_EXPIRED');
+      }
+
+      const { fight } = await loadFightForChallenge(challenge.fightId, session);
+      if (!fight) throw h2hError(404, 'Fight not found.', 'FIGHT_NOT_FOUND');
+      if (!isFightOpenForEntry(fight)) {
+        throw h2hError(409, 'Predictions are locked for this fight.', 'FIGHT_LOCKED');
+      }
+
+      const me = await withFightSession(
+        User.findById(userId).select('email playerName dateOfBirth residenceState selfExcludedUntil'),
+        session,
+      ).lean();
+      const blocked = checkHeadToHeadEligibility(me);
+      if (blocked) throw h2hError(403, blocked.message, blocked.code);
+
+      await requireEntryForChallenge(userId, challenge.fightId, session);
+
+      // Claim the acceptance before the debit.
+      const claimed = await withFightSession(
+        Challenge.findOneAndUpdate(
+          { _id: challengeId, status: 'PENDING' },
+          { $set: { status: 'ACCEPTED' } },
+          { new: true },
+        ),
+        session,
+      );
+      if (!claimed) throw h2hError(409, 'This challenge was already answered.', 'CHALLENGE_NOT_PENDING');
+
+      const balance = await moveChallengeStake({
+        userId,
+        delta: -challenge.stake,
+        reason: 'h2h_stake_escrow',
+        reference: `h2h:${challenge.fightId}:${userId}`,
+        session,
+        meta: { challengeId: String(challenge._id), stake: challenge.stake },
+      });
+
+      return { challenge: claimed, fight, balance, me };
+    });
+
+    const challenger = await User.findById(result.challenge.challengerId).select('email playerName').lean();
+    sendMoneyNotice({
+      to: challenger?.email,
+      subject: 'Your challenge was accepted',
+      heading: 'CHALLENGE ACCEPTED',
+      lines: [
+        `${result.me?.playerName || 'Your opponent'} accepted your ${result.challenge.stake.toLocaleString()} FM challenge.`,
+        `Winner takes <strong>${(result.challenge.stake * 2).toLocaleString()} FM</strong> once the fight is scored.`,
+      ],
+    });
+
+    return res.status(200).json({
+      ok: true,
+      challengeId: result.challenge._id,
+      status: result.challenge.status,
+      pot: result.challenge.stake * 2,
+      rakePercent: H2H_RAKE_PERCENT,
+      winnerReceives: Math.floor((result.challenge.stake * 2) * (100 - H2H_RAKE_PERCENT) / 100),
+      walletBalance: result.balance.after,
+    });
+  } catch (error) {
+    const status = error?.status || 500;
+    if (status >= 500) console.error('Challenge accept failed:', error);
+    return res.status(status).json({
+      ok: false,
+      message: error?.message || 'Could not accept that challenge.',
+      code: error?.code || 'ACCEPT_FAILED',
+      ...(error?.extra || {}),
+    });
+  }
+});
+
+// --------------------------------------------------------------------------
+// DECLINE / WITHDRAW — returns the escrowed stake. Either side may back out
+// while the invite is still pending.
+// --------------------------------------------------------------------------
+const releaseChallenge = async ({ challengeId, actorId, nextStatus, reason }) => runFightEntryTransaction(async (session) => {
+  const challenge = await withFightSession(Challenge.findById(challengeId), session);
+  if (!challenge) throw h2hError(404, 'Challenge not found.', 'CHALLENGE_NOT_FOUND');
+  if (actorId && ![String(challenge.challengerId), String(challenge.opponentId)].includes(String(actorId))) {
+    throw h2hError(403, 'This challenge is not yours.', 'NOT_YOUR_CHALLENGE');
+  }
+
+  // Atomic claim: only one caller gets to release the escrow.
+  const claimed = await withFightSession(
+    Challenge.findOneAndUpdate(
+      { _id: challengeId, status: 'PENDING' },
+      { $set: { status: nextStatus, voidReason: reason || '' } },
+      { new: true },
+    ),
+    session,
+  );
+  if (!claimed) {
+    const current = await withFightSession(Challenge.findById(challengeId), session).lean();
+    return { alreadyResolved: true, challenge: current };
+  }
+
+  await moveChallengeStake({
+    userId: challenge.challengerId,
+    delta: challenge.stake,
+    reason: 'h2h_stake_returned',
+    reference: `h2h:release:${challengeId}`,
+    session,
+    meta: { challengeId: String(challengeId), status: nextStatus },
+  });
+
+  return { alreadyResolved: false, challenge: claimed };
+});
+
+app.post('/api/challenges/:id/decline', requireHeadToHead, verifyToken, requireScope(TOKEN_SCOPES.PLAYER), async (req, res) => {
+  try {
+    const result = await releaseChallenge({
+      challengeId: String(req.params.id || '').trim(),
+      actorId: String(req.user?.id || req.user?._id || '').trim(),
+      nextStatus: 'DECLINED',
+      reason: 'Declined by the opponent.',
+    });
+    return res.status(200).json({
+      ok: true,
+      alreadyResolved: result.alreadyResolved,
+      message: result.alreadyResolved
+        ? 'That challenge was already resolved.'
+        : 'Challenge declined and the stake returned.',
+    });
+  } catch (error) {
+    const status = error?.status || 500;
+    if (status >= 500) console.error('Challenge decline failed:', error);
+    return res.status(status).json({ ok: false, message: error?.message || 'Could not decline.', code: error?.code || 'DECLINE_FAILED' });
+  }
+});
+
+// --------------------------------------------------------------------------
+// MY CHALLENGES
+// --------------------------------------------------------------------------
+app.get('/api/challenges/me', requireHeadToHead, verifyToken, requireScope(TOKEN_SCOPES.PLAYER), async (req, res) => {
+  try {
+    const userId = String(req.user?.id || req.user?._id || '').trim();
+    const rows = await Challenge.find({ $or: [{ challengerId: userId }, { opponentId: userId }] })
+      .sort({ createdAt: -1 }).limit(100).lean();
+
+    const otherIds = [...new Set(rows.map((row) => (String(row.challengerId) === userId ? row.opponentId : row.challengerId)))];
+    const others = otherIds.length
+      ? await User.find({ _id: { $in: otherIds.filter((id) => mongoose.isValidObjectId(id)) } })
+        .select('playerName firstName profileUrl').lean()
+      : [];
+    const byId = new Map(others.map((row) => [String(row._id), row]));
+
+    const fightIds = [...new Set(rows.map((row) => String(row.fightId)))].filter((id) => mongoose.isValidObjectId(id));
+    const fights = fightIds.length
+      ? await Match.find({ _id: { $in: fightIds } }).select('matchFighterA matchFighterB matchDate matchCategory').lean()
+      : [];
+    const fightById = new Map(fights.map((row) => [String(row._id), row]));
+
+    return res.json({
+      ok: true,
+      challenges: rows.map((row) => {
+        const iAmChallenger = String(row.challengerId) === userId;
+        const other = byId.get(String(iAmChallenger ? row.opponentId : row.challengerId));
+        const fight = fightById.get(String(row.fightId));
+        return {
+          id: row._id,
+          fightId: row.fightId,
+          fight: fight ? { fighterA: fight.matchFighterA, fighterB: fight.matchFighterB, date: fight.matchDate } : null,
+          direction: iAmChallenger ? 'sent' : 'received',
+          opponentName: other?.playerName || other?.firstName || 'Player',
+          opponentAvatar: other?.profileUrl || '',
+          stake: row.stake,
+          pot: row.stake * 2,
+          status: row.status,
+          expiresAt: row.expiresAt,
+          // Only meaningful once settled.
+          outcome: row.status !== 'SETTLED'
+            ? null
+            : row.tie ? 'tie' : (String(row.winnerId) === userId ? 'won' : 'lost'),
+          myPoints: iAmChallenger ? row.challengerPoints : row.opponentPoints,
+          theirPoints: iAmChallenger ? row.opponentPoints : row.challengerPoints,
+          payout: row.payout,
+          rake: row.rake || 0,
+          winnerReceives: Math.floor((row.stake * 2) * (100 - H2H_RAKE_PERCENT) / 100),
+        };
+      }),
+    });
+  } catch (error) {
+    console.error('Challenge list failed:', error);
+    return res.status(500).json({ ok: false, message: 'Could not load your challenges.' });
+  }
+});
+
+// --------------------------------------------------------------------------
+// SETTLEMENT — scored from the same official round stats as the pot contest.
+// Winner takes both stakes; a tie returns both. Runs per challenge with an
+// atomic claim, so a retried settle cannot pay twice.
+// --------------------------------------------------------------------------
+const settleFightChallenges = async (fightId) => {
+  const { fight } = await loadFightForChallenge(fightId);
+  if (!fight) return { settled: 0, skipped: 0, reason: 'FIGHT_NOT_FOUND' };
+
+  const category = String(fight.matchCategory || '').toLowerCase();
+  const oneStats = category === 'boxing' ? fight?.BoxingMatch?.fighterOneStats : fight?.MMAMatch?.fighterOneStats;
+  const twoStats = category === 'boxing' ? fight?.BoxingMatch?.fighterTwoStats : fight?.MMAMatch?.fighterTwoStats;
+  if (!Array.isArray(oneStats) || !Array.isArray(twoStats)) {
+    return { settled: 0, skipped: 0, reason: 'STATS_MISSING' };
+  }
+
+  const open = await Challenge.find({ fightId: String(fightId), status: { $in: ['PENDING', 'ACCEPTED'] } }).lean();
+  let settled = 0;
+  let voided = 0;
+
+  for (const row of open) {
+    // Never accepted — the stake goes back to whoever put it up.
+    if (row.status === 'PENDING') {
+      try {
+        await releaseChallenge({
+          challengeId: row._id,
+          actorId: null,
+          nextStatus: 'EXPIRED',
+          reason: 'Never accepted before the fight was scored.',
+        });
+        voided += 1;
+      } catch (error) {
+        console.error('Could not expire challenge', String(row._id), error.message);
+      }
+      continue;
+    }
+
+    try {
+      await runFightEntryTransaction(async (session) => {
+        // Claim before paying.
+        const claimed = await withFightSession(
+          Challenge.findOneAndUpdate(
+            { _id: row._id, status: 'ACCEPTED' },
+            { $set: { status: 'SETTLED', settledAt: new Date() } },
+            { new: true },
+          ),
+          session,
+        );
+        if (!claimed) return;
+
+        const [challengerCard, opponentCard] = await Promise.all([
+          withFightSession(Score.findOne({ playerId: String(row.challengerId), matchId: String(fightId), refunded: { $ne: true } }), session).lean(),
+          withFightSession(Score.findOne({ playerId: String(row.opponentId), matchId: String(fightId), refunded: { $ne: true } }), session).lean(),
+        ]);
+
+        const challengerPoints = challengerCard
+          ? calculateClassicPredictionPoints(challengerCard.predictions, oneStats, twoStats, category)
+          : null;
+        const opponentPoints = opponentCard
+          ? calculateClassicPredictionPoints(opponentCard.predictions, oneStats, twoStats, category)
+          : null;
+
+        // A refunded or missing card cannot win. If neither has one, both stakes
+        // go home — the platform does not keep money from a contest that never
+        // really happened.
+        const pot = row.stake * 2;
+        let winnerId = null;
+        let tie = false;
+
+        if (challengerPoints === null && opponentPoints === null) {
+          tie = true;
+        } else if (challengerPoints === null) {
+          winnerId = String(row.opponentId);
+        } else if (opponentPoints === null) {
+          winnerId = String(row.challengerId);
+        } else if (challengerPoints > opponentPoints) {
+          winnerId = String(row.challengerId);
+        } else if (opponentPoints > challengerPoints) {
+          winnerId = String(row.opponentId);
+        } else {
+          tie = true;
+        }
+
+        // Rake is charged on a decided result only, and floored so rounding can
+        // never pay out more than the pot holds.
+        const rake = tie ? 0 : Math.floor((pot * H2H_RAKE_PERCENT) / 100);
+        const netPayout = pot - rake;
+
+        if (tie) {
+          // Return each side's own stake rather than splitting a pot — same
+          // amount, but it reads correctly in the ledger.
+          for (const playerId of [row.challengerId, row.opponentId]) {
+            await moveChallengeStake({
+              userId: playerId,
+              delta: row.stake,
+              reason: 'h2h_tie_returned',
+              reference: `h2h:tie:${row._id}:${playerId}`,
+              session,
+              meta: { challengeId: String(row._id) },
+            });
+          }
+        } else {
+          await moveChallengeStake({
+            userId: winnerId,
+            delta: netPayout,
+            reason: 'h2h_prize',
+            reference: `h2h:win:${row._id}`,
+            session,
+            meta: { challengeId: String(row._id), stake: row.stake, pot, rake, rakePercent: H2H_RAKE_PERCENT },
+          });
+        }
+
+        await withFightSession(
+          Challenge.findByIdAndUpdate(row._id, {
+            $set: {
+              winnerId,
+              tie,
+              payout: tie ? row.stake : netPayout,
+              rake,
+              challengerPoints,
+              opponentPoints,
+            },
+          }),
+          session,
+        );
+
+        settled += 1;
+
+        const [challengerUser, opponentUser] = await Promise.all([
+          User.findById(row.challengerId).select('email playerName').lean(),
+          User.findById(row.opponentId).select('email playerName').lean(),
+        ]);
+        const label = `${fight.matchFighterA || 'Fighter A'} vs ${fight.matchFighterB || 'Fighter B'}`;
+        [[challengerUser, challengerPoints, opponentPoints], [opponentUser, opponentPoints, challengerPoints]]
+          .forEach(([person, mine, theirs]) => {
+            if (!person?.email) return;
+            const won = !tie && String(person._id) === winnerId;
+            sendMoneyNotice({
+              to: person.email,
+              subject: tie ? 'Your challenge was a draw' : won ? 'You won your challenge' : 'Your challenge result',
+              heading: tie ? 'DRAW' : won ? 'CHALLENGE WON' : 'CHALLENGE LOST',
+              lines: [
+                `${label} has been scored.`,
+                `Your card: <strong>${mine ?? 0}</strong> · Theirs: <strong>${theirs ?? 0}</strong>`,
+                tie
+                  ? `Scores were level, so your ${row.stake.toLocaleString()} FM stake has been returned.`
+                  : won
+                    ? `<strong>${netPayout.toLocaleString()} FM</strong> has been added to your wallet — a ${pot.toLocaleString()} FM pot less the ${H2H_RAKE_PERCENT}% platform fee.`
+                    : `Your ${row.stake.toLocaleString()} FM stake goes to your opponent.`,
+              ],
+            });
+          });
+      });
+    } catch (error) {
+      console.error('Challenge settlement failed for', String(row._id), error.message);
+    }
+  }
+
+  clearPublicResponseCache();
+  return { settled, voided, total: open.length };
+};
+
+// Activate a reusable Shadow template as a new live contest. The source
+// template is never modified, so it remains available for future quiet weeks.
+app.post('/api/admin/shadow/:shadowId/activate', verifyAdminToken, async (req, res) => {
+  try {
+    const shadowId = String(req.params.shadowId || '').trim();
+    const shadow = await Shadow.findById(shadowId).lean();
+    if (!shadow) return res.status(404).json({ ok: false, message: 'Shadow fight not found.' });
+
+    const {
+      _id, __v, createdAt, updatedAt, sourceMatchId, convertedFromLiveAt,
+      matchShadowStatus, matchShadowOpenStatus, shadowIdentityHidden,
+      shadowAutoPublished, shadowPublishedAt, shadowExpiresAt, shadowLastUsedAt,
+      shadowOriginalMatchDate, userPredictions, collectedFees, prizesSettledAt,
+      voidedAt, voidReason, shortfallPromoterWarnedAt, shortfallPlayersWarnedAt,
+      ...template
+    } = shadow;
+
+    const numberOrTemplate = (key) => req.body?.[key] !== undefined
+      ? Math.max(0, Math.round(Number(req.body[key]) || 0))
+      : Math.max(0, Math.round(Number(shadow[key]) || 0));
+    const requestedStatus = String(req.body?.matchStatus || 'Draft');
+    const matchStatus = ['Draft', 'Scheduled', 'Open'].includes(requestedStatus) ? requestedStatus : 'Draft';
+
+    const liveFight = await Match.create({
+      ...template,
+      sourceShadowId: shadow._id,
+      activatedFromShadowAt: new Date(),
+      matchType: 'LIVE',
+      matchStatus,
+      matchDate: req.body?.matchDate || shadow.matchDate || new Date(),
+      matchTime: req.body?.matchTime ?? shadow.matchTime,
+      matchTokens: numberOrTemplate('matchTokens'),
+      pot: numberOrTemplate('pot'),
+      promoterStake: numberOrTemplate('promoterStake'),
+      platformContribution: numberOrTemplate('platformContribution'),
+      projectedEntrants: numberOrTemplate('projectedEntrants'),
+      minimumEntrants: numberOrTemplate('minimumEntrants'),
+      autoRefundIfShort: req.body?.autoRefundIfShort !== false,
+      homepagePromoted: Boolean(req.body?.homepagePromoted),
+      featuredThisWeek: Boolean(req.body?.featuredThisWeek),
+      featuredFight: Boolean(req.body?.featuredFight),
+      notify: false,
+      addToShadow: false,
+      userPredictions: [],
+      collectedFees: 0,
+      profitZoneReachedAt: null,
+    });
+
+    clearPublicResponseCache();
+    return res.status(201).json({
+      ok: true,
+      message: 'Shadow template activated as a new live contest.',
+      sourceShadowId: shadowId,
+      fight: liveFight.toObject(),
+    });
+  } catch (error) {
+    console.error('Shadow activation failed:', error);
+    return res.status(500).json({ ok: false, message: 'Could not activate that Shadow fight.' });
+  }
+});
+
+// Lets an admin set or waive the house-risk guard for one fight. Waiving it means
+// the platform covers any shortfall itself, so it is recorded explicitly rather
+// than being an accident of a blank field.
+async function sendFightPublishedNotices(fight) {
+  const label = fightLabelOf(fight);
+  const fightUrl = `${APP_ORIGIN}/fight/${fight._id}`;
+  const [players, affiliates] = await Promise.all([
+    User.find({ isSubscribed: { $ne: false }, isNotificationsEnabled: { $ne: false } })
+      .select('email firstName').limit(20000).lean(),
+    Affiliate.find({ verified: true }).select('email fullName leagueName').limit(10000).lean(),
+  ]);
+  const deliveries = [
+    ...players.filter((row) => row.email).map((player) => sendMoneyNotice({
+      to: player.email,
+      subject: `New fight card: ${label}`,
+      heading: 'A NEW FIGHT CARD IS OPEN',
+      lines: [
+        `${player.firstName ? `${player.firstName}, ` : ''}<strong>${label}</strong> is ready for predictions.`,
+        `<a href="${fightUrl}" style="color:#f2b544;">Open the fight card</a>`,
+      ],
+      footer: `Questions? ${SUPPORT_EMAIL}`,
+    })),
+    ...affiliates.filter((row) => row.email).map((affiliate) => sendMoneyNotice({
+      to: affiliate.email,
+      subject: `New card available to promote: ${label}`,
+      heading: 'NEW AFFILIATE FIGHT OPPORTUNITY',
+      lines: [
+        `<strong>${label}</strong> is now available in the fight system.`,
+        `<a href="${APP_ORIGIN}/AffiliateDashboard" style="color:#f2b544;">Open Affiliate Command</a>`,
+      ],
+      footer: `Affiliate support: ${SUPPORT_EMAIL}`,
+    })),
+  ];
+  const results = await Promise.allSettled(deliveries);
+  return {
+    attempted: deliveries.length,
+    delivered: results.filter((row) => row.status === 'fulfilled').length,
+    failed: results.filter((row) => row.status === 'rejected').length,
+  };
+}
+
+app.post('/api/admin/fights/:fightId/prize-guard', verifyAdminToken, async (req, res) => {
+  try {
+    const fightId = String(req.params.fightId || '').trim();
+    const update = {};
+    if (req.body?.minimumEntrants !== undefined) {
+      const value = Math.max(0, Math.round(Number(req.body.minimumEntrants) || 0));
+      update.minimumEntrants = value;
+    }
+    if (req.body?.autoRefundIfShort !== undefined) {
+      update.autoRefundIfShort = ['true', '1', 'yes', true].includes(req.body.autoRefundIfShort);
+    }
+    if (req.body?.matchTokens !== undefined) {
+      update.matchTokens = Math.max(0, Math.round(Number(req.body.matchTokens) || 0));
+    }
+    if (req.body?.pot !== undefined) {
+      update.pot = Math.max(0, Math.round(Number(req.body.pot) || 0));
+    }
+    ['promoterStake', 'platformContribution', 'projectedEntrants'].forEach((key) => {
+      if (req.body?.[key] !== undefined) update[key] = Math.max(0, Math.round(Number(req.body[key]) || 0));
+    });
+    if (req.body?.maxRounds !== undefined) {
+      update.maxRounds = Math.max(1, Math.min(30, Math.round(Number(req.body.maxRounds) || 12)));
+    }
+    if (req.body?.matchDate !== undefined && req.body.matchDate) {
+      update.matchDate = req.body.matchDate;
+    }
+    if (req.body?.matchTime !== undefined) {
+      update.matchTime = req.body.matchTime;
+    }
+    ['notify', 'addToShadow', 'homepagePromoted', 'featuredThisWeek', 'featuredFight'].forEach((key) => {
+      if (req.body?.[key] !== undefined) update[key] = ['true', '1', 'yes', true].includes(req.body[key]);
+    });
+    if (req.body?.matchStatus !== undefined) {
+      const allowedStatuses = ['Draft', 'Scheduled', 'Open', 'Live', 'Closed', 'Finished'];
+      if (!allowedStatuses.includes(req.body.matchStatus)) return res.status(400).json({ ok: false, message: 'Invalid publishing status.' });
+      update.matchStatus = req.body.matchStatus;
+    }
+    if (!Object.keys(update).length) {
+      return res.status(400).json({ ok: false, message: 'Nothing to change.' });
+    }
+
+    const [previousMatch, previousShadow] = await Promise.all([
+      Match.findById(fightId).select('notify').lean(),
+      Shadow.findById(fightId).select('notify').lean(),
+    ]);
+    const [matchResult, shadowResult] = await Promise.all([
+      Match.findOneAndUpdate({ _id: fightId }, { $set: update }, { new: true })
+        .select('matchName matchFighterA matchFighterB pot matchTokens promoterStake platformContribution projectedEntrants minimumEntrants autoRefundIfShort maxRounds matchDate matchTime matchStatus notify addToShadow homepagePromoted featuredThisWeek featuredFight').lean(),
+      Shadow.findOneAndUpdate({ _id: fightId }, { $set: update }, { new: true })
+        .select('matchName matchFighterA matchFighterB pot matchTokens promoterStake platformContribution projectedEntrants minimumEntrants autoRefundIfShort maxRounds matchDate matchTime matchStatus notify addToShadow homepagePromoted featuredThisWeek featuredFight').lean(),
+    ]);
+    const fight = matchResult || shadowResult;
+    if (!fight) return res.status(404).json({ ok: false, message: 'Fight not found.' });
+    const previouslyNotified = Boolean((previousMatch || previousShadow)?.notify);
+    const notificationDelivery = update.notify === true && !previouslyNotified
+      ? await sendFightPublishedNotices(fight)
+      : null;
+
+    const entryFee = Math.max(0, Math.round(Number(fight.matchTokens) || 0));
+    const declaredPot = Math.max(0, Math.round(Number(fight.pot) || 0));
+    const committedFunding = Math.min(declaredPot, Math.max(0, Number(fight.promoterStake) || 0) + Math.max(0, Number(fight.platformContribution) || 0));
+    const breakEven = entryFee > 0 ? Math.ceil(Math.max(0, declaredPot - committedFunding) / entryFee) : 0;
+    return res.json({
+      ok: true,
+      fightId,
+      matchTokens: fight.matchTokens,
+      pot: fight.pot,
+      promoterStake: fight.promoterStake || 0,
+      platformContribution: fight.platformContribution || 0,
+      projectedEntrants: fight.projectedEntrants || 0,
+      maxRounds: fight.maxRounds,
+      matchDate: fight.matchDate,
+      matchTime: fight.matchTime,
+      matchStatus: fight.matchStatus,
+      notify: fight.notify,
+      addToShadow: fight.addToShadow,
+      homepagePromoted: fight.homepagePromoted,
+      featuredThisWeek: fight.featuredThisWeek,
+      featuredFight: fight.featuredFight,
+      minimumEntrants: fight.minimumEntrants || breakEven,
+      breakEvenEntrants: breakEven,
+      autoRefundIfShort: fight.autoRefundIfShort !== false,
+      notificationDelivery,
+      warning: fight.autoRefundIfShort === false
+        ? 'Auto-refund is OFF for this fight. Any shortfall between entries and the declared prize is paid by the platform.'
+        : undefined,
+    });
+  } catch (error) {
+    console.error('Prize guard update failed:', error);
+    return res.status(500).json({ ok: false, message: 'Could not update the prize guard.' });
+  }
+});
+
+app.post('/api/admin/fights/:fightId/settle-challenges', verifyAdminToken, async (req, res) => {
+  try {
+    const summary = await settleFightChallenges(String(req.params.fightId || '').trim());
+    return res.status(200).json({ ok: true, ...summary });
+  } catch (error) {
+    console.error('Challenge settle sweep failed:', error);
+    return res.status(500).json({ ok: false, message: 'Could not settle challenges for that fight.' });
+  }
+});
+
+// Expiry sweep. Runs from the scheduler so an unanswered challenge does not sit
+// on a player's coins indefinitely.
+app.get('/api/cron/challenges/expire', verifyCronSecret, async (req, res) => {
+  try {
+    const due = await Challenge.find({ status: 'PENDING', expiresAt: { $lte: new Date() } }).limit(200).lean();
+    let released = 0;
+    for (const row of due) {
+      try {
+        const result = await releaseChallenge({
+          challengeId: row._id,
+          actorId: null,
+          nextStatus: 'EXPIRED',
+          reason: 'Not accepted before it expired.',
+        });
+        if (!result.alreadyResolved) released += 1;
+      } catch (error) {
+        console.error('Could not expire challenge', String(row._id), error.message);
+      }
+    }
+    return res.json({ ok: true, examined: due.length, released });
+  } catch (error) {
+    console.error('Challenge expiry sweep failed:', error);
+    return res.status(500).json({ ok: false, message: 'Expiry sweep failed.' });
+  }
+});
+
+// Readiness probe. Answers the one question that decides whether money paths
+// work at all, without needing shell access to the database.
+app.get('/api/health/db', async (_req, res) => {
+  await ensureDatabaseCapability();
+  const ready = databaseCapability.transactionsSupported;
+  return res.status(ready ? 200 : 503).json({
+    ok: ready,
+    connected: mongoose.connection.readyState === 1,
+    topology: databaseCapability.topology,
+    transactionsSupported: databaseCapability.transactionsSupported,
+    message: ready
+      ? 'Database supports transactions. Money paths are safe to use.'
+      : 'Database does NOT support transactions. Paid entries, refunds and settlement will fail. Make MongoDB a replica set.',
+  });
+});
+
+// Lets the app decide between the live feature and the waitlist card without
+// shipping a second build.
+app.get('/api/public/features', (_req, res) => {
+  res.json({
+    ok: true,
+    features: {
+      headToHead: {
+        enabled: HEAD_TO_HEAD_ENABLED,
+        minStake: H2H_MIN_STAKE,
+        maxStake: H2H_MAX_STAKE,
+        rakePercent: H2H_RAKE_PERCENT,
+      },
+      teamCards: {
+        enabled: TEAM_CARDS_ENABLED,
+        picksRequired: TEAM_PICKS_REQUIRED,
+        callBonusCap: TEAM_CALL_BONUS_CAP,
+      },
+      seasonCards: {
+        enabled: SEASON_CARDS_ENABLED,
+        slots: SEASON_SLOTS,
+        slotMax: SEASON_SLOT_MAX,
+        callBonusCap: SEASON_CALL_BONUS_CAP,
+      },
+    },
+  });
+});
+
+// ==========================================================================
+// SEASON CARDS — the multi-sport long game
+//
+// A player drafts ONE fighter per sport. Over the season those five fighters
+// compete on their own schedules, and whatever each one actually does in the
+// cage or ring is credited to whoever drafted them. It is a fantasy roster, not
+// a prediction contest — but it keeps the platform's DNA in two ways:
+//
+//   1. Output is scored with the SAME categories the scorecards use. A boxer
+//      earns from head punches, body punches, total punches, round wins and
+//      knockdowns; an MMA fighter from strikes, kicks, knees, elbows. Nothing
+//      new is invented, so a Season Card score means the same thing a fight
+//      score means.
+//
+//   2. Each pick carries a CALLED NUMBER. The player names a category and a
+//      figure their fighter will reach across the season. It scores by exactly
+//      the platform's existing rule — if you called at or under what the fighter
+//      actually did, you score what you called. Call low and it is safe but
+//      small; call high and you risk the whole bonus. Same trade-off as a
+//      scorecard, stretched over three months.
+//
+// CROSS-SPORT FAIRNESS. A twelve-round boxing match generates several times the
+// countable output of a three-round MMA fight, so raw totals would make the
+// boxing slot decide every season. Each slot is therefore scored out of 100
+// WITHIN ITS OWN SPORT — measured against the best performance any entrant got
+// from that slot — and the five slots sum to a score out of 500. The raw number
+// is kept and shown alongside it; the normalisation is the conversion, not a
+// replacement for the platform's scoring.
+//
+// SHIPPED OFF. SEASON_CARDS_ENABLED must be 'true' to expose any of it.
+// ==========================================================================
+// LIVE BY DEFAULT. Set SEASON_CARDS_ENABLED=false to pull it.
+const SEASON_CARDS_ENABLED = ['true', '1', 'yes', 'on']
+  .includes(String(process.env.SEASON_CARDS_ENABLED || 'true').trim().toLowerCase());
+
+// Five slots, but only three scoring families: the platform scores boxing and
+// bare knuckle identically, and MMA and kickboxing identically.
+const SEASON_SLOTS = Object.freeze([
+  { key: 'boxing', label: 'Boxing', family: 'boxing' },
+  { key: 'bareknuckle', label: 'Bare Knuckle', family: 'boxing' },
+  { key: 'mma', label: 'MMA', family: 'mma' },
+  { key: 'kickboxing', label: 'Kickboxing', family: 'mma' },
+  { key: 'wrestling', label: 'Pro Wrestling', family: 'wrestling' },
+]);
+const SEASON_SLOT_KEYS = Object.freeze(SEASON_SLOTS.map((slot) => slot.key));
+const SLOT_BY_KEY = new Map(SEASON_SLOTS.map((slot) => [slot.key, slot]));
+
+// Categories a called number may be placed on, per family. These are the same
+// fields the scorecards read, so a called number is checkable against the very
+// stats an admin already enters.
+const SEASON_CALL_CATEGORIES = Object.freeze({
+  boxing: Object.freeze({ HP: 'Head punches', BP: 'Body punches', TP: 'Total punches', RW: 'Rounds won', KO: 'Knockdowns' }),
+  mma: Object.freeze({ ST: 'Strikes', KI: 'Kicks', KN: 'Knees', EL: 'Elbows', RW: 'Rounds won', KO: 'Knockdowns' }),
+  wrestling: Object.freeze({ SIG: 'Signature moves', NF: 'Near falls', RV: 'Reversals', PIN: 'Pinfalls' }),
+});
+
+// A called number cannot out-weigh the fighter's actual output.
+const SEASON_CALL_BONUS_CAP = Math.max(0, Number(process.env.SEASON_CALL_BONUS_CAP ?? 100));
+const SEASON_SLOT_MAX = 100;
+
+const seasonSchema = new mongoose.Schema({
+  name: { type: String, required: true },
+  description: { type: String, default: '' },
+  startsAt: { type: Date, required: true },
+  endsAt: { type: Date, required: true },
+  // Zero means a free season — runs in every state, awards non-cash prizes only.
+  entryFee: { type: Number, default: 0, min: 0 },
+  requiredSlots: { type: [String], default: () => [...SEASON_SLOT_KEYS] },
+  status: { type: String, enum: ['DRAFT_OPEN', 'RUNNING', 'SETTLED', 'VOID'], default: 'DRAFT_OPEN', index: true },
+  // Drafting closes here; after it, rosters are locked for the season.
+  draftClosesAt: { type: Date, required: true },
+  prizePool: { type: Number, default: 0 },
+  settledAt: { type: Date, default: null },
+  voidReason: { type: String, default: '' },
+}, { timestamps: true });
+
+const seasonRosterSchema = new mongoose.Schema({
+  seasonId: { type: String, required: true, index: true },
+  userId: { type: String, required: true, index: true },
+  picks: {
+    type: [new mongoose.Schema({
+      slot: { type: String, required: true },
+      fighterName: { type: String, required: true },
+      // Lower-cased for matching, because fights carry fighter NAMES not ids.
+      matchKey: { type: String, required: true, index: true },
+      calledCategory: { type: String, default: '' },
+      calledValue: { type: Number, default: 0 },
+      // Accumulated as the season runs.
+      rawPoints: { type: Number, default: 0 },
+      categoryTotals: { type: Object, default: () => ({}) },
+      eventsCounted: { type: Number, default: 0 },
+      // Filled at settlement.
+      normalized: { type: Number, default: 0 },
+      callBonus: { type: Number, default: 0 },
+      callHit: { type: Boolean, default: false },
+    }, { _id: false })],
+    default: [],
+  },
+  entryFeePaid: { type: Number, default: 0 },
+  totalScore: { type: Number, default: 0 },
+  settled: { type: Boolean, default: false },
+  // Guards a re-run of settlement and a double entry charge.
+  idempotencyKey: { type: String, required: true, unique: true },
+}, { timestamps: true });
+
+// One roster per player per season.
+seasonRosterSchema.index({ seasonId: 1, userId: 1 }, { unique: true });
+// Credit lookups walk this: "which rosters hold this fighter in this slot?"
+seasonRosterSchema.index({ seasonId: 1, 'picks.matchKey': 1 });
+
+const Season = mongoose.models.Season || mongoose.model('Season', seasonSchema);
+const SeasonRoster = mongoose.models.SeasonRoster || mongoose.model('SeasonRoster', seasonRosterSchema);
+
+const seasonError = (status, message, code, extra = {}) => {
+  const error = new Error(message);
+  error.status = status;
+  error.code = code;
+  error.extra = extra;
+  return error;
+};
+
+const requireSeasonCards = (req, res, next) => {
+  if (!SEASON_CARDS_ENABLED) {
+    return res.status(404).json({
+      ok: false,
+      message: 'Season Cards are not open yet.',
+      code: 'FEATURE_DISABLED',
+    });
+  }
+  return next();
+};
+
+// Fighter names are the only identifier a fight carries, so matching is done on
+// a normalised key rather than the raw string.
+const fighterMatchKey = (name) => String(name || '')
+  .toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
+
+const seasonFamilyForCategory = (matchCategory) => {
+  const category = String(matchCategory || '').toLowerCase();
+  if (category.includes('box') || category.includes('knuckle')) return 'boxing';
+  if (category.includes('wrestl')) return 'wrestling';
+  return 'mma';
+};
+
+// Converts what a fighter ACTUALLY did into points and per-category totals,
+// using the same fields the scorecards score against.
+const fighterOutputFromRounds = (rounds, family) => {
+  const totals = {};
+  let points = 0;
+  if (!Array.isArray(rounds)) return { points, totals };
+
+  const fields = family === 'boxing'
+    ? ['HP', 'BP', 'TP', 'RW', 'KO']
+    : family === 'wrestling'
+      ? ['SIG', 'NF', 'RV', 'PIN']
+      : ['ST', 'KI', 'KN', 'EL', 'RW', 'KO'];
+  // Decisive events are rare, so they carry weight rather than a raw count.
+  const weights = { RW: 10, KO: 25, PIN: 25, NF: 5 };
+
+  rounds.forEach((round) => {
+    if (!round) return;
+    fields.forEach((field) => {
+      const value = Number(round[field]);
+      if (!Number.isFinite(value) || value <= 0) return;
+      totals[field] = (totals[field] || 0) + value;
+      points += value * (weights[field] || 1);
+    });
+  });
+  return { points, totals };
+};
+
+// Called at fight settlement. Credits every roster that drafted either fighter.
+const creditSeasonRosters = async (fight, oneStats, twoStats) => {
+  if (!SEASON_CARDS_ENABLED) return { credited: 0 };
+  const when = fight?.matchDate ? new Date(fight.matchDate) : new Date();
+  const seasons = await Season.find({
+    status: 'RUNNING',
+    startsAt: { $lte: when },
+    endsAt: { $gte: when },
+  }).select('_id').lean();
+  if (!seasons.length) return { credited: 0 };
+
+  const family = seasonFamilyForCategory(fight?.matchCategory);
+  const sides = [
+    { name: fight?.matchFighterA, rounds: oneStats },
+    { name: fight?.matchFighterB, rounds: twoStats },
+  ];
+  let credited = 0;
+
+  for (const season of seasons) {
+    for (const side of sides) {
+      const key = fighterMatchKey(side.name);
+      if (!key) continue;
+      const { points, totals } = fighterOutputFromRounds(side.rounds, family);
+      if (points <= 0) continue;
+
+      const rosters = await SeasonRoster.find({
+        seasonId: String(season._id),
+        settled: false,
+        'picks.matchKey': key,
+      });
+
+      for (const roster of rosters) {
+        let touched = false;
+        roster.picks.forEach((pick) => {
+          if (pick.matchKey !== key) return;
+          // Only credit the slot whose sport this fight actually belongs to, so
+          // a name collision across sports cannot cross-credit.
+          if (SLOT_BY_KEY.get(pick.slot)?.family !== family) return;
+          pick.rawPoints += points;
+          pick.eventsCounted += 1;
+          const merged = { ...(pick.categoryTotals || {}) };
+          Object.entries(totals).forEach(([field, value]) => {
+            merged[field] = (merged[field] || 0) + value;
+          });
+          pick.categoryTotals = merged;
+          touched = true;
+        });
+        if (touched) {
+          roster.markModified('picks');
+          await roster.save();
+          credited += 1;
+        }
+      }
+    }
+  }
+  return { credited };
+};
+
+// --------------------------------------------------------------------------
+// DRAFT — charges the entry fee through the same transaction and ledger the
+// fight entries use, so a Season Card entry is auditable the same way.
+// --------------------------------------------------------------------------
+app.post('/api/seasons/:seasonId/draft', requireSeasonCards, submitLimiter, verifyToken, requireScope(TOKEN_SCOPES.PLAYER), async (req, res) => {
+  try {
+    const userId = String(req.user?.id || req.user?._id || '').trim();
+    const seasonId = String(req.params.seasonId || '').trim();
+    const submitted = Array.isArray(req.body?.picks) ? req.body.picks : [];
+
+    const result = await runFightEntryTransaction(async (session) => {
+      const season = await withFightSession(Season.findById(seasonId), session);
+      if (!season) throw seasonError(404, 'Season not found.', 'SEASON_NOT_FOUND');
+      if (season.status !== 'DRAFT_OPEN') {
+        throw seasonError(409, 'Drafting has closed for this season.', 'DRAFT_CLOSED');
+      }
+      if (season.draftClosesAt.getTime() <= Date.now()) {
+        throw seasonError(409, 'Drafting has closed for this season.', 'DRAFT_CLOSED');
+      }
+
+      const user = await withFightSession(
+        User.findById(userId).select('email playerName dateOfBirth residenceState selfExcludedUntil tokens'),
+        session,
+      );
+      if (!user) throw seasonError(404, 'Account not found.', 'USER_NOT_FOUND');
+
+      const blocked = checkPlayEligibility(user);
+      if (blocked) throw seasonError(403, blocked.message, blocked.code);
+
+      // A paid season is a paid contest: it obeys the state mode exactly as a
+      // paid fight does.
+      const fee = Math.max(0, Math.round(Number(season.entryFee) || 0));
+      if (fee > 0) {
+        const mode = resolveStateMode(user.residenceState);
+        if (mode !== 'paid') {
+          throw seasonError(403, 'Paid seasons are not available in your state. Free seasons are.', 'STATE_FREE_PLAY_ONLY');
+        }
+      }
+
+      const required = Array.isArray(season.requiredSlots) && season.requiredSlots.length
+        ? season.requiredSlots
+        : [...SEASON_SLOT_KEYS];
+
+      const picks = [];
+      for (const slot of required) {
+        const raw = submitted.find((entry) => String(entry?.slot || '').trim() === slot);
+        const fighterName = String(raw?.fighterName || '').trim();
+        if (!fighterName) {
+          throw seasonError(422, `Pick a fighter for every slot — ${SLOT_BY_KEY.get(slot)?.label || slot} is empty.`, 'INCOMPLETE_ROSTER', { slot });
+        }
+        const family = SLOT_BY_KEY.get(slot)?.family || 'mma';
+        const allowed = SEASON_CALL_CATEGORIES[family] || {};
+        const calledCategory = String(raw?.calledCategory || '').trim().toUpperCase();
+        const calledValue = Math.max(0, Math.round(Number(raw?.calledValue) || 0));
+        if (calledCategory && !allowed[calledCategory]) {
+          throw seasonError(422, `${calledCategory} is not a category for ${SLOT_BY_KEY.get(slot)?.label || slot}.`, 'BAD_CALL_CATEGORY', { slot });
+        }
+        picks.push({
+          slot,
+          fighterName: fighterName.slice(0, 120),
+          matchKey: fighterMatchKey(fighterName),
+          calledCategory: calledCategory && calledValue > 0 ? calledCategory : '',
+          calledValue: calledCategory && calledValue > 0 ? calledValue : 0,
+        });
+      }
+
+      // No drafting the same fighter into two slots.
+      const keys = picks.map((pick) => pick.matchKey);
+      if (new Set(keys).size !== keys.length) {
+        throw seasonError(422, 'Each slot needs a different fighter.', 'DUPLICATE_PICK');
+      }
+
+      const existing = await withFightSession(SeasonRoster.findOne({ seasonId, userId }), session).lean();
+      if (existing) throw seasonError(409, 'You already have a card in this season.', 'ALREADY_DRAFTED');
+
+      if (fee > 0) {
+        const before = fightTokenBalance(user.tokens);
+        if (before < fee) {
+          throw seasonError(402, 'Not enough FM coins for this season.', 'INSUFFICIENT_FUNDS', {
+            balance: before, entryFee: fee, shortfall: fee - before,
+          });
+        }
+        user.tokens = String(before - fee);
+        await user.save({ session });
+        await recordWalletMove({
+          userId, amount: -fee, balanceBefore: before, balanceAfter: before - fee,
+          reason: 'season_entry', reference: `season:${seasonId}:${userId}`,
+          meta: { seasonId, seasonName: season.name }, session,
+        });
+        await Season.updateOne({ _id: seasonId }, { $inc: { prizePool: fee } }, session ? { session } : undefined);
+      }
+
+      const [roster] = await SeasonRoster.create([{
+        seasonId, userId, picks, entryFeePaid: fee,
+        idempotencyKey: `season:${seasonId}:${userId}`,
+      }], session ? { session } : undefined);
+
+      return { roster, season, user, fee };
+    });
+
+    sendMoneyNotice({
+      to: result.user.email,
+      subject: `Your Season Card is locked in — ${result.season.name}`,
+      heading: 'SEASON CARD LOCKED',
+      lines: [
+        `Your five fighters are set for <strong>${escapeHtml(result.season.name)}</strong>.`,
+        result.roster.picks.map((pick) => `${SLOT_BY_KEY.get(pick.slot)?.label || pick.slot}: <strong>${escapeHtml(pick.fighterName)}</strong>${pick.calledCategory ? ` — called ${pick.calledValue} ${(SEASON_CALL_CATEGORIES[SLOT_BY_KEY.get(pick.slot)?.family || 'mma'] || {})[pick.calledCategory] || pick.calledCategory}` : ''}`).join('<br>'),
+        result.fee > 0 ? `Entry: ${result.fee.toLocaleString()} FM.` : 'Free entry.',
+        'Every time one of your five competes, what they do is credited to your card.',
+      ],
+    });
+
+    return res.status(201).json({
+      ok: true,
+      rosterId: result.roster._id,
+      seasonName: result.season.name,
+      picks: result.roster.picks.map((pick) => ({
+        slot: pick.slot, fighterName: pick.fighterName,
+        calledCategory: pick.calledCategory, calledValue: pick.calledValue,
+      })),
+      entryFeePaid: result.fee,
+    });
+  } catch (error) {
+    const status = error?.status || 500;
+    if (status >= 500) console.error('Season draft failed:', error);
+    return res.status(status).json({
+      ok: false,
+      message: error?.message || 'Could not lock in that card.',
+      code: error?.code || 'DRAFT_FAILED',
+      ...(error?.extra || {}),
+    });
+  }
+});
+
+// --------------------------------------------------------------------------
+// SETTLEMENT — normalise each slot within its own sport, apply the called
+// number, then hand the season to the existing prize machinery.
+// --------------------------------------------------------------------------
+const settleSeason = async (seasonId) => {
+  // Claim before scoring, exactly as fight settlement does.
+  const claimed = await Season.findOneAndUpdate(
+    { _id: seasonId, status: 'RUNNING' },
+    { $set: { status: 'SETTLED', settledAt: new Date() } },
+    { new: true },
+  );
+  if (!claimed) {
+    const current = await Season.findById(seasonId).select('status settledAt').lean();
+    return { alreadySettled: true, status: current?.status || null };
+  }
+
+  const rosters = await SeasonRoster.find({ seasonId: String(seasonId) });
+  if (!rosters.length) return { settled: 0, entrants: 0 };
+
+  // Normalisation needs a field to measure against. With a single paid entrant
+  // there is no contest — refund rather than hand them their own money back
+  // minus nothing, or worse, pay them a prize they did not compete for.
+  const paidEntrants = rosters.filter((roster) => Number(roster.entryFeePaid) > 0);
+  // Set when the pot has been handed back, so the prize step below must not run.
+  let refundedNoField = false;
+  if (paidEntrants.length === 1) {
+    refundedNoField = true;
+    const solo = paidEntrants[0];
+    try {
+      const user = await User.findById(solo.userId).select('tokens email');
+      if (user) {
+        const before = fightTokenBalance(user.tokens);
+        user.tokens = String(before + solo.entryFeePaid);
+        await user.save();
+        await recordWalletMove({
+          userId: solo.userId, amount: solo.entryFeePaid, balanceBefore: before,
+          balanceAfter: before + solo.entryFeePaid, reason: 'season_refund_no_field',
+          reference: `season:solo-refund:${seasonId}:${solo.userId}`,
+          meta: { seasonId: String(seasonId) },
+        });
+        if (user.email) {
+          sendMoneyNotice({
+            to: user.email,
+            subject: `${claimed.name} — refunded, not enough entrants`,
+            heading: 'SEASON REFUNDED',
+            lines: [
+              `<strong>${escapeHtml(claimed.name)}</strong> finished with only one paid card, so there was no field to score against.`,
+              `Your ${solo.entryFeePaid.toLocaleString()} FM entry has been returned in full.`,
+            ],
+          });
+        }
+      }
+    } catch (error) {
+      console.error('Solo-entrant season refund failed:', error);
+    }
+  }
+
+  // Best raw output achieved in each slot across the whole field. This is the
+  // yardstick a slot is scored against, so the scale is set by what was actually
+  // achievable in that sport this season rather than a guessed constant.
+  const bestBySlot = new Map();
+  rosters.forEach((roster) => {
+    roster.picks.forEach((pick) => {
+      const best = bestBySlot.get(pick.slot) || 0;
+      if (pick.rawPoints > best) bestBySlot.set(pick.slot, pick.rawPoints);
+    });
+  });
+
+  for (const roster of rosters) {
+    let total = 0;
+    roster.picks.forEach((pick) => {
+      const best = bestBySlot.get(pick.slot) || 0;
+      // A slot nobody scored in is worth nothing to everybody — no free points
+      // for a fighter who never competed, and no division by zero.
+      pick.normalized = best > 0 ? Math.round((pick.rawPoints / best) * SEASON_SLOT_MAX) : 0;
+
+      // The platform's own rule: you score what you called, provided you called
+      // at or under what the fighter actually did.
+      const actual = Number((pick.categoryTotals || {})[pick.calledCategory]) || 0;
+      const hit = Boolean(pick.calledCategory) && pick.calledValue > 0 && pick.calledValue <= actual;
+      pick.callHit = hit;
+      pick.callBonus = hit ? Math.min(pick.calledValue, SEASON_CALL_BONUS_CAP) : 0;
+
+      total += pick.normalized + pick.callBonus;
+    });
+    roster.totalScore = total;
+    roster.settled = true;
+    roster.markModified('picks');
+    await roster.save();
+  }
+
+  // Hand off to the machinery that already pays fight contests, so season
+  // prizes use the same distribution, the same ledger and the same emails.
+  const scored = rosters
+    .map((roster) => ({ userId: String(roster.userId), points: roster.totalScore }))
+    .sort((a, b) => b.points - a.points);
+
+  let payout = null;
+  // A refunded pot is gone — paying prizes from it as well would pay the same
+  // coins out twice.
+  const prizePool = refundedNoField ? 0 : Math.max(0, Math.round(Number(claimed.prizePool) || 0));
+  if (refundedNoField) payout = { prizePool: 0, paid: 0, refunded: true };
+  if (prizePool > 0) {
+    const { awards } = buildPrizeAwards(scored, prizePool);
+    let paid = 0;
+    for (const award of awards) {
+      if (!award?.amount || award.amount <= 0) continue;
+      const winner = await User.findById(award.userId).select('email playerName tokens');
+      if (!winner) continue;
+      const before = fightTokenBalance(winner.tokens);
+      winner.tokens = String(before + award.amount);
+      await winner.save();
+      await recordWalletMove({
+        userId: award.userId, amount: award.amount, balanceBefore: before,
+        balanceAfter: before + award.amount, reason: 'season_prize',
+        reference: `season:prize:${seasonId}:${award.userId}`,
+        meta: { seasonId, place: award.place },
+      });
+      paid += award.amount;
+      if (winner.email) {
+        sendMoneyNotice({
+          to: winner.email,
+          subject: `${claimed.name} — you finished #${award.place}`,
+          heading: `SEASON RESULT · #${award.place}`,
+          lines: [
+            `<strong>${escapeHtml(claimed.name)}</strong> has been settled.`,
+            `<strong>${award.amount.toLocaleString()} FM</strong> has been added to your wallet.`,
+          ],
+        });
+      }
+    }
+    payout = { prizePool, paid };
+  }
+
+  // Badges, titles and sponsor prizes attach to a season the same way they
+  // attach to a fight — a free season is scored and awarded, just not paid.
+  let awardsGiven = null;
+  try {
+    awardsGiven = await awardNonCashPrizes(seasonId, scored, { matchFighterA: claimed.name, matchFighterB: 'Season' });
+  } catch (error) {
+    console.error('Season non-cash awards failed:', error);
+    awardsGiven = { error: 'AWARDS_FAILED' };
+  }
+
+  clearPublicResponseCache();
+  return { settled: rosters.length, entrants: rosters.length, payout, awardsGiven };
+};
+
+// Runs from the scheduler. Two jobs: start seasons whose draft window has closed,
+// and settle seasons that have ended. A season that needs an admin to remember it
+// is a season that strands entry fees.
+app.get('/api/cron/seasons/advance', verifyCronSecret, async (req, res) => {
+  try {
+    const now = new Date();
+    const started = await Season.updateMany(
+      { status: 'DRAFT_OPEN', draftClosesAt: { $lte: now } },
+      { $set: { status: 'RUNNING' } },
+    );
+
+    const due = await Season.find({ status: 'RUNNING', endsAt: { $lte: now } }).select('_id name').limit(20).lean();
+    const settled = [];
+    for (const season of due) {
+      try {
+        const summary = await settleSeason(String(season._id));
+        settled.push({ id: season._id, name: season.name, ...summary });
+      } catch (error) {
+        console.error('Season auto-settle failed for', String(season._id), error.message);
+      }
+    }
+    return res.json({ ok: true, started: started?.modifiedCount || 0, settled });
+  } catch (error) {
+    console.error('Season advance sweep failed:', error);
+    return res.status(500).json({ ok: false, message: 'Season sweep failed.' });
+  }
+});
+
+app.post('/api/admin/seasons/:seasonId/settle', verifyAdminToken, async (req, res) => {
+  try {
+    const summary = await settleSeason(String(req.params.seasonId || '').trim());
+    return res.status(200).json({ ok: true, ...summary });
+  } catch (error) {
+    console.error('Season settle failed:', error);
+    return res.status(500).json({ ok: false, message: 'Could not settle that season.' });
+  }
+});
+
+app.post('/api/admin/seasons', verifyAdminToken, async (req, res) => {
+  try {
+    const name = String(req.body?.name || '').trim();
+    if (!name) return res.status(422).json({ ok: false, message: 'A season name is required.' });
+    const startsAt = new Date(req.body?.startsAt);
+    const endsAt = new Date(req.body?.endsAt);
+    const draftClosesAt = new Date(req.body?.draftClosesAt || req.body?.startsAt);
+    if ([startsAt, endsAt, draftClosesAt].some((date) => Number.isNaN(date.getTime()))) {
+      return res.status(422).json({ ok: false, message: 'Provide valid start, end and draft-close dates.' });
+    }
+    if (endsAt <= startsAt) return res.status(422).json({ ok: false, message: 'The season must end after it starts.' });
+
+    const requested = Array.isArray(req.body?.requiredSlots) ? req.body.requiredSlots : SEASON_SLOT_KEYS;
+    const requiredSlots = requested.filter((slot) => SEASON_SLOT_KEYS.includes(String(slot)));
+    if (!requiredSlots.length) return res.status(422).json({ ok: false, message: 'A season needs at least one slot.' });
+
+    const season = await Season.create({
+      name: name.slice(0, 120),
+      description: String(req.body?.description || '').slice(0, 500),
+      startsAt, endsAt, draftClosesAt,
+      entryFee: Math.max(0, Math.round(Number(req.body?.entryFee) || 0)),
+      requiredSlots,
+    });
+    return res.status(201).json({ ok: true, seasonId: season._id });
+  } catch (error) {
+    console.error('Season create failed:', error);
+    return res.status(500).json({ ok: false, message: 'Could not create that season.' });
+  }
+});
+
+app.post('/api/admin/seasons/:seasonId/status', verifyAdminToken, async (req, res) => {
+  try {
+    const next = String(req.body?.status || '').trim().toUpperCase();
+    if (!['DRAFT_OPEN', 'RUNNING', 'VOID'].includes(next)) {
+      return res.status(422).json({ ok: false, message: 'status must be DRAFT_OPEN, RUNNING or VOID.' });
+    }
+    const season = await Season.findById(String(req.params.seasonId || '')).lean();
+    if (!season) return res.status(404).json({ ok: false, message: 'Season not found.' });
+    if (season.status === 'SETTLED') {
+      return res.status(409).json({ ok: false, message: 'That season is already settled.' });
+    }
+
+    // Voiding must return every entry fee — a season nobody can win is a season
+    // nobody should have paid for.
+    if (next === 'VOID') {
+      const rosters = await SeasonRoster.find({ seasonId: String(season._id), entryFeePaid: { $gt: 0 } }).lean();
+      for (const roster of rosters) {
+        try {
+          const user = await User.findById(roster.userId).select('tokens email');
+          if (!user) continue;
+          const before = fightTokenBalance(user.tokens);
+          user.tokens = String(before + roster.entryFeePaid);
+          await user.save();
+          await recordWalletMove({
+            userId: roster.userId, amount: roster.entryFeePaid, balanceBefore: before,
+            balanceAfter: before + roster.entryFeePaid, reason: 'season_refund',
+            reference: `season:refund:${season._id}:${roster.userId}`,
+            meta: { seasonId: String(season._id) },
+          });
+          if (user.email) {
+            sendMoneyNotice({
+              to: user.email,
+              subject: `${season.name} was cancelled — you have been refunded`,
+              heading: 'SEASON CANCELLED',
+              lines: [
+                `<strong>${escapeHtml(season.name)}</strong> has been cancelled.`,
+                `Your ${roster.entryFeePaid.toLocaleString()} FM entry has been returned in full.`,
+              ],
+            });
+          }
+        } catch (error) {
+          console.error('Season refund failed for', String(roster.userId), error.message);
+        }
+      }
+    }
+
+    await Season.updateOne({ _id: season._id }, {
+      $set: { status: next, voidReason: next === 'VOID' ? String(req.body?.reason || 'Cancelled by an administrator.') : '' },
+    });
+    return res.json({ ok: true, status: next });
+  } catch (error) {
+    console.error('Season status change failed:', error);
+    return res.status(500).json({ ok: false, message: 'Could not change that season.' });
+  }
+});
+
+// --------------------------------------------------------------------------
+// PLAYER READS
+// --------------------------------------------------------------------------
+app.get('/api/seasons/open', requireSeasonCards, async (req, res) => {
+  try {
+    const seasons = await Season.find({ status: { $in: ['DRAFT_OPEN', 'RUNNING'] } })
+      .sort({ startsAt: 1 }).limit(20).lean();
+    return res.json({
+      ok: true,
+      slots: SEASON_SLOTS,
+      callCategories: SEASON_CALL_CATEGORIES,
+      callBonusCap: SEASON_CALL_BONUS_CAP,
+      slotMax: SEASON_SLOT_MAX,
+      seasons: await Promise.all(seasons.map(async (season) => ({
+        id: season._id,
+        name: season.name,
+        description: season.description,
+        startsAt: season.startsAt,
+        endsAt: season.endsAt,
+        draftClosesAt: season.draftClosesAt,
+        draftOpen: season.status === 'DRAFT_OPEN' && season.draftClosesAt.getTime() > Date.now(),
+        entryFee: season.entryFee,
+        requiredSlots: season.requiredSlots,
+        prizePool: season.prizePool,
+        entrants: await SeasonRoster.countDocuments({ seasonId: String(season._id) }),
+      }))),
+    });
+  } catch (error) {
+    console.error('Season list failed:', error);
+    return res.status(500).json({ ok: false, message: 'Could not load seasons.' });
+  }
+});
+
+app.get('/api/seasons/me', requireSeasonCards, verifyToken, requireScope(TOKEN_SCOPES.PLAYER), async (req, res) => {
+  try {
+    const userId = String(req.user?.id || req.user?._id || '').trim();
+    const rosters = await SeasonRoster.find({ userId }).sort({ createdAt: -1 }).limit(30).lean();
+    const seasonIds = [...new Set(rosters.map((r) => r.seasonId))].filter((id) => mongoose.isValidObjectId(id));
+    const seasons = seasonIds.length ? await Season.find({ _id: { $in: seasonIds } }).lean() : [];
+    const byId = new Map(seasons.map((s2) => [String(s2._id), s2]));
+
+    return res.json({
+      ok: true,
+      cards: rosters.map((roster) => {
+        const season = byId.get(String(roster.seasonId));
+        return {
+          rosterId: roster._id,
+          seasonId: roster.seasonId,
+          seasonName: season?.name || 'Season',
+          status: season?.status || 'RUNNING',
+          endsAt: season?.endsAt || null,
+          entryFeePaid: roster.entryFeePaid,
+          totalScore: roster.totalScore,
+          settled: roster.settled,
+          maxPossible: (roster.picks?.length || 0) * SEASON_SLOT_MAX,
+          picks: (roster.picks || []).map((pick) => {
+            const family = SLOT_BY_KEY.get(pick.slot)?.family || 'mma';
+            return {
+              slot: pick.slot,
+              slotLabel: SLOT_BY_KEY.get(pick.slot)?.label || pick.slot,
+              fighterName: pick.fighterName,
+              rawPoints: pick.rawPoints,
+              eventsCounted: pick.eventsCounted,
+              normalized: pick.normalized,
+              calledCategory: pick.calledCategory,
+              calledCategoryLabel: (SEASON_CALL_CATEGORIES[family] || {})[pick.calledCategory] || '',
+              calledValue: pick.calledValue,
+              actualSoFar: Number((pick.categoryTotals || {})[pick.calledCategory]) || 0,
+              callHit: pick.callHit,
+              callBonus: pick.callBonus,
+            };
+          }),
+        };
+      }),
+    });
+  } catch (error) {
+    console.error('Season cards lookup failed:', error);
+    return res.status(500).json({ ok: false, message: 'Could not load your cards.' });
+  }
+});
+
+app.get('/api/seasons/:seasonId/leaderboard', requireSeasonCards, async (req, res) => {
+  try {
+    const seasonId = String(req.params.seasonId || '').trim();
+    const rosters = await SeasonRoster.find({ seasonId }).lean();
+    // Mid-season the normalised figure is not final, so rank on raw output and
+    // label it as provisional rather than publishing a number that will move.
+    const settled = rosters.some((roster) => roster.settled);
+    const ranked = rosters
+      .map((roster) => ({
+        userId: roster.userId,
+        score: settled ? roster.totalScore : (roster.picks || []).reduce((sum, pick) => sum + pick.rawPoints, 0),
+      }))
+      .sort((a, b) => b.score - a.score)
+      .slice(0, 100);
+
+    const users = ranked.length
+      ? await User.find({ _id: { $in: ranked.map((r) => r.userId).filter((id) => mongoose.isValidObjectId(id)) } })
+        .select('playerName firstName profileUrl').lean()
+      : [];
+    const byId = new Map(users.map((u) => [String(u._id), u]));
+
+    return res.json({
+      ok: true,
+      provisional: !settled,
+      scale: settled ? 'normalized' : 'raw',
+      leaderboard: ranked.map((row, index) => ({
+        place: index + 1,
+        name: byId.get(row.userId)?.playerName || byId.get(row.userId)?.firstName || 'Player',
+        avatar: byId.get(row.userId)?.profileUrl || '',
+        score: row.score,
+      })),
+    });
+  } catch (error) {
+    console.error('Season leaderboard failed:', error);
+    return res.status(500).json({ ok: false, message: 'Could not load the leaderboard.' });
+  }
+});
+
+// ==========================================================================
+// TEAM CARDS — pick five fighters from one event
+//
+// The player builds a team of five fighters from a single card, one from each of
+// five different bouts, and their combined output over that night is the score.
+//
+// This is the strongest shape the platform has:
+//
+//   - Every fighter is in the same sport under the same rules, so the score is a
+//     plain total. No normalisation, no conversion, nothing to explain — the
+//     platform's own scoring runs untouched.
+//   - It resolves the same night, which matches how the rest of the app behaves.
+//   - It is a five-athlete lineup across five bouts, which is the classic
+//     daily-fantasy shape rather than a single-event contest.
+//
+// ONE FIGHTER PER BOUT is enforced, not advised. Without it a player picks both
+// sides of a fight and banks points whichever way it goes — a hedge, not a call.
+// ==========================================================================
+const TEAM_CARDS_ENABLED = ['true', '1', 'yes', 'on']
+  .includes(String(process.env.TEAM_CARDS_ENABLED || 'true').trim().toLowerCase());
+
+const TEAM_PICKS_REQUIRED = Math.max(2, Math.min(10, Number(process.env.TEAM_PICKS_REQUIRED || 5)));
+const TEAM_CALL_BONUS_CAP = Math.max(0, Number(process.env.TEAM_CALL_BONUS_CAP ?? 50));
+
+const teamContestSchema = new mongoose.Schema({
+  name: { type: String, required: true },
+  eventName: { type: String, default: '' },
+  // The bouts this card is built from. A pick must name a fighter in one of them.
+  fightIds: { type: [String], default: [], required: true },
+  picksRequired: { type: Number, default: TEAM_PICKS_REQUIRED },
+  entryFee: { type: Number, default: 0, min: 0 },
+  prizePool: { type: Number, default: 0 },
+  // Set when a promoter runs the contest for their league.
+  affiliateId: { type: String, default: '' },
+  status: { type: String, enum: ['OPEN', 'LOCKED', 'SETTLED', 'VOID'], default: 'OPEN', index: true },
+  settledAt: { type: Date, default: null },
+  voidReason: { type: String, default: '' },
+}, { timestamps: true });
+
+const teamEntrySchema = new mongoose.Schema({
+  contestId: { type: String, required: true, index: true },
+  userId: { type: String, required: true, index: true },
+  picks: {
+    type: [new mongoose.Schema({
+      fightId: { type: String, required: true },
+      fighterName: { type: String, required: true },
+      matchKey: { type: String, required: true },
+      calledCategory: { type: String, default: '' },
+      calledValue: { type: Number, default: 0 },
+      points: { type: Number, default: 0 },
+      categoryTotals: { type: Object, default: () => ({}) },
+      scored: { type: Boolean, default: false },
+      callHit: { type: Boolean, default: false },
+      callBonus: { type: Number, default: 0 },
+    }, { _id: false })],
+    default: [],
+  },
+  entryFeePaid: { type: Number, default: 0 },
+  totalPoints: { type: Number, default: 0 },
+  settled: { type: Boolean, default: false },
+  idempotencyKey: { type: String, required: true, unique: true },
+}, { timestamps: true });
+
+teamEntrySchema.index({ contestId: 1, userId: 1 }, { unique: true });
+teamEntrySchema.index({ contestId: 1, 'picks.fightId': 1 });
+
+const TeamContest = mongoose.models.TeamContest || mongoose.model('TeamContest', teamContestSchema);
+const TeamEntry = mongoose.models.TeamEntry || mongoose.model('TeamEntry', teamEntrySchema);
+
+const requireTeamCards = (req, res, next) => {
+  if (!TEAM_CARDS_ENABLED) {
+    return res.status(404).json({ ok: false, message: 'Team Cards are not open yet.', code: 'FEATURE_DISABLED' });
+  }
+  return next();
+};
+
+const teamError = (status, message, code, extra = {}) => {
+  const error = new Error(message);
+  error.status = status;
+  error.code = code;
+  error.extra = extra;
+  return error;
+};
+
+// Credits every team entry holding either fighter from a settled bout. Called
+// from the same settlement that scores the fight, off the same official stats.
+const creditTeamEntries = async (fight, oneStats, twoStats) => {
+  if (!TEAM_CARDS_ENABLED) return { credited: 0 };
+  const fightId = String(fight?._id || '');
+  if (!fightId) return { credited: 0 };
+
+  const contests = await TeamContest.find({
+    fightIds: fightId,
+    status: { $in: ['OPEN', 'LOCKED'] },
+  }).select('_id').lean();
+  if (!contests.length) return { credited: 0 };
+
+  const family = seasonFamilyForCategory(fight?.matchCategory);
+  const sides = [
+    { name: fight?.matchFighterA, rounds: oneStats },
+    { name: fight?.matchFighterB, rounds: twoStats },
+  ];
+  let credited = 0;
+
+  for (const contest of contests) {
+    const entries = await TeamEntry.find({ contestId: String(contest._id), settled: false, 'picks.fightId': fightId });
+    for (const entry of entries) {
+      let touched = false;
+      entry.picks.forEach((pick) => {
+        if (String(pick.fightId) !== fightId || pick.scored) return;
+        const side = sides.find((candidate) => fighterMatchKey(candidate.name) === pick.matchKey);
+        if (!side) return;
+        const { points, totals } = fighterOutputFromRounds(side.rounds, family);
+        pick.points = points;
+        pick.categoryTotals = totals;
+        pick.scored = true;
+        touched = true;
+      });
+      if (touched) {
+        entry.markModified('picks');
+        await entry.save();
+        credited += 1;
+      }
+    }
+  }
+  return { credited };
+};
+
+// --------------------------------------------------------------------------
+// ENTER — one fighter per bout, charged through the same transaction as a fight
+// entry so the money path is the one already hardened.
+// --------------------------------------------------------------------------
+app.post('/api/team-contests/:contestId/enter', requireTeamCards, submitLimiter, verifyToken, requireScope(TOKEN_SCOPES.PLAYER), async (req, res) => {
+  try {
+    const userId = String(req.user?.id || req.user?._id || '').trim();
+    const contestId = String(req.params.contestId || '').trim();
+    const submitted = Array.isArray(req.body?.picks) ? req.body.picks : [];
+
+    const result = await runFightEntryTransaction(async (session) => {
+      const contest = await withFightSession(TeamContest.findById(contestId), session);
+      if (!contest) throw teamError(404, 'Contest not found.', 'CONTEST_NOT_FOUND');
+      if (contest.status !== 'OPEN') {
+        throw teamError(409, 'This contest is closed for entry.', 'CONTEST_CLOSED');
+      }
+
+      const user = await withFightSession(
+        User.findById(userId).select('email playerName dateOfBirth residenceState selfExcludedUntil tokens'),
+        session,
+      );
+      if (!user) throw teamError(404, 'Account not found.', 'USER_NOT_FOUND');
+      const blocked = checkPlayEligibility(user);
+      if (blocked) throw teamError(403, blocked.message, blocked.code);
+
+      const fee = Math.max(0, Math.round(Number(contest.entryFee) || 0));
+      if (fee > 0 && resolveStateMode(user.residenceState) !== 'paid') {
+        throw teamError(403, 'Paid contests are not available in your state. Free contests are.', 'STATE_FREE_PLAY_ONLY');
+      }
+
+      // A promoter cannot enter their own contest, matching the fight rule.
+      if (contest.affiliateId && String(contest.affiliateId) === userId) {
+        throw teamError(403, 'You cannot enter a contest you are promoting.', 'AFFILIATE_SELF_ENTRY');
+      }
+
+      const required = Math.max(2, Math.round(Number(contest.picksRequired) || TEAM_PICKS_REQUIRED));
+      if (submitted.length !== required) {
+        throw teamError(422, `Pick exactly ${required} fighters.`, 'WRONG_PICK_COUNT', { required });
+      }
+
+      // Load every bout on the card once, then validate each pick against it.
+      const fights = await Match.find({ _id: { $in: contest.fightIds.filter((id) => mongoose.isValidObjectId(id)) } })
+        .select('_id matchFighterA matchFighterB matchDate matchStatus matchCategory').lean();
+      const fightById = new Map(fights.map((row) => [String(row._id), row]));
+
+      const picks = [];
+      const usedBouts = new Set();
+      for (const raw of submitted) {
+        const fightId = String(raw?.fightId || '').trim();
+        const fighterName = String(raw?.fighterName || '').trim();
+        const bout = fightById.get(fightId);
+        if (!bout) throw teamError(422, 'One of your picks is not on this card.', 'PICK_NOT_ON_CARD', { fightId });
+        if (!isFightOpenForEntry(bout)) {
+          throw teamError(409, `${bout.matchFighterA} vs ${bout.matchFighterB} is already locked.`, 'BOUT_LOCKED', { fightId });
+        }
+        // THE RULE: one fighter per bout, so a player cannot back both sides.
+        if (usedBouts.has(fightId)) {
+          throw teamError(422, 'Pick one fighter per bout — you cannot take both sides of a fight.', 'DUPLICATE_BOUT', { fightId });
+        }
+        const key = fighterMatchKey(fighterName);
+        if (![bout.matchFighterA, bout.matchFighterB].map(fighterMatchKey).includes(key)) {
+          throw teamError(422, `${fighterName} is not in that bout.`, 'FIGHTER_NOT_IN_BOUT', { fightId });
+        }
+        usedBouts.add(fightId);
+
+        const family = seasonFamilyForCategory(bout.matchCategory);
+        const allowed = SEASON_CALL_CATEGORIES[family] || {};
         const calledCategory = String(raw?.calledCategory || '').trim().toUpperCase();
         const calledValue = Math.max(0, Math.round(Number(raw?.calledValue) || 0));
         if (calledCategory && !allowed[calledCategory]) {
