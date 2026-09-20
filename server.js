@@ -21131,6 +21131,7 @@ app.post('/api/affiliates/me/promotions/:fightId/announce', submitLimiter, verif
 
     let emailedCount = 0;
     let emailSkippedReason = '';
+    let emailDiagnostic = null;
 
     if (recentEmail) {
       const hoursLeft = Math.max(1, Math.ceil((new Date(recentEmail.createdAt).getTime() + LEAGUE_EMAIL_COOLDOWN_HOURS * 3600 * 1000 - Date.now()) / 3600000));
@@ -21160,24 +21161,34 @@ app.post('/api/affiliates/me/promotions/:fightId/announce', submitLimiter, verif
           .filter((recipient) => recipient.email)
           .map((recipient) => [String(recipient.email).trim().toLowerCase(), recipient]),
       ).values()];
-      const deliveryResults = await Promise.allSettled(uniqueRecipients.map((recipient) => transporter.sendMail({
-        from: `Fantasy MMAdness <${SMTP_USER}>`,
-        to: recipient.email,
-        envelope: { from: SMTP_USER, to: [recipient.email] },
-        subject: headline,
-        html: `<div style="font-family:Arial,Helvetica,sans-serif;color:#201f1d;max-width:600px;margin:auto">
-          <p>Hi ${escapeHtml(recipient.firstName || 'there')},</p>
-          <p style="font-size:17px"><strong>${escapeHtml(headline)}</strong></p>
-          <p>${escapeHtml(body)}</p>
-          ${fight.matchDate ? `<p style="color:#5d5a55">Fight date: ${escapeHtml(String(fight.matchDate).slice(0, 10))}</p>` : ''}
-          <p><a href="${appUrl}" style="display:inline-block;padding:11px 20px;background:#f2b544;color:#2b1b00;text-decoration:none;border-radius:6px;font-weight:bold">Open Fantasy MMAdness</a></p>
-          <p style="font-size:12px;color:#8a8579">You are getting this because you joined ${escapeHtml(promoterName)} on Fantasy MMAdness. You can turn league emails off in your account settings.</p>
-        </div>`,
-      })));
+      // Send one at a time. Gmail can reject a burst of parallel SMTP transactions
+      // even when the same authenticated connection passes verify().
+      const deliveryResults = [];
+      for (const recipient of uniqueRecipients) {
+        try {
+          const info = await transporter.sendMail({
+            from: `Fantasy MMAdness <${SMTP_USER}>`,
+            to: recipient.email,
+            envelope: { from: SMTP_USER, to: [recipient.email] },
+            subject: headline,
+            html: `<div style="font-family:Arial,Helvetica,sans-serif;color:#201f1d;max-width:600px;margin:auto">
+              <p>Hi ${escapeHtml(recipient.firstName || 'there')},</p>
+              <p style="font-size:17px"><strong>${escapeHtml(headline)}</strong></p>
+              <p>${escapeHtml(body)}</p>
+              ${fight.matchDate ? `<p style="color:#5d5a55">Fight date: ${escapeHtml(String(fight.matchDate).slice(0, 10))}</p>` : ''}
+              <p><a href="${appUrl}" style="display:inline-block;padding:11px 20px;background:#f2b544;color:#2b1b00;text-decoration:none;border-radius:6px;font-weight:bold">Open Fantasy MMAdness</a></p>
+              <p style="font-size:12px;color:#8a8579">You are getting this because you joined ${escapeHtml(promoterName)} on Fantasy MMAdness. You can turn league emails off in your account settings.</p>
+            </div>`,
+          });
+          deliveryResults.push({ status: 'fulfilled', value: info });
+        } catch (reason) {
+          deliveryResults.push({ status: 'rejected', reason });
+        }
+      }
       emailedCount = deliveryResults.filter((result) => result.status === 'fulfilled').length;
       const failedCount = deliveryResults.length - emailedCount;
       const firstMailFailure = deliveryResults.find((result) => result.status === 'rejected')?.reason;
-      const emailDiagnostic = firstMailFailure ? {
+      emailDiagnostic = firstMailFailure ? {
         code: String(firstMailFailure?.code || 'UNKNOWN').slice(0, 80),
         command: String(firstMailFailure?.command || 'UNKNOWN').slice(0, 80),
         responseCode: Number(firstMailFailure?.responseCode || 0) || undefined,
