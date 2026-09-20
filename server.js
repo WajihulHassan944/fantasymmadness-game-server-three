@@ -21397,12 +21397,11 @@ app.post('/api/affiliates/me/promotions/:fightId/announce', submitLimiter, verif
       noticeId: notice._id,
       reachedBells: members.length,
       emailed: emailedCount,
-      emailedRecipients,
       emailSkippedReason: emailSkippedReason || undefined,
       emailDiagnostic: emailDiagnostic || undefined,
       message: emailedCount
-        ? `Sent to ${members.length} member${members.length === 1 ? '' : 's'} — ${emailedCount} by email. Delivered to: ${emailedRecipients.map((recipient) => recipient.name ? `${recipient.name} <${recipient.email}>` : recipient.email).join(', ')}.${emailSkippedReason ? ` ${emailSkippedReason}` : ''}`
-        : `Posted to ${members.length} member${members.length === 1 ? '' : 's'}' notifications.${emailSkippedReason ? ` Email: ${emailSkippedReason}` : ''}`,
+        ? `Fight promotion published successfully. ${members.length} in-app notification${members.length === 1 ? '' : 's'} sent. ${emailedCount} of ${uniqueRecipients.length} member email${uniqueRecipients.length === 1 ? '' : 's'} sent.${emailSkippedReason ? ` ${emailSkippedReason}` : ''}`
+        : `Fight promotion published successfully. ${members.length} in-app notification${members.length === 1 ? '' : 's'} sent. 0 of ${uniqueRecipients.length} member email${uniqueRecipients.length === 1 ? '' : 's'} sent.${emailSkippedReason ? ` ${emailSkippedReason}` : ''}`,
     });
   } catch (error) {
     console.error('League announce failed:', error);
