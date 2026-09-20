@@ -3672,6 +3672,8 @@ app.post(
   // addMatch publishes a public LIVE fight, so eligible players must receive
   // email as well as the in-app bell. The old optional notify flag was often
   // omitted by the client, leaving the bell populated but sending no email.
+  
+  let emailDelivery = { attempted: 0, delivered: 0, failed: 0 };
   {
 
 
@@ -3817,7 +3819,7 @@ const nonRegisteredUserMailPromises = nonRegisteredUsers.map(user => {
 
   // Registered player alerts are delivered in controlled batches. Non-registered
   // marketing recipients are deliberately excluded from the fight-alert path.
-  const emailDelivery = req.actorRole === 'admin'
+  emailDelivery = req.actorRole === 'admin'
     ? await sendMailBatch(registeredUserMailOptions, 3)
     : { attempted: 0, delivered: 0, failed: 0, skipped: 'AFFILIATE_LEAGUE_NOTICE' };
   console.log('Fight email delivery:', emailDelivery);
