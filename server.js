@@ -21074,11 +21074,16 @@ app.post('/api/affiliates/me/promotions/:fightId/announce', submitLimiter, verif
     const body = String(req.body?.message || '').trim().slice(0, 300)
       || (fee > 0 ? `${fee.toLocaleString()} FM to enter.` : 'Free to enter.');
 
-    // Email cooldown, per promoter. The notice still goes to every bell —
-    // only the inbox is throttled.
+    // Duplicate protection is per fight, not per promoter. A promoter may
+    // publish more than one legitimate card in a day; each new fight must
+    // reach the league, while repeated clicks for the same fight must not send
+    // duplicate email.
     const cutoff = new Date(Date.now() - LEAGUE_EMAIL_COOLDOWN_HOURS * 3600 * 1000);
     const recentEmail = await LeagueNotice.findOne({
-      affiliateId, emailedCount: { $gt: 0 }, createdAt: { $gte: cutoff },
+      affiliateId,
+      fightId: String(fight._id),
+      emailedCount: { $gt: 0 },
+      createdAt: { $gte: cutoff },
     }).select('createdAt').lean();
 
     let emailedCount = 0;
@@ -21086,7 +21091,7 @@ app.post('/api/affiliates/me/promotions/:fightId/announce', submitLimiter, verif
 
     if (recentEmail) {
       const hoursLeft = Math.max(1, Math.ceil((new Date(recentEmail.createdAt).getTime() + LEAGUE_EMAIL_COOLDOWN_HOURS * 3600 * 1000 - Date.now()) / 3600000));
-      emailSkippedReason = `Email cooldown — you can email your league again in about ${hoursLeft}h. This notice still went to every member's notifications.`;
+      emailSkippedReason = `This fight was already emailed to your league. You can resend it in about ${hoursLeft}h; the notice still appears in every member's notifications.`;
     } else {
       // isSubscribed is the paid-plan flag, not the league-notification opt-in.
       // Filtering on it silently removed free-plan league members — normally
