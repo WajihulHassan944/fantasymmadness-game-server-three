@@ -21238,6 +21238,7 @@ app.post('/api/affiliates/me/promotions/:fightId/announce', submitLimiter, verif
     }).select('createdAt').lean();
 
     let emailedCount = 0;
+    let emailedRecipients = [];
     let emailSkippedReason = '';
     let emailDiagnostic = null;
 
@@ -21317,7 +21318,7 @@ app.post('/api/affiliates/me/promotions/:fightId/announce', submitLimiter, verif
         }
       }
       emailedCount = deliveryResults.filter((result) => result.status === 'fulfilled').length;
-      const emailedRecipients = deliveryResults
+      emailedRecipients = deliveryResults
         .filter((result) => result.status === 'fulfilled')
         .map((result) => ({
           name: String(result.recipient?.firstName || '').trim(),
