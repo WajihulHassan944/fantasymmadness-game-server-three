@@ -6099,6 +6099,90 @@ const mailFailureMessage = (error) => {
   return 'The email provider could not deliver this message. Check the backend mail configuration and try again.';
 };
 
+const transactionalMailProvider = () => {
+  if (process.env.RESEND_API_KEY) return 'resend';
+  if (process.env.SENDGRID_API_KEY) return 'sendgrid';
+  if (process.env.BREVO_API_KEY) return 'brevo';
+  if (process.env.POSTMARK_SERVER_TOKEN) return 'postmark';
+  return 'smtp';
+};
+
+const sendTransactionalMail = async ({ to, subject, html }) => {
+  const recipient = String(to || '').trim().toLowerCase();
+  const from = String(
+    process.env.TRANSACTIONAL_MAIL_FROM
+    || process.env.RESEND_FROM
+    || process.env.SENDGRID_FROM
+    || process.env.BREVO_FROM
+    || process.env.POSTMARK_FROM
+    || FMM_MAIL_FROM
+    || SMTP_USER,
+  ).trim();
+  const provider = transactionalMailProvider();
+  if (provider === 'smtp') {
+    return transporter.sendMail({
+      from: SMTP_USER ? `Fantasy MMAdness <${SMTP_USER}>` : from,
+      to: recipient,
+      envelope: SMTP_USER ? { from: SMTP_USER, to: [recipient] } : undefined,
+      subject,
+      html,
+    });
+  }
+
+  let url;
+  let headers = { 'Content-Type': 'application/json' };
+  let payload;
+  if (provider === 'resend') {
+    url = 'https://api.resend.com/emails';
+    headers.Authorization = `Bearer ${process.env.RESEND_API_KEY}`;
+    payload = { from, to: [recipient], subject, html };
+  } else if (provider === 'sendgrid') {
+    url = 'https://api.sendgrid.com/v3/mail/send';
+    headers.Authorization = `Bearer ${process.env.SENDGRID_API_KEY}`;
+    payload = {
+      personalizations: [{ to: [{ email: recipient }] }],
+      from: { email: from.replace(/^.*<([^>]+)>.*$/, '$1') },
+      subject,
+      content: [{ type: 'text/html', value: html }],
+    };
+  } else if (provider === 'brevo') {
+    url = 'https://api.brevo.com/v3/smtp/email';
+    headers['api-key'] = process.env.BREVO_API_KEY;
+    payload = {
+      sender: { email: from.replace(/^.*<([^>]+)>.*$/, '$1'), name: 'Fantasy MMAdness' },
+      to: [{ email: recipient }],
+      subject,
+      htmlContent: html,
+    };
+  } else {
+    url = 'https://api.postmarkapp.com/email';
+    headers['X-Postmark-Server-Token'] = process.env.POSTMARK_SERVER_TOKEN;
+    payload = {
+      From: from.replace(/^.*<([^>]+)>.*$/, '$1'),
+      To: recipient,
+      Subject: subject,
+      HtmlBody: html,
+      MessageStream: 'outbound',
+    };
+  }
+
+  const response = await fetch(url, {
+    method: 'POST',
+    headers,
+    body: JSON.stringify(payload),
+  });
+  const responseText = await response.text();
+  if (!response.ok) {
+    const error = new Error(`${provider} rejected the message: ${response.status} ${responseText.slice(0, 500)}`);
+    error.code = `${provider.toUpperCase()}_DELIVERY_FAILED`;
+    error.responseCode = response.status;
+    error.response = responseText;
+    error.command = 'DATA';
+    throw error;
+  }
+  return { provider, response: responseText };
+};
+
 // One authenticated path for operational tools (including Jarvis) to surface
 // failures in both the admin inbox and the real support mailbox.
 app.post('/api/admin/alerts', verifyAdminToken, async (req, res) => {
@@ -21166,10 +21250,8 @@ app.post('/api/affiliates/me/promotions/:fightId/announce', submitLimiter, verif
       const deliveryResults = [];
       for (const recipient of uniqueRecipients) {
         try {
-          const info = await transporter.sendMail({
-            from: `Fantasy MMAdness <${SMTP_USER}>`,
+          const info = await sendTransactionalMail({
             to: recipient.email,
-            envelope: { from: SMTP_USER, to: [recipient.email] },
             subject: headline,
             html: `<div style="font-family:Arial,Helvetica,sans-serif;color:#201f1d;max-width:600px;margin:auto">
               <p>Hi ${escapeHtml(recipient.firstName || 'there')},</p>
