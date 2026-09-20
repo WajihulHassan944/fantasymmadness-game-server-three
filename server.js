@@ -6236,6 +6236,15 @@ async function sendMailBatch(mailOptions, concurrency = 3) {
 // Safe production mail readiness probe. It authenticates with the configured
 // SMTP provider but never sends a message or exposes credentials.
 app.get('/api/health/email', submitLimiter, async (_req, res) => {
+  const selectedProvider = transactionalMailProvider();
+  if (selectedProvider !== 'smtp') {
+    return res.json({
+      ok: true,
+      configured: true,
+      provider: selectedProvider,
+      message: `Transactional email is configured through ${selectedProvider}.`,
+    });
+  }
   if (!SMTP_USER || !SMTP_PASS) {
     return res.status(503).json({
       ok: false,
