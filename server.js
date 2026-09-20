@@ -2855,10 +2855,10 @@ app.post("/activate-match/:matchId", verifyAdminOrAffiliateToken, requireAdminOr
     // Activating a public fight is the publish action. Keep email delivery tied
     // to that action so the player bell and inbox cannot disagree.
 
-    // Notify every player whose actual notification preference is enabled.
-    // isSubscribed is a paid-plan field and must not exclude free players.
+    // Fight email is independent from SMS and paid-plan preferences. Existing
+    // accounts without the new field are included unless they opt out.
     const users = await User.find({
-      isNotificationsEnabled: { $ne: false },
+      fightEmailNotifications: { $ne: false },
     }).select('email firstName isNotificationsEnabled').limit(20000).lean();
     const nonRegisteredUsers = await Usernonregistered.find();
 
@@ -3674,10 +3674,10 @@ app.post(
   {
 
 
-  // isNotificationsEnabled is the real delivery preference. isSubscribed is
-  // a paid-plan field, so filtering on it silently excluded free players.
+  // Fight email is independent from SMS and paid-plan preferences. Existing
+  // accounts without the new field are included unless they opt out.
   const users = await User.find({
-    isNotificationsEnabled: { $ne: false },
+    fightEmailNotifications: { $ne: false },
   }).select('email firstName lastName').limit(20000).lean();
   
   
@@ -4607,6 +4607,9 @@ const userSchema = new mongoose.Schema({
   shortBio: String,
   password: { type: String, select: false },
   isNotificationsEnabled: Boolean,
+  // Fight-email consent is independent from SMS and paid-plan status. Existing
+  // accounts default to enabled unless they explicitly turn this off.
+  fightEmailNotifications: { type: Boolean, default: true },
   isSubscribed: Boolean,
   isUSCitizen: Boolean,
   isAgreed: Boolean,
@@ -5823,6 +5826,7 @@ app.put('/update-profile/:userId', verifyToken, requireSelf((req) => req.params.
     zipCode,
     shortBio,
     isNotificationsEnabled,
+    fightEmailNotifications,
     isSubscribed,
     isUSCitizen,
   } = req.body;
@@ -5839,6 +5843,7 @@ app.put('/update-profile/:userId', verifyToken, requireSelf((req) => req.params.
     if (zipCode) updateFields.zipCode = zipCode;
     if (shortBio) updateFields.shortBio = shortBio;
     if (isNotificationsEnabled !== undefined) updateFields.isNotificationsEnabled = isNotificationsEnabled;
+    if (fightEmailNotifications !== undefined) updateFields.fightEmailNotifications = fightEmailNotifications;
     if (isSubscribed !== undefined) updateFields.isSubscribed = isSubscribed;
     if (isUSCitizen !== undefined) updateFields.isUSCitizen = isUSCitizen;
 
@@ -21082,7 +21087,7 @@ app.post('/api/affiliates/me/promotions/:fightId/announce', submitLimiter, verif
       const recipients = memberFilters.length
         ? await User.find({
           $or: memberFilters,
-          isNotificationsEnabled: { $ne: false },
+          fightEmailNotifications: { $ne: false },
         }).select('email firstName').limit(LEAGUE_EMAIL_MAX_RECIPIENTS).lean()
         : [];
 
