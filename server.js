@@ -10128,7 +10128,6 @@ app.post('/affiliate/:affiliateId/join', verifyToken, requireScope(TOKEN_SCOPES.
   // SECURITY: derived from the verified token. Body ids are ignored — otherwise
   // any caller could join another player into a league.
   const userId = String(req.user?.id || req.user?._id || '').trim();
-  const userEmail = String(req.body?.userEmail || '').trim();
   if (!userId) return res.status(401).json({ message: 'Sign in to join a league.' });
 
   try {
@@ -10152,7 +10151,10 @@ app.post('/affiliate/:affiliateId/join', verifyToken, requireScope(TOKEN_SCOPES.
     }
 
     // Add the user to the league
-    affiliate.usersJoined.push({ userId, email: userEmail });
+    // Store the verified account email, not a client-supplied value. The mobile
+    // join flow does not send userEmail, which previously left roster entries
+    // blank and made legacy/email-based notification recovery impossible.
+    affiliate.usersJoined.push({ userId, email: String(user.email || '').trim().toLowerCase() });
     await affiliate.save();
 
     // Send emails to both the user and the affiliate
@@ -21086,18 +21088,31 @@ app.post('/api/affiliates/me/promotions/:fightId/announce', submitLimiter, verif
       const hoursLeft = Math.max(1, Math.ceil((new Date(recentEmail.createdAt).getTime() + LEAGUE_EMAIL_COOLDOWN_HOURS * 3600 * 1000 - Date.now()) / 3600000));
       emailSkippedReason = `Email cooldown — you can email your league again in about ${hoursLeft}h. This notice still went to every member's notifications.`;
     } else {
-      // Only members who have not opted out of mail.
+      // isSubscribed is the paid-plan flag, not the league-notification opt-in.
+      // Filtering on it silently removed free-plan league members — normally
+      // most of a promoter's roster. isNotificationsEnabled is the actual
+      // account-level delivery preference.
       const memberIds = members.map((m) => String(m.userId)).filter((id) => mongoose.isValidObjectId(id));
-      const recipients = memberIds.length
+      const memberEmails = members
+        .map((m) => String(m?.email || '').trim().toLowerCase())
+        .filter(Boolean);
+      const memberFilters = [];
+      if (memberIds.length) memberFilters.push({ _id: { $in: memberIds } });
+      if (memberEmails.length) memberFilters.push({ email: { $in: memberEmails } });
+      const recipients = memberFilters.length
         ? await User.find({
-          _id: { $in: memberIds },
-          isSubscribed: { $ne: false },
+          $or: memberFilters,
           isNotificationsEnabled: { $ne: false },
         }).select('email firstName').limit(LEAGUE_EMAIL_MAX_RECIPIENTS).lean()
         : [];
 
       const appUrl = String(process.env.PUBLIC_APP_URL || 'https://www.fantasymmadness.com').replace(/\/$/, '');
-      await Promise.allSettled(recipients.filter((r) => r.email).map((recipient) => transporter.sendMail({
+      const uniqueRecipients = [...new Map(
+        recipients
+          .filter((recipient) => recipient.email)
+          .map((recipient) => [String(recipient.email).trim().toLowerCase(), recipient]),
+      ).values()];
+      const deliveryResults = await Promise.allSettled(uniqueRecipients.map((recipient) => transporter.sendMail({
         from: FMM_MAIL_FROM,
         to: recipient.email,
         subject: headline,
@@ -21109,8 +21124,17 @@ app.post('/api/affiliates/me/promotions/:fightId/announce', submitLimiter, verif
           <p><a href="${appUrl}" style="display:inline-block;padding:11px 20px;background:#f2b544;color:#2b1b00;text-decoration:none;border-radius:6px;font-weight:bold">Open Fantasy MMAdness</a></p>
           <p style="font-size:12px;color:#8a8579">You are getting this because you joined ${escapeHtml(promoterName)} on Fantasy MMAdness. You can turn league emails off in your account settings.</p>
         </div>`,
-      }).catch((error) => { console.error('League notice mail failed:', error.message); })));
-      emailedCount = recipients.length;
+      })));
+      emailedCount = deliveryResults.filter((result) => result.status === 'fulfilled').length;
+      const failedCount = deliveryResults.length - emailedCount;
+      if (failedCount > 0) {
+        emailSkippedReason = `${failedCount} league email${failedCount === 1 ? '' : 's'} failed at the mail provider. ${emailedCount} delivered successfully.`;
+        deliveryResults.forEach((result) => {
+          if (result.status === 'rejected') console.error('League notice mail failed:', result.reason?.message || result.reason);
+        });
+      } else if (uniqueRecipients.length === 0) {
+        emailSkippedReason = 'No league members currently have an eligible notification email.';
+      }
     }
 
     const notice = await LeagueNotice.create({
