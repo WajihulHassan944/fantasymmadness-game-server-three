@@ -21402,8 +21402,8 @@ app.post('/api/affiliates/me/promotions/:fightId/announce', submitLimiter, verif
       emailSkippedReason: emailSkippedReason || undefined,
       emailDiagnostic: emailDiagnostic || undefined,
       message: emailedCount
-        ? `Fight promotion published successfully. ${members.length} in-app notification${members.length === 1 ? '' : 's'} sent. ${emailedCount} of ${eligibleEmailCount} member email${uniqueRecipients.length === 1 ? '' : 's'} sent.${emailSkippedReason ? ` ${emailSkippedReason}` : ''}`
-        : `Fight promotion published successfully. ${members.length} in-app notification${members.length === 1 ? '' : 's'} sent. 0 of ${eligibleEmailCount} member email${uniqueRecipients.length === 1 ? '' : 's'} sent.${emailSkippedReason ? ` ${emailSkippedReason}` : ''}`,
+        ? `Fight promotion published successfully. ${members.length} in-app notification${members.length === 1 ? '' : 's'} sent. ${emailedCount} of ${eligibleEmailCount} member email${eligibleEmailCount === 1 ? '' : 's'} sent.${emailSkippedReason ? ` ${emailSkippedReason}` : ''}`
+        : `Fight promotion published successfully. ${members.length} in-app notification${members.length === 1 ? '' : 's'} sent. 0 of ${eligibleEmailCount} member email${eligibleEmailCount === 1 ? '' : 's'} sent.${emailSkippedReason ? ` ${emailSkippedReason}` : ''}`,
     });
   } catch (error) {
     console.error('League announce failed:', error);
