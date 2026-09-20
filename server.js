@@ -21381,6 +21381,50 @@ app.post('/api/affiliates/me/promotions/:fightId/announce', submitLimiter, verif
 // Retry provider-blocked league alerts after the mailbox quota resets.
 app.get('/api/cron/retry-league-emails', verifyCronSecret, async (_req, res) => {
   try {
+    // Recover recent quota-failed notices created before the durable queue existed.
+    const recentFailedNotices = await LeagueNotice.find({
+      emailedCount: 0,
+      emailSkippedReason: /sending limit|failed at the mail provider/i,
+      createdAt: { $gte: new Date(Date.now() - 7 * 24 * 60 * 60 * 1000) },
+    }).sort({ createdAt: -1 }).limit(20).lean();
+    for (const notice of recentFailedNotices) {
+      const affiliate = await Affiliate.findById(notice.affiliateId).select('usersJoined leagueName playerName').lean();
+      const members = Array.isArray(affiliate?.usersJoined) ? affiliate.usersJoined : [];
+      const ids = members.map((member) => String(member.userId || '')).filter((id) => mongoose.isValidObjectId(id));
+      const emails = members.map((member) => String(member.email || '').trim().toLowerCase()).filter(Boolean);
+      const filters = [];
+      if (ids.length) filters.push({ _id: { $in: ids } });
+      if (emails.length) filters.push({ email: { $in: emails } });
+      const users = filters.length ? await User.find({
+        $or: filters,
+        fightEmailNotifications: { $ne: false },
+      }).select('email firstName').lean() : [];
+      const uniqueUsers = [...new Map(users.filter((user) => user.email).map((user) => [String(user.email).trim().toLowerCase(), user])).values()];
+      if (uniqueUsers.length) {
+        const appUrl = String(process.env.PUBLIC_APP_URL || 'https://www.fantasymmadness.com').replace(/\/$/, '');
+        await PendingLeagueEmail.bulkWrite(uniqueUsers.map((user) => {
+          const email = String(user.email).trim().toLowerCase();
+          return {
+            updateOne: {
+              filter: { dedupeKey: `${notice.fightId}:${email}` },
+              update: {
+                $setOnInsert: {
+                  dedupeKey: `${notice.fightId}:${email}`,
+                  to: email,
+                  subject: notice.headline,
+                  html: `<div style="font-family:Arial,Helvetica,sans-serif;color:#201f1d;max-width:600px;margin:auto"><p>Hi ${escapeHtml(user.firstName || 'there')},</p><p style="font-size:17px"><strong>${escapeHtml(notice.headline)}</strong></p><p>${escapeHtml(notice.body || '')}</p><p><a href="${appUrl}">Open Fantasy MMAdness</a></p></div>`,
+                  status: 'pending',
+                  attempts: 0,
+                  nextAttemptAt: new Date(),
+                },
+              },
+              upsert: true,
+            },
+          };
+        }), { ordered: false });
+      }
+    }
+
     const queued = await PendingLeagueEmail.find({
       status: 'pending',
       nextAttemptAt: { $lte: new Date() },
