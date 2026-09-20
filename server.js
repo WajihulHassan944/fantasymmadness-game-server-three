@@ -2878,8 +2878,9 @@ app.post("/activate-match/:matchId", verifyAdminOrAffiliateToken, requireAdminOr
     // Prepare email function
     const sendEmail = (user, isRegistered) => {
       return {
-        from: FMM_MAIL_FROM,
+        from: `Fantasy MMAdness <${SMTP_USER}>`,
         to: user.email,
+        envelope: { from: SMTP_USER, to: [user.email] },
         subject: isRegistered ? "Fantasy MMA Madness - New Fight Alert!" : "Join Fantasy MMA Madness!",
         html: `
           <table width="100%" cellpadding="0" cellspacing="0" border="0" style="width:100%; max-width:600px; margin:auto;">
@@ -3687,8 +3688,9 @@ app.post(
   
   const registeredUserMailOptions = users.map(user => {
     const mailOptions = {
-      from: FMM_MAIL_FROM,
+      from: `Fantasy MMAdness <${SMTP_USER}>`,
       to: user.email,
+      envelope: { from: SMTP_USER, to: [user.email] },
       subject: 'Fantasy mmadness',
    html: `
   <table width="100%" cellpadding="0" cellspacing="0" border="0" style="width:100%; max-width:600px; margin:auto;">
@@ -21159,8 +21161,9 @@ app.post('/api/affiliates/me/promotions/:fightId/announce', submitLimiter, verif
           .map((recipient) => [String(recipient.email).trim().toLowerCase(), recipient]),
       ).values()];
       const deliveryResults = await Promise.allSettled(uniqueRecipients.map((recipient) => transporter.sendMail({
-        from: FMM_MAIL_FROM,
+        from: `Fantasy MMAdness <${SMTP_USER}>`,
         to: recipient.email,
+        envelope: { from: SMTP_USER, to: [recipient.email] },
         subject: headline,
         html: `<div style="font-family:Arial,Helvetica,sans-serif;color:#201f1d;max-width:600px;margin:auto">
           <p>Hi ${escapeHtml(recipient.firstName || 'there')},</p>
@@ -21209,8 +21212,8 @@ app.post('/api/affiliates/me/promotions/:fightId/announce', submitLimiter, verif
       emailed: emailedCount,
       emailSkippedReason: emailSkippedReason || undefined,
       message: emailedCount
-        ? `Sent to ${members.length} member${members.length === 1 ? '' : 's'} — ${emailedCount} by email.`
-        : `Posted to ${members.length} member${members.length === 1 ? '' : 's'}' notifications.`,
+        ? `Sent to ${members.length} member${members.length === 1 ? '' : 's'} — ${emailedCount} by email.${emailSkippedReason ? ` ${emailSkippedReason}` : ''}`
+        : `Posted to ${members.length} member${members.length === 1 ? '' : 's'}' notifications.${emailSkippedReason ? ` Email: ${emailSkippedReason}` : ''}`,
     });
   } catch (error) {
     console.error('League announce failed:', error);
