@@ -21176,10 +21176,26 @@ app.post('/api/affiliates/me/promotions/:fightId/announce', submitLimiter, verif
       })));
       emailedCount = deliveryResults.filter((result) => result.status === 'fulfilled').length;
       const failedCount = deliveryResults.length - emailedCount;
+      const firstMailFailure = deliveryResults.find((result) => result.status === 'rejected')?.reason;
+      const emailDiagnostic = firstMailFailure ? {
+        code: String(firstMailFailure?.code || 'UNKNOWN').slice(0, 80),
+        command: String(firstMailFailure?.command || 'UNKNOWN').slice(0, 80),
+        responseCode: Number(firstMailFailure?.responseCode || 0) || undefined,
+        providerResponse: safeMailProviderResponse(firstMailFailure) || undefined,
+        guidance: mailFailureMessage(firstMailFailure),
+      } : null;
       if (failedCount > 0) {
-        emailSkippedReason = `${failedCount} league email${failedCount === 1 ? '' : 's'} failed at the mail provider. ${emailedCount} delivered successfully.`;
+        const providerDetail = emailDiagnostic?.providerResponse
+          ? ` Provider response: ${emailDiagnostic.providerResponse}`
+          : '';
+        emailSkippedReason = `${failedCount} league email${failedCount === 1 ? '' : 's'} failed at the mail provider. ${emailedCount} delivered successfully. ${emailDiagnostic?.guidance || ''}${providerDetail}`.trim();
         deliveryResults.forEach((result) => {
-          if (result.status === 'rejected') console.error('League notice mail failed:', result.reason?.message || result.reason);
+          if (result.status === 'rejected') console.error('League notice mail failed:', {
+            code: result.reason?.code,
+            command: result.reason?.command,
+            responseCode: result.reason?.responseCode,
+            response: safeMailProviderResponse(result.reason),
+          });
         });
       } else if (uniqueRecipients.length === 0) {
         emailSkippedReason = 'No league members currently have an eligible notification email.';
@@ -21211,6 +21227,7 @@ app.post('/api/affiliates/me/promotions/:fightId/announce', submitLimiter, verif
       reachedBells: members.length,
       emailed: emailedCount,
       emailSkippedReason: emailSkippedReason || undefined,
+      emailDiagnostic: emailDiagnostic || undefined,
       message: emailedCount
         ? `Sent to ${members.length} member${members.length === 1 ? '' : 's'} — ${emailedCount} by email.${emailSkippedReason ? ` ${emailSkippedReason}` : ''}`
         : `Posted to ${members.length} member${members.length === 1 ? '' : 's'}' notifications.${emailSkippedReason ? ` Email: ${emailSkippedReason}` : ''}`,
