@@ -1,9 +1,17 @@
 {
   "version": 2,
   "name": "backend-for-share-experiences",
-  "builds": [{ "src": "full-card-bootstrap.js", "use": "@vercel/node" }],
+  "builds": [
+    {
+      "src": "full-card-bootstrap.js",
+      "use": "@vercel/node"
+    }
+  ],
   "routes": [
-    { "src": "/(.*)", "dest": "/full-card-bootstrap.js" }
+    {
+      "src": "/(.*)",
+      "dest": "/full-card-bootstrap.js"
+    }
   ],
   "crons": [
     {
@@ -29,6 +37,10 @@
     {
       "path": "/api/cron/ufc-event-discovery",
       "schedule": "17 4 * * *"
+    },
+    {
+      "path": "/api/cron/retry-league-emails",
+      "schedule": "15 14 * * *"
     }
   ]
 }
