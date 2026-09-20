@@ -21238,6 +21238,7 @@ app.post('/api/affiliates/me/promotions/:fightId/announce', submitLimiter, verif
     }).select('createdAt').lean();
 
     let emailedCount = 0;
+    let eligibleEmailCount = 0;
     let emailedRecipients = [];
     let emailSkippedReason = '';
     let emailDiagnostic = null;
@@ -21270,6 +21271,7 @@ app.post('/api/affiliates/me/promotions/:fightId/announce', submitLimiter, verif
           .filter((recipient) => recipient.email)
           .map((recipient) => [String(recipient.email).trim().toLowerCase(), recipient]),
       ).values()];
+      eligibleEmailCount = uniqueRecipients.length;
       const deliveryResults = [];
       const buildLeagueEmailHtml = (recipient) => `<div style="font-family:Arial,Helvetica,sans-serif;color:#201f1d;max-width:600px;margin:auto">
         <p>Hi ${escapeHtml(recipient?.firstName || 'fight fan')},</p>
@@ -21400,8 +21402,8 @@ app.post('/api/affiliates/me/promotions/:fightId/announce', submitLimiter, verif
       emailSkippedReason: emailSkippedReason || undefined,
       emailDiagnostic: emailDiagnostic || undefined,
       message: emailedCount
-        ? `Fight promotion published successfully. ${members.length} in-app notification${members.length === 1 ? '' : 's'} sent. ${emailedCount} of ${uniqueRecipients.length} member email${uniqueRecipients.length === 1 ? '' : 's'} sent.${emailSkippedReason ? ` ${emailSkippedReason}` : ''}`
-        : `Fight promotion published successfully. ${members.length} in-app notification${members.length === 1 ? '' : 's'} sent. 0 of ${uniqueRecipients.length} member email${uniqueRecipients.length === 1 ? '' : 's'} sent.${emailSkippedReason ? ` ${emailSkippedReason}` : ''}`,
+        ? `Fight promotion published successfully. ${members.length} in-app notification${members.length === 1 ? '' : 's'} sent. ${emailedCount} of ${eligibleEmailCount} member email${uniqueRecipients.length === 1 ? '' : 's'} sent.${emailSkippedReason ? ` ${emailSkippedReason}` : ''}`
+        : `Fight promotion published successfully. ${members.length} in-app notification${members.length === 1 ? '' : 's'} sent. 0 of ${eligibleEmailCount} member email${uniqueRecipients.length === 1 ? '' : 's'} sent.${emailSkippedReason ? ` ${emailSkippedReason}` : ''}`,
     });
   } catch (error) {
     console.error('League announce failed:', error);
