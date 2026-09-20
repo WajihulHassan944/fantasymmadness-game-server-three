@@ -2855,12 +2855,11 @@ app.post("/activate-match/:matchId", verifyAdminOrAffiliateToken, requireAdminOr
     // Activating a public fight is the publish action. Keep email delivery tied
     // to that action so the player bell and inbox cannot disagree.
 
-    // Fetch users. Respect the two opt-outs that already exist on the account —
-    // mailing someone who unsubscribed is the fastest route to a spam complaint.
+    // Notify every player whose actual notification preference is enabled.
+    // isSubscribed is a paid-plan field and must not exclude free players.
     const users = await User.find({
-      isSubscribed: { $ne: false },
       isNotificationsEnabled: { $ne: false },
-    }).select('email firstName isSubscribed isNotificationsEnabled').limit(20000).lean();
+    }).select('email firstName isNotificationsEnabled').limit(20000).lean();
     const nonRegisteredUsers = await Usernonregistered.find();
 
     // Match details for email
@@ -3675,10 +3674,9 @@ app.post(
   {
 
 
-  // Opt-in already, but it was mailing people who had unsubscribed and loading
-  // whole user documents (password hashes included) to do it.
+  // isNotificationsEnabled is the real delivery preference. isSubscribed is
+  // a paid-plan field, so filtering on it silently excluded free players.
   const users = await User.find({
-    isSubscribed: { $ne: false },
     isNotificationsEnabled: { $ne: false },
   }).select('email firstName lastName').limit(20000).lean();
   
