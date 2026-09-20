@@ -180,9 +180,12 @@ app.use(cors({
   [
     ['CRON_SECRET', 'scheduled jobs will return 503'],
     ['AUTHORIZE_NET_SIGNATURE_KEY', 'payment webhooks will be rejected'],
-    ['SMTP_PASS', 'no email will be delivered'],
+    ['SMTP_PASS or GMAIL_APP_PASSWORD', 'no email will be delivered'],
   ].forEach(([name, effect]) => {
-    if (!String(process.env[name] || '').trim()) console.warn(`WARNING: ${name} is not set — ${effect}.`);
+    const configured = name === 'SMTP_PASS or GMAIL_APP_PASSWORD'
+      ? String(process.env.SMTP_PASS || process.env.GMAIL_APP_PASSWORD || '').trim()
+      : String(process.env[name] || '').trim();
+    if (!configured) console.warn(`WARNING: ${name} is not set — ${effect}.`);
   });
 })();
 
@@ -2849,26 +2852,8 @@ app.post("/activate-match/:matchId", verifyAdminOrAffiliateToken, requireAdminOr
 
     console.log(`Match ${matchId} status set to active.`);
 
-    // EMAIL IS FOR FEATURED FIGHTS ONLY.
-    // This used to mail every user and every guest on every activation. Players
-    // now receive all fights through the in-app bell
-    // (GET /api/users/me/notifications), so the inbox is reserved for cards you
-    // have actually marked as featured. An admin can force a send with
-    // { "notify": true } in the body for a one-off.
-    const isFeatured = Boolean(match.featuredThisWeek || match.featuredFight);
-    const forceNotify = req.body?.notify === true;
-    const shouldEmail = isFeatured || forceNotify;
-
-    if (!shouldEmail) {
-      console.log(`Match ${matchId} activated without email — not featured.`);
-      clearPublicResponseCache();
-      return res.status(200).json({
-        message: "Fight activated. No email sent — mark it Featured This Week (or send notify:true) to email your list.",
-        emailed: false,
-        reason: 'NOT_FEATURED',
-        inAppNotified: true,
-      });
-    }
+    // Activating a public fight is the publish action. Keep email delivery tied
+    // to that action so the player bell and inbox cannot disagree.
 
     // Fetch users. Respect the two opt-outs that already exist on the account —
     // mailing someone who unsubscribed is the fastest route to a spam complaint.
@@ -3684,7 +3669,11 @@ app.post(
   }
   
 
-  if (req.body.notify === 'true' || req.body.notify === true) {
+  // addMatch publishes a public LIVE fight, so eligible players must receive
+  // email as well as the in-app bell. The old optional notify flag was often
+  // omitted by the client, leaving the bell populated but sending no email.
+  {
+
 
   // Opt-in already, but it was mailing people who had unsubscribed and loading
   // whole user documents (password hashes included) to do it.
@@ -3787,16 +3776,6 @@ app.post(
     return transporter.sendMail(mailOptions);
   });
 
-  // Wait for all emails to be sent
-  try {
-    await Promise.all(mailPromises);
-    console.log('Emails sent successfully');
-  } catch (error) {
-    console.error('Error sending emails:', error);
-  }
-
-
-
   // Fetch non-registered users
 const nonRegisteredUsers = await Usernonregistered.find();
 
@@ -3845,9 +3824,7 @@ const nonRegisteredUserMailPromises = nonRegisteredUsers.map(user => {
   } 
   
   
-} else {
-    console.log('Notification skipped because notify is set to false');
-  }
+}
 
   const swarmAutomation = await triggerUpcomingEventAutomationForMatch(savedMatch, {
     route: '/addMatch',
