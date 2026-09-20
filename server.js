@@ -2955,13 +2955,10 @@ app.post("/activate-match/:matchId", verifyAdminOrAffiliateToken, requireAdminOr
       };
     };
 
-    // Send emails
-    const registeredEmails = users.map((user) => transporter.sendMail(sendEmail(user, true)));
-    const nonRegisteredEmails = nonRegisteredUsers.map((user) => transporter.sendMail(sendEmail(user, false)));
-
-    await Promise.all([...registeredEmails, ...nonRegisteredEmails]);
-
-    console.log("Emails sent successfully to all users.");
+    // Fight alerts are for registered players. Guest marketing mail does not
+    // belong in this time-sensitive path or consume Gmail concurrency.
+    const emailDelivery = await sendMailBatch(users.map((user) => sendEmail(user, true)), 3);
+    console.log('Fight email delivery:', emailDelivery);
     const swarmAutomation = await app.locals.swarmPhase2?.triggerAutomationEvent?.({
       trigger: 'fight_published',
       vertical: 'combat',
@@ -2985,7 +2982,11 @@ app.post("/activate-match/:matchId", verifyAdminOrAffiliateToken, requireAdminOr
       metadata: { route: '/activate-match/:matchId', action: 'legacy-fight-published' },
       reason: 'fight-activated-in-backend',
     }).catch((error) => ({ ok: false, warning: 'Fight activated but swarm automation event failed.', error: error.message }));
-    return res.status(200).json({ message: "Match activated & emails sent successfully", automation: swarmAutomation || null });
+    return res.status(200).json({
+      message: emailDelivery.failed ? 'Match activated; some email alerts failed.' : 'Match activated and player emails sent.',
+      emailDelivery,
+      automation: swarmAutomation || null,
+    });
   } catch (error) {
     console.error("Error updating match status:", error);
     return res.status(500).json({ message: "Internal server error" });
@@ -3681,7 +3682,7 @@ app.post(
   }).select('email firstName lastName').limit(20000).lean();
   
   
-  const registeredUserMailPromises = users.map(user => {
+  const registeredUserMailOptions = users.map(user => {
     const mailOptions = {
       from: FMM_MAIL_FROM,
       to: user.email,
@@ -3771,7 +3772,7 @@ app.post(
 ,
     };
 
-    return transporter.sendMail(mailOptions);
+    return mailOptions;
   });
 
   // Fetch non-registered users
@@ -3813,15 +3814,10 @@ const nonRegisteredUserMailPromises = nonRegisteredUsers.map(user => {
   return transporter.sendMail(mailOptions);
 });
 
-  // Wait for all emails to be sent
-  try {
-    await Promise.all([...registeredUserMailPromises, ...nonRegisteredUserMailPromises]);
-    console.log('Emails sent successfully to all users');
-  } catch (error) {
-    console.error('Error sending emails:', error);
-  } 
-  
-  
+  // Registered player alerts are delivered in controlled batches. Non-registered
+  // marketing recipients are deliberately excluded from the fight-alert path.
+  const emailDelivery = await sendMailBatch(registeredUserMailOptions, 3);
+  console.log('Fight email delivery:', emailDelivery);
 }
 
   const swarmAutomation = await triggerUpcomingEventAutomationForMatch(savedMatch, {
@@ -3832,7 +3828,12 @@ const nonRegisteredUserMailPromises = nonRegisteredUsers.map(user => {
   });
 
   // Respond with success and the saved match ID
-  res.status(200).json({ message: 'Match Added Successfully and Notifications Sent', matchId: savedMatch._id, automation: swarmAutomation || null });
+  res.status(200).json({
+    message: emailDelivery.failed ? 'Fight published; some email alerts failed.' : 'Fight published and player emails sent.',
+    matchId: savedMatch._id,
+    emailDelivery,
+    automation: swarmAutomation || null,
+  });
 } catch (error) {
   console.error('Error adding match:', error);
   const isValidationError = error?.name === 'ValidationError' || error?.name === 'CastError';
@@ -6116,6 +6117,30 @@ app.post('/api/admin/alerts', verifyAdminToken, async (req, res) => {
     return res.status(500).json({ message: 'Could not deliver the admin alert.' });
   }
 });
+
+async function sendMailBatch(mailOptions, concurrency = 3) {
+  const queue = (Array.isArray(mailOptions) ? mailOptions : []).filter((item) => item?.to);
+  const results = new Array(queue.length);
+  let cursor = 0;
+  const worker = async () => {
+    while (cursor < queue.length) {
+      const index = cursor++;
+      try {
+        const info = await transporter.sendMail(queue[index]);
+        results[index] = { ok: true, accepted: Array.isArray(info?.accepted) ? info.accepted.length : 0 };
+      } catch (error) {
+        results[index] = { ok: false, code: String(error?.code || 'SMTP_DELIVERY_FAILED'), responseCode: Number(error?.responseCode || 0) || null, message: mailFailureMessage(error) };
+      }
+    }
+  };
+  await Promise.all(Array.from({ length: Math.min(Math.max(1, concurrency), Math.max(1, queue.length)) }, worker));
+  return {
+    attempted: queue.length,
+    delivered: results.filter((item) => item?.ok && item.accepted > 0).length,
+    failed: results.filter((item) => !item?.ok || item.accepted === 0).length,
+    firstError: results.find((item) => !item?.ok)?.message || '',
+  };
+}
 
 // Safe production mail readiness probe. It authenticates with the configured
 // SMTP provider but never sends a message or exposes credentials.
