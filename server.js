@@ -21163,6 +21163,21 @@ const leagueNoticeSchema = new mongoose.Schema({
 leagueNoticeSchema.index({ affiliateId: 1, createdAt: -1 });
 
 const LeagueNotice = mongoose.models.LeagueNotice || mongoose.model('LeagueNotice', leagueNoticeSchema);
+const pendingLeagueEmailSchema = new mongoose.Schema({
+  dedupeKey: { type: String, required: true, unique: true, index: true },
+  to: { type: String, required: true },
+  subject: { type: String, required: true },
+  html: { type: String, required: true },
+  status: { type: String, enum: ['pending', 'sent', 'abandoned'], default: 'pending', index: true },
+  attempts: { type: Number, default: 0 },
+  nextAttemptAt: { type: Date, default: Date.now, index: true },
+  lastError: { type: String, default: '' },
+  sentAt: { type: Date, default: null },
+}, { timestamps: true });
+
+const PendingLeagueEmail = mongoose.models.PendingLeagueEmail
+  || mongoose.model('PendingLeagueEmail', pendingLeagueEmailSchema);
+
 
 // --------------------------------------------------------------------------
 // ANNOUNCE
@@ -21258,22 +21273,23 @@ app.post('/api/affiliates/me/promotions/:fightId/announce', submitLimiter, verif
       // even when the same authenticated connection passes verify().
       const deliveryResults = [];
       for (const recipient of uniqueRecipients) {
-        try {
-          const info = await sendTransactionalMail({
-            to: recipient.email,
-            subject: headline,
-            html: `<div style="font-family:Arial,Helvetica,sans-serif;color:#201f1d;max-width:600px;margin:auto">
+        const emailHtml = `<div style="font-family:Arial,Helvetica,sans-serif;color:#201f1d;max-width:600px;margin:auto">
               <p>Hi ${escapeHtml(recipient.firstName || 'there')},</p>
               <p style="font-size:17px"><strong>${escapeHtml(headline)}</strong></p>
               <p>${escapeHtml(body)}</p>
               ${fight.matchDate ? `<p style="color:#5d5a55">Fight date: ${escapeHtml(String(fight.matchDate).slice(0, 10))}</p>` : ''}
               <p><a href="${appUrl}" style="display:inline-block;padding:11px 20px;background:#f2b544;color:#2b1b00;text-decoration:none;border-radius:6px;font-weight:bold">Open Fantasy MMAdness</a></p>
               <p style="font-size:12px;color:#8a8579">You are getting this because you joined ${escapeHtml(promoterName)} on Fantasy MMAdness. You can turn league emails off in your account settings.</p>
-            </div>`,
+            </div>`;
+        try {
+          const info = await sendTransactionalMail({
+            to: recipient.email,
+            subject: headline,
+            html: emailHtml,
           });
-          deliveryResults.push({ status: 'fulfilled', value: info });
+          deliveryResults.push({ status: 'fulfilled', value: info, recipient, emailHtml });
         } catch (reason) {
-          deliveryResults.push({ status: 'rejected', reason });
+          deliveryResults.push({ status: 'rejected', reason, recipient, emailHtml });
         }
       }
       emailedCount = deliveryResults.filter((result) => result.status === 'fulfilled').length;
@@ -21291,6 +21307,28 @@ app.post('/api/affiliates/me/promotions/:fightId/announce', submitLimiter, verif
           ? ` Provider response: ${emailDiagnostic.providerResponse}`
           : '';
         emailSkippedReason = `${failedCount} league email${failedCount === 1 ? '' : 's'} failed at the mail provider. ${emailedCount} delivered successfully. ${emailDiagnostic?.guidance || ''}${providerDetail}`.trim();
+        const failedDeliveries = deliveryResults.filter((result) => result.status === 'rejected');
+        if (failedDeliveries.length) {
+          await PendingLeagueEmail.bulkWrite(failedDeliveries.map((result) => ({
+            updateOne: {
+              filter: { dedupeKey: `${fight._id}:${String(result.recipient.email).trim().toLowerCase()}` },
+              update: {
+                $setOnInsert: {
+                  dedupeKey: `${fight._id}:${String(result.recipient.email).trim().toLowerCase()}`,
+                  to: String(result.recipient.email).trim().toLowerCase(),
+                  subject: headline,
+                  html: result.emailHtml,
+                  status: 'pending',
+                  attempts: 0,
+                  nextAttemptAt: new Date(Date.now() + 60 * 60 * 1000),
+                },
+                $set: { lastError: safeMailProviderResponse(result.reason) || String(result.reason?.message || '').slice(0, 420) },
+              },
+              upsert: true,
+            },
+          })), { ordered: false });
+          emailSkippedReason += ' Failed emails were queued for automatic retry.';
+        }
         deliveryResults.forEach((result) => {
           if (result.status === 'rejected') console.error('League notice mail failed:', {
             code: result.reason?.code,
@@ -21337,6 +21375,41 @@ app.post('/api/affiliates/me/promotions/:fightId/announce', submitLimiter, verif
   } catch (error) {
     console.error('League announce failed:', error);
     return res.status(500).json({ ok: false, message: 'Could not send that notice.' });
+  }
+});
+
+// Retry provider-blocked league alerts after the mailbox quota resets.
+app.get('/api/cron/retry-league-emails', verifyCronSecret, async (_req, res) => {
+  try {
+    const queued = await PendingLeagueEmail.find({
+      status: 'pending',
+      nextAttemptAt: { $lte: new Date() },
+      attempts: { $lt: 8 },
+    }).sort({ createdAt: 1 }).limit(20);
+
+    let sent = 0;
+    let failed = 0;
+    for (const item of queued) {
+      try {
+        await sendTransactionalMail({ to: item.to, subject: item.subject, html: item.html });
+        item.status = 'sent';
+        item.sentAt = new Date();
+        item.lastError = '';
+        sent += 1;
+      } catch (error) {
+        item.attempts += 1;
+        item.lastError = safeMailProviderResponse(error) || String(error?.message || '').slice(0, 420);
+        item.nextAttemptAt = new Date(Date.now() + Math.min(24, Math.max(2, item.attempts * 3)) * 60 * 60 * 1000);
+        if (item.attempts >= 8) item.status = 'abandoned';
+        failed += 1;
+      }
+      await item.save();
+      if (failed > 0 && transactionalMailProvider() === 'smtp') break;
+    }
+    return res.json({ ok: true, provider: transactionalMailProvider(), checked: queued.length, sent, failed });
+  } catch (error) {
+    console.error('League email retry failed:', error);
+    return res.status(500).json({ ok: false, message: 'League email retry failed.' });
   }
 });
 
