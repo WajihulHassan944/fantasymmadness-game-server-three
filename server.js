@@ -3677,9 +3677,10 @@ app.post(
 
   // Fight email is independent from SMS and paid-plan preferences. Existing
   // accounts without the new field are included unless they opt out.
-  const users = await User.find({
-    fightEmailNotifications: { $ne: false },
-  }).select('email firstName lastName').limit(20000).lean();
+  const users = req.actorRole === 'admin'
+    ? await User.find({ fightEmailNotifications: { $ne: false } })
+      .select('email firstName lastName').limit(20000).lean()
+    : [];
   
   
   const registeredUserMailOptions = users.map(user => {
@@ -3776,7 +3777,7 @@ app.post(
   });
 
   // Fetch non-registered users
-const nonRegisteredUsers = await Usernonregistered.find();
+const nonRegisteredUsers = []; // Guest marketing is never part of fight publishing.
 
 const nonRegisteredUserMailPromises = nonRegisteredUsers.map(user => {
   const mailOptions = {
@@ -3811,12 +3812,14 @@ const nonRegisteredUserMailPromises = nonRegisteredUsers.map(user => {
     `,
   };
 
-  return transporter.sendMail(mailOptions);
+  return mailOptions;
 });
 
   // Registered player alerts are delivered in controlled batches. Non-registered
   // marketing recipients are deliberately excluded from the fight-alert path.
-  const emailDelivery = await sendMailBatch(registeredUserMailOptions, 3);
+  const emailDelivery = req.actorRole === 'admin'
+    ? await sendMailBatch(registeredUserMailOptions, 3)
+    : { attempted: 0, delivered: 0, failed: 0, skipped: 'AFFILIATE_LEAGUE_NOTICE' };
   console.log('Fight email delivery:', emailDelivery);
 }
 
