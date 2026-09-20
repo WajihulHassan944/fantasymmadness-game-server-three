@@ -6117,6 +6117,37 @@ app.post('/api/admin/alerts', verifyAdminToken, async (req, res) => {
   }
 });
 
+// Safe production mail readiness probe. It authenticates with the configured
+// SMTP provider but never sends a message or exposes credentials.
+app.get('/api/health/email', submitLimiter, async (_req, res) => {
+  if (!SMTP_USER || !SMTP_PASS) {
+    return res.status(503).json({
+      ok: false,
+      configured: false,
+      code: 'SMTP_NOT_CONFIGURED',
+      message: 'Email credentials are missing in the production environment.',
+    });
+  }
+  try {
+    await transporter.verify();
+    return res.json({
+      ok: true,
+      configured: true,
+      provider: SMTP_IS_GMAIL_ACCOUNT ? 'gmail' : (SMTP_HOST ? 'smtp' : 'service'),
+      message: 'The email provider accepted the production SMTP credentials.',
+    });
+  } catch (error) {
+    return res.status(503).json({
+      ok: false,
+      configured: true,
+      code: String(error?.code || 'SMTP_VERIFY_FAILED'),
+      responseCode: Number(error?.responseCode || 0) || null,
+      command: String(error?.command || ''),
+      message: mailFailureMessage(error),
+    });
+  }
+});
+
 const STATIC_PUBLIC_APPAREL_PRODUCTS = [
   { sku: 'FMM-ETSY-4552218538', name: 'Every Fight Has A Formula Tee', price: 49.95, currency: 'USD', image: 'https://i.etsystatic.com/14114660/r/il/6ecaae/8355959330/il_794xN.8355959330_ru4j.jpg', sizes: ['M', 'L', 'XL', '2XL'], source: 'etsy', buyUrl: 'https://www.etsy.com/listing/4552218538/fantasy-mmadness-combat-sports-t-shirt' },
   { sku: 'FMM-ETSY-4552212559', name: 'Fighting Is In The Bones Tee', price: 49.95, currency: 'USD', image: 'https://i.etsystatic.com/14114660/r/il/e0f448/8403876627/il_794xN.8403876627_fcdb.jpg', sizes: ['M', 'L', 'XL', '2XL'], source: 'etsy', buyUrl: 'https://www.etsy.com/listing/4552212559/fantasy-mmadness-combat-sports-t-shirt' },
