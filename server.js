@@ -19244,7 +19244,7 @@ app.get('/api/admin/feedback/digest', verifyAdminToken, async (req, res) => {
 // The legacy sendMoneyNotice helper intentionally uses SMTP for older money
 // receipts, which caused support tickets to keep hitting Gmail after production
 // moved to Resend.
-const sendSupportNotice = async ({ to, subject, heading, lines = [], footer }) => {
+const sendSupportNotice = async ({ to, subject, heading, lines = [], footer, transactionalCopy = false }) => {
   const recipient = String(to || '').trim().toLowerCase();
   const html = `
     <div style="font-family:Arial,Helvetica,sans-serif;max-width:600px;margin:auto;background:#0b0c10;color:#fff;padding:24px;border-radius:12px;">
@@ -19269,7 +19269,14 @@ const sendSupportNotice = async ({ to, subject, heading, lines = [], footer }) =
       if (!Array.isArray(info?.accepted) || !info.accepted.length) {
         throw new Error('SMTP provider did not accept the recipient.');
       }
-      return { provider: 'smtp', accepted: info.accepted };
+      if (transactionalCopy && transactionalMailProvider() !== 'smtp') {
+        try {
+          await sendTransactionalMail({ to: recipient, subject, html });
+        } catch (copyError) {
+          console.error('Support transactional copy failed:', copyError?.message || copyError);
+        }
+      }
+      return { provider: transactionalCopy ? 'smtp+transactional' : 'smtp', accepted: info.accepted };
     } catch (error) {
       console.error('Support SMTP delivery failed; trying transactional fallback:', error?.message || error);
     }
@@ -19337,6 +19344,7 @@ app.post('/api/support/tickets', submitLimiter, optionalVerifyToken, async (req,
         to: email,
         subject: `We received your message — ${ticketNumber}`,
         heading: 'SUPPORT REQUEST RECEIVED',
+        transactionalCopy: category === 'affiliate',
         lines: [
           `Your reference is <strong>${ticketNumber}</strong>. Quote it in any reply.`,
           `Subject: ${subject}`,
