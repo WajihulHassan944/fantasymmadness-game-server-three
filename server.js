@@ -19238,6 +19238,21 @@ app.get('/api/admin/feedback/digest', verifyAdminToken, async (req, res) => {
 });
 
 // --- Support tickets -------------------------------------------------------
+// Support mail must use the same transactional provider as fight alerts.
+// The legacy sendMoneyNotice helper intentionally uses SMTP for older money
+// receipts, which caused support tickets to keep hitting Gmail after production
+// moved to Resend.
+const sendSupportNotice = ({ to, subject, heading, lines = [], footer }) => sendTransactionalMail({
+  to,
+  subject,
+  html: `
+    <div style="font-family:Arial,Helvetica,sans-serif;max-width:600px;margin:auto;background:#0b0c10;color:#fff;padding:24px;border-radius:12px;">
+      <h2 style="color:#f2b544;margin:0 0 12px;">${heading}</h2>
+      ${lines.map((line) => `<p style="margin:0 0 10px;line-height:1.6;color:rgba(255,255,255,.85);">${line}</p>`).join('')}
+      <p style="margin:18px 0 0;font-size:12px;color:rgba(255,255,255,.45);">${footer || 'FANTASY MMADNESS Support'}</p>
+    </div>`,
+});
+
 const supportTicketSchema = new mongoose.Schema({
   ticketNumber: { type: String, unique: true, index: true },
   userId: { type: mongoose.Schema.Types.ObjectId, ref: 'User', index: true },
@@ -19285,27 +19300,39 @@ app.post('/api/support/tickets', submitLimiter, optionalVerifyToken, async (req,
       relatedFightId: String(req.body?.fightId || '').slice(0, 60),
     });
 
-    await sendMoneyNotice({
-      to: email,
-      subject: `We received your message — ${ticketNumber}`,
-      heading: 'SUPPORT REQUEST RECEIVED',
-      lines: [
-        `Your reference is <strong>${ticketNumber}</strong>. Quote it in any reply.`,
-        `Subject: ${subject}`,
-        category === 'payment'
-          ? 'Payment issues are prioritised — we will come back to you as soon as we can.'
-          : 'We will come back to you as soon as we can.',
-      ],
+    const delivery = await Promise.allSettled([
+      sendSupportNotice({
+        to: email,
+        subject: `We received your message — ${ticketNumber}`,
+        heading: 'SUPPORT REQUEST RECEIVED',
+        lines: [
+          `Your reference is <strong>${ticketNumber}</strong>. Quote it in any reply.`,
+          `Subject: ${subject}`,
+          category === 'payment'
+            ? 'Payment issues are prioritised — we will come back to you as soon as we can.'
+            : 'We will come back to you as soon as we can.',
+        ],
+      }),
+      sendSupportNotice({
+        to: SUPPORT_EMAIL,
+        subject: `[${category.toUpperCase()}] ${ticketNumber} — ${subject}`,
+        heading: 'NEW SUPPORT TICKET',
+        lines: [`From: ${email}`, `Category: ${category}`, message],
+      }),
+    ]);
+    const requesterEmailSent = delivery[0].status === 'fulfilled';
+    const supportEmailSent = delivery[1].status === 'fulfilled';
+    delivery.forEach((result, index) => {
+      if (result.status === 'rejected') {
+        console.error(`Support ticket ${index === 0 ? 'requester' : 'inbox'} email failed:`, result.reason?.message || result.reason);
+      }
     });
 
-    await sendMoneyNotice({
-      to: SUPPORT_EMAIL,
-      subject: `[${category.toUpperCase()}] ${ticketNumber} — ${subject}`,
-      heading: 'NEW SUPPORT TICKET',
-      lines: [`From: ${email}`, `Category: ${category}`, message],
+    return res.status(201).json({
+      ticketNumber,
+      status: ticket.status,
+      emailDelivery: { requester: requesterEmailSent, support: supportEmailSent },
     });
-
-    return res.status(201).json({ ticketNumber, status: ticket.status });
   } catch (error) {
     console.error('Support ticket failed:', error);
     return res.status(500).json({ message: 'Could not submit your request.' });
@@ -19353,7 +19380,7 @@ app.patch('/api/admin/support/tickets/:id', verifyAdminToken, async (req, res) =
     if (reply) {
       ticket.responses.push({ body: reply, fromAdmin: true });
       ticket.lastResponseAt = new Date();
-      await sendMoneyNotice({
+      await sendSupportNotice({
         to: ticket.email,
         subject: `Re: ${ticket.subject} — ${ticket.ticketNumber}`,
         heading: 'REPLY FROM SUPPORT',
