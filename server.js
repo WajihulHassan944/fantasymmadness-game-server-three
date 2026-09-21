@@ -29,6 +29,7 @@ const crypto = require('crypto'); // For generating the verification token
 const nodemailer = require('nodemailer'); // For sending emails
 const SUPPORT_EMAIL = String(process.env.SUPPORT_EMAIL || 'contact@fantasymmadness.com').trim().toLowerCase();
 const ADMIN_ALERT_EMAILS = String(process.env.ADMIN_ALERT_EMAILS || SUPPORT_EMAIL).trim();
+const PRIMARY_CONTACT_EMAIL = 'contact@fantasymmadness.com';
 const SMTP_ACCOUNT_EMAIL = String(process.env.SMTP_USER || 'Fantasymmadness2@gmail.com').trim();
 // Most SMTP providers reject an unverified From domain. Use the authenticated
 // mailbox by default; SMTP_FROM remains available for a verified domain/alias.
@@ -19277,7 +19278,7 @@ const sendSupportNotice = async ({ to, subject, heading, lines = [], footer }) =
 };
 
 const supportInboxRecipients = () => Array.from(new Set(
-  [SUPPORT_EMAIL, ...String(ADMIN_ALERT_EMAILS || '').split(',')]
+  [PRIMARY_CONTACT_EMAIL, SUPPORT_EMAIL, ...String(ADMIN_ALERT_EMAILS || '').split(',')]
     .map((email) => String(email || '').trim().toLowerCase())
     .filter(Boolean),
 ));
