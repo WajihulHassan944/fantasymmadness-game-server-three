@@ -9309,6 +9309,8 @@ const Affiliate = mongoose.models.Affiliate || mongoose.model('Affiliate', affil
 const affiliateInviteSchema = new mongoose.Schema({
   code: { type: String, required: true, unique: true, index: true },
   note: { type: String, default: '' },
+  promoterAccess: { type: Boolean, default: false },
+  recipientEmail: { type: String, default: '' },
   expiresAt: { type: Date, required: true },
   usedAt: { type: Date, default: null },
   usedByAffiliateId: { type: mongoose.Schema.Types.ObjectId, ref: 'Affiliate', default: null },
@@ -10631,9 +10633,13 @@ app.post('/api/admin/affiliate-invites', verifyAdminToken, async (req, res) => {
   try {
     const days = Number(req.body?.expiresInDays) > 0 ? Number(req.body.expiresInDays) : 14;
     const code = crypto.randomBytes(9).toString('base64url');
+    const recipientEmail = String(req.body?.recipientEmail || '').trim().toLowerCase();
+    if (recipientEmail && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(recipientEmail)) return res.status(400).json({ message: 'Enter a valid recipient email.' });
     const invite = await AffiliateInvite.create({
       code,
       note: String(req.body?.note || '').slice(0, 200),
+      promoterAccess: req.body?.promoterAccess === true,
+      recipientEmail,
       expiresAt: new Date(Date.now() + days * 24 * 60 * 60 * 1000),
     });
     const siteBase = String(process.env.PUBLIC_SITE_URL || 'https://fantasymmadness.com').replace(/\/$/, '');
@@ -10701,6 +10707,10 @@ app.post('/registerAffiliate', submitLimiter, upload.single('image'), async (req
     const trimmedInviteCode = String(inviteCode || '').trim();
     if (trimmedInviteCode) {
       redeemedInvite = await AffiliateInvite.findOne({ code: trimmedInviteCode, usedAt: null, expiresAt: { $gt: new Date() } });
+      if (!redeemedInvite) return res.status(410).json({ message: 'This invitation has expired or has already been used.' });
+      if (redeemedInvite.recipientEmail && redeemedInvite.recipientEmail !== String(email || '').trim().toLowerCase()) {
+        return res.status(403).json({ message: 'This invitation is reserved for a different email address.' });
+      }
     }
 
     // Create new user with hashed password
@@ -10717,18 +10727,29 @@ app.post('/registerAffiliate', submitLimiter, upload.single('image'), async (req
       isUSCitizen,
       isAgreed,
       verified: Boolean(redeemedInvite),
+      ...(redeemedInvite?.promoterAccess ? {
+        promoterRole: 'PROMOTER', canCreateFullCards: true,
+        promoterVerifiedAt: new Date(), promoterSuspendedAt: null,
+      } : {}),
       password: await bcrypt.hash(password, 10),
       profileUrl, // Save the profile image URL
       profileDeleteUrl, // Save the delete URL for future image deletion
     });
 
-    // Save the new user to the database
-    await newUser.save();
-
+    // Claim the one-time code before saving so two concurrent signups cannot
+    // both receive pre-approved promoter access from the same link.
     if (redeemedInvite) {
-      redeemedInvite.usedAt = new Date();
-      redeemedInvite.usedByAffiliateId = newUser._id;
-      await redeemedInvite.save();
+      const claimed = await AffiliateInvite.findOneAndUpdate(
+        { _id: redeemedInvite._id, usedAt: null, expiresAt: { $gt: new Date() } },
+        { $set: { usedAt: new Date(), usedByAffiliateId: newUser._id } },
+        { new: true }
+      );
+      if (!claimed) return res.status(410).json({ message: 'This invitation has already been used.' });
+    }
+    try { await newUser.save(); }
+    catch (saveError) {
+      if (redeemedInvite) await AffiliateInvite.updateOne({ _id: redeemedInvite._id, usedByAffiliateId: newUser._id }, { $set: { usedAt: null, usedByAffiliateId: null } });
+      throw saveError;
     }
 
 const notification = new Notification({
@@ -10739,7 +10760,7 @@ const notification = new Notification({
     if (redeemedInvite) {
       // Instant-approved — no admin action needed, just let them know it happened.
       sendAdminPush({ title: 'Affiliate auto-approved', body: `${newUser.firstName} signed up via instant invite and is live.`, url: '/administration/AffiliateUsers' }).catch(() => null);
-      return res.status(201).json({ message: 'Affiliate account created and instantly approved.', instantApproved: true });
+      return res.status(201).json({ message: redeemedInvite.promoterAccess ? 'Promoter account created and instantly approved.' : 'Affiliate account created and instantly approved.', instantApproved: true, promoterApproved: Boolean(redeemedInvite.promoterAccess) });
     }
 
     const approvalLink = `https://fantasymmadness-game-server-three.vercel.app/approveAffiliate/${newUser._id}?t=${signActionToken('affiliate-approval', newUser._id)}`;
