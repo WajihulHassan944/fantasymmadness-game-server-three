@@ -129,15 +129,28 @@ module.exports = function registerFullCardPromoter({
   // Admin permission + secure invitation lifecycle.
   app.patch('/api/admin/full-card-promoters/:affiliateId', verifyAdminToken, async (req, res) => {
     try {
+      if (!validId(mongoose, req.params.affiliateId)) return res.status(400).json({ ok: false, message: 'Invalid affiliate ID.' });
       const update = {};
-      if (typeof req.body?.enabled === 'boolean') update.canCreateFullCards = req.body.enabled;
+      if (typeof req.body?.enabled === 'boolean') {
+        update.canCreateFullCards = req.body.enabled;
+        // The owner's approval also completes affiliate verification, which
+        // requirePromoter checks on every request.
+        if (req.body.enabled) update.verified = true;
+      }
       if (typeof req.body?.allowGrandPrize === 'boolean') update.canOfferFullCardPrize = req.body.allowGrandPrize;
       if (req.body?.role) update.promoterRole = ['STANDARD', 'PROMOTER', 'PARTNER'].includes(req.body.role) ? req.body.role : 'PROMOTER';
       if (typeof req.body?.suspended === 'boolean') update.promoterSuspendedAt = req.body.suspended ? new Date() : null;
-      if (req.body?.enabled) update.promoterVerifiedAt = new Date();
+      if (req.body?.enabled) {
+        update.promoterVerifiedAt = new Date();
+        update.promoterSuspendedAt = null;
+        if (!req.body?.role) update.promoterRole = 'PROMOTER';
+      }
       const affiliate = await Affiliate.findByIdAndUpdate(req.params.affiliateId, { $set: update }, { new: true })
         .select('_id firstName lastName playerName email verified promoterRole canCreateFullCards canOfferFullCardPrize promoterSuspendedAt').lean();
       if (!affiliate) return res.status(404).json({ ok: false, message: 'Affiliate not found.' });
+      if (req.body?.enabled === false || req.body?.suspended === true) {
+        await PromoterInvite.updateMany({ affiliateId: affiliate._id, revokedAt: null }, { $set: { revokedAt: new Date() } });
+      }
       return res.json({ ok: true, affiliate });
     } catch (error) { return res.status(500).json({ ok: false, message: 'Could not update promoter access.' }); }
   });
@@ -153,6 +166,12 @@ module.exports = function registerFullCardPromoter({
         expiresAt: new Date(Date.now() + days * 86400000), createdBy: String(req.admin?.id || req.admin?._id || ''),
         allowGrandPrize: Boolean(req.body?.allowGrandPrize), note: clean(req.body?.note, 300),
       });
+      // Sending a private invitation is itself the owner's approval. The
+      // designated affiliate can use Full Card tools immediately after login.
+      await Affiliate.updateOne({ _id: affiliateId }, { $set: {
+        verified: true, promoterRole: 'PROMOTER', canCreateFullCards: true,
+        promoterVerifiedAt: new Date(), promoterSuspendedAt: null,
+      } });
       return res.status(201).json({ ok: true, inviteId: invite._id, expiresAt: invite.expiresAt, url: `${String(appOrigin).replace(/\/$/, '')}/promoter/invite/${raw}` });
     } catch (error) { return res.status(500).json({ ok: false, message: 'Could not create invitation.' }); }
   });
@@ -174,10 +193,18 @@ module.exports = function registerFullCardPromoter({
   app.post('/api/full-card-promoter-invites/:token/accept', verifyToken, requireScope(affiliateScope), async (req, res) => {
     const affiliateId = affiliateIdFrom(req);
     const now = new Date();
-    const row = await PromoterInvite.findOneAndUpdate({ tokenHash: hashToken(crypto, req.params.token), affiliateId, acceptedAt: null, revokedAt: null, expiresAt: { $gt: now } }, { $set: { acceptedAt: now } }, { new: true }).select('+tokenHash').lean();
-    if (!row) return res.status(410).json({ ok: false, message: 'This invitation cannot be accepted by this account.' });
-    await Affiliate.updateOne({ _id: affiliateId }, { $set: { promoterRole: 'PROMOTER', canCreateFullCards: true, canOfferFullCardPrize: row.allowGrandPrize, promoterVerifiedAt: now, promoterSuspendedAt: null } });
-    return res.json({ ok: true, message: 'Full Card Promoter access activated.' });
+    const row = await PromoterInvite.findOne({ tokenHash: hashToken(crypto, req.params.token), affiliateId, revokedAt: null, expiresAt: { $gt: now } }).lean();
+    if (!row) return res.status(410).json({ ok: false, message: 'This invitation is unavailable for this account.' });
+    const affiliate = await Affiliate.findById(affiliateId).select('verified canCreateFullCards promoterSuspendedAt').lean();
+    if (!affiliate || affiliate.promoterSuspendedAt) return res.status(403).json({ ok: false, message: 'Promoter access has been disabled. Contact the owner.' });
+    // Previously issued invitations still work for affiliates who had not
+    // accepted them before this immediate-approval flow was deployed.
+    if (!affiliate.canCreateFullCards) await Affiliate.updateOne({ _id: affiliateId }, { $set: {
+      verified: true, promoterRole: 'PROMOTER', canCreateFullCards: true,
+      canOfferFullCardPrize: row.allowGrandPrize, promoterVerifiedAt: now,
+    } });
+    if (!row.acceptedAt) await PromoterInvite.updateOne({ _id: row._id, acceptedAt: null }, { $set: { acceptedAt: now } });
+    return res.json({ ok: true, message: 'Promoter access is active.' });
   });
 
   // Promoter card management.
