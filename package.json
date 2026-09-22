@@ -17,6 +17,7 @@
   "author": "",
   "license": "ISC",
   "dependencies": {
+    "@vercel/functions": "^3.9.9",
     "@vercel/oidc": "^3.8.8",
     "authorizenet": "1.0.10",
     "axios": "^1.18.0",

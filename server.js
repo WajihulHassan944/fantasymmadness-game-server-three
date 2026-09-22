@@ -27,6 +27,7 @@ const multer = require('multer');
 const bcrypt = require('bcrypt');
 const crypto = require('crypto'); // For generating the verification token
 const nodemailer = require('nodemailer'); // For sending emails
+const { waitUntil } = require('@vercel/functions');
 const SUPPORT_EMAIL = String(process.env.SUPPORT_EMAIL || 'contact@fantasymmadness.com').trim().toLowerCase();
 const ADMIN_ALERT_EMAILS = String(process.env.ADMIN_ALERT_EMAILS || SUPPORT_EMAIL).trim();
 const PRIMARY_CONTACT_EMAIL = 'contact@fantasymmadness.com';
@@ -3676,7 +3677,6 @@ app.post(
   // email as well as the in-app bell. The old optional notify flag was often
   // omitted by the client, leaving the bell populated but sending no email.
   
-  let emailDelivery = { attempted: 0, delivered: 0, failed: 0 };
   {
 
 
@@ -3823,26 +3823,36 @@ const nonRegisteredUserMailPromises = nonRegisteredUsers.map(user => {
 
   // Registered player alerts are delivered in controlled batches. Non-registered
   // marketing recipients are deliberately excluded from the fight-alert path.
-  emailDelivery = req.actorRole === 'admin'
-    ? await sendMailBatch(registeredUserMailOptions, 3)
-    : { attempted: 0, delivered: 0, failed: 0, skipped: 'AFFILIATE_LEAGUE_NOTICE' };
-  console.log('Fight email delivery:', emailDelivery);
-}
+  // The fight is already durable at this point. Emailing the full player list
+  // used to keep /addMatch open until the browser timed out, producing a false
+  // "lost connection" warning even though the registry record existed.
+  // Vercel waitUntil keeps the notification work alive after the success
+  // response without making the administrator wait for the entire batch.
+  const backgroundPublishWork = (async () => {
+    const emailDelivery = req.actorRole === 'admin'
+      ? await sendMailBatch(registeredUserMailOptions, 3)
+      : { attempted: 0, delivered: 0, failed: 0, skipped: 'AFFILIATE_LEAGUE_NOTICE' };
+    console.log('Fight email delivery:', emailDelivery);
 
-  const swarmAutomation = await triggerUpcomingEventAutomationForMatch(savedMatch, {
-    route: '/addMatch',
-    action: 'legacy-upcoming-event-created',
-    reason: 'combat-match-added-in-backend',
-    warning: 'Fight was added but upcoming-event automation failed.',
+    const swarmAutomation = await triggerUpcomingEventAutomationForMatch(savedMatch, {
+      route: '/addMatch',
+      action: 'legacy-upcoming-event-created',
+      reason: 'combat-match-added-in-backend',
+      warning: 'Fight was added but upcoming-event automation failed.',
+    });
+    console.log('Fight post-publish automation:', swarmAutomation || { skipped: true });
+  })().catch((backgroundError) => {
+    console.error('Fight published but background notifications failed:', backgroundError);
   });
+  waitUntil(backgroundPublishWork);
 
-  // Respond with success and the saved match ID
-  res.status(200).json({
-    message: emailDelivery.failed ? 'Fight published; some email alerts failed.' : 'Fight published and player emails sent.',
+  return res.status(200).json({
+    message: 'Fight published. Player notifications are being delivered in the background.',
     matchId: savedMatch._id,
-    emailDelivery,
-    automation: swarmAutomation || null,
+    emailDelivery: { queued: registeredUserMailOptions.length },
+    automation: { queued: true },
   });
+}
 } catch (error) {
   console.error('Error adding match:', error);
   const isValidationError = error?.name === 'ValidationError' || error?.name === 'CastError';
