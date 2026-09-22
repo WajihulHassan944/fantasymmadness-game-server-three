@@ -2501,6 +2501,9 @@ app.get('/shadow', async (req, res) => {
 
 
 const matchSchema = new mongoose.Schema({
+  // A retry after a dropped response returns the original fight instead of
+  // creating another public card and sending the same announcement again.
+  publishRequestId: { type: String, sparse: true, unique: true, index: true },
   // Optional game-mode metadata. Existing records and APIs remain fully compatible.
   gameMode: String,
   predictionFormat: String,
@@ -3450,6 +3453,7 @@ app.post(
     // Declared out here because the shadow-template linkage below runs OUTSIDE
     // the try block and still needs the pinned promoter id.
     let effectiveAffiliateId = null;
+    let publishRequestId = '';
     try {
       const {
         BoxingMatch,
@@ -3483,6 +3487,20 @@ app.post(
         promotionBackgroundUrl,
         promotionBackgroundDeleteUrlFromReq
       } = req.body;
+
+      publishRequestId = String(req.body.publishRequestId || req.get('Idempotency-Key') || '').trim().slice(0, 160);
+      if (publishRequestId) {
+        const existingPublish = await Match.findOne({ publishRequestId }).select('_id').lean();
+        if (existingPublish) {
+          return res.status(200).json({
+            message: 'This fight was already published. Returning the original registry record.',
+            matchId: existingPublish._id,
+            duplicatePrevented: true,
+            emailDelivery: { queued: 0, duplicatePrevented: true },
+            automation: { queued: false, duplicatePrevented: true },
+          });
+        }
+      }
 
       // An affiliate promoting a card is pinned to their own id: the body value
       // is ignored so nobody can post a fight in another promoter's name (and
@@ -3589,7 +3607,8 @@ app.post(
         fighterAImageDeleteUrl,
         fighterBImageDeleteUrl,
         promotionBackground,
-        promotionBackgroundDeleteUrl
+        promotionBackgroundDeleteUrl,
+        ...(publishRequestId ? { publishRequestId } : {})
       }, fighterSelection);
 
       if (mongoose.Types.ObjectId.isValid(String(shadowFightId || ''))) {
@@ -3682,7 +3701,8 @@ app.post(
 
   // Fight email is independent from SMS and paid-plan preferences. Existing
   // accounts without the new field are included unless they opt out.
-  const users = req.actorRole === 'admin'
+  const shouldNotifyMembers = ['true', '1', 'yes', true].includes(req.body.notify);
+  const users = req.actorRole === 'admin' && shouldNotifyMembers
     ? await User.find({ fightEmailNotifications: { $ne: false } })
       .select('email firstName lastName').limit(20000).lean()
     : [];
@@ -3779,6 +3799,37 @@ app.post(
 ,
     };
 
+    // Final saved record is the only source for names and photos. Request-body
+    // values can be stale when an admin picked a library fighter, which caused
+    // the right name to be paired with somebody else's picture.
+    mailOptions.from = FMM_MAIL_FROM;
+    mailOptions.envelope = { from: SMTP_ACCOUNT_EMAIL, to: [user.email] };
+    mailOptions.subject = `${savedMatch.matchFighterA} vs ${savedMatch.matchFighterB} — New FANTASY MMADNESS Fight`;
+    mailOptions.html = `
+      <div style="margin:0;padding:24px 10px;background:#05070b;color:#fff;font-family:Arial,sans-serif;">
+        <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="width:100%;max-width:620px;margin:auto;background:#0b1018;border:1px solid #293243;border-radius:22px;overflow:hidden;box-shadow:0 18px 48px rgba(0,0,0,.5);">
+          <tr><td align="center" style="padding:26px 20px 18px;background:linear-gradient(135deg,#23050a,#0b1018 55%,#07172b);border-bottom:3px solid #ef1d31;">
+            <img src="https://res.cloudinary.com/daflot6fo/image/upload/v1736068036/bywcrrcqmcyczdyhjmdv.png" alt="FANTASY MMADNESS" style="width:112px;height:auto;display:block;" />
+            <p style="margin:12px 0 0;color:#f7b51b;font-size:12px;font-weight:900;letter-spacing:2px;">NEW FIGHT ALERT</p>
+            <h1 style="margin:7px 0 0;color:#fff;font-size:30px;line-height:1.05;">DON'T JUST WATCH. PREDICT IT.</h1>
+          </td></tr>
+          <tr><td style="padding:22px 24px 8px;">
+            <p style="margin:0 0 8px;color:#b7c0cf;font-size:15px;">Hello ${escapeHtml(user.firstName || 'Fight Fan')},</p>
+            <p style="margin:0;color:#fff;font-size:19px;font-weight:800;">${escapeHtml(savedMatch.matchName || `${savedMatch.matchFighterA} vs ${savedMatch.matchFighterB}`)}</p>
+            <p style="margin:8px 0 0;color:#95a2b5;font-size:14px;line-height:1.55;">Call the action round by round, score points, and climb the leaderboard.</p>
+          </td></tr>
+          <tr><td style="padding:20px 14px;"><table role="presentation" width="100%" cellpadding="0" cellspacing="0"><tr>
+            <td width="42%" align="center"><div style="width:104px;height:104px;border-radius:50%;border:4px solid #ef1d31;background:#111827;overflow:hidden;box-shadow:0 0 24px rgba(239,29,49,.35);"><img src="${escapeHtml(savedMatch.fighterAImage || '')}" alt="${escapeHtml(savedMatch.matchFighterA || 'Fighter A')}" style="width:100%;height:100%;object-fit:cover;display:block;" /></div><p style="margin:12px 0 0;color:#fff;font-size:17px;font-weight:900;">${escapeHtml(savedMatch.matchFighterA || 'Fighter A')}</p></td>
+            <td width="16%" align="center"><div style="width:54px;height:54px;border-radius:50%;background:#ef1d31;color:#fff;font-size:21px;font-weight:900;line-height:54px;">VS</div></td>
+            <td width="42%" align="center"><div style="width:104px;height:104px;border-radius:50%;border:4px solid #168fe6;background:#111827;overflow:hidden;box-shadow:0 0 24px rgba(22,143,230,.35);"><img src="${escapeHtml(savedMatch.fighterBImage || '')}" alt="${escapeHtml(savedMatch.matchFighterB || 'Fighter B')}" style="width:100%;height:100%;object-fit:cover;display:block;" /></div><p style="margin:12px 0 0;color:#fff;font-size:17px;font-weight:900;">${escapeHtml(savedMatch.matchFighterB || 'Fighter B')}</p></td>
+          </tr></table></td></tr>
+          <tr><td align="center" style="padding:20px 24px 28px;border-top:1px solid #263142;">
+            <p style="margin:0 0 18px;color:#c7cfda;font-size:14px;"><strong style="color:#fff;">${escapeHtml(String(savedMatch.matchDate || '').slice(0, 10))}</strong> &nbsp;•&nbsp; ${escapeHtml(savedMatch.matchTime || 'Time TBA')} &nbsp;•&nbsp; ${Number(savedMatch.maxRounds || 0)} rounds</p>
+            <a href="https://fantasymmadness.com/upcomingfights" style="display:inline-block;padding:14px 28px;border-radius:999px;background:linear-gradient(90deg,#ef1d31,#ff3d4e);color:#fff;font-size:14px;font-weight:900;text-decoration:none;">OPEN THE FIGHT CARD →</a>
+          </td></tr>
+          <tr><td align="center" style="padding:17px;background:#070a10;"><p style="margin:0;color:#738096;font-size:11px;letter-spacing:1px;">PREDICT • SCORE • CLIMB</p><p style="margin:8px 0 0;"><a href="https://fantasymmadness.com" style="color:#f7b51b;text-decoration:none;font-weight:800;">FANTASYMMADNESS.COM</a></p></td></tr>
+        </table>
+      </div>`;
     return mailOptions;
   });
 
@@ -3829,9 +3880,9 @@ const nonRegisteredUserMailPromises = nonRegisteredUsers.map(user => {
   // Vercel waitUntil keeps the notification work alive after the success
   // response without making the administrator wait for the entire batch.
   const backgroundPublishWork = (async () => {
-    const emailDelivery = req.actorRole === 'admin'
+    const emailDelivery = req.actorRole === 'admin' && shouldNotifyMembers
       ? await sendMailBatch(registeredUserMailOptions, 3)
-      : { attempted: 0, delivered: 0, failed: 0, skipped: 'AFFILIATE_LEAGUE_NOTICE' };
+      : { attempted: 0, delivered: 0, failed: 0, skipped: shouldNotifyMembers ? 'AFFILIATE_LEAGUE_NOTICE' : 'NOTIFY_DISABLED' };
     console.log('Fight email delivery:', emailDelivery);
 
     const swarmAutomation = await triggerUpcomingEventAutomationForMatch(savedMatch, {
@@ -3855,6 +3906,16 @@ const nonRegisteredUserMailPromises = nonRegisteredUsers.map(user => {
 }
 } catch (error) {
   console.error('Error adding match:', error);
+  if (error?.code === 11000 && publishRequestId) {
+    const existingPublish = await Match.findOne({ publishRequestId }).select('_id').lean().catch(() => null);
+    if (existingPublish) {
+      return res.status(200).json({
+        message: 'This fight was already published. Returning the original registry record.',
+        matchId: existingPublish._id,
+        duplicatePrevented: true,
+      });
+    }
+  }
   const isValidationError = error?.name === 'ValidationError' || error?.name === 'CastError';
   res.status(isValidationError ? 400 : 500).json({
     message: isValidationError ? (error.message || 'The fight information is invalid.') : 'The fight could not be published.',
