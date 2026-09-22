@@ -69,6 +69,8 @@ assert(serverSource.includes('registerFightDataQualityRoutes({'), 'server.js mus
 assert(serverSource.includes('function hasOfficialShadowScores'), 'Affiliate Shadow templates must require official scoring.');
 assert(serverSource.includes('matches.filter(hasOfficialShadowScores)'), 'The promotion Shadow endpoint must hide unscored records.');
 assert(serverSource.includes('sourceLiveMatchId'), 'Affiliate live-fight campaigns must retain their live source id.');
+assert(serverSource.includes('publishRequestId'), 'Fight publishing must use a stable idempotency key.');
+assert(serverSource.includes('duplicatePrevented'), 'Duplicate fight retries must return the original record.');
 
 const routeSource = fs.readFileSync(path.join(__dirname, 'fight-data-quality.js'), 'utf8');
 for (const route of [
@@ -84,6 +86,7 @@ for (const route of [
   '/api/admin/shadow-fights/library',
   '/api/admin/combat-fighters/import-from-fights',
   '/api/admin/combat-fighters/:id',
+  '/api/admin/combat-fighters/:id/permanent',
   '/api/admin/combat-fighters/:id/restore',
   '/api/admin/fights/:matchId/link-fighters',
 ]) {
