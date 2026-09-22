@@ -22998,3 +22998,3509 @@ const settleFightChallenges = async (fightId) => {
           }),
           session,
         );
+
+        settled += 1;
+
+        const [challengerUser, opponentUser] = await Promise.all([
+          User.findById(row.challengerId).select('email playerName').lean(),
+          User.findById(row.opponentId).select('email playerName').lean(),
+        ]);
+        const label = `${fight.matchFighterA || 'Fighter A'} vs ${fight.matchFighterB || 'Fighter B'}`;
+        [[challengerUser, challengerPoints, opponentPoints], [opponentUser, opponentPoints, challengerPoints]]
+          .forEach(([person, mine, theirs]) => {
+            if (!person?.email) return;
+            const won = !tie && String(person._id) === winnerId;
+            sendMoneyNotice({
+              to: person.email,
+              subject: tie ? 'Your challenge was a draw' : won ? 'You won your challenge' : 'Your challenge result',
+              heading: tie ? 'DRAW' : won ? 'CHALLENGE WON' : 'CHALLENGE LOST',
+              lines: [
+                `${label} has been scored.`,
+                `Your card: <strong>${mine ?? 0}</strong> · Theirs: <strong>${theirs ?? 0}</strong>`,
+                tie
+                  ? `Scores were level, so your ${row.stake.toLocaleString()} FM stake has been returned.`
+                  : won
+                    ? `<strong>${netPayout.toLocaleString()} FM</strong> has been added to your wallet — a ${pot.toLocaleString()} FM pot less the ${H2H_RAKE_PERCENT}% platform fee.`
+                    : `Your ${row.stake.toLocaleString()} FM stake goes to your opponent.`,
+              ],
+            });
+            sendPlayerPush(person._id, {
+              title: tie ? 'Your challenge was a draw' : won ? 'You won your challenge' : 'Challenge result ready',
+              body: tie
+                ? `Scores were level. Your ${row.stake.toLocaleString()} FM stake was returned.`
+                : won ? `${netPayout.toLocaleString()} FM was added to your wallet.` : `${label} has been scored.`,
+              url: '/YourFights',
+            }).catch((error) => console.error('Challenge result push failed:', error.message));
+          });
+      });
+    } catch (error) {
+      console.error('Challenge settlement failed for', String(row._id), error.message);
+    }
+  }
+
+  clearPublicResponseCache();
+  return { settled, voided, total: open.length };
+};
+
+// Activate a reusable Shadow template as a new live contest. The source
+// template is never modified, so it remains available for future quiet weeks.
+app.post('/api/admin/shadow/:shadowId/activate', verifyAdminToken, async (req, res) => {
+  try {
+    const shadowId = String(req.params.shadowId || '').trim();
+    const shadow = await Shadow.findById(shadowId).lean();
+    if (!shadow) return res.status(404).json({ ok: false, message: 'Shadow fight not found.' });
+
+    const {
+      _id, __v, createdAt, updatedAt, sourceMatchId, convertedFromLiveAt,
+      matchShadowStatus, matchShadowOpenStatus, shadowIdentityHidden,
+      shadowAutoPublished, shadowPublishedAt, shadowExpiresAt, shadowLastUsedAt,
+      shadowOriginalMatchDate, userPredictions, collectedFees, prizesSettledAt,
+      voidedAt, voidReason, shortfallPromoterWarnedAt, shortfallPlayersWarnedAt,
+      ...template
+    } = shadow;
+
+    const numberOrTemplate = (key) => req.body?.[key] !== undefined
+      ? Math.max(0, Math.round(Number(req.body[key]) || 0))
+      : Math.max(0, Math.round(Number(shadow[key]) || 0));
+    const requestedStatus = String(req.body?.matchStatus || 'Draft');
+    const matchStatus = ['Draft', 'Scheduled', 'Open'].includes(requestedStatus) ? requestedStatus : 'Draft';
+
+    const liveFight = await Match.create({
+      ...template,
+      sourceShadowId: shadow._id,
+      activatedFromShadowAt: new Date(),
+      matchType: 'LIVE',
+      matchStatus,
+      matchDate: req.body?.matchDate || shadow.matchDate || new Date(),
+      matchTime: req.body?.matchTime ?? shadow.matchTime,
+      matchTokens: numberOrTemplate('matchTokens'),
+      pot: numberOrTemplate('pot'),
+      promoterStake: numberOrTemplate('promoterStake'),
+      platformContribution: numberOrTemplate('platformContribution'),
+      projectedEntrants: numberOrTemplate('projectedEntrants'),
+      minimumEntrants: numberOrTemplate('minimumEntrants'),
+      autoRefundIfShort: req.body?.autoRefundIfShort !== false,
+      homepagePromoted: Boolean(req.body?.homepagePromoted),
+      featuredThisWeek: Boolean(req.body?.featuredThisWeek),
+      featuredFight: Boolean(req.body?.featuredFight),
+      notify: false,
+      addToShadow: false,
+      userPredictions: [],
+      collectedFees: 0,
+      profitZoneReachedAt: null,
+    });
+
+    clearPublicResponseCache();
+    return res.status(201).json({
+      ok: true,
+      message: 'Shadow template activated as a new live contest.',
+      sourceShadowId: shadowId,
+      fight: liveFight.toObject(),
+    });
+  } catch (error) {
+    console.error('Shadow activation failed:', error);
+    return res.status(500).json({ ok: false, message: 'Could not activate that Shadow fight.' });
+  }
+});
+
+// Lets an admin set or waive the house-risk guard for one fight. Waiving it means
+// the platform covers any shortfall itself, so it is recorded explicitly rather
+// than being an accident of a blank field.
+async function sendFightPublishedNotices(fight) {
+  const label = fightLabelOf(fight);
+  const fightUrl = `${APP_ORIGIN}/fight/${fight._id}`;
+  const [players, affiliates] = await Promise.all([
+    User.find({ isSubscribed: { $ne: false }, isNotificationsEnabled: { $ne: false } })
+      .select('email firstName').limit(20000).lean(),
+    Affiliate.find({ verified: true }).select('email fullName leagueName').limit(10000).lean(),
+  ]);
+  const deliveries = [
+    ...players.filter((row) => row.email).map((player) => sendMoneyNotice({
+      to: player.email,
+      subject: `New fight card: ${label}`,
+      heading: 'A NEW FIGHT CARD IS OPEN',
+      lines: [
+        `${player.firstName ? `${player.firstName}, ` : ''}<strong>${label}</strong> is ready for predictions.`,
+        `<a href="${fightUrl}" style="color:#f2b544;">Open the fight card</a>`,
+      ],
+      footer: `Questions? ${SUPPORT_EMAIL}`,
+    })),
+    ...affiliates.filter((row) => row.email).map((affiliate) => sendMoneyNotice({
+      to: affiliate.email,
+      subject: `New card available to promote: ${label}`,
+      heading: 'NEW AFFILIATE FIGHT OPPORTUNITY',
+      lines: [
+        `<strong>${label}</strong> is now available in the fight system.`,
+        `<a href="${APP_ORIGIN}/AffiliateDashboard" style="color:#f2b544;">Open Affiliate Command</a>`,
+      ],
+      footer: `Affiliate support: ${SUPPORT_EMAIL}`,
+    })),
+  ];
+  const results = await Promise.allSettled(deliveries);
+  return {
+    attempted: deliveries.length,
+    delivered: results.filter((row) => row.status === 'fulfilled').length,
+    failed: results.filter((row) => row.status === 'rejected').length,
+  };
+}
+
+app.post('/api/admin/fights/:fightId/prize-guard', verifyAdminToken, async (req, res) => {
+  try {
+    const fightId = String(req.params.fightId || '').trim();
+    const update = {};
+    if (req.body?.minimumEntrants !== undefined) {
+      const value = Math.max(0, Math.round(Number(req.body.minimumEntrants) || 0));
+      update.minimumEntrants = value;
+    }
+    if (req.body?.autoRefundIfShort !== undefined) {
+      update.autoRefundIfShort = ['true', '1', 'yes', true].includes(req.body.autoRefundIfShort);
+    }
+    if (req.body?.matchTokens !== undefined) {
+      update.matchTokens = Math.max(0, Math.round(Number(req.body.matchTokens) || 0));
+    }
+    if (req.body?.pot !== undefined) {
+      update.pot = Math.max(0, Math.round(Number(req.body.pot) || 0));
+    }
+    ['promoterStake', 'platformContribution', 'projectedEntrants'].forEach((key) => {
+      if (req.body?.[key] !== undefined) update[key] = Math.max(0, Math.round(Number(req.body[key]) || 0));
+    });
+    if (req.body?.maxRounds !== undefined) {
+      update.maxRounds = Math.max(1, Math.min(30, Math.round(Number(req.body.maxRounds) || 12)));
+    }
+    if (req.body?.matchDate !== undefined && req.body.matchDate) {
+      update.matchDate = req.body.matchDate;
+    }
+    if (req.body?.matchTime !== undefined) {
+      update.matchTime = req.body.matchTime;
+    }
+    ['notify', 'addToShadow', 'homepagePromoted', 'featuredThisWeek', 'featuredFight'].forEach((key) => {
+      if (req.body?.[key] !== undefined) update[key] = ['true', '1', 'yes', true].includes(req.body[key]);
+    });
+    if (req.body?.matchStatus !== undefined) {
+      const allowedStatuses = ['Draft', 'Scheduled', 'Open', 'Live', 'Closed', 'Finished'];
+      if (!allowedStatuses.includes(req.body.matchStatus)) return res.status(400).json({ ok: false, message: 'Invalid publishing status.' });
+      update.matchStatus = req.body.matchStatus;
+    }
+    if (!Object.keys(update).length) {
+      return res.status(400).json({ ok: false, message: 'Nothing to change.' });
+    }
+
+    const [previousMatch, previousShadow] = await Promise.all([
+      Match.findById(fightId).select('notify').lean(),
+      Shadow.findById(fightId).select('notify').lean(),
+    ]);
+    const [matchResult, shadowResult] = await Promise.all([
+      Match.findOneAndUpdate({ _id: fightId }, { $set: update }, { new: true })
+        .select('matchName matchFighterA matchFighterB pot matchTokens promoterStake platformContribution projectedEntrants minimumEntrants autoRefundIfShort maxRounds matchDate matchTime matchStatus notify addToShadow homepagePromoted featuredThisWeek featuredFight').lean(),
+      Shadow.findOneAndUpdate({ _id: fightId }, { $set: update }, { new: true })
+        .select('matchName matchFighterA matchFighterB pot matchTokens promoterStake platformContribution projectedEntrants minimumEntrants autoRefundIfShort maxRounds matchDate matchTime matchStatus notify addToShadow homepagePromoted featuredThisWeek featuredFight').lean(),
+    ]);
+    const fight = matchResult || shadowResult;
+    if (!fight) return res.status(404).json({ ok: false, message: 'Fight not found.' });
+    const previouslyNotified = Boolean((previousMatch || previousShadow)?.notify);
+    const notificationDelivery = update.notify === true && !previouslyNotified
+      ? await sendFightPublishedNotices(fight)
+      : null;
+
+    const entryFee = Math.max(0, Math.round(Number(fight.matchTokens) || 0));
+    const declaredPot = Math.max(0, Math.round(Number(fight.pot) || 0));
+    const committedFunding = Math.min(declaredPot, Math.max(0, Number(fight.promoterStake) || 0) + Math.max(0, Number(fight.platformContribution) || 0));
+    const breakEven = entryFee > 0 ? Math.ceil(Math.max(0, declaredPot - committedFunding) / entryFee) : 0;
+    return res.json({
+      ok: true,
+      fightId,
+      matchTokens: fight.matchTokens,
+      pot: fight.pot,
+      promoterStake: fight.promoterStake || 0,
+      platformContribution: fight.platformContribution || 0,
+      projectedEntrants: fight.projectedEntrants || 0,
+      maxRounds: fight.maxRounds,
+      matchDate: fight.matchDate,
+      matchTime: fight.matchTime,
+      matchStatus: fight.matchStatus,
+      notify: fight.notify,
+      addToShadow: fight.addToShadow,
+      homepagePromoted: fight.homepagePromoted,
+      featuredThisWeek: fight.featuredThisWeek,
+      featuredFight: fight.featuredFight,
+      minimumEntrants: fight.minimumEntrants || breakEven,
+      breakEvenEntrants: breakEven,
+      autoRefundIfShort: fight.autoRefundIfShort !== false,
+      notificationDelivery,
+      warning: fight.autoRefundIfShort === false
+        ? 'Auto-refund is OFF for this fight. Any shortfall between entries and the declared prize is paid by the platform.'
+        : undefined,
+    });
+  } catch (error) {
+    console.error('Prize guard update failed:', error);
+    return res.status(500).json({ ok: false, message: 'Could not update the prize guard.' });
+  }
+});
+
+app.post('/api/admin/fights/:fightId/settle-challenges', verifyAdminToken, async (req, res) => {
+  try {
+    const summary = await settleFightChallenges(String(req.params.fightId || '').trim());
+    return res.status(200).json({ ok: true, ...summary });
+  } catch (error) {
+    console.error('Challenge settle sweep failed:', error);
+    return res.status(500).json({ ok: false, message: 'Could not settle challenges for that fight.' });
+  }
+});
+
+// Expiry sweep. Runs from the scheduler so an unanswered challenge does not sit
+// on a player's coins indefinitely.
+app.get('/api/cron/challenges/expire', verifyCronSecret, async (req, res) => {
+  try {
+    const due = await Challenge.find({ status: 'PENDING', expiresAt: { $lte: new Date() } }).limit(200).lean();
+    let released = 0;
+    for (const row of due) {
+      try {
+        const result = await releaseChallenge({
+          challengeId: row._id,
+          actorId: null,
+          nextStatus: 'EXPIRED',
+          reason: 'Not accepted before it expired.',
+        });
+        if (!result.alreadyResolved) released += 1;
+      } catch (error) {
+        console.error('Could not expire challenge', String(row._id), error.message);
+      }
+    }
+    return res.json({ ok: true, examined: due.length, released });
+  } catch (error) {
+    console.error('Challenge expiry sweep failed:', error);
+    return res.status(500).json({ ok: false, message: 'Expiry sweep failed.' });
+  }
+});
+
+// Readiness probe. Answers the one question that decides whether money paths
+// work at all, without needing shell access to the database.
+app.get('/api/health/db', async (_req, res) => {
+  await ensureDatabaseCapability();
+  const ready = databaseCapability.transactionsSupported;
+  return res.status(ready ? 200 : 503).json({
+    ok: ready,
+    connected: mongoose.connection.readyState === 1,
+    topology: databaseCapability.topology,
+    transactionsSupported: databaseCapability.transactionsSupported,
+    message: ready
+      ? 'Database supports transactions. Money paths are safe to use.'
+      : 'Database does NOT support transactions. Paid entries, refunds and settlement will fail. Make MongoDB a replica set.',
+  });
+});
+
+// Lets the app decide between the live feature and the waitlist card without
+// shipping a second build.
+app.get('/api/public/features', (_req, res) => {
+  res.json({
+    ok: true,
+    features: {
+      headToHead: {
+        enabled: HEAD_TO_HEAD_ENABLED,
+        minStake: H2H_MIN_STAKE,
+        maxStake: H2H_MAX_STAKE,
+        rakePercent: H2H_RAKE_PERCENT,
+      },
+      teamCards: {
+        enabled: TEAM_CARDS_ENABLED,
+        picksRequired: TEAM_PICKS_REQUIRED,
+        callBonusCap: TEAM_CALL_BONUS_CAP,
+      },
+      seasonCards: {
+        enabled: SEASON_CARDS_ENABLED,
+        slots: SEASON_SLOTS,
+        slotMax: SEASON_SLOT_MAX,
+        callBonusCap: SEASON_CALL_BONUS_CAP,
+      },
+    },
+  });
+});
+
+// ==========================================================================
+// SEASON CARDS — the multi-sport long game
+//
+// A player drafts ONE fighter per sport. Over the season those five fighters
+// compete on their own schedules, and whatever each one actually does in the
+// cage or ring is credited to whoever drafted them. It is a fantasy roster, not
+// a prediction contest — but it keeps the platform's DNA in two ways:
+//
+//   1. Output is scored with the SAME categories the scorecards use. A boxer
+//      earns from head punches, body punches, total punches, round wins and
+//      knockdowns; an MMA fighter from strikes, kicks, knees, elbows. Nothing
+//      new is invented, so a Season Card score means the same thing a fight
+//      score means.
+//
+//   2. Each pick carries a CALLED NUMBER. The player names a category and a
+//      figure their fighter will reach across the season. It scores by exactly
+//      the platform's existing rule — if you called at or under what the fighter
+//      actually did, you score what you called. Call low and it is safe but
+//      small; call high and you risk the whole bonus. Same trade-off as a
+//      scorecard, stretched over three months.
+//
+// CROSS-SPORT FAIRNESS. A twelve-round boxing match generates several times the
+// countable output of a three-round MMA fight, so raw totals would make the
+// boxing slot decide every season. Each slot is therefore scored out of 100
+// WITHIN ITS OWN SPORT — measured against the best performance any entrant got
+// from that slot — and the five slots sum to a score out of 500. The raw number
+// is kept and shown alongside it; the normalisation is the conversion, not a
+// replacement for the platform's scoring.
+//
+// SHIPPED OFF. SEASON_CARDS_ENABLED must be 'true' to expose any of it.
+// ==========================================================================
+// LIVE BY DEFAULT. Set SEASON_CARDS_ENABLED=false to pull it.
+const SEASON_CARDS_ENABLED = ['true', '1', 'yes', 'on']
+  .includes(String(process.env.SEASON_CARDS_ENABLED || 'true').trim().toLowerCase());
+
+// Five slots, but only three scoring families: the platform scores boxing and
+// bare knuckle identically, and MMA and kickboxing identically.
+const SEASON_SLOTS = Object.freeze([
+  { key: 'boxing', label: 'Boxing', family: 'boxing' },
+  { key: 'bareknuckle', label: 'Bare Knuckle', family: 'boxing' },
+  { key: 'mma', label: 'MMA', family: 'mma' },
+  { key: 'kickboxing', label: 'Kickboxing', family: 'mma' },
+  { key: 'wrestling', label: 'Pro Wrestling', family: 'wrestling' },
+]);
+const SEASON_SLOT_KEYS = Object.freeze(SEASON_SLOTS.map((slot) => slot.key));
+const SLOT_BY_KEY = new Map(SEASON_SLOTS.map((slot) => [slot.key, slot]));
+
+// Categories a called number may be placed on, per family. These are the same
+// fields the scorecards read, so a called number is checkable against the very
+// stats an admin already enters.
+const SEASON_CALL_CATEGORIES = Object.freeze({
+  boxing: Object.freeze({ HP: 'Head punches', BP: 'Body punches', TP: 'Total punches', RW: 'Rounds won', KO: 'Knockdowns' }),
+  mma: Object.freeze({ ST: 'Strikes', KI: 'Kicks', KN: 'Knees', EL: 'Elbows', RW: 'Rounds won', KO: 'Knockdowns' }),
+  wrestling: Object.freeze({ SIG: 'Signature moves', NF: 'Near falls', RV: 'Reversals', PIN: 'Pinfalls' }),
+});
+
+// A called number cannot out-weigh the fighter's actual output.
+const SEASON_CALL_BONUS_CAP = Math.max(0, Number(process.env.SEASON_CALL_BONUS_CAP ?? 100));
+const SEASON_SLOT_MAX = 100;
+
+const seasonSchema = new mongoose.Schema({
+  name: { type: String, required: true },
+  description: { type: String, default: '' },
+  startsAt: { type: Date, required: true },
+  endsAt: { type: Date, required: true },
+  // Zero means a free season — runs in every state, awards non-cash prizes only.
+  entryFee: { type: Number, default: 0, min: 0 },
+  requiredSlots: { type: [String], default: () => [...SEASON_SLOT_KEYS] },
+  status: { type: String, enum: ['DRAFT_OPEN', 'RUNNING', 'SETTLED', 'VOID'], default: 'DRAFT_OPEN', index: true },
+  // Drafting closes here; after it, rosters are locked for the season.
+  draftClosesAt: { type: Date, required: true },
+  prizePool: { type: Number, default: 0 },
+  settledAt: { type: Date, default: null },
+  voidReason: { type: String, default: '' },
+}, { timestamps: true });
+
+const seasonRosterSchema = new mongoose.Schema({
+  seasonId: { type: String, required: true, index: true },
+  userId: { type: String, required: true, index: true },
+  picks: {
+    type: [new mongoose.Schema({
+      slot: { type: String, required: true },
+      fighterName: { type: String, required: true },
+      // Lower-cased for matching, because fights carry fighter NAMES not ids.
+      matchKey: { type: String, required: true, index: true },
+      calledCategory: { type: String, default: '' },
+      calledValue: { type: Number, default: 0 },
+      // Accumulated as the season runs.
+      rawPoints: { type: Number, default: 0 },
+      categoryTotals: { type: Object, default: () => ({}) },
+      eventsCounted: { type: Number, default: 0 },
+      // Filled at settlement.
+      normalized: { type: Number, default: 0 },
+      callBonus: { type: Number, default: 0 },
+      callHit: { type: Boolean, default: false },
+    }, { _id: false })],
+    default: [],
+  },
+  entryFeePaid: { type: Number, default: 0 },
+  totalScore: { type: Number, default: 0 },
+  settled: { type: Boolean, default: false },
+  // Guards a re-run of settlement and a double entry charge.
+  idempotencyKey: { type: String, required: true, unique: true },
+}, { timestamps: true });
+
+// One roster per player per season.
+seasonRosterSchema.index({ seasonId: 1, userId: 1 }, { unique: true });
+// Credit lookups walk this: "which rosters hold this fighter in this slot?"
+seasonRosterSchema.index({ seasonId: 1, 'picks.matchKey': 1 });
+
+const Season = mongoose.models.Season || mongoose.model('Season', seasonSchema);
+const SeasonRoster = mongoose.models.SeasonRoster || mongoose.model('SeasonRoster', seasonRosterSchema);
+
+const seasonError = (status, message, code, extra = {}) => {
+  const error = new Error(message);
+  error.status = status;
+  error.code = code;
+  error.extra = extra;
+  return error;
+};
+
+const requireSeasonCards = (req, res, next) => {
+  if (!SEASON_CARDS_ENABLED) {
+    return res.status(404).json({
+      ok: false,
+      message: 'Season Cards are not open yet.',
+      code: 'FEATURE_DISABLED',
+    });
+  }
+  return next();
+};
+
+// Fighter names are the only identifier a fight carries, so matching is done on
+// a normalised key rather than the raw string.
+const fighterMatchKey = (name) => String(name || '')
+  .toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
+
+const seasonFamilyForCategory = (matchCategory) => {
+  const category = String(matchCategory || '').toLowerCase();
+  if (category.includes('box') || category.includes('knuckle')) return 'boxing';
+  if (category.includes('wrestl')) return 'wrestling';
+  return 'mma';
+};
+
+// Converts what a fighter ACTUALLY did into points and per-category totals,
+// using the same fields the scorecards score against.
+const fighterOutputFromRounds = (rounds, family) => {
+  const totals = {};
+  let points = 0;
+  if (!Array.isArray(rounds)) return { points, totals };
+
+  const fields = family === 'boxing'
+    ? ['HP', 'BP', 'TP', 'RW', 'KO']
+    : family === 'wrestling'
+      ? ['SIG', 'NF', 'RV', 'PIN']
+      : ['ST', 'KI', 'KN', 'EL', 'RW', 'KO'];
+  // Decisive events are rare, so they carry weight rather than a raw count.
+  const weights = { RW: 10, KO: 25, PIN: 25, NF: 5 };
+
+  rounds.forEach((round) => {
+    if (!round) return;
+    fields.forEach((field) => {
+      const value = Number(round[field]);
+      if (!Number.isFinite(value) || value <= 0) return;
+      totals[field] = (totals[field] || 0) + value;
+      points += value * (weights[field] || 1);
+    });
+  });
+  return { points, totals };
+};
+
+// Called at fight settlement. Credits every roster that drafted either fighter.
+const creditSeasonRosters = async (fight, oneStats, twoStats) => {
+  if (!SEASON_CARDS_ENABLED) return { credited: 0 };
+  const when = fight?.matchDate ? new Date(fight.matchDate) : new Date();
+  const seasons = await Season.find({
+    status: 'RUNNING',
+    startsAt: { $lte: when },
+    endsAt: { $gte: when },
+  }).select('_id').lean();
+  if (!seasons.length) return { credited: 0 };
+
+  const family = seasonFamilyForCategory(fight?.matchCategory);
+  const sides = [
+    { name: fight?.matchFighterA, rounds: oneStats },
+    { name: fight?.matchFighterB, rounds: twoStats },
+  ];
+  let credited = 0;
+
+  for (const season of seasons) {
+    for (const side of sides) {
+      const key = fighterMatchKey(side.name);
+      if (!key) continue;
+      const { points, totals } = fighterOutputFromRounds(side.rounds, family);
+      if (points <= 0) continue;
+
+      const rosters = await SeasonRoster.find({
+        seasonId: String(season._id),
+        settled: false,
+        'picks.matchKey': key,
+      });
+
+      for (const roster of rosters) {
+        let touched = false;
+        roster.picks.forEach((pick) => {
+          if (pick.matchKey !== key) return;
+          // Only credit the slot whose sport this fight actually belongs to, so
+          // a name collision across sports cannot cross-credit.
+          if (SLOT_BY_KEY.get(pick.slot)?.family !== family) return;
+          pick.rawPoints += points;
+          pick.eventsCounted += 1;
+          const merged = { ...(pick.categoryTotals || {}) };
+          Object.entries(totals).forEach(([field, value]) => {
+            merged[field] = (merged[field] || 0) + value;
+          });
+          pick.categoryTotals = merged;
+          touched = true;
+        });
+        if (touched) {
+          roster.markModified('picks');
+          await roster.save();
+          credited += 1;
+        }
+      }
+    }
+  }
+  return { credited };
+};
+
+// --------------------------------------------------------------------------
+// DRAFT — charges the entry fee through the same transaction and ledger the
+// fight entries use, so a Season Card entry is auditable the same way.
+// --------------------------------------------------------------------------
+app.post('/api/seasons/:seasonId/draft', requireSeasonCards, submitLimiter, verifyToken, requireScope(TOKEN_SCOPES.PLAYER), async (req, res) => {
+  try {
+    const userId = String(req.user?.id || req.user?._id || '').trim();
+    const seasonId = String(req.params.seasonId || '').trim();
+    const submitted = Array.isArray(req.body?.picks) ? req.body.picks : [];
+
+    const result = await runFightEntryTransaction(async (session) => {
+      const season = await withFightSession(Season.findById(seasonId), session);
+      if (!season) throw seasonError(404, 'Season not found.', 'SEASON_NOT_FOUND');
+      if (season.status !== 'DRAFT_OPEN') {
+        throw seasonError(409, 'Drafting has closed for this season.', 'DRAFT_CLOSED');
+      }
+      if (season.draftClosesAt.getTime() <= Date.now()) {
+        throw seasonError(409, 'Drafting has closed for this season.', 'DRAFT_CLOSED');
+      }
+
+      const user = await withFightSession(
+        User.findById(userId).select('email playerName dateOfBirth residenceState selfExcludedUntil tokens'),
+        session,
+      );
+      if (!user) throw seasonError(404, 'Account not found.', 'USER_NOT_FOUND');
+
+      const blocked = checkPlayEligibility(user);
+      if (blocked) throw seasonError(403, blocked.message, blocked.code);
+
+      // A paid season is a paid contest: it obeys the state mode exactly as a
+      // paid fight does.
+      const fee = Math.max(0, Math.round(Number(season.entryFee) || 0));
+      if (fee > 0) {
+        const mode = resolveStateMode(user.residenceState);
+        if (mode !== 'paid') {
+          throw seasonError(403, 'Paid seasons are not available in your state. Free seasons are.', 'STATE_FREE_PLAY_ONLY');
+        }
+      }
+
+      const required = Array.isArray(season.requiredSlots) && season.requiredSlots.length
+        ? season.requiredSlots
+        : [...SEASON_SLOT_KEYS];
+
+      const picks = [];
+      for (const slot of required) {
+        const raw = submitted.find((entry) => String(entry?.slot || '').trim() === slot);
+        const fighterName = String(raw?.fighterName || '').trim();
+        if (!fighterName) {
+          throw seasonError(422, `Pick a fighter for every slot — ${SLOT_BY_KEY.get(slot)?.label || slot} is empty.`, 'INCOMPLETE_ROSTER', { slot });
+        }
+        const family = SLOT_BY_KEY.get(slot)?.family || 'mma';
+        const allowed = SEASON_CALL_CATEGORIES[family] || {};
+        const calledCategory = String(raw?.calledCategory || '').trim().toUpperCase();
+        const calledValue = Math.max(0, Math.round(Number(raw?.calledValue) || 0));
+        if (calledCategory && !allowed[calledCategory]) {
+          throw seasonError(422, `${calledCategory} is not a category for ${SLOT_BY_KEY.get(slot)?.label || slot}.`, 'BAD_CALL_CATEGORY', { slot });
+        }
+        picks.push({
+          slot,
+          fighterName: fighterName.slice(0, 120),
+          matchKey: fighterMatchKey(fighterName),
+          calledCategory: calledCategory && calledValue > 0 ? calledCategory : '',
+          calledValue: calledCategory && calledValue > 0 ? calledValue : 0,
+        });
+      }
+
+      // No drafting the same fighter into two slots.
+      const keys = picks.map((pick) => pick.matchKey);
+      if (new Set(keys).size !== keys.length) {
+        throw seasonError(422, 'Each slot needs a different fighter.', 'DUPLICATE_PICK');
+      }
+
+      const existing = await withFightSession(SeasonRoster.findOne({ seasonId, userId }), session).lean();
+      if (existing) throw seasonError(409, 'You already have a card in this season.', 'ALREADY_DRAFTED');
+
+      if (fee > 0) {
+        const before = fightTokenBalance(user.tokens);
+        if (before < fee) {
+          throw seasonError(402, 'Not enough FM coins for this season.', 'INSUFFICIENT_FUNDS', {
+            balance: before, entryFee: fee, shortfall: fee - before,
+          });
+        }
+        user.tokens = String(before - fee);
+        await user.save({ session });
+        await recordWalletMove({
+          userId, amount: -fee, balanceBefore: before, balanceAfter: before - fee,
+          reason: 'season_entry', reference: `season:${seasonId}:${userId}`,
+          meta: { seasonId, seasonName: season.name }, session,
+        });
+        await Season.updateOne({ _id: seasonId }, { $inc: { prizePool: fee } }, session ? { session } : undefined);
+      }
+
+      const [roster] = await SeasonRoster.create([{
+        seasonId, userId, picks, entryFeePaid: fee,
+        idempotencyKey: `season:${seasonId}:${userId}`,
+      }], session ? { session } : undefined);
+
+      return { roster, season, user, fee };
+    });
+
+    sendMoneyNotice({
+      to: result.user.email,
+      subject: `Your Season Card is locked in — ${result.season.name}`,
+      heading: 'SEASON CARD LOCKED',
+      lines: [
+        `Your five fighters are set for <strong>${escapeHtml(result.season.name)}</strong>.`,
+        result.roster.picks.map((pick) => `${SLOT_BY_KEY.get(pick.slot)?.label || pick.slot}: <strong>${escapeHtml(pick.fighterName)}</strong>${pick.calledCategory ? ` — called ${pick.calledValue} ${(SEASON_CALL_CATEGORIES[SLOT_BY_KEY.get(pick.slot)?.family || 'mma'] || {})[pick.calledCategory] || pick.calledCategory}` : ''}`).join('<br>'),
+        result.fee > 0 ? `Entry: ${result.fee.toLocaleString()} FM.` : 'Free entry.',
+        'Every time one of your five competes, what they do is credited to your card.',
+      ],
+    });
+
+    return res.status(201).json({
+      ok: true,
+      rosterId: result.roster._id,
+      seasonName: result.season.name,
+      picks: result.roster.picks.map((pick) => ({
+        slot: pick.slot, fighterName: pick.fighterName,
+        calledCategory: pick.calledCategory, calledValue: pick.calledValue,
+      })),
+      entryFeePaid: result.fee,
+    });
+  } catch (error) {
+    const status = error?.status || 500;
+    if (status >= 500) console.error('Season draft failed:', error);
+    return res.status(status).json({
+      ok: false,
+      message: error?.message || 'Could not lock in that card.',
+      code: error?.code || 'DRAFT_FAILED',
+      ...(error?.extra || {}),
+    });
+  }
+});
+
+// --------------------------------------------------------------------------
+// SETTLEMENT — normalise each slot within its own sport, apply the called
+// number, then hand the season to the existing prize machinery.
+// --------------------------------------------------------------------------
+const settleSeason = async (seasonId) => {
+  // Claim before scoring, exactly as fight settlement does.
+  const claimed = await Season.findOneAndUpdate(
+    { _id: seasonId, status: 'RUNNING' },
+    { $set: { status: 'SETTLED', settledAt: new Date() } },
+    { new: true },
+  );
+  if (!claimed) {
+    const current = await Season.findById(seasonId).select('status settledAt').lean();
+    return { alreadySettled: true, status: current?.status || null };
+  }
+
+  const rosters = await SeasonRoster.find({ seasonId: String(seasonId) });
+  if (!rosters.length) return { settled: 0, entrants: 0 };
+
+  // Normalisation needs a field to measure against. With a single paid entrant
+  // there is no contest — refund rather than hand them their own money back
+  // minus nothing, or worse, pay them a prize they did not compete for.
+  const paidEntrants = rosters.filter((roster) => Number(roster.entryFeePaid) > 0);
+  // Set when the pot has been handed back, so the prize step below must not run.
+  let refundedNoField = false;
+  if (paidEntrants.length === 1) {
+    refundedNoField = true;
+    const solo = paidEntrants[0];
+    try {
+      const user = await User.findById(solo.userId).select('tokens email');
+      if (user) {
+        const before = fightTokenBalance(user.tokens);
+        user.tokens = String(before + solo.entryFeePaid);
+        await user.save();
+        await recordWalletMove({
+          userId: solo.userId, amount: solo.entryFeePaid, balanceBefore: before,
+          balanceAfter: before + solo.entryFeePaid, reason: 'season_refund_no_field',
+          reference: `season:solo-refund:${seasonId}:${solo.userId}`,
+          meta: { seasonId: String(seasonId) },
+        });
+        if (user.email) {
+          sendMoneyNotice({
+            to: user.email,
+            subject: `${claimed.name} — refunded, not enough entrants`,
+            heading: 'SEASON REFUNDED',
+            lines: [
+              `<strong>${escapeHtml(claimed.name)}</strong> finished with only one paid card, so there was no field to score against.`,
+              `Your ${solo.entryFeePaid.toLocaleString()} FM entry has been returned in full.`,
+            ],
+          });
+        }
+      }
+    } catch (error) {
+      console.error('Solo-entrant season refund failed:', error);
+    }
+  }
+
+  // Best raw output achieved in each slot across the whole field. This is the
+  // yardstick a slot is scored against, so the scale is set by what was actually
+  // achievable in that sport this season rather than a guessed constant.
+  const bestBySlot = new Map();
+  rosters.forEach((roster) => {
+    roster.picks.forEach((pick) => {
+      const best = bestBySlot.get(pick.slot) || 0;
+      if (pick.rawPoints > best) bestBySlot.set(pick.slot, pick.rawPoints);
+    });
+  });
+
+  for (const roster of rosters) {
+    let total = 0;
+    roster.picks.forEach((pick) => {
+      const best = bestBySlot.get(pick.slot) || 0;
+      // A slot nobody scored in is worth nothing to everybody — no free points
+      // for a fighter who never competed, and no division by zero.
+      pick.normalized = best > 0 ? Math.round((pick.rawPoints / best) * SEASON_SLOT_MAX) : 0;
+
+      // The platform's own rule: you score what you called, provided you called
+      // at or under what the fighter actually did.
+      const actual = Number((pick.categoryTotals || {})[pick.calledCategory]) || 0;
+      const hit = Boolean(pick.calledCategory) && pick.calledValue > 0 && pick.calledValue <= actual;
+      pick.callHit = hit;
+      pick.callBonus = hit ? Math.min(pick.calledValue, SEASON_CALL_BONUS_CAP) : 0;
+
+      total += pick.normalized + pick.callBonus;
+    });
+    roster.totalScore = total;
+    roster.settled = true;
+    roster.markModified('picks');
+    await roster.save();
+  }
+
+  // Hand off to the machinery that already pays fight contests, so season
+  // prizes use the same distribution, the same ledger and the same emails.
+  const scored = rosters
+    .map((roster) => ({ userId: String(roster.userId), points: roster.totalScore }))
+    .sort((a, b) => b.points - a.points);
+
+  let payout = null;
+  // A refunded pot is gone — paying prizes from it as well would pay the same
+  // coins out twice.
+  const prizePool = refundedNoField ? 0 : Math.max(0, Math.round(Number(claimed.prizePool) || 0));
+  if (refundedNoField) payout = { prizePool: 0, paid: 0, refunded: true };
+  if (prizePool > 0) {
+    const { awards } = buildPrizeAwards(scored, prizePool);
+    let paid = 0;
+    for (const award of awards) {
+      if (!award?.amount || award.amount <= 0) continue;
+      const winner = await User.findById(award.userId).select('email playerName tokens');
+      if (!winner) continue;
+      const before = fightTokenBalance(winner.tokens);
+      winner.tokens = String(before + award.amount);
+      await winner.save();
+      await recordWalletMove({
+        userId: award.userId, amount: award.amount, balanceBefore: before,
+        balanceAfter: before + award.amount, reason: 'season_prize',
+        reference: `season:prize:${seasonId}:${award.userId}`,
+        meta: { seasonId, place: award.place },
+      });
+      paid += award.amount;
+      if (winner.email) {
+        sendMoneyNotice({
+          to: winner.email,
+          subject: `${claimed.name} — you finished #${award.place}`,
+          heading: `SEASON RESULT · #${award.place}`,
+          lines: [
+            `<strong>${escapeHtml(claimed.name)}</strong> has been settled.`,
+            `<strong>${award.amount.toLocaleString()} FM</strong> has been added to your wallet.`,
+          ],
+        });
+      }
+    }
+    payout = { prizePool, paid };
+  }
+
+  // Badges, titles and sponsor prizes attach to a season the same way they
+  // attach to a fight — a free season is scored and awarded, just not paid.
+  let awardsGiven = null;
+  try {
+    awardsGiven = await awardNonCashPrizes(seasonId, scored, { matchFighterA: claimed.name, matchFighterB: 'Season' });
+  } catch (error) {
+    console.error('Season non-cash awards failed:', error);
+    awardsGiven = { error: 'AWARDS_FAILED' };
+  }
+
+  clearPublicResponseCache();
+  return { settled: rosters.length, entrants: rosters.length, payout, awardsGiven };
+};
+
+// Runs from the scheduler. Two jobs: start seasons whose draft window has closed,
+// and settle seasons that have ended. A season that needs an admin to remember it
+// is a season that strands entry fees.
+app.get('/api/cron/seasons/advance', verifyCronSecret, async (req, res) => {
+  try {
+    const now = new Date();
+    const started = await Season.updateMany(
+      { status: 'DRAFT_OPEN', draftClosesAt: { $lte: now } },
+      { $set: { status: 'RUNNING' } },
+    );
+
+    const due = await Season.find({ status: 'RUNNING', endsAt: { $lte: now } }).select('_id name').limit(20).lean();
+    const settled = [];
+    for (const season of due) {
+      try {
+        const summary = await settleSeason(String(season._id));
+        settled.push({ id: season._id, name: season.name, ...summary });
+      } catch (error) {
+        console.error('Season auto-settle failed for', String(season._id), error.message);
+      }
+    }
+    return res.json({ ok: true, started: started?.modifiedCount || 0, settled });
+  } catch (error) {
+    console.error('Season advance sweep failed:', error);
+    return res.status(500).json({ ok: false, message: 'Season sweep failed.' });
+  }
+});
+
+app.post('/api/admin/seasons/:seasonId/settle', verifyAdminToken, async (req, res) => {
+  try {
+    const summary = await settleSeason(String(req.params.seasonId || '').trim());
+    return res.status(200).json({ ok: true, ...summary });
+  } catch (error) {
+    console.error('Season settle failed:', error);
+    return res.status(500).json({ ok: false, message: 'Could not settle that season.' });
+  }
+});
+
+app.post('/api/admin/seasons', verifyAdminToken, async (req, res) => {
+  try {
+    const name = String(req.body?.name || '').trim();
+    if (!name) return res.status(422).json({ ok: false, message: 'A season name is required.' });
+    const startsAt = new Date(req.body?.startsAt);
+    const endsAt = new Date(req.body?.endsAt);
+    const draftClosesAt = new Date(req.body?.draftClosesAt || req.body?.startsAt);
+    if ([startsAt, endsAt, draftClosesAt].some((date) => Number.isNaN(date.getTime()))) {
+      return res.status(422).json({ ok: false, message: 'Provide valid start, end and draft-close dates.' });
+    }
+    if (endsAt <= startsAt) return res.status(422).json({ ok: false, message: 'The season must end after it starts.' });
+
+    const requested = Array.isArray(req.body?.requiredSlots) ? req.body.requiredSlots : SEASON_SLOT_KEYS;
+    const requiredSlots = requested.filter((slot) => SEASON_SLOT_KEYS.includes(String(slot)));
+    if (!requiredSlots.length) return res.status(422).json({ ok: false, message: 'A season needs at least one slot.' });
+
+    const season = await Season.create({
+      name: name.slice(0, 120),
+      description: String(req.body?.description || '').slice(0, 500),
+      startsAt, endsAt, draftClosesAt,
+      entryFee: Math.max(0, Math.round(Number(req.body?.entryFee) || 0)),
+      requiredSlots,
+    });
+    return res.status(201).json({ ok: true, seasonId: season._id });
+  } catch (error) {
+    console.error('Season create failed:', error);
+    return res.status(500).json({ ok: false, message: 'Could not create that season.' });
+  }
+});
+
+app.post('/api/admin/seasons/:seasonId/status', verifyAdminToken, async (req, res) => {
+  try {
+    const next = String(req.body?.status || '').trim().toUpperCase();
+    if (!['DRAFT_OPEN', 'RUNNING', 'VOID'].includes(next)) {
+      return res.status(422).json({ ok: false, message: 'status must be DRAFT_OPEN, RUNNING or VOID.' });
+    }
+    const season = await Season.findById(String(req.params.seasonId || '')).lean();
+    if (!season) return res.status(404).json({ ok: false, message: 'Season not found.' });
+    if (season.status === 'SETTLED') {
+      return res.status(409).json({ ok: false, message: 'That season is already settled.' });
+    }
+
+    // Voiding must return every entry fee — a season nobody can win is a season
+    // nobody should have paid for.
+    if (next === 'VOID') {
+      const rosters = await SeasonRoster.find({ seasonId: String(season._id), entryFeePaid: { $gt: 0 } }).lean();
+      for (const roster of rosters) {
+        try {
+          const user = await User.findById(roster.userId).select('tokens email');
+          if (!user) continue;
+          const before = fightTokenBalance(user.tokens);
+          user.tokens = String(before + roster.entryFeePaid);
+          await user.save();
+          await recordWalletMove({
+            userId: roster.userId, amount: roster.entryFeePaid, balanceBefore: before,
+            balanceAfter: before + roster.entryFeePaid, reason: 'season_refund',
+            reference: `season:refund:${season._id}:${roster.userId}`,
+            meta: { seasonId: String(season._id) },
+          });
+          if (user.email) {
+            sendMoneyNotice({
+              to: user.email,
+              subject: `${season.name} was cancelled — you have been refunded`,
+              heading: 'SEASON CANCELLED',
+              lines: [
+                `<strong>${escapeHtml(season.name)}</strong> has been cancelled.`,
+                `Your ${roster.entryFeePaid.toLocaleString()} FM entry has been returned in full.`,
+              ],
+            });
+          }
+        } catch (error) {
+          console.error('Season refund failed for', String(roster.userId), error.message);
+        }
+      }
+    }
+
+    await Season.updateOne({ _id: season._id }, {
+      $set: { status: next, voidReason: next === 'VOID' ? String(req.body?.reason || 'Cancelled by an administrator.') : '' },
+    });
+    return res.json({ ok: true, status: next });
+  } catch (error) {
+    console.error('Season status change failed:', error);
+    return res.status(500).json({ ok: false, message: 'Could not change that season.' });
+  }
+});
+
+// --------------------------------------------------------------------------
+// PLAYER READS
+// --------------------------------------------------------------------------
+app.get('/api/seasons/open', requireSeasonCards, async (req, res) => {
+  try {
+    const seasons = await Season.find({ status: { $in: ['DRAFT_OPEN', 'RUNNING'] } })
+      .sort({ startsAt: 1 }).limit(20).lean();
+    return res.json({
+      ok: true,
+      slots: SEASON_SLOTS,
+      callCategories: SEASON_CALL_CATEGORIES,
+      callBonusCap: SEASON_CALL_BONUS_CAP,
+      slotMax: SEASON_SLOT_MAX,
+      seasons: await Promise.all(seasons.map(async (season) => ({
+        id: season._id,
+        name: season.name,
+        description: season.description,
+        startsAt: season.startsAt,
+        endsAt: season.endsAt,
+        draftClosesAt: season.draftClosesAt,
+        draftOpen: season.status === 'DRAFT_OPEN' && season.draftClosesAt.getTime() > Date.now(),
+        entryFee: season.entryFee,
+        requiredSlots: season.requiredSlots,
+        prizePool: season.prizePool,
+        entrants: await SeasonRoster.countDocuments({ seasonId: String(season._id) }),
+      }))),
+    });
+  } catch (error) {
+    console.error('Season list failed:', error);
+    return res.status(500).json({ ok: false, message: 'Could not load seasons.' });
+  }
+});
+
+app.get('/api/seasons/me', requireSeasonCards, verifyToken, requireScope(TOKEN_SCOPES.PLAYER), async (req, res) => {
+  try {
+    const userId = String(req.user?.id || req.user?._id || '').trim();
+    const rosters = await SeasonRoster.find({ userId }).sort({ createdAt: -1 }).limit(30).lean();
+    const seasonIds = [...new Set(rosters.map((r) => r.seasonId))].filter((id) => mongoose.isValidObjectId(id));
+    const seasons = seasonIds.length ? await Season.find({ _id: { $in: seasonIds } }).lean() : [];
+    const byId = new Map(seasons.map((s2) => [String(s2._id), s2]));
+
+    return res.json({
+      ok: true,
+      cards: rosters.map((roster) => {
+        const season = byId.get(String(roster.seasonId));
+        return {
+          rosterId: roster._id,
+          seasonId: roster.seasonId,
+          seasonName: season?.name || 'Season',
+          status: season?.status || 'RUNNING',
+          endsAt: season?.endsAt || null,
+          entryFeePaid: roster.entryFeePaid,
+          totalScore: roster.totalScore,
+          settled: roster.settled,
+          maxPossible: (roster.picks?.length || 0) * SEASON_SLOT_MAX,
+          picks: (roster.picks || []).map((pick) => {
+            const family = SLOT_BY_KEY.get(pick.slot)?.family || 'mma';
+            return {
+              slot: pick.slot,
+              slotLabel: SLOT_BY_KEY.get(pick.slot)?.label || pick.slot,
+              fighterName: pick.fighterName,
+              rawPoints: pick.rawPoints,
+              eventsCounted: pick.eventsCounted,
+              normalized: pick.normalized,
+              calledCategory: pick.calledCategory,
+              calledCategoryLabel: (SEASON_CALL_CATEGORIES[family] || {})[pick.calledCategory] || '',
+              calledValue: pick.calledValue,
+              actualSoFar: Number((pick.categoryTotals || {})[pick.calledCategory]) || 0,
+              callHit: pick.callHit,
+              callBonus: pick.callBonus,
+            };
+          }),
+        };
+      }),
+    });
+  } catch (error) {
+    console.error('Season cards lookup failed:', error);
+    return res.status(500).json({ ok: false, message: 'Could not load your cards.' });
+  }
+});
+
+app.get('/api/seasons/:seasonId/leaderboard', requireSeasonCards, async (req, res) => {
+  try {
+    const seasonId = String(req.params.seasonId || '').trim();
+    const rosters = await SeasonRoster.find({ seasonId }).lean();
+    // Mid-season the normalised figure is not final, so rank on raw output and
+    // label it as provisional rather than publishing a number that will move.
+    const settled = rosters.some((roster) => roster.settled);
+    const ranked = rosters
+      .map((roster) => ({
+        userId: roster.userId,
+        score: settled ? roster.totalScore : (roster.picks || []).reduce((sum, pick) => sum + pick.rawPoints, 0),
+      }))
+      .sort((a, b) => b.score - a.score)
+      .slice(0, 100);
+
+    const users = ranked.length
+      ? await User.find({ _id: { $in: ranked.map((r) => r.userId).filter((id) => mongoose.isValidObjectId(id)) } })
+        .select('playerName firstName profileUrl').lean()
+      : [];
+    const byId = new Map(users.map((u) => [String(u._id), u]));
+
+    return res.json({
+      ok: true,
+      provisional: !settled,
+      scale: settled ? 'normalized' : 'raw',
+      leaderboard: ranked.map((row, index) => ({
+        place: index + 1,
+        name: byId.get(row.userId)?.playerName || byId.get(row.userId)?.firstName || 'Player',
+        avatar: byId.get(row.userId)?.profileUrl || '',
+        score: row.score,
+      })),
+    });
+  } catch (error) {
+    console.error('Season leaderboard failed:', error);
+    return res.status(500).json({ ok: false, message: 'Could not load the leaderboard.' });
+  }
+});
+
+// ==========================================================================
+// TEAM CARDS — pick five fighters from one event
+//
+// The player builds a team of five fighters from a single card, one from each of
+// five different bouts, and their combined output over that night is the score.
+//
+// This is the strongest shape the platform has:
+//
+//   - Every fighter is in the same sport under the same rules, so the score is a
+//     plain total. No normalisation, no conversion, nothing to explain — the
+//     platform's own scoring runs untouched.
+//   - It resolves the same night, which matches how the rest of the app behaves.
+//   - It is a five-athlete lineup across five bouts, which is the classic
+//     daily-fantasy shape rather than a single-event contest.
+//
+// ONE FIGHTER PER BOUT is enforced, not advised. Without it a player picks both
+// sides of a fight and banks points whichever way it goes — a hedge, not a call.
+// ==========================================================================
+const TEAM_CARDS_ENABLED = ['true', '1', 'yes', 'on']
+  .includes(String(process.env.TEAM_CARDS_ENABLED || 'true').trim().toLowerCase());
+
+const TEAM_PICKS_REQUIRED = Math.max(2, Math.min(10, Number(process.env.TEAM_PICKS_REQUIRED || 5)));
+const TEAM_CALL_BONUS_CAP = Math.max(0, Number(process.env.TEAM_CALL_BONUS_CAP ?? 50));
+
+const teamContestSchema = new mongoose.Schema({
+  name: { type: String, required: true },
+  eventName: { type: String, default: '' },
+  // The bouts this card is built from. A pick must name a fighter in one of them.
+  fightIds: { type: [String], default: [], required: true },
+  picksRequired: { type: Number, default: TEAM_PICKS_REQUIRED },
+  entryFee: { type: Number, default: 0, min: 0 },
+  prizePool: { type: Number, default: 0 },
+  // Set when a promoter runs the contest for their league.
+  affiliateId: { type: String, default: '' },
+  status: { type: String, enum: ['OPEN', 'LOCKED', 'SETTLED', 'VOID'], default: 'OPEN', index: true },
+  settledAt: { type: Date, default: null },
+  voidReason: { type: String, default: '' },
+}, { timestamps: true });
+
+const teamEntrySchema = new mongoose.Schema({
+  contestId: { type: String, required: true, index: true },
+  userId: { type: String, required: true, index: true },
+  picks: {
+    type: [new mongoose.Schema({
+      fightId: { type: String, required: true },
+      fighterName: { type: String, required: true },
+      matchKey: { type: String, required: true },
+      calledCategory: { type: String, default: '' },
+      calledValue: { type: Number, default: 0 },
+      points: { type: Number, default: 0 },
+      categoryTotals: { type: Object, default: () => ({}) },
+      scored: { type: Boolean, default: false },
+      callHit: { type: Boolean, default: false },
+      callBonus: { type: Number, default: 0 },
+    }, { _id: false })],
+    default: [],
+  },
+  entryFeePaid: { type: Number, default: 0 },
+  totalPoints: { type: Number, default: 0 },
+  settled: { type: Boolean, default: false },
+  idempotencyKey: { type: String, required: true, unique: true },
+}, { timestamps: true });
+
+teamEntrySchema.index({ contestId: 1, userId: 1 }, { unique: true });
+teamEntrySchema.index({ contestId: 1, 'picks.fightId': 1 });
+
+const TeamContest = mongoose.models.TeamContest || mongoose.model('TeamContest', teamContestSchema);
+const TeamEntry = mongoose.models.TeamEntry || mongoose.model('TeamEntry', teamEntrySchema);
+
+const requireTeamCards = (req, res, next) => {
+  if (!TEAM_CARDS_ENABLED) {
+    return res.status(404).json({ ok: false, message: 'Team Cards are not open yet.', code: 'FEATURE_DISABLED' });
+  }
+  return next();
+};
+
+const teamError = (status, message, code, extra = {}) => {
+  const error = new Error(message);
+  error.status = status;
+  error.code = code;
+  error.extra = extra;
+  return error;
+};
+
+// Credits every team entry holding either fighter from a settled bout. Called
+// from the same settlement that scores the fight, off the same official stats.
+const creditTeamEntries = async (fight, oneStats, twoStats) => {
+  if (!TEAM_CARDS_ENABLED) return { credited: 0 };
+  const fightId = String(fight?._id || '');
+  if (!fightId) return { credited: 0 };
+
+  const contests = await TeamContest.find({
+    fightIds: fightId,
+    status: { $in: ['OPEN', 'LOCKED'] },
+  }).select('_id').lean();
+  if (!contests.length) return { credited: 0 };
+
+  const family = seasonFamilyForCategory(fight?.matchCategory);
+  const sides = [
+    { name: fight?.matchFighterA, rounds: oneStats },
+    { name: fight?.matchFighterB, rounds: twoStats },
+  ];
+  let credited = 0;
+
+  for (const contest of contests) {
+    const entries = await TeamEntry.find({ contestId: String(contest._id), settled: false, 'picks.fightId': fightId });
+    for (const entry of entries) {
+      let touched = false;
+      entry.picks.forEach((pick) => {
+        if (String(pick.fightId) !== fightId || pick.scored) return;
+        const side = sides.find((candidate) => fighterMatchKey(candidate.name) === pick.matchKey);
+        if (!side) return;
+        const { points, totals } = fighterOutputFromRounds(side.rounds, family);
+        pick.points = points;
+        pick.categoryTotals = totals;
+        pick.scored = true;
+        touched = true;
+      });
+      if (touched) {
+        entry.markModified('picks');
+        await entry.save();
+        credited += 1;
+      }
+    }
+  }
+  return { credited };
+};
+
+// --------------------------------------------------------------------------
+// ENTER — one fighter per bout, charged through the same transaction as a fight
+// entry so the money path is the one already hardened.
+// --------------------------------------------------------------------------
+app.post('/api/team-contests/:contestId/enter', requireTeamCards, submitLimiter, verifyToken, requireScope(TOKEN_SCOPES.PLAYER), async (req, res) => {
+  try {
+    const userId = String(req.user?.id || req.user?._id || '').trim();
+    const contestId = String(req.params.contestId || '').trim();
+    const submitted = Array.isArray(req.body?.picks) ? req.body.picks : [];
+
+    const result = await runFightEntryTransaction(async (session) => {
+      const contest = await withFightSession(TeamContest.findById(contestId), session);
+      if (!contest) throw teamError(404, 'Contest not found.', 'CONTEST_NOT_FOUND');
+      if (contest.status !== 'OPEN') {
+        throw teamError(409, 'This contest is closed for entry.', 'CONTEST_CLOSED');
+      }
+
+      const user = await withFightSession(
+        User.findById(userId).select('email playerName dateOfBirth residenceState selfExcludedUntil tokens'),
+        session,
+      );
+      if (!user) throw teamError(404, 'Account not found.', 'USER_NOT_FOUND');
+      const blocked = checkPlayEligibility(user);
+      if (blocked) throw teamError(403, blocked.message, blocked.code);
+
+      const fee = Math.max(0, Math.round(Number(contest.entryFee) || 0));
+      if (fee > 0 && resolveStateMode(user.residenceState) !== 'paid') {
+        throw teamError(403, 'Paid contests are not available in your state. Free contests are.', 'STATE_FREE_PLAY_ONLY');
+      }
+
+      // A promoter cannot enter their own contest, matching the fight rule.
+      if (contest.affiliateId && String(contest.affiliateId) === userId) {
+        throw teamError(403, 'You cannot enter a contest you are promoting.', 'AFFILIATE_SELF_ENTRY');
+      }
+
+      const required = Math.max(2, Math.round(Number(contest.picksRequired) || TEAM_PICKS_REQUIRED));
+      if (submitted.length !== required) {
+        throw teamError(422, `Pick exactly ${required} fighters.`, 'WRONG_PICK_COUNT', { required });
+      }
+
+      // Load every bout on the card once, then validate each pick against it.
+      const fights = await Match.find({ _id: { $in: contest.fightIds.filter((id) => mongoose.isValidObjectId(id)) } })
+        .select('_id matchFighterA matchFighterB matchDate matchStatus matchCategory').lean();
+      const fightById = new Map(fights.map((row) => [String(row._id), row]));
+
+      const picks = [];
+      const usedBouts = new Set();
+      for (const raw of submitted) {
+        const fightId = String(raw?.fightId || '').trim();
+        const fighterName = String(raw?.fighterName || '').trim();
+        const bout = fightById.get(fightId);
+        if (!bout) throw teamError(422, 'One of your picks is not on this card.', 'PICK_NOT_ON_CARD', { fightId });
+        if (!isFightOpenForEntry(bout)) {
+          throw teamError(409, `${bout.matchFighterA} vs ${bout.matchFighterB} is already locked.`, 'BOUT_LOCKED', { fightId });
+        }
+        // THE RULE: one fighter per bout, so a player cannot back both sides.
+        if (usedBouts.has(fightId)) {
+          throw teamError(422, 'Pick one fighter per bout — you cannot take both sides of a fight.', 'DUPLICATE_BOUT', { fightId });
+        }
+        const key = fighterMatchKey(fighterName);
+        if (![bout.matchFighterA, bout.matchFighterB].map(fighterMatchKey).includes(key)) {
+          throw teamError(422, `${fighterName} is not in that bout.`, 'FIGHTER_NOT_IN_BOUT', { fightId });
+        }
+        usedBouts.add(fightId);
+
+        const family = seasonFamilyForCategory(bout.matchCategory);
+        const allowed = SEASON_CALL_CATEGORIES[family] || {};
+        const calledCategory = String(raw?.calledCategory || '').trim().toUpperCase();
+        const calledValue = Math.max(0, Math.round(Number(raw?.calledValue) || 0));
+        if (calledCategory && !allowed[calledCategory]) {
+          throw teamError(422, `${calledCategory} is not a category for that bout.`, 'BAD_CALL_CATEGORY');
+        }
+
+        picks.push({
+          fightId,
+          fighterName: fighterName.slice(0, 120),
+          matchKey: key,
+          calledCategory: calledCategory && calledValue > 0 ? calledCategory : '',
+          calledValue: calledCategory && calledValue > 0 ? calledValue : 0,
+        });
+      }
+
+      const existing = await withFightSession(TeamEntry.findOne({ contestId, userId }), session).lean();
+      if (existing) throw teamError(409, 'You already have a team in this contest.', 'ALREADY_ENTERED');
+
+      if (fee > 0) {
+        const before = fightTokenBalance(user.tokens);
+        if (before < fee) {
+          throw teamError(402, 'Not enough FM coins for this contest.', 'INSUFFICIENT_FUNDS', {
+            balance: before, entryFee: fee, shortfall: fee - before,
+          });
+        }
+        user.tokens = String(before - fee);
+        await user.save({ session });
+        await recordWalletMove({
+          userId, amount: -fee, balanceBefore: before, balanceAfter: before - fee,
+          reason: 'team_entry', reference: `team:${contestId}:${userId}`,
+          meta: { contestId, contestName: contest.name }, session,
+        });
+        await TeamContest.updateOne({ _id: contestId }, { $inc: { prizePool: fee } }, session ? { session } : undefined);
+      }
+
+      const [entry] = await TeamEntry.create([{
+        contestId, userId, picks, entryFeePaid: fee,
+        idempotencyKey: `team:${contestId}:${userId}`,
+      }], session ? { session } : undefined);
+
+      return { entry, contest, user, fee };
+    });
+
+    sendMoneyNotice({
+      to: result.user.email,
+      subject: `Your team is in — ${result.contest.name}`,
+      heading: 'TEAM LOCKED IN',
+      lines: [
+        `Your ${result.entry.picks.length} fighters are set for <strong>${escapeHtml(result.contest.name)}</strong>.`,
+        result.entry.picks.map((pick) => `<strong>${escapeHtml(pick.fighterName)}</strong>${pick.calledCategory ? ` — called ${pick.calledValue}` : ''}`).join('<br>'),
+        result.fee > 0 ? `Entry: ${result.fee.toLocaleString()} FM.` : 'Free entry.',
+        'Your score is what all of them do on the night, added together.',
+      ],
+    });
+
+    return res.status(201).json({
+      ok: true,
+      entryId: result.entry._id,
+      contestName: result.contest.name,
+      picks: result.entry.picks.map((pick) => ({
+        fightId: pick.fightId, fighterName: pick.fighterName,
+        calledCategory: pick.calledCategory, calledValue: pick.calledValue,
+      })),
+      entryFeePaid: result.fee,
+    });
+  } catch (error) {
+    const status = error?.status || 500;
+    if (status >= 500) console.error('Team entry failed:', error);
+    return res.status(status).json({
+      ok: false,
+      message: error?.message || 'Could not lock in that team.',
+      code: error?.code || 'TEAM_ENTRY_FAILED',
+      ...(error?.extra || {}),
+    });
+  }
+});
+
+// --------------------------------------------------------------------------
+// SETTLEMENT — a plain total, because every fighter was scored by the same
+// rules. Claimed atomically before any money moves.
+// --------------------------------------------------------------------------
+const settleTeamContest = async (contestId) => {
+  const claimed = await TeamContest.findOneAndUpdate(
+    { _id: contestId, status: { $in: ['OPEN', 'LOCKED'] } },
+    { $set: { status: 'SETTLED', settledAt: new Date() } },
+    { new: true },
+  );
+  if (!claimed) {
+    const current = await TeamContest.findById(contestId).select('status settledAt').lean();
+    return { alreadySettled: true, status: current?.status || null };
+  }
+
+  const entries = await TeamEntry.find({ contestId: String(contestId) });
+  if (!entries.length) return { settled: 0, entrants: 0 };
+
+  for (const entry of entries) {
+    let total = 0;
+    entry.picks.forEach((pick) => {
+      const actual = Number((pick.categoryTotals || {})[pick.calledCategory]) || 0;
+      const hit = Boolean(pick.calledCategory) && pick.calledValue > 0 && pick.calledValue <= actual;
+      pick.callHit = hit;
+      pick.callBonus = hit ? Math.min(pick.calledValue, TEAM_CALL_BONUS_CAP) : 0;
+      total += pick.points + pick.callBonus;
+    });
+    entry.totalPoints = total;
+    entry.settled = true;
+    entry.markModified('picks');
+    await entry.save();
+  }
+
+  const scored = entries
+    .map((entry) => ({ userId: String(entry.userId), points: entry.totalPoints }))
+    .sort((a, b) => b.points - a.points);
+
+  // A single paid entrant has no field to beat, so the entry goes back rather
+  // than a prize being paid out of their own money.
+  const paid = entries.filter((entry) => Number(entry.entryFeePaid) > 0);
+  let refundedNoField = false;
+  if (paid.length === 1) {
+    refundedNoField = true;
+    const solo = paid[0];
+    try {
+      const user = await User.findById(solo.userId).select('tokens email');
+      if (user) {
+        const before = fightTokenBalance(user.tokens);
+        user.tokens = String(before + solo.entryFeePaid);
+        await user.save();
+        await recordWalletMove({
+          userId: solo.userId, amount: solo.entryFeePaid, balanceBefore: before,
+          balanceAfter: before + solo.entryFeePaid, reason: 'team_refund_no_field',
+          reference: `team:solo-refund:${contestId}:${solo.userId}`,
+          meta: { contestId: String(contestId) },
+        });
+        if (user.email) {
+          sendMoneyNotice({
+            to: user.email,
+            subject: `${claimed.name} — refunded, not enough entrants`,
+            heading: 'CONTEST REFUNDED',
+            lines: [
+              `<strong>${escapeHtml(claimed.name)}</strong> finished with only one paid team, so there was no field to score against.`,
+              `Your ${solo.entryFeePaid.toLocaleString()} FM entry has been returned in full.`,
+            ],
+          });
+        }
+      }
+    } catch (error) {
+      console.error('Solo-entrant team refund failed:', error);
+    }
+  }
+
+  let payout = null;
+  const prizePool = refundedNoField ? 0 : Math.max(0, Math.round(Number(claimed.prizePool) || 0));
+  if (refundedNoField) payout = { prizePool: 0, paid: 0, refunded: true };
+  if (prizePool > 0) {
+    const { awards } = buildPrizeAwards(scored, prizePool);
+    let totalPaid = 0;
+    for (const award of awards) {
+      if (!award?.amount || award.amount <= 0) continue;
+      const winner = await User.findById(award.userId).select('email tokens');
+      if (!winner) continue;
+      const before = fightTokenBalance(winner.tokens);
+      winner.tokens = String(before + award.amount);
+      await winner.save();
+      await recordWalletMove({
+        userId: award.userId, amount: award.amount, balanceBefore: before,
+        balanceAfter: before + award.amount, reason: 'team_prize',
+        reference: `team:prize:${contestId}:${award.userId}`,
+        meta: { contestId, place: award.place },
+      });
+      totalPaid += award.amount;
+      if (winner.email) {
+        sendMoneyNotice({
+          to: winner.email,
+          subject: `${claimed.name} — you finished #${award.place}`,
+          heading: `TEAM RESULT · #${award.place}`,
+          lines: [
+            `<strong>${escapeHtml(claimed.name)}</strong> has been settled.`,
+            `<strong>${award.amount.toLocaleString()} FM</strong> has been added to your wallet.`,
+          ],
+        });
+      }
+    }
+    payout = { prizePool, paid: totalPaid };
+  }
+
+  let awardsGiven = null;
+  try {
+    awardsGiven = await awardNonCashPrizes(contestId, scored, { matchFighterA: claimed.name, matchFighterB: 'Team Card' });
+  } catch (error) {
+    console.error('Team non-cash awards failed:', error);
+    awardsGiven = { error: 'AWARDS_FAILED' };
+  }
+
+  clearPublicResponseCache();
+  return { settled: entries.length, entrants: entries.length, payout, awardsGiven };
+};
+
+app.post('/api/admin/team-contests/:contestId/settle', verifyAdminToken, async (req, res) => {
+  try {
+    const summary = await settleTeamContest(String(req.params.contestId || '').trim());
+    return res.status(200).json({ ok: true, ...summary });
+  } catch (error) {
+    console.error('Team settle failed:', error);
+    return res.status(500).json({ ok: false, message: 'Could not settle that contest.' });
+  }
+});
+
+// Auto-settles a card once every bout on it has been scored, so the result lands
+// the same night rather than waiting for an admin to remember.
+app.get('/api/cron/team-contests/settle', verifyCronSecret, async (req, res) => {
+  try {
+    const live = await TeamContest.find({ status: { $in: ['OPEN', 'LOCKED'] } }).select('_id name fightIds').limit(40).lean();
+    const settled = [];
+    for (const contest of live) {
+      const ids = (contest.fightIds || []).filter((id) => mongoose.isValidObjectId(id));
+      if (!ids.length) continue;
+      const fights = await Match.find({ _id: { $in: ids } }).select('prizesSettledAt').lean();
+      // Every bout must be settled — a partial card would score an incomplete team.
+      if (fights.length !== ids.length || !fights.every((fight) => fight.prizesSettledAt)) continue;
+      try {
+        const summary = await settleTeamContest(String(contest._id));
+        settled.push({ id: contest._id, name: contest.name, ...summary });
+      } catch (error) {
+        console.error('Team auto-settle failed for', String(contest._id), error.message);
+      }
+    }
+    return res.json({ ok: true, examined: live.length, settled });
+  } catch (error) {
+    console.error('Team settle sweep failed:', error);
+    return res.status(500).json({ ok: false, message: 'Team sweep failed.' });
+  }
+});
+
+// --------------------------------------------------------------------------
+// ADMIN + PROMOTER
+// --------------------------------------------------------------------------
+app.post('/api/admin/team-contests', verifyAdminToken, async (req, res) => {
+  try {
+    const name = String(req.body?.name || '').trim();
+    const fightIds = (Array.isArray(req.body?.fightIds) ? req.body.fightIds : [])
+      .map((id) => String(id).trim()).filter((id) => mongoose.isValidObjectId(id));
+    if (!name) return res.status(422).json({ ok: false, message: 'A contest name is required.' });
+
+    const picksRequired = Math.max(2, Math.min(10, Math.round(Number(req.body?.picksRequired) || TEAM_PICKS_REQUIRED)));
+    // The one-fighter-per-bout rule means the card needs at least as many bouts
+    // as picks, or the contest is impossible to enter.
+    if (fightIds.length < picksRequired) {
+      return res.status(422).json({
+        ok: false,
+        message: `A ${picksRequired}-pick contest needs at least ${picksRequired} bouts on the card.`,
+        code: 'NOT_ENOUGH_BOUTS',
+      });
+    }
+
+    const contest = await TeamContest.create({
+      name: name.slice(0, 120),
+      eventName: String(req.body?.eventName || '').slice(0, 120),
+      fightIds: [...new Set(fightIds)],
+      picksRequired,
+      entryFee: Math.max(0, Math.round(Number(req.body?.entryFee) || 0)),
+      affiliateId: String(req.body?.affiliateId || '').trim(),
+    });
+    return res.status(201).json({ ok: true, contestId: contest._id });
+  } catch (error) {
+    console.error('Team contest create failed:', error);
+    return res.status(500).json({ ok: false, message: 'Could not create that contest.' });
+  }
+});
+
+app.post('/api/admin/team-contests/:contestId/void', verifyAdminToken, async (req, res) => {
+  try {
+    const contest = await TeamContest.findById(String(req.params.contestId || '')).lean();
+    if (!contest) return res.status(404).json({ ok: false, message: 'Contest not found.' });
+    if (contest.status === 'SETTLED') {
+      return res.status(409).json({ ok: false, message: 'That contest is already settled.' });
+    }
+    const entries = await TeamEntry.find({ contestId: String(contest._id), entryFeePaid: { $gt: 0 } }).lean();
+    for (const entry of entries) {
+      try {
+        const user = await User.findById(entry.userId).select('tokens email');
+        if (!user) continue;
+        const before = fightTokenBalance(user.tokens);
+        user.tokens = String(before + entry.entryFeePaid);
+        await user.save();
+        await recordWalletMove({
+          userId: entry.userId, amount: entry.entryFeePaid, balanceBefore: before,
+          balanceAfter: before + entry.entryFeePaid, reason: 'team_refund',
+          reference: `team:refund:${contest._id}:${entry.userId}`,
+          meta: { contestId: String(contest._id) },
+        });
+        if (user.email) {
+          sendMoneyNotice({
+            to: user.email,
+            subject: `${contest.name} was cancelled — you have been refunded`,
+            heading: 'CONTEST CANCELLED',
+            lines: [
+              `<strong>${escapeHtml(contest.name)}</strong> has been cancelled.`,
+              `Your ${entry.entryFeePaid.toLocaleString()} FM entry has been returned in full.`,
+            ],
+          });
+        }
+      } catch (error) {
+        console.error('Team refund failed for', String(entry.userId), error.message);
+      }
+    }
+    await TeamContest.updateOne({ _id: contest._id }, {
+      $set: { status: 'VOID', voidReason: String(req.body?.reason || 'Cancelled by an administrator.').slice(0, 300) },
+    });
+    return res.json({ ok: true, refunded: entries.length });
+  } catch (error) {
+    console.error('Team void failed:', error);
+    return res.status(500).json({ ok: false, message: 'Could not cancel that contest.' });
+  }
+});
+
+// A promoter runs a Team Card for their own league.
+app.post('/api/affiliates/me/team-contests', requireTeamCards, verifyToken, requireScope(TOKEN_SCOPES.AFFILIATE), async (req, res) => {
+  try {
+    const affiliateId = String(req.user?.id || req.user?._id || '').trim();
+    const affiliate = await Affiliate.findById(affiliateId).select('_id verified').lean();
+    if (!affiliate) return res.status(404).json({ ok: false, message: 'Affiliate account not found.' });
+    if (!affiliate.verified) {
+      return res.status(403).json({ ok: false, message: 'Your league must be approved before you can run contests.', code: 'NOT_VERIFIED' });
+    }
+
+    const name = String(req.body?.name || '').trim();
+    const fightIds = (Array.isArray(req.body?.fightIds) ? req.body.fightIds : [])
+      .map((id) => String(id).trim()).filter((id) => mongoose.isValidObjectId(id));
+    const picksRequired = Math.max(2, Math.min(10, Math.round(Number(req.body?.picksRequired) || TEAM_PICKS_REQUIRED)));
+    if (!name) return res.status(422).json({ ok: false, message: 'Name your contest.' });
+    if (fightIds.length < picksRequired) {
+      return res.status(422).json({ ok: false, message: `Pick at least ${picksRequired} bouts for a ${picksRequired}-pick contest.`, code: 'NOT_ENOUGH_BOUTS' });
+    }
+
+    const contest = await TeamContest.create({
+      name: name.slice(0, 120),
+      eventName: String(req.body?.eventName || '').slice(0, 120),
+      fightIds: [...new Set(fightIds)],
+      picksRequired,
+      entryFee: Math.max(0, Math.round(Number(req.body?.entryFee) || 0)),
+      affiliateId,
+    });
+    return res.status(201).json({ ok: true, contestId: contest._id });
+  } catch (error) {
+    console.error('Promoter team contest create failed:', error);
+    return res.status(500).json({ ok: false, message: 'Could not create that contest.' });
+  }
+});
+
+// --------------------------------------------------------------------------
+// PLAYER READS
+// --------------------------------------------------------------------------
+app.get('/api/team-contests/open', requireTeamCards, async (req, res) => {
+  try {
+    const contests = await TeamContest.find({ status: 'OPEN' }).sort({ createdAt: -1 }).limit(20).lean();
+    const allFightIds = [...new Set(contests.flatMap((contest) => contest.fightIds || []))]
+      .filter((id) => mongoose.isValidObjectId(id));
+    const fights = allFightIds.length
+      ? await Match.find({ _id: { $in: allFightIds } })
+        .select('matchFighterA matchFighterB matchDate matchCategory maxRounds matchStatus').lean()
+      : [];
+    const fightById = new Map(fights.map((row) => [String(row._id), row]));
+
+    return res.json({
+      ok: true,
+      callCategories: SEASON_CALL_CATEGORIES,
+      callBonusCap: TEAM_CALL_BONUS_CAP,
+      contests: await Promise.all(contests.map(async (contest) => ({
+        id: contest._id,
+        name: contest.name,
+        eventName: contest.eventName,
+        entryFee: contest.entryFee,
+        prizePool: contest.prizePool,
+        picksRequired: contest.picksRequired,
+        promoted: Boolean(contest.affiliateId),
+        entrants: await TeamEntry.countDocuments({ contestId: String(contest._id) }),
+        bouts: (contest.fightIds || []).map((id) => {
+          const bout = fightById.get(String(id));
+          if (!bout) return null;
+          return {
+            fightId: String(id),
+            fighterA: bout.matchFighterA,
+            fighterB: bout.matchFighterB,
+            category: bout.matchCategory,
+            rounds: bout.maxRounds,
+            date: bout.matchDate,
+            open: isFightOpenForEntry(bout),
+          };
+        }).filter(Boolean),
+      }))),
+    });
+  } catch (error) {
+    console.error('Team contest list failed:', error);
+    return res.status(500).json({ ok: false, message: 'Could not load contests.' });
+  }
+});
+
+app.get('/api/team-contests/me', requireTeamCards, verifyToken, requireScope(TOKEN_SCOPES.PLAYER), async (req, res) => {
+  try {
+    const userId = String(req.user?.id || req.user?._id || '').trim();
+    const entries = await TeamEntry.find({ userId }).sort({ createdAt: -1 }).limit(30).lean();
+    const contestIds = [...new Set(entries.map((entry) => entry.contestId))].filter((id) => mongoose.isValidObjectId(id));
+    const contests = contestIds.length ? await TeamContest.find({ _id: { $in: contestIds } }).lean() : [];
+    const byId = new Map(contests.map((row) => [String(row._id), row]));
+
+    return res.json({
+      ok: true,
+      teams: entries.map((entry) => {
+        const contest = byId.get(String(entry.contestId));
+        return {
+          entryId: entry._id,
+          contestId: entry.contestId,
+          contestName: contest?.name || 'Team Card',
+          eventName: contest?.eventName || '',
+          status: contest?.status || 'OPEN',
+          entryFeePaid: entry.entryFeePaid,
+          totalPoints: entry.totalPoints,
+          settled: entry.settled,
+          scoredCount: (entry.picks || []).filter((pick) => pick.scored).length,
+          picks: (entry.picks || []).map((pick) => ({
+            fighterName: pick.fighterName,
+            points: pick.points,
+            scored: pick.scored,
+            calledCategory: pick.calledCategory,
+            calledValue: pick.calledValue,
+            actual: Number((pick.categoryTotals || {})[pick.calledCategory]) || 0,
+            callHit: pick.callHit,
+            callBonus: pick.callBonus,
+          })),
+        };
+      }),
+    });
+  } catch (error) {
+    console.error('Team lookup failed:', error);
+    return res.status(500).json({ ok: false, message: 'Could not load your teams.' });
+  }
+});
+
+app.get('/api/team-contests/:contestId/leaderboard', requireTeamCards, async (req, res) => {
+  try {
+    const contestId = String(req.params.contestId || '').trim();
+    const entries = await TeamEntry.find({ contestId }).lean();
+    const settled = entries.some((entry) => entry.settled);
+    const ranked = entries
+      .map((entry) => ({
+        userId: entry.userId,
+        // Live totals mid-card so the leaderboard moves as the night goes on.
+        score: settled ? entry.totalPoints : (entry.picks || []).reduce((sum, pick) => sum + pick.points, 0),
+        scoredCount: (entry.picks || []).filter((pick) => pick.scored).length,
+      }))
+      .sort((a, b) => b.score - a.score)
+      .slice(0, 100);
+
+    const users = ranked.length
+      ? await User.find({ _id: { $in: ranked.map((row) => row.userId).filter((id) => mongoose.isValidObjectId(id)) } })
+        .select('playerName firstName profileUrl').lean()
+      : [];
+    const byId = new Map(users.map((row) => [String(row._id), row]));
+
+    return res.json({
+      ok: true,
+      live: !settled,
+      leaderboard: ranked.map((row, index) => ({
+        place: index + 1,
+        name: byId.get(row.userId)?.playerName || byId.get(row.userId)?.firstName || 'Player',
+        avatar: byId.get(row.userId)?.profileUrl || '',
+        score: row.score,
+        fightsScored: row.scoredCount,
+      })),
+    });
+  } catch (error) {
+    console.error('Team leaderboard failed:', error);
+    return res.status(500).json({ ok: false, message: 'Could not load the leaderboard.' });
+  }
+});
+
+// ==========================================================================
+// NON-CASH PRIZES — what makes a free contest worth winning
+//
+// In free-play states the entry fee is zero, so there is no consideration and no
+// wager. That also means there is nothing to pay out of. Prizes here are things
+// with no cash value to the player: badges, leaderboard titles, sponsor merch
+// and PPV codes the sponsor funds.
+//
+// Deliberately kept separate from the wallet. Coins are a balance; these are
+// awards. Mixing them would give the "free" coins a cash value and collapse the
+// distinction the free mode depends on.
+// ==========================================================================
+const PRIZE_TYPES = Object.freeze(['badge', 'title', 'merch', 'ppv_code', 'sponsor_other']);
+// Digital-only types need no shipping and are complete the moment they are won.
+const INSTANT_PRIZE_TYPES = Object.freeze(['badge', 'title', 'ppv_code']);
+
+const contestPrizeSchema = new mongoose.Schema({
+  fightId: { type: String, required: true, index: true },
+  // 1, 2, 3 … or 0 meaning "everyone who entered" (participation badges).
+  place: { type: Number, required: true, min: 0 },
+  type: { type: String, enum: PRIZE_TYPES, required: true },
+  name: { type: String, required: true },
+  description: { type: String, default: '' },
+  imageUrl: { type: String, default: '' },
+  sponsorName: { type: String, default: '' },
+  // For ppv_code: a pool of single-use codes, claimed one per winner.
+  codePool: { type: [String], default: [] },
+  quantity: { type: Number, default: 1, min: 1 },
+  awardedCount: { type: Number, default: 0 },
+  active: { type: Boolean, default: true },
+}, { timestamps: true });
+
+const playerAwardSchema = new mongoose.Schema({
+  userId: { type: String, required: true, index: true },
+  fightId: { type: String, required: true, index: true },
+  prizeId: { type: String, required: true },
+  type: { type: String, enum: PRIZE_TYPES, required: true },
+  name: { type: String, required: true },
+  description: { type: String, default: '' },
+  imageUrl: { type: String, default: '' },
+  sponsorName: { type: String, default: '' },
+  place: { type: Number, default: 0 },
+  // Single-use code handed to this winner (ppv_code only).
+  code: { type: String, default: '' },
+  // Physical goods need fulfilment; digital awards are done on creation.
+  fulfilment: { type: String, enum: ['not_required', 'pending', 'shipped', 'cancelled'], default: 'not_required' },
+  shippingNote: { type: String, default: '' },
+  // Prevents a re-run of settlement awarding the same prize twice.
+  idempotencyKey: { type: String, required: true, unique: true },
+}, { timestamps: true });
+
+const ContestPrize = mongoose.models.ContestPrize || mongoose.model('ContestPrize', contestPrizeSchema);
+const PlayerAward = mongoose.models.PlayerAward || mongoose.model('PlayerAward', playerAwardSchema);
+
+// Ranks entrants by score and hands out whatever non-cash prizes the fight has
+// configured. Safe to re-run: each award has an idempotency key.
+const awardNonCashPrizes = async (fightId, scoredRows, fight) => {
+  const prizes = await ContestPrize.find({ fightId: String(fightId), active: true }).lean();
+  if (!prizes.length) return { awarded: 0, prizes: 0 };
+
+  // Same ordering the cash prizes use, so a winner is a winner in both.
+  const ranked = [...scoredRows].sort((a, b) => b.points - a.points);
+  let awarded = 0;
+
+  for (const prize of prizes) {
+    const recipients = prize.place === 0
+      ? ranked
+      : (ranked[prize.place - 1] ? [ranked[prize.place - 1]] : []);
+
+    for (const recipient of recipients) {
+      if (prize.awardedCount >= prize.quantity && prize.place !== 0) break;
+
+      const idempotencyKey = `award:${fightId}:${prize._id}:${recipient.userId}`;
+      const existing = await PlayerAward.findOne({ idempotencyKey }).lean();
+      if (existing) continue;
+
+      // Claim one code from the pool atomically, so two winners cannot receive
+      // the same PPV code.
+      let code = '';
+      if (prize.type === 'ppv_code') {
+        const claimed = await ContestPrize.findOneAndUpdate(
+          { _id: prize._id, 'codePool.0': { $exists: true } },
+          { $pop: { codePool: -1 }, $inc: { awardedCount: 1 } },
+          { new: false },
+        ).lean();
+        if (!claimed?.codePool?.length) {
+          console.warn(`[prizes] code pool empty for prize ${prize._id}; skipping ${recipient.userId}`);
+          continue;
+        }
+        code = claimed.codePool[0];
+      } else {
+        await ContestPrize.updateOne({ _id: prize._id }, { $inc: { awardedCount: 1 } });
+      }
+
+      try {
+        await PlayerAward.create({
+          userId: String(recipient.userId),
+          fightId: String(fightId),
+          prizeId: String(prize._id),
+          type: prize.type,
+          name: prize.name,
+          description: prize.description,
+          imageUrl: prize.imageUrl,
+          sponsorName: prize.sponsorName,
+          place: prize.place,
+          code,
+          fulfilment: INSTANT_PRIZE_TYPES.includes(prize.type) ? 'not_required' : 'pending',
+          idempotencyKey,
+        });
+        awarded += 1;
+      } catch (error) {
+        if (error?.code !== 11000) console.error('Award creation failed:', error.message);
+        continue;
+      }
+
+      const winner = await User.findById(recipient.userId).select('email playerName').lean();
+      if (winner?.email) {
+        sendMoneyNotice({
+          to: winner.email,
+          subject: `You won: ${prize.name}`,
+          heading: prize.place === 0 ? 'YOU EARNED AN AWARD' : `#${prize.place} FINISH`,
+          lines: [
+            `${fight?.matchFighterA || 'Fighter A'} vs ${fight?.matchFighterB || 'Fighter B'} has been scored.`,
+            `You won <strong>${escapeHtml(prize.name)}</strong>${prize.sponsorName ? `, courtesy of ${escapeHtml(prize.sponsorName)}` : ''}.`,
+            code ? `Your code: <strong>${escapeHtml(code)}</strong>` : '',
+            INSTANT_PRIZE_TYPES.includes(prize.type)
+              ? 'It is already on your profile.'
+              : 'We will be in touch about delivery.',
+          ].filter(Boolean),
+        });
+      }
+    }
+  }
+
+  return { awarded, prizes: prizes.length };
+};
+
+// --- admin: configure prizes on a fight -----------------------------------
+app.post('/api/admin/fights/:fightId/prizes', verifyAdminToken, async (req, res) => {
+  try {
+    const fightId = String(req.params.fightId || '').trim();
+    const type = String(req.body?.type || '').trim();
+    if (!PRIZE_TYPES.includes(type)) {
+      return res.status(422).json({ ok: false, message: `type must be one of: ${PRIZE_TYPES.join(', ')}` });
+    }
+    const name = String(req.body?.name || '').trim();
+    if (!name) return res.status(422).json({ ok: false, message: 'A prize name is required.' });
+
+    const codePool = Array.isArray(req.body?.codePool)
+      ? req.body.codePool.map((c) => String(c).trim()).filter(Boolean).slice(0, 500)
+      : [];
+    if (type === 'ppv_code' && !codePool.length) {
+      return res.status(422).json({ ok: false, message: 'Provide at least one code for a PPV code prize.' });
+    }
+
+    const prize = await ContestPrize.create({
+      fightId,
+      place: Math.max(0, Math.round(Number(req.body?.place) || 0)),
+      type,
+      name: name.slice(0, 120),
+      description: String(req.body?.description || '').slice(0, 500),
+      imageUrl: String(req.body?.imageUrl || '').slice(0, 500),
+      sponsorName: String(req.body?.sponsorName || '').slice(0, 120),
+      codePool,
+      quantity: type === 'ppv_code' ? codePool.length : Math.max(1, Math.round(Number(req.body?.quantity) || 1)),
+    });
+    return res.status(201).json({ ok: true, prizeId: prize._id });
+  } catch (error) {
+    console.error('Prize create failed:', error);
+    return res.status(500).json({ ok: false, message: 'Could not add that prize.' });
+  }
+});
+
+app.get('/api/admin/fights/:fightId/prizes', verifyAdminToken, async (req, res) => {
+  try {
+    const prizes = await ContestPrize.find({ fightId: String(req.params.fightId || '').trim() })
+      .select('-codePool').sort({ place: 1 }).lean();
+    // Never return the unclaimed codes themselves; the count is what admins need.
+    const withCounts = await Promise.all(prizes.map(async (prize) => {
+      const full = await ContestPrize.findById(prize._id).select('codePool').lean();
+      return { ...prize, codesRemaining: full?.codePool?.length || 0 };
+    }));
+    return res.json({ ok: true, prizes: withCounts });
+  } catch (error) {
+    return res.status(500).json({ ok: false, message: 'Could not load prizes.' });
+  }
+});
+
+app.delete('/api/admin/prizes/:prizeId', verifyAdminToken, async (req, res) => {
+  try {
+    await ContestPrize.updateOne({ _id: String(req.params.prizeId || '') }, { $set: { active: false } });
+    return res.json({ ok: true, message: 'Prize deactivated. Awards already given are unaffected.' });
+  } catch (error) {
+    return res.status(500).json({ ok: false, message: 'Could not remove that prize.' });
+  }
+});
+
+// --- admin: fulfilment queue for physical goods ---------------------------
+app.get('/api/admin/awards/fulfilment', verifyAdminToken, async (req, res) => {
+  try {
+    const status = String(req.query.status || 'pending').trim();
+    const rows = await PlayerAward.find({ fulfilment: status }).sort({ createdAt: 1 }).limit(300).lean();
+    const userIds = [...new Set(rows.map((r) => r.userId))].filter((id) => mongoose.isValidObjectId(id));
+    const users = userIds.length
+      ? await User.find({ _id: { $in: userIds } }).select('email playerName firstName lastName phone zipCode').lean()
+      : [];
+    const byId = new Map(users.map((u) => [String(u._id), u]));
+    return res.json({
+      ok: true,
+      awards: rows.map((row) => ({
+        id: row._id,
+        name: row.name,
+        type: row.type,
+        sponsorName: row.sponsorName,
+        place: row.place,
+        wonAt: row.createdAt,
+        fulfilment: row.fulfilment,
+        winner: byId.get(row.userId)
+          ? {
+            name: byId.get(row.userId).playerName
+              || [byId.get(row.userId).firstName, byId.get(row.userId).lastName].filter(Boolean).join(' '),
+            email: byId.get(row.userId).email,
+            phone: byId.get(row.userId).phone,
+            zipCode: byId.get(row.userId).zipCode,
+          }
+          : null,
+      })),
+    });
+  } catch (error) {
+    console.error('Fulfilment queue failed:', error);
+    return res.status(500).json({ ok: false, message: 'Could not load the queue.' });
+  }
+});
+
+app.post('/api/admin/awards/:awardId/fulfil', verifyAdminToken, async (req, res) => {
+  try {
+    const next = String(req.body?.status || 'shipped').trim();
+    if (!['shipped', 'cancelled', 'pending'].includes(next)) {
+      return res.status(422).json({ ok: false, message: 'status must be shipped, cancelled or pending.' });
+    }
+    const award = await PlayerAward.findOneAndUpdate(
+      { _id: String(req.params.awardId || '') },
+      { $set: { fulfilment: next, shippingNote: String(req.body?.note || '').slice(0, 300) } },
+      { new: true },
+    ).lean();
+    if (!award) return res.status(404).json({ ok: false, message: 'Award not found.' });
+
+    if (next === 'shipped') {
+      const winner = await User.findById(award.userId).select('email').lean();
+      if (winner?.email) {
+        sendMoneyNotice({
+          to: winner.email,
+          subject: `Your prize is on the way: ${award.name}`,
+          heading: 'PRIZE SHIPPED',
+          lines: [
+            `<strong>${escapeHtml(award.name)}</strong> has been sent out.`,
+            award.shippingNote ? escapeHtml(award.shippingNote) : '',
+          ].filter(Boolean),
+        });
+      }
+    }
+    return res.json({ ok: true, fulfilment: award.fulfilment });
+  } catch (error) {
+    console.error('Fulfilment update failed:', error);
+    return res.status(500).json({ ok: false, message: 'Could not update that award.' });
+  }
+});
+
+// --- player: my trophy case ------------------------------------------------
+app.get('/api/users/me/awards', verifyToken, async (req, res) => {
+  try {
+    const userId = String(req.user?.id || req.user?._id || '').trim();
+    const rows = await PlayerAward.find({ userId }).sort({ createdAt: -1 }).limit(200).lean();
+    return res.json({
+      ok: true,
+      awards: rows.map((row) => ({
+        id: row._id,
+        type: row.type,
+        name: row.name,
+        description: row.description,
+        imageUrl: row.imageUrl,
+        sponsorName: row.sponsorName,
+        place: row.place,
+        code: row.code || undefined,
+        fulfilment: row.fulfilment,
+        wonAt: row.createdAt,
+        fightId: row.fightId,
+      })),
+      badges: rows.filter((r) => r.type === 'badge').length,
+      titles: rows.filter((r) => r.type === 'title').map((r) => r.name),
+    });
+  } catch (error) {
+    console.error('Awards lookup failed:', error);
+    return res.status(500).json({ ok: false, message: 'Could not load your awards.' });
+  }
+});
+
+// Public trophy case, for the leaderboard and profile showcase. Names only.
+app.get('/api/public/awards/:userId', async (req, res) => {
+  try {
+    const rows = await PlayerAward.find({ userId: String(req.params.userId || '').trim() })
+      .select('type name imageUrl sponsorName place createdAt').sort({ createdAt: -1 }).limit(50).lean();
+    return res.json({ ok: true, awards: rows });
+  } catch (error) {
+    return res.status(500).json({ ok: false, message: 'Could not load awards.' });
+  }
+});
+
+// ==========================================================================
+// OWNER CHECK — read-only inspection of the whole platform
+//
+// A credential that can see everything is a credential worth stealing, so this
+// one cannot DO anything: there is no write endpoint here beyond signing in.
+// Every money action stays behind admin auth with its own audit trail. That way
+// a leaked owner code costs you information, not money.
+//
+// Separate secret from admin (JWT_SECRET_OWNER) so neither role's compromise
+// includes the other. Short session — you are checking, not living here.
+// ==========================================================================
+const OWNER_EMAIL = String(process.env.OWNER_EMAIL || SUPPORT_EMAIL).trim().toLowerCase();
+const OWNER_CODE_TTL_MS = 10 * 60 * 1000;
+const OWNER_SESSION_TTL = process.env.OWNER_SESSION_TTL || '1h';
+const OWNER_CODE_MAX_ATTEMPTS = 5;
+
+const ownerLoginCodeSchema = new mongoose.Schema({
+  codeHash: { type: String, required: true },
+  attempts: { type: Number, default: 0 },
+  expiresAt: { type: Date, required: true },
+}, { timestamps: true });
+
+const OwnerLoginCode = mongoose.models.OwnerLoginCode
+  || mongoose.model('OwnerLoginCode', ownerLoginCodeSchema);
+
+const ownerSecret = () => String(process.env.JWT_SECRET_OWNER || '').trim();
+
+app.post('/api/owner/login/request', loginLimiter, async (req, res) => {
+  // Identical response either way — this must never confirm the owner address.
+  const generic = { ok: true, message: 'If that address can access the owner view, a code is on its way.' };
+  try {
+    const email = String(req.body?.email || '').trim().toLowerCase();
+    if (email !== OWNER_EMAIL) return res.json(generic);
+    if (!ownerSecret()) {
+      console.error('Owner sign-in attempted but JWT_SECRET_OWNER is not configured.');
+      return res.json(generic);
+    }
+
+    const code = String(crypto.randomInt(100000, 1000000));
+    await OwnerLoginCode.deleteMany({});
+    await OwnerLoginCode.create({
+      codeHash: crypto.createHash('sha256').update(code).digest('hex'),
+      expiresAt: new Date(Date.now() + OWNER_CODE_TTL_MS),
+    });
+
+    await transporter.sendMail({
+      from: FMM_MAIL_FROM,
+      to: OWNER_EMAIL,
+      subject: 'Fantasy MMAdness owner sign-in code',
+      html: `<div style="font-family:Georgia,'Times New Roman',serif;color:#201f1d">
+        <p>Your owner sign-in code:</p>
+        <p style="font-size:32px;letter-spacing:8px;font-variant-numeric:tabular-nums"><strong>${code}</strong></p>
+        <p>Valid for 10 minutes. <strong>If you did not request this, someone knows your owner address — change your email password and tell your developer.</strong></p>
+      </div>`,
+    });
+    return res.json(generic);
+  } catch (error) {
+    console.error('Owner code request failed:', error);
+    return res.json(generic);
+  }
+});
+
+app.post('/api/owner/login/verify', loginLimiter, async (req, res) => {
+  try {
+    const email = String(req.body?.email || '').trim().toLowerCase();
+    const code = String(req.body?.code || '').trim();
+    if (email !== OWNER_EMAIL || !/^\d{6}$/.test(code)) {
+      return res.status(400).json({ ok: false, message: 'That code is not correct.' });
+    }
+    if (!ownerSecret()) return res.status(503).json({ ok: false, message: 'Owner access is not configured.' });
+
+    const record = await OwnerLoginCode.findOne({}).sort({ createdAt: -1 });
+    if (!record || record.expiresAt.getTime() < Date.now()) {
+      return res.status(400).json({ ok: false, message: 'That code has expired. Request a new one.' });
+    }
+    if (record.attempts >= OWNER_CODE_MAX_ATTEMPTS) {
+      return res.status(429).json({ ok: false, message: 'Too many attempts. Request a new code.' });
+    }
+    const supplied = Buffer.from(crypto.createHash('sha256').update(code).digest('hex'));
+    const expected = Buffer.from(record.codeHash);
+    if (supplied.length !== expected.length || !crypto.timingSafeEqual(supplied, expected)) {
+      record.attempts += 1;
+      await record.save();
+      return res.status(400).json({ ok: false, message: 'That code is not correct.' });
+    }
+    await OwnerLoginCode.deleteMany({});
+
+    const token = jwt.sign({ email: OWNER_EMAIL, scope: 'owner' }, ownerSecret(), { expiresIn: OWNER_SESSION_TTL });
+
+    // Every successful owner sign-in is announced, so an unexpected one is visible.
+    sendMoneyNotice({
+      to: OWNER_EMAIL,
+      subject: 'Owner view accessed',
+      heading: 'OWNER SIGN-IN',
+      lines: [
+        `Someone signed in to the owner view at ${new Date().toUTCString()}.`,
+        `IP: ${String(req.headers['x-forwarded-for'] || req.socket?.remoteAddress || 'unknown')}`,
+        'If this was not you, change your email password immediately.',
+      ],
+    });
+
+    return res.json({ ok: true, token, expiresIn: OWNER_SESSION_TTL });
+  } catch (error) {
+    console.error('Owner verify failed:', error);
+    return res.status(500).json({ ok: false, message: 'Sign-in is temporarily unavailable.' });
+  }
+});
+
+// --------------------------------------------------------------------------
+// TRUSTED DEVICE + PIN
+//
+// Emailing a code every time is right for a new device and wrong for the phone
+// in your pocket. So: prove it once by email, then keep a device secret on that
+// phone and unlock with a short PIN.
+//
+// This is only defensible because the owner view is READ-ONLY. A PIN would be a
+// bad guard on anything that can move money; here the worst case is that someone
+// holding your unlocked phone can read numbers they could also read over your
+// shoulder. The device secret is long and random — the PIN alone is useless
+// without it, and five wrong PINs destroy the device record entirely.
+// --------------------------------------------------------------------------
+const ownerDeviceSchema = new mongoose.Schema({
+  deviceKeyHash: { type: String, required: true, unique: true },
+  pinHash: { type: String, required: true },
+  label: { type: String, default: 'Phone' },
+  failedAttempts: { type: Number, default: 0 },
+  lastUsedAt: { type: Date, default: null },
+  expiresAt: { type: Date, required: true },
+}, { timestamps: true });
+
+const OwnerDevice = mongoose.models.OwnerDevice || mongoose.model('OwnerDevice', ownerDeviceSchema);
+
+const OWNER_DEVICE_TTL_MS = Number(process.env.OWNER_DEVICE_TTL_DAYS || 30) * 24 * 60 * 60 * 1000;
+const OWNER_PIN_MAX_ATTEMPTS = 5;
+const hashOwnerValue = (value) => crypto.createHash('sha256').update(String(value)).digest('hex');
+
+app.post('/api/owner/device/trust', (req, res, next) => verifyOwnerToken(req, res, next), async (req, res) => {
+  try {
+    const pin = String(req.body?.pin || '').trim();
+    if (!/^\d{4,8}$/.test(pin)) {
+      return res.status(422).json({ ok: false, message: 'Choose a PIN of 4 to 8 digits.' });
+    }
+    // Refuse the PINs someone would guess first.
+    if (/^(\d)\1+$/.test(pin) || ['1234', '12345', '123456', '0000'].includes(pin)) {
+      return res.status(422).json({ ok: false, message: 'Pick a less predictable PIN.' });
+    }
+
+    const deviceKey = crypto.randomBytes(32).toString('hex');
+    await OwnerDevice.create({
+      deviceKeyHash: hashOwnerValue(deviceKey),
+      pinHash: await bcrypt.hash(pin, 10),
+      label: String(req.body?.label || 'Phone').slice(0, 40),
+      expiresAt: new Date(Date.now() + OWNER_DEVICE_TTL_MS),
+    });
+
+    sendMoneyNotice({
+      to: OWNER_EMAIL,
+      subject: 'A device was trusted for owner access',
+      heading: 'DEVICE TRUSTED',
+      lines: [
+        `A device was set up for quick owner sign-in on ${new Date().toUTCString()}.`,
+        'If this was not you, open the owner view and choose "Forget all devices".',
+      ],
+    });
+
+    // Returned once and never again — the phone stores it, the server keeps only a hash.
+    return res.json({ ok: true, deviceKey, expiresInDays: Math.round(OWNER_DEVICE_TTL_MS / 86400000) });
+  } catch (error) {
+    console.error('Owner device trust failed:', error);
+    return res.status(500).json({ ok: false, message: 'Could not set up quick access.' });
+  }
+});
+
+app.post('/api/owner/login/device', loginLimiter, async (req, res) => {
+  try {
+    const deviceKey = String(req.body?.deviceKey || '').trim();
+    const pin = String(req.body?.pin || '').trim();
+    const generic = { ok: false, message: 'That PIN is not correct.' };
+    if (!deviceKey || !/^\d{4,8}$/.test(pin) || !ownerSecret()) return res.status(400).json(generic);
+
+    const device = await OwnerDevice.findOne({ deviceKeyHash: hashOwnerValue(deviceKey) });
+    if (!device) return res.status(401).json({ ok: false, message: 'This device is no longer trusted. Sign in with an email code.', reset: true });
+    if (device.expiresAt.getTime() < Date.now()) {
+      await device.deleteOne();
+      return res.status(401).json({ ok: false, message: 'Quick access expired. Sign in with an email code.', reset: true });
+    }
+    if (device.failedAttempts >= OWNER_PIN_MAX_ATTEMPTS) {
+      await device.deleteOne();
+      return res.status(429).json({ ok: false, message: 'Too many wrong PINs — this device was un-trusted. Sign in with an email code.', reset: true });
+    }
+
+    if (!(await bcrypt.compare(pin, device.pinHash))) {
+      device.failedAttempts += 1;
+      await device.save();
+      const left = OWNER_PIN_MAX_ATTEMPTS - device.failedAttempts;
+      return res.status(401).json({
+        ok: false,
+        message: left > 0 ? `That PIN is not correct. ${left} attempt${left === 1 ? '' : 's'} left.` : 'That PIN is not correct.',
+      });
+    }
+
+    device.failedAttempts = 0;
+    device.lastUsedAt = new Date();
+    // Sliding window: a phone you actually use stays trusted.
+    device.expiresAt = new Date(Date.now() + OWNER_DEVICE_TTL_MS);
+    await device.save();
+
+    const token = jwt.sign({ email: OWNER_EMAIL, scope: 'owner', via: 'device' }, ownerSecret(), { expiresIn: OWNER_SESSION_TTL });
+    return res.json({ ok: true, token, expiresIn: OWNER_SESSION_TTL });
+  } catch (error) {
+    console.error('Owner device sign-in failed:', error);
+    return res.status(500).json({ ok: false, message: 'Sign-in is temporarily unavailable.' });
+  }
+});
+
+app.post('/api/owner/device/forget-all', (req, res, next) => verifyOwnerToken(req, res, next), async (req, res) => {
+  try {
+    const { deletedCount } = await OwnerDevice.deleteMany({});
+    return res.json({ ok: true, removed: deletedCount || 0, message: 'All trusted devices removed. Every device now needs an email code.' });
+  } catch (error) {
+    console.error('Owner device wipe failed:', error);
+    return res.status(500).json({ ok: false, message: 'Could not remove trusted devices.' });
+  }
+});
+
+// --------------------------------------------------------------------------
+// VIEW AS — see the app as a specific player or affiliate, read-only
+//
+// Not impersonation: the token this mints cannot write. It is a way to answer
+// "what does this person actually see", which support questions constantly need
+// and screenshots never settle.
+// --------------------------------------------------------------------------
+const OWNER_PREVIEW_TTL = process.env.OWNER_PREVIEW_TTL || '20m';
+
+app.get('/api/owner/preview/search', (req, res, next) => verifyOwnerToken(req, res, next), async (req, res) => {
+  try {
+    const q = String(req.query.q || '').trim();
+    if (q.length < 2) return res.json({ ok: true, players: [], affiliates: [] });
+    const safe = q.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const match = new RegExp(safe, 'i');
+    const filter = { $or: [{ email: match }, { playerName: match }, { firstName: match }, { lastName: match }] };
+
+    const [players, affiliates] = await Promise.all([
+      User.find(filter).select('_id email playerName firstName lastName tokens').limit(10).lean(),
+      Affiliate.find(filter).select('_id email playerName firstName lastName tokens verified').limit(10).lean(),
+    ]);
+
+    const shape = (row) => ({
+      id: String(row._id),
+      name: row.playerName || [row.firstName, row.lastName].filter(Boolean).join(' ') || 'Unnamed',
+      email: row.email,
+      coins: Number.parseInt(String(row.tokens || '0'), 10) || 0,
+      verified: row.verified,
+    });
+    return res.json({ ok: true, players: players.map(shape), affiliates: affiliates.map(shape) });
+  } catch (error) {
+    console.error('Owner preview search failed:', error);
+    return res.status(500).json({ ok: false, message: 'Search failed.' });
+  }
+});
+
+app.post('/api/owner/preview/token', (req, res, next) => verifyOwnerToken(req, res, next), async (req, res) => {
+  try {
+    const targetType = String(req.body?.targetType || '').trim().toLowerCase();
+    const targetId = String(req.body?.targetId || '').trim();
+    if (!['player', 'affiliate'].includes(targetType) || !mongoose.isValidObjectId(targetId)) {
+      return res.status(422).json({ ok: false, message: 'Choose a player or affiliate to view.' });
+    }
+    const account = targetType === 'affiliate'
+      ? await Affiliate.findById(targetId).select('_id email playerName firstName lastName').lean()
+      : await User.findById(targetId).select('_id email playerName firstName lastName').lean();
+    if (!account) return res.status(404).json({ ok: false, message: 'That account no longer exists.' });
+
+    // Signed with JWT_SECRET so ordinary read routes accept it — but carrying a
+    // scope that verifyToken refuses to let write.
+    const token = jwt.sign(
+      { id: String(account._id), scope: 'owner-preview', previewOf: targetType, actor: OWNER_EMAIL },
+      process.env.JWT_SECRET,
+      { expiresIn: OWNER_PREVIEW_TTL },
+    );
+
+    console.log(`[owner-preview] ${OWNER_EMAIL} started a read-only preview of ${targetType} ${account._id}`);
+    return res.json({
+      ok: true,
+      token,
+      expiresIn: OWNER_PREVIEW_TTL,
+      target: {
+        id: String(account._id),
+        type: targetType,
+        name: account.playerName || [account.firstName, account.lastName].filter(Boolean).join(' ') || account.email,
+      },
+    });
+  } catch (error) {
+    console.error('Owner preview token failed:', error);
+    return res.status(500).json({ ok: false, message: 'Could not start the preview.' });
+  }
+});
+
+const verifyOwnerToken = (req, res, next) => {
+  const header = String(req.headers.authorization || '');
+  const token = header.startsWith('Bearer ') ? header.slice(7) : null;
+  if (!token || !ownerSecret()) {
+    return res.status(401).json({ ok: false, message: 'Owner sign-in required.', shouldLogin: true });
+  }
+  try {
+    const claims = jwt.verify(token, ownerSecret());
+    if (claims?.scope !== 'owner') throw new Error('wrong scope');
+    req.owner = claims;
+    return next();
+  } catch (error) {
+    return res.status(401).json({ ok: false, message: 'Your owner session has expired.', shouldLogin: true });
+  }
+};
+
+// --------------------------------------------------------------------------
+// OVERVIEW — configuration, live counts, feature flags
+// --------------------------------------------------------------------------
+app.get('/api/owner/overview', verifyOwnerToken, async (req, res) => {
+  try {
+    await ensureDatabaseCapability();
+    const anet = getAuthorizeNetEnvironment();
+    const set = (name) => Boolean(String(process.env[name] || '').trim());
+
+    const [players, affiliates, openFights, entriesToday, pendingPayouts] = await Promise.all([
+      User.countDocuments({}),
+      Affiliate.countDocuments({}),
+      Match.countDocuments({ matchStatus: { $nin: ['finished', 'closed', 'draft'] } }),
+      Score.countDocuments({ createdAt: { $gte: new Date(Date.now() - 24 * 60 * 60 * 1000) } }),
+      Affiliate.countDocuments({ 'payouts.status': 'pending' }),
+    ]);
+
+    return res.json({
+      ok: true,
+      generatedAt: new Date().toISOString(),
+      config: [
+        { label: 'Database transactions', ok: databaseCapability.transactionsSupported, value: databaseCapability.topology,
+          note: databaseCapability.transactionsSupported ? 'Money paths safe' : 'PAID ENTRIES WILL FAIL' },
+        { label: 'Payment provider mode', ok: anet.isLive, value: anet.isLive ? 'production' : 'sandbox',
+          note: anet.isLive ? 'Taking real payments' : 'Sandbox — no real money moves' },
+        { label: 'Payment webhook signing', ok: set('AUTHORIZE_NET_SIGNATURE_KEY'), value: set('AUTHORIZE_NET_SIGNATURE_KEY') ? 'configured' : 'missing',
+          note: 'Without it, payment confirmations are rejected' },
+        { label: 'Email delivery', ok: set('SMTP_PASS') || set('GMAIL_APP_PASSWORD'), value: (set('SMTP_PASS') || set('GMAIL_APP_PASSWORD')) ? 'configured' : 'missing',
+          note: 'Receipts, payouts and alerts all depend on this' },
+        { label: 'Scheduled jobs', ok: set('CRON_SECRET'), value: set('CRON_SECRET') ? 'protected' : 'disabled',
+          note: set('CRON_SECRET') ? 'Cron endpoints require the secret' : 'Jobs return 503 until CRON_SECRET is set' },
+        { label: 'Admin/player secrets differ', ok: process.env.JWT_SECRET !== process.env.JWT_SECRET_ADMIN, value: process.env.JWT_SECRET !== process.env.JWT_SECRET_ADMIN ? 'yes' : 'IDENTICAL',
+          note: 'If identical, any player token passes admin checks' },
+        { label: 'Paid states', ok: PAID_STATES.length > 0, value: `${PAID_STATES.length} states`,
+          note: 'Real-money contests are open in these' },
+        { label: 'Free-play only (locked)', ok: true, value: FREE_ONLY_STATES.join(', '),
+          note: 'Paid contests can never be enabled here, by design' },
+        { label: 'Blocked states', ok: true, value: BLOCKED_STATES.length ? BLOCKED_STATES.join(', ') : 'none',
+          note: 'No access at all' },
+      ],
+      counts: { players, affiliates, openFights, entriesLast24h: entriesToday, pendingPayouts },
+      trustedDevices: await OwnerDevice.countDocuments({}),
+      features: {
+        headToHead: HEAD_TO_HEAD_ENABLED,
+        proWrestling: ['true', '1', 'yes', 'on'].includes(String(process.env.PRO_WRESTLING_ENABLED || 'false').toLowerCase()),
+      },
+    });
+  } catch (error) {
+    console.error('Owner overview failed:', error);
+    return res.status(500).json({ ok: false, message: 'Could not build the overview.' });
+  }
+});
+
+// --------------------------------------------------------------------------
+// INTEGRITY — the questions that tell you whether the books are straight.
+// Read-only; every check reports counts and a small sample, never a bulk dump.
+// --------------------------------------------------------------------------
+const runOwnerIntegrityChecks = async () => {
+  const checks = [];
+  const add = (name, count, detail, sample = []) => checks.push({
+    name, count, ok: count === 0, detail, sample: sample.slice(0, 10),
+  });
+
+  // 1. Entries charged with no ledger row — an entry fee taken without an audit trail.
+  const paidFights = await Match.find({ matchTokens: { $gt: 0 } }).select('_id').limit(500).lean();
+  const paidIds = paidFights.map((f) => String(f._id));
+  const entries = paidIds.length
+    ? await Score.find({ matchId: { $in: paidIds }, refunded: { $ne: true } }).select('playerId matchId').limit(5000).lean()
+    : [];
+  const ledgerRows = entries.length
+    ? await FightEntryLedger.find({ matchId: { $in: paidIds }, type: 'FIGHT_ENTRY' }).select('userId matchId').limit(20000).lean()
+    : [];
+  const ledgerKeys = new Set(ledgerRows.map((r) => `${r.userId}:${r.matchId}`));
+  const unaudited = entries.filter((e) => !ledgerKeys.has(`${e.playerId}:${e.matchId}`));
+  add('Paid entries with no ledger row', unaudited.length,
+    'A player was entered into a paid fight without a recorded charge. Entries created before charging existed will show here.',
+    unaudited.map((e) => ({ playerId: e.playerId, matchId: e.matchId })));
+
+  // 2. Broken wallet chains — each ledger row records the balance before and
+  //    after, so a gap between consecutive rows means a balance changed without
+  //    being recorded anywhere.
+  const recentLedger = await FightEntryLedger.find({})
+    .select('userId amount balanceBefore balanceAfter createdAt')
+    .sort({ createdAt: -1 }).limit(4000).lean();
+  const byUser = new Map();
+  recentLedger.forEach((row) => {
+    const key = String(row.userId);
+    if (!byUser.has(key)) byUser.set(key, []);
+    byUser.get(key).push(row);
+  });
+  const brokenChains = [];
+  byUser.forEach((rows, userId) => {
+    const ordered = rows.slice().reverse();
+    for (let i = 1; i < ordered.length; i += 1) {
+      if (Number(ordered[i].balanceBefore) !== Number(ordered[i - 1].balanceAfter)) {
+        brokenChains.push({
+          userId,
+          expected: Number(ordered[i - 1].balanceAfter),
+          found: Number(ordered[i].balanceBefore),
+          at: ordered[i].createdAt,
+        });
+        break;
+      }
+    }
+  });
+  add('Wallets with an unrecorded balance change', brokenChains.length,
+    'A balance moved between two recorded moves. Usually an admin adjustment made outside the ledger.',
+    brokenChains);
+
+  // 3. Fights that have entries and official stats but were never settled.
+  const finishedWithStats = await Match.find({
+    prizesSettledAt: { $in: [null, undefined] },
+    matchDate: { $lt: new Date(Date.now() - 12 * 60 * 60 * 1000) },
+  }).select('_id matchFighterA matchFighterB matchDate pot').limit(200).lean();
+  const unsettled = [];
+  for (const fight of finishedWithStats) {
+    const entryCount = await Score.countDocuments({ matchId: String(fight._id), refunded: { $ne: true } });
+    if (entryCount > 0) {
+      unsettled.push({
+        fightId: String(fight._id),
+        fight: `${fight.matchFighterA || '?'} vs ${fight.matchFighterB || '?'}`,
+        entries: entryCount,
+        pot: Number(fight.pot) || 0,
+        date: fight.matchDate,
+      });
+    }
+  }
+  add('Fights with entries awaiting settlement', unsettled.length,
+    'Players paid in and have not been paid out. Settle these from the admin fight screen.',
+    unsettled);
+
+  // 3b. Contests where the declared prize is not covered by the entries taken —
+  //     the platform would be paying the difference.
+  const openPaid = await Match.find({
+    prizesSettledAt: { $in: [null, undefined] },
+    voidedAt: { $in: [null, undefined] },
+    matchTokens: { $gt: 0 },
+    pot: { $gt: 0 },
+  }).select('_id matchFighterA matchFighterB pot matchTokens collectedFees minimumEntrants').limit(200).lean();
+  const uncovered = openPaid
+    .map((fight) => {
+      const collected = Math.max(0, Number(fight.collectedFees) || 0);
+      const declared = Math.max(0, Number(fight.pot) || 0);
+      return {
+        fightId: String(fight._id),
+        fight: `${fight.matchFighterA || '?'} vs ${fight.matchFighterB || '?'}`,
+        declaredPrize: declared,
+        feesCollected: collected,
+        shortfall: Math.max(0, declared - collected),
+      };
+    })
+    .filter((row) => row.shortfall > 0);
+  add('Open contests not yet covering their prize', uncovered.length,
+    'Entries so far do not cover the prize promised. They will void and refund at settlement unless more players enter.',
+    uncovered);
+
+  // 3c. Physical prizes won but not yet sent.
+  const pendingAwards = await PlayerAward.find({ fulfilment: 'pending' })
+    .select('name sponsorName createdAt').sort({ createdAt: 1 }).limit(100).lean();
+  const stalePrizes = pendingAwards.filter((row) => (Date.now() - new Date(row.createdAt).getTime()) > 7 * 24 * 3600 * 1000);
+  add('Prizes won but not sent after a week', stalePrizes.length,
+    'Winners are waiting on merch or sponsor goods. Clear these from the fulfilment queue.',
+    stalePrizes.map((r) => ({ prize: r.name, sponsor: r.sponsorName, wonAt: r.createdAt })));
+
+  // 4. Payments that took money but never credited.
+  const stuckOrders = await CoinPurchaseOrder.find({
+    status: { $in: ['PROCESSING', 'FAILED'] },
+    createdAt: { $lt: new Date(Date.now() - 60 * 60 * 1000) },
+  }).select('orderNumber email status subtotalCents createdAt').sort({ createdAt: -1 }).limit(100).lean();
+  add('Coin orders stuck or failed', stuckOrders.length,
+    'A payment may have been taken without coins being credited. Check each against the payment provider.',
+    stuckOrders.map((o) => ({ orderNumber: o.orderNumber, email: o.email, status: o.status, amount: (o.subtotalCents || 0) / 100 })));
+
+  // 5. Payouts an affiliate is waiting on.
+  const withPending = await Affiliate.find({ 'payouts.status': 'pending' })
+    .select('firstName lastName email payouts').limit(200).lean();
+  const stalePayouts = [];
+  withPending.forEach((affiliate) => {
+    (affiliate.payouts || []).forEach((payout, index) => {
+      const created = payout?.requestedAt || payout?.createdAt;
+      const ageHours = created ? (Date.now() - new Date(created).getTime()) / 3600000 : 0;
+      if (String(payout?.status || '').toLowerCase() === 'pending' && ageHours > 48) {
+        stalePayouts.push({
+          affiliate: `${affiliate.firstName || ''} ${affiliate.lastName || ''}`.trim(),
+          amount: Number(payout.amount) || 0,
+          waitingHours: Math.round(ageHours),
+          payoutIndex: index,
+        });
+      }
+    });
+  });
+  add('Payouts pending over 48 hours', stalePayouts.length,
+    'Affiliates are waiting on money. Approve or reject from the payouts screen.',
+    stalePayouts);
+
+  // 6. Head-to-head escrow left holding coins on a settled fight.
+  if (HEAD_TO_HEAD_ENABLED) {
+    const settledFightIds = (await Match.find({ prizesSettledAt: { $ne: null } }).select('_id').limit(500).lean())
+      .map((f) => String(f._id));
+    const stuck = settledFightIds.length
+      ? await Challenge.find({ fightId: { $in: settledFightIds }, status: { $in: ['PENDING', 'ACCEPTED'] } })
+        .select('fightId stake status').limit(200).lean()
+      : [];
+    add('Challenges holding coins on a settled fight', stuck.length,
+      'Escrow was not released. Re-run settle-challenges for those fights.',
+      stuck.map((c) => ({ challengeId: String(c._id), fightId: c.fightId, stake: c.stake, status: c.status })));
+  }
+
+  const problems = checks.filter((c) => !c.ok);
+  return {
+    generatedAt: new Date().toISOString(),
+    allClear: problems.length === 0,
+    problemCount: problems.length,
+    checks,
+  };
+};
+
+app.get('/api/owner/integrity', verifyOwnerToken, async (req, res) => {
+  try {
+    return res.json({ ok: true, ...(await runOwnerIntegrityChecks()) });
+  } catch (error) {
+    console.error('Owner integrity check failed:', error);
+    return res.status(500).json({ ok: false, message: 'Could not complete the checks.' });
+  }
+});
+
+// Nightly run. Emails ONLY when something is wrong, so silence means the books
+// balance and the mail stays worth reading.
+app.get('/api/cron/owner-integrity', verifyCronSecret, async (req, res) => {
+  try {
+    const report = await runOwnerIntegrityChecks();
+    if (report.allClear) return res.json({ ok: true, allClear: true, emailed: false });
+
+    const problems = report.checks.filter((c) => !c.ok);
+    await sendMoneyNotice({
+      to: OWNER_EMAIL,
+      subject: `[FMM] ${problems.length} thing${problems.length === 1 ? '' : 's'} need${problems.length === 1 ? 's' : ''} your attention`,
+      heading: 'NIGHTLY CHECK',
+      lines: problems.map((p) => `<strong>${p.name}: ${p.count}</strong><br/>${escapeHtml(p.detail)}`),
+      footer: 'Open the owner view for the full list. You only get this email when something is off.',
+    });
+    return res.json({ ok: true, allClear: false, problemCount: problems.length, emailed: true });
+  } catch (error) {
+    console.error('Nightly integrity check failed:', error);
+    return res.status(500).json({ ok: false, message: 'Nightly check failed.' });
+  }
+});
+
+// Centralized request/upload error handling. This keeps existing upload routes intact
+// while returning deterministic 4xx responses for malformed or oversized requests.
+app.use((error, req, res, next) => {
+  if (error instanceof multer.MulterError) {
+    const isFileTooLarge = error.code === 'LIMIT_FILE_SIZE';
+    return res.status(isFileTooLarge ? 413 : 400).json({
+      message: isFileTooLarge
+        ? `Uploaded file is too large. Maximum allowed size is ${MAX_UPLOAD_FILE_SIZE_BYTES} bytes.`
+        : error.message,
+      code: error.code,
+    });
+  }
+
+  if (req.fileValidationError) {
+    return res.status(400).json({ message: req.fileValidationError });
+  }
+
+  if (error?.statusCode) {
+    return res.status(error.statusCode).json({ message: error.message, code: error.code });
+  }
+
+  if (error?.message === 'Not allowed by CORS') {
+    return res.status(403).json({ message: 'Origin is not allowed by CORS.' });
+  }
+
+  if (error?.type === 'entity.too.large') {
+    return res.status(413).json({ message: `Request body is too large. Maximum JSON body size is ${JSON_BODY_LIMIT}.` });
+  }
+
+  if (error instanceof SyntaxError && error.status === 400 && 'body' in error) {
+    return res.status(400).json({ message: 'Malformed JSON request body.' });
+  }
+
+  return next(error);
+});
+
+// ==========================================================================
+// SCORER DELEGATION
+// --------------------------------------------------------------------------
+// Multiple live events on one night means the owner cannot be at every card.
+// A scorer is a delegated pair of hands: they punch rounds in as they happen
+// and those rounds go live immediately, but they can NEVER finalize a fight,
+// settle it, or pay anybody. Finalization stays admin-only, which is the whole
+// safety property here.
+//
+// Two ways in, both landing on the same scoped token:
+//   * LINK    - a one-time URL for a casual helper. No account. Bound to one
+//               fight, expires, single claim, revocable.
+//   * ACCOUNT - a permanent staff login that only ever sees fights explicitly
+//               assigned to it.
+//
+// What a scorer must not see (owner's call): the pot and entry fees, the
+// entrant list and their predictions, other fights on the card, and anything
+// about the affiliate/promoter. buildScorerFightView() is the only shape a
+// scorer token can ever read, so those fields cannot leak by accident.
+// ==========================================================================
+
+const SCORER_SCOPE = 'scorer';
+const SCORER_LINK_TTL_HOURS = Number(process.env.SCORER_LINK_TTL_HOURS || 24);
+const SCORER_SESSION_TTL = process.env.SCORER_SESSION_TTL || '12h';
+
+const scorerAccountSchema = new mongoose.Schema({
+  name: { type: String, trim: true, default: '' },
+  email: { type: String, required: true, trim: true, lowercase: true, unique: true },
+  passwordHash: { type: String, required: true },
+  active: { type: Boolean, default: true },
+  createdBy: { type: String, default: 'admin' },
+  lastLoginAt: { type: Date, default: null },
+}, { timestamps: true });
+
+const scorerAssignmentSchema = new mongoose.Schema({
+  fightId: { type: String, required: true, index: true },
+  fightLabel: { type: String, default: '' },
+  mode: { type: String, enum: ['link', 'account'], required: true },
+  scorerName: { type: String, trim: true, default: '' },
+  scorerEmail: { type: String, trim: true, lowercase: true, default: '' },
+  accountId: { type: String, default: '' },
+  // Only the hash is stored. The raw link token is shown once, at creation.
+  tokenHash: { type: String, default: '' },
+  expiresAt: { type: Date, default: null },
+  claimedAt: { type: Date, default: null },
+  revokedAt: { type: Date, default: null },
+  createdBy: { type: String, default: 'admin' },
+  roundsSubmitted: { type: Number, default: 0 },
+  lastSubmitAt: { type: Date, default: null },
+}, { timestamps: true });
+
+const scorerLogSchema = new mongoose.Schema({
+  assignmentId: { type: String, index: true },
+  fightId: { type: String, index: true },
+  scorer: { type: String, default: '' },
+  roundNumber: { type: Number, default: 0 },
+  payload: { type: mongoose.Schema.Types.Mixed, default: {} },
+  at: { type: Date, default: Date.now },
+});
+
+const ScorerAccount = mongoose.models.ScorerAccount || mongoose.model('ScorerAccount', scorerAccountSchema);
+const ScorerAssignment = mongoose.models.ScorerAssignment || mongoose.model('ScorerAssignment', scorerAssignmentSchema);
+const ScorerLog = mongoose.models.ScorerLog || mongoose.model('ScorerLog', scorerLogSchema);
+
+// Live scoring is bursty — a scorer correcting round 7 three times in a minute
+// is normal. The generic submitLimiter (20 per 10 min) would lock them out
+// mid-fight, so scoring gets its own, roomier limit.
+const scorerLimiter = rateLimit({
+  windowMs: 5 * 60 * 1000,
+  max: 120,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { message: 'Too many score submissions. Wait a moment and try again.' },
+});
+
+const hashScorerToken = (raw) => crypto.createHash('sha256').update(String(raw)).digest('hex');
+
+const signScorerSession = (assignment) => jwt.sign({
+  id: String(assignment._id),
+  scope: SCORER_SCOPE,
+  fightId: String(assignment.fightId),
+  accountId: String(assignment.accountId || ''),
+}, process.env.JWT_SECRET, { expiresIn: SCORER_SESSION_TTL });
+
+// A scorer token is deliberately NOT accepted by verifyToken's player routes:
+// this middleware is the only door it opens.
+const verifyScorerToken = async (req, res, next) => {
+  const header = req.headers.authorization || '';
+  const raw = header.startsWith('Bearer ') ? header.slice(7) : null;
+  if (!raw) return res.status(401).json({ message: 'Scorer session required.', code: 'NO_SCORER_TOKEN' });
+  try {
+    const claims = jwt.verify(raw, process.env.JWT_SECRET);
+    if (claims.scope !== SCORER_SCOPE) {
+      return res.status(403).json({ message: 'This session cannot score fights.', code: 'WRONG_SCOPE' });
+    }
+    const assignment = await ScorerAssignment.findById(claims.id);
+    if (!assignment || assignment.revokedAt) {
+      return res.status(403).json({ message: 'This scoring assignment has been revoked.', code: 'REVOKED' });
+    }
+    if (assignment.expiresAt && assignment.expiresAt.getTime() < Date.now()) {
+      return res.status(403).json({ message: 'This scoring assignment has expired.', code: 'EXPIRED' });
+    }
+    req.scorer = assignment;
+    return next();
+  } catch (error) {
+    return res.status(401).json({ message: 'Invalid or expired scorer session.', code: 'BAD_SCORER_TOKEN' });
+  }
+};
+
+// The ONLY fight shape a scorer token can read. No pot, no matchTokens, no
+// entrants, no affiliate, no sibling fights on the card.
+function buildScorerFightView(match, assignment) {
+  const category = normalizeCombatCategory(match.matchCategory);
+  const container = category === 'boxing' ? (match.BoxingMatch || {}) : (match.MMAMatch || {});
+  return {
+    id: String(match._id),
+    name: match.matchName || '',
+    category,
+    categoryTwo: match.matchCategoryTwo || '',
+    fighterA: match.matchFighterA || '',
+    fighterB: match.matchFighterB || '',
+    fighterAImage: match.fighterAImage || '',
+    fighterBImage: match.fighterBImage || '',
+    maxRounds: Number(match.maxRounds || 0) || 12,
+    matchDate: match.matchDate || '',
+    matchTime: match.matchTime || '',
+    status: match.matchStatus || '',
+    statSet: category === 'boxing' ? ['HP', 'BP', 'TP'] : ['ST', 'KI', 'KN', 'EL'],
+    fighterOneStats: Array.isArray(container.fighterOneStats) ? container.fighterOneStats : [],
+    fighterTwoStats: Array.isArray(container.fighterTwoStats) ? container.fighterTwoStats : [],
+    assignment: {
+      id: String(assignment._id),
+      scorerName: assignment.scorerName || '',
+      mode: assignment.mode,
+      expiresAt: assignment.expiresAt,
+      roundsSubmitted: assignment.roundsSubmitted || 0,
+      // Stated to the scorer's own UI so the limit is visible, not a surprise 403.
+      canFinalize: false,
+    },
+  };
+}
+
+// --- admin: staff scorer accounts -----------------------------------------
+app.post('/api/admin/scorers', verifyAdminToken, async (req, res) => {
+  try {
+    const email = String(req.body.email || '').trim().toLowerCase();
+    const password = String(req.body.password || '');
+    if (!email || !password) return res.status(400).json({ message: 'Email and password are required.' });
+    if (password.length < 8) return res.status(400).json({ message: 'Password must be at least 8 characters.' });
+    const existing = await ScorerAccount.findOne({ email });
+    if (existing) return res.status(409).json({ message: 'A scorer already exists with that email.' });
+    const account = await ScorerAccount.create({
+      email,
+      name: String(req.body.name || '').trim(),
+      passwordHash: await bcrypt.hash(password, 10),
+    });
+    return res.status(201).json({ ok: true, scorer: { id: account._id, email: account.email, name: account.name, active: account.active } });
+  } catch (error) {
+    console.error('Create scorer failed:', error);
+    return res.status(500).json({ message: 'Could not create the scorer account.' });
+  }
+});
+
+app.get('/api/admin/scorers', verifyAdminToken, async (_req, res) => {
+  try {
+    const accounts = await ScorerAccount.find({}).select('name email active lastLoginAt createdAt').sort({ createdAt: -1 }).lean();
+    return res.json({ ok: true, scorers: accounts });
+  } catch (error) {
+    return res.status(500).json({ message: 'Could not load scorers.' });
+  }
+});
+
+app.patch('/api/admin/scorers/:id', verifyAdminToken, async (req, res) => {
+  try {
+    const update = {};
+    if (typeof req.body.active === 'boolean') update.active = req.body.active;
+    if (req.body.name !== undefined) update.name = String(req.body.name).trim();
+    if (req.body.password) {
+      if (String(req.body.password).length < 8) return res.status(400).json({ message: 'Password must be at least 8 characters.' });
+      update.passwordHash = await bcrypt.hash(String(req.body.password), 10);
+    }
+    const account = await ScorerAccount.findByIdAndUpdate(req.params.id, update, { new: true }).select('name email active');
+    if (!account) return res.status(404).json({ message: 'Scorer not found.' });
+    return res.json({ ok: true, scorer: account });
+  } catch (error) {
+    return res.status(500).json({ message: 'Could not update the scorer.' });
+  }
+});
+
+// --- admin: hand a fight to somebody --------------------------------------
+app.post('/api/admin/fights/:fightId/scorers', verifyAdminToken, async (req, res) => {
+  try {
+    const fightId = String(req.params.fightId || '').trim();
+    const match = await Match.findById(fightId).select('matchName matchFighterA matchFighterB');
+    if (!match) return res.status(404).json({ message: 'Fight not found.' });
+
+    const mode = String(req.body.mode || 'link').toLowerCase() === 'account' ? 'account' : 'link';
+    const fightLabel = match.matchName || `${match.matchFighterA} vs ${match.matchFighterB}`;
+
+    if (mode === 'account') {
+      const account = await ScorerAccount.findById(String(req.body.accountId || ''));
+      if (!account || !account.active) return res.status(400).json({ message: 'Pick an active scorer account.' });
+      const assignment = await ScorerAssignment.create({
+        fightId, fightLabel, mode: 'account',
+        accountId: String(account._id),
+        scorerName: account.name || account.email,
+        scorerEmail: account.email,
+        createdBy: String(req.admin?.id || 'admin'),
+      });
+      return res.status(201).json({ ok: true, assignment: { id: assignment._id, mode: 'account', scorerName: assignment.scorerName } });
+    }
+
+    const rawToken = crypto.randomBytes(24).toString('hex');
+    const expiresAt = new Date(Date.now() + SCORER_LINK_TTL_HOURS * 60 * 60 * 1000);
+    const assignment = await ScorerAssignment.create({
+      fightId, fightLabel, mode: 'link',
+      scorerName: String(req.body.scorerName || '').trim(),
+      scorerEmail: String(req.body.scorerEmail || '').trim().toLowerCase(),
+      tokenHash: hashScorerToken(rawToken),
+      expiresAt,
+      createdBy: String(req.admin?.id || 'admin'),
+    });
+
+    const appOrigin = String(process.env.PUBLIC_APP_URL || 'https://www.fantasymmadness.com').replace(/\/$/, '');
+    const link = `${appOrigin}/score/${rawToken}`;
+
+    let emailSent = false;
+    let emailError = '';
+    if (assignment.scorerEmail) {
+      try {
+        await transporter.sendMail({
+          from: FMM_MAIL_FROM,
+          to: assignment.scorerEmail,
+          subject: `You are scoring ${fightLabel}`,
+          html: `<p>You have been asked to score <strong>${fightLabel}</strong>.</p>
+                 <p><a href="${link}">Open the scorecard</a></p>
+                 <p>This link works once and expires in ${SCORER_LINK_TTL_HOURS} hours. You can submit rounds as they happen; only the promoter can finalize the fight.</p>`,
+        });
+        emailSent = true;
+      } catch (mailError) {
+        console.warn('Scorer invite email failed:', mailError?.message);
+        emailError = mailError?.message || 'Email delivery failed.';
+      }
+    }
+
+    // The raw token is returned exactly once, here \u2014 so the admin can still
+    // copy/paste it manually if the email failed to send.
+    return res.status(201).json({ ok: true, assignment: { id: assignment._id, mode: 'link', expiresAt }, link, emailSent, emailError });
+  } catch (error) {
+    console.error('Assign scorer failed:', error);
+    return res.status(500).json({ message: 'Could not assign a scorer.' });
+  }
+});
+
+app.get('/api/admin/fights/:fightId/scorers', verifyAdminToken, async (req, res) => {
+  try {
+    const rows = await ScorerAssignment.find({ fightId: String(req.params.fightId || '').trim() })
+      .select('-tokenHash').sort({ createdAt: -1 }).lean();
+    return res.json({ ok: true, assignments: rows });
+  } catch (error) {
+    return res.status(500).json({ message: 'Could not load scorer assignments.' });
+  }
+});
+
+app.delete('/api/admin/scorer-assignments/:id', verifyAdminToken, async (req, res) => {
+  try {
+    const assignment = await ScorerAssignment.findByIdAndUpdate(req.params.id, { revokedAt: new Date() }, { new: true });
+    if (!assignment) return res.status(404).json({ message: 'Assignment not found.' });
+    return res.json({ ok: true, revokedAt: assignment.revokedAt });
+  } catch (error) {
+    return res.status(500).json({ message: 'Could not revoke the assignment.' });
+  }
+});
+
+// Audit: what did the delegated scorer actually punch in.
+app.get('/api/admin/fights/:fightId/scorer-log', verifyAdminToken, async (req, res) => {
+  try {
+    const rows = await ScorerLog.find({ fightId: String(req.params.fightId || '').trim() })
+      .sort({ at: -1 }).limit(200).lean();
+    return res.json({ ok: true, entries: rows });
+  } catch (error) {
+    return res.status(500).json({ message: 'Could not load the scorer log.' });
+  }
+});
+
+// --- scorer: getting in ----------------------------------------------------
+app.post('/api/scorer/claim', submitLimiter, async (req, res) => {
+  try {
+    const raw = String(req.body.token || '').trim();
+    if (!raw) return res.status(400).json({ message: 'Scoring link token is required.' });
+    const assignment = await ScorerAssignment.findOne({ tokenHash: hashScorerToken(raw), mode: 'link' });
+    if (!assignment || assignment.revokedAt) return res.status(404).json({ message: 'This scoring link is no longer valid.' });
+    if (assignment.expiresAt && assignment.expiresAt.getTime() < Date.now()) {
+      return res.status(410).json({ message: 'This scoring link has expired. Ask for a new one.' });
+    }
+    if (!assignment.claimedAt) {
+      assignment.claimedAt = new Date();
+      await assignment.save();
+    }
+    return res.json({ ok: true, token: signScorerSession(assignment), fightLabel: assignment.fightLabel });
+  } catch (error) {
+    console.error('Scorer claim failed:', error);
+    return res.status(500).json({ message: 'Could not open the scorecard.' });
+  }
+});
+
+app.post('/api/scorer/login', submitLimiter, async (req, res) => {
+  try {
+    const email = String(req.body.email || '').trim().toLowerCase();
+    const password = String(req.body.password || '');
+    const account = await ScorerAccount.findOne({ email });
+    if (!account || !account.active || !(await bcrypt.compare(password, account.passwordHash))) {
+      return res.status(401).json({ message: 'Wrong email or password.' });
+    }
+    const assignments = await ScorerAssignment.find({
+      accountId: String(account._id),
+      revokedAt: null,
+    }).sort({ createdAt: -1 }).lean();
+    if (!assignments.length) return res.status(403).json({ message: 'You have no fights assigned right now.' });
+
+    account.lastLoginAt = new Date();
+    await account.save();
+
+    // One session per assignment: the token is fight-bound by design, so a
+    // staff scorer picks the fight and gets the token for that fight only.
+    return res.json({
+      ok: true,
+      scorer: { name: account.name, email: account.email },
+      fights: assignments.map((a) => ({
+        assignmentId: String(a._id),
+        fightId: a.fightId,
+        fightLabel: a.fightLabel,
+        token: signScorerSession(a),
+      })),
+    });
+  } catch (error) {
+    console.error('Scorer login failed:', error);
+    return res.status(500).json({ message: 'Could not sign in.' });
+  }
+});
+
+// --- scorer: the desk ------------------------------------------------------
+app.get('/api/scorer/fight', verifyScorerToken, async (req, res) => {
+  try {
+    const match = await Match.findById(req.scorer.fightId);
+    if (!match) return res.status(404).json({ message: 'Fight not found.' });
+    return res.json({ ok: true, fight: buildScorerFightView(match, req.scorer) });
+  } catch (error) {
+    return res.status(500).json({ message: 'Could not load the fight.' });
+  }
+});
+
+// Rounds go live the moment they are submitted. This is the same write path
+// the admin desk uses (applyRoundResultsToMatch), so TP is still never
+// computed from HP + BP and the stat set still follows the category.
+app.post('/api/scorer/fight/rounds', verifyScorerToken, scorerLimiter, async (req, res) => {
+  try {
+    const match = await Match.findById(req.scorer.fightId);
+    if (!match) return res.status(404).json({ message: 'Fight not found.' });
+
+    const finished = String(match.matchStatus || '').toLowerCase();
+    if (['completed', 'finished', 'settled'].includes(finished)) {
+      return res.status(409).json({ message: 'This fight is already finalized. Rounds are locked.', code: 'FINALIZED' });
+    }
+
+    try {
+      applyRoundResultsToMatch(match, {
+        fighterOneStats: req.body.fighterOneStats,
+        fighterTwoStats: req.body.fighterTwoStats,
+      });
+    } catch (scoringError) {
+      return res.status(scoringError.statusCode || 400).json({ message: scoringError.message });
+    }
+    await match.save();
+
+    const roundNumber = Number(req.body?.fighterOneStats?.roundNumber || req.body?.fighterTwoStats?.roundNumber || 0);
+    req.scorer.roundsSubmitted = (req.scorer.roundsSubmitted || 0) + 1;
+    req.scorer.lastSubmitAt = new Date();
+    await req.scorer.save();
+    await ScorerLog.create({
+      assignmentId: String(req.scorer._id),
+      fightId: String(req.scorer.fightId),
+      scorer: req.scorer.scorerName || req.scorer.scorerEmail || 'scorer',
+      roundNumber,
+      payload: { fighterOneStats: req.body.fighterOneStats, fighterTwoStats: req.body.fighterTwoStats },
+    });
+
+    return res.json({ ok: true, fight: buildScorerFightView(match, req.scorer) });
+  } catch (error) {
+    console.error('Scorer round submit failed:', error);
+    return res.status(500).json({ message: 'Could not save the round.' });
+  }
+});
+
+// Explicit, so a scorer hitting the wall gets an explanation rather than a 404.
+app.post('/api/scorer/fight/finalize', verifyScorerToken, (_req, res) => res.status(403).json({
+  message: 'Scorers cannot finalize a fight. The promoter finalizes and pays out.',
+  code: 'FINALIZE_IS_ADMIN_ONLY',
+}));
+
+// Licensed data-feed intake for CompuBox, DAZN partners, UFC/ALT Sports Data,
+// or another approved provider. This is deliberately push-based: it avoids
+// brittle/high-frequency scraping and gives providers one stable normalized
+// contract for schedules, status changes, and round statistics.
+const verifyFightDataFeed = (req, res, next) => {
+  const secret = String(process.env.FIGHT_DATA_INGEST_SECRET || '').trim();
+  if (!secret) return res.status(503).json({ ok: false, code: 'FIGHT_DATA_FEED_NOT_CONFIGURED' });
+  const bearer = String(req.headers.authorization || '').replace(/^Bearer\s+/i, '');
+  const supplied = bearer || String(req.headers['x-fight-data-secret'] || '');
+  const expectedBuffer = Buffer.from(secret);
+  const suppliedBuffer = Buffer.from(supplied);
+  if (expectedBuffer.length !== suppliedBuffer.length || !crypto.timingSafeEqual(expectedBuffer, suppliedBuffer)) {
+    return res.status(401).json({ ok: false, code: 'INVALID_FIGHT_DATA_CREDENTIAL' });
+  }
+  return next();
+};
+
+app.get('/api/integrations/fight-data/status', verifyAdminToken, (_req, res) => {
+  res.json({
+    ok: true,
+    configured: Boolean(String(process.env.FIGHT_DATA_INGEST_SECRET || '').trim()),
+    supportedProviders: ['compubox', 'dazn', 'ufcstats', 'alt-sports-data', 'fight-analytics', 'custom'],
+    accepts: ['event', 'status', 'round-stats', 'final-result'],
+  });
+});
+
+app.post('/api/integrations/fight-data/:provider', verifyFightDataFeed, async (req, res) => {
+  try {
+    const provider = String(req.params.provider || 'custom').trim().toLowerCase().slice(0, 80);
+    const body = req.body || {};
+    const externalId = String(body.externalId || body.eventId || body.boutId || '').trim().slice(0, 180);
+    let fight = body.fightId && mongoose.isValidObjectId(body.fightId) ? await Match.findById(body.fightId) : null;
+    if (!fight && externalId) fight = await Match.findOne({ liveDataProvider: provider, liveDataExternalId: externalId });
+    if (!fight && body.event && body.event.fighterA && body.event.fighterB) {
+      const event = body.event;
+      fight = new Match({
+        matchName: String(event.name || `${event.fighterA} vs ${event.fighterB}`).slice(0, 240),
+        matchFighterA: String(event.fighterA).slice(0, 160), matchFighterB: String(event.fighterB).slice(0, 160),
+        matchCategory: String(event.category || 'boxing').toLowerCase() === 'mma' ? 'mma' : 'boxing',
+        matchDate: event.date ? new Date(event.date) : undefined,
+        matchTime: String(event.time || '').slice(0, 40), venue: String(event.venue || '').slice(0, 200),
+        matchStatus: 'Scheduled', matchType: 'LIVE', matchShadowOpenStatus: 'open',
+      });
+    }
+    if (!fight) return res.status(404).json({ ok: false, code: 'FIGHT_NOT_FOUND', message: 'Supply a valid fightId or enough event data to create the fight.' });
+
+    const sequence = Number(body.sequence || 0);
+    if (sequence && Number(fight.liveDataSequence || 0) >= sequence) {
+      return res.status(200).json({ ok: true, ignored: true, reason: 'duplicate-or-out-of-order', fightId: String(fight._id) });
+    }
+    const statusMap = { scheduled: 'Scheduled', open: 'Open', live: 'Live', ongoing: 'Ongoing', finished: 'Finished', completed: 'Finished', closed: 'Closed' };
+    const nextStatus = statusMap[String(body.status || '').toLowerCase()];
+    if (nextStatus) fight.matchStatus = nextStatus;
+    if (body.fighterOneStats || body.fighterTwoStats) {
+      applyRoundResultsToMatch(fight, { fighterOneStats: body.fighterOneStats, fighterTwoStats: body.fighterTwoStats });
+    }
+    fight.liveDataProvider = provider;
+    fight.liveDataExternalId = externalId || fight.liveDataExternalId;
+    fight.liveDataSourceUrl = /^https:\/\//i.test(String(body.sourceUrl || '')) ? String(body.sourceUrl).slice(0, 1000) : fight.liveDataSourceUrl;
+    fight.liveDataLastUpdatedAt = new Date();
+    if (sequence) fight.liveDataSequence = sequence;
+    await fight.save();
+    clearPublicResponseCache();
+
+    const entrants = await Score.find({ matchId: String(fight._id), refunded: { $ne: true } }).distinct('playerId');
+    if (nextStatus === 'Live') {
+      await Promise.all(entrants.map((playerId) => sendPlayerPush(playerId, {
+        title: 'Your fight is live', body: `${fight.matchFighterA} vs ${fight.matchFighterB} has started.`, url: `/fight/${fight._id}`,
+      }).catch(() => null)));
+    }
+    return res.json({ ok: true, fightId: String(fight._id), provider, status: fight.matchStatus, notifiedPlayers: nextStatus === 'Live' ? entrants.length : 0 });
+  } catch (error) {
+    console.error('Fight data ingestion failed:', error);
+    return res.status(error.statusCode || 500).json({ ok: false, code: 'FIGHT_DATA_INGEST_FAILED', message: error.message || 'The fight update could not be applied.' });
+  }
+});
+
+
+// ==========================================================================
+// AFFILIATE MONEY PAGE
+// --------------------------------------------------------------------------
+// One read for the promoter's whole financial picture. Deliberately narrower
+// than the admin view: a promoter sees THEIR fights, THEIR rake and THEIR
+// payouts, and nothing about other affiliates, the platform's own cut, or the
+// admin-only levers (uploading a live card, setting a pot). Those stay in the
+// back office.
+//
+// Earnings are not recalculated here. They are read back out of the wallet
+// ledger rows settlement already wrote (reason: 'affiliate_pot_share'), so this
+// page can never disagree with what was actually paid.
+// ==========================================================================
+app.get('/api/affiliates/me/money', verifyToken, requireScope(TOKEN_SCOPES.AFFILIATE), async (req, res) => {
+  try {
+    const affiliateId = String(req.user?.id || req.user?._id || '').trim();
+    const affiliate = await Affiliate.findById(affiliateId).select('affiliateName email tokens payouts');
+    if (!affiliate) return res.status(404).json({ message: 'Affiliate not found.' });
+
+    const balance = Number.parseInt(String(affiliate.tokens || '0'), 10) || 0;
+
+    // --- earnings, straight from the settlement ledger ---------------------
+    const ledgerRows = await FightEntryLedger.find({
+      userId: affiliateId,
+      'metadata.reason': 'affiliate_pot_share',
+    }).sort({ createdAt: -1 }).limit(200).lean();
+
+    const fightIds = [...new Set(ledgerRows.map((row) => String(row.matchId)).filter(Boolean))];
+    const fightDocs = await Match.find({ _id: { $in: fightIds } })
+      .select('matchName matchFighterA matchFighterB matchDate matchCategory pot collectedFees')
+      .lean();
+    const fightById = new Map(fightDocs.map((f) => [String(f._id), f]));
+
+    const earnings = ledgerRows.map((row) => {
+      const meta = row.metadata || {};
+      const fight = fightById.get(String(row.matchId)) || {};
+      return {
+        fightId: String(row.matchId),
+        fightLabel: fight.matchName || `${fight.matchFighterA || ''} vs ${fight.matchFighterB || ''}`.trim(),
+        category: fight.matchCategory || '',
+        settledAt: row.createdAt,
+        entrants: Number(meta.entrants || 0),
+        // What the contest took in, vs the pot that was promised out.
+        revenue: Number(meta.collectedFees || 0),
+        potTotal: Number(meta.potTotal || 0),
+        sharePct: Number(meta.sharePct || AFFILIATE_SPLIT_PCT),
+        // The 50% rake splits into a fixed cut of the declared pot plus half of
+        // everything the contest took above it. Shown apart because the second
+        // number is the one that grows with a bigger field.
+        fixedCut: Number(meta.fixedCut || 0),
+        surplusShare: Number(meta.surplusShare || 0),
+        total: Math.round(Number(row.amount) || 0),
+      };
+    });
+
+    const lifetimeEarned = earnings.reduce((sum, row) => sum + row.total, 0);
+
+    // --- staked shadow fights: pot fill and profit zone ---------------------
+    // Staked cards live in BOTH collections: a shadow template the promoter
+    // staked, and a live card they created through the promotion desk (which
+    // saves to Match). Reading only Shadow silently hid half their money.
+    const stakeQuery = {
+      $or: [{ affiliateId }, { 'AffiliateIds.AffiliateId': affiliateId }],
+      potTarget: { $gt: 0 },
+    };
+    const stakeFields = 'matchName matchFighterA matchFighterB pot potTarget promoterStake profitZoneReachedAt userPredictions matchDate';
+    const stakedFights = [
+      ...(await Shadow.find(stakeQuery).select(stakeFields).lean()),
+      ...(await Match.find(stakeQuery).select(stakeFields).lean()),
+    ];
+
+    const stakes = stakedFights.map((fight) => {
+      const target = Math.max(0, Number(fight.potTarget) || 0);
+      const filled = Math.max(0, Number(fight.pot) || 0);
+      const entrants = Array.isArray(fight.userPredictions)
+        ? fight.userPredictions.filter((u) => String(u?.predictionStatus) === 'submitted').length
+        : 0;
+      const profitAboveStake = Math.max(0, filled - target);
+      return {
+        fightId: String(fight._id),
+        fightLabel: fight.matchName || `${fight.matchFighterA || ''} vs ${fight.matchFighterB || ''}`.trim(),
+        matchDate: fight.matchDate || '',
+        staked: Math.max(0, Number(fight.promoterStake) || target),
+        potTarget: target,
+        potFilled: filled,
+        fillPct: target ? Math.min(100, Math.round((filled / target) * 100)) : 0,
+        entrants,
+        inProfitZone: target > 0 && filled >= target,
+        profitZoneReachedAt: fight.profitZoneReachedAt || null,
+        profitAboveStake,
+        yourProjectedShare: Math.floor((profitAboveStake * AFFILIATE_SPLIT_PCT) / 100),
+      };
+    });
+
+    // --- payouts ------------------------------------------------------------
+    const payouts = (affiliate.payouts || []).map((p, index) => ({
+      index,
+      amount: Number(p.amount || 0),
+      status: p.status || 'pending',
+      requestedAt: p.createdAt,
+      resolvedAt: p.resolvedAt || null,
+      reason: p.reason || '',
+    })).sort((a, b) => new Date(b.requestedAt || 0) - new Date(a.requestedAt || 0));
+
+    const paidOut = payouts.filter((p) => p.status === 'paid').reduce((sum, p) => sum + p.amount, 0);
+    const pending = payouts.filter((p) => p.status === 'pending').reduce((sum, p) => sum + p.amount, 0);
+
+    return res.json({
+      ok: true,
+      affiliate: { name: affiliate.affiliateName || '', email: affiliate.email || '' },
+      summary: {
+        balance,
+        lifetimeEarned,
+        paidOut,
+        pendingPayouts: pending,
+        splitPct: AFFILIATE_SPLIT_PCT,
+        fightsSettled: earnings.length,
+        totalEntrants: earnings.reduce((sum, row) => sum + row.entrants, 0),
+      },
+      earnings,
+      stakes,
+      payouts,
+    });
+  } catch (error) {
+    console.error('Affiliate money page failed:', error);
+    return res.status(500).json({ message: 'Could not load your earnings.' });
+  }
+});
+
+
+// ==========================================================================
+// SHORTFALL SWEEP — fills, or it refunds
+// --------------------------------------------------------------------------
+// The default deal on a paid card is simple: if enough people enter, it runs;
+// if they don't, it never happens and everybody gets their money back. That is
+// what makes promoting accessible — a promoter needs an audience, not capital.
+//
+// A promoter CAN put money behind the prize (promoterStake >= pot). That card
+// is guaranteed: it runs however few turn up, and the shortfall comes out of
+// their stake. Guaranteed cards are skipped by this sweep entirely.
+//
+// autoRefundIfShort already existed but only ran inside settlement — i.e. after
+// a fight was over and only when an admin got round to it. So an underfilled
+// card sat open, took entries, and nobody was told. This closes that.
+//
+// Three moments, each fired once:
+//   T-6h   promoter warned, with the number they still need. Time to push.
+//   T-1h   entrants warned it may void, with cards that ARE filling. Time to move.
+//   Lock   void, refund every entry, tell them where else to play.
+//
+// Five minutes' notice was the original idea and it is too late to be useful:
+// the promoter cannot rescue a card in five minutes and a player cannot get
+// into another one before its own lock.
+// ==========================================================================
+
+const PROMOTER_WARN_MS = Number(process.env.SHORTFALL_PROMOTER_WARN_MS || 6 * 60 * 60 * 1000);
+const PLAYER_WARN_MS = Number(process.env.SHORTFALL_PLAYER_WARN_MS || 60 * 60 * 1000);
+const APP_ORIGIN = String(process.env.PUBLIC_APP_URL || 'https://www.fantasymmadness.com').replace(/\/$/, '');
+
+// Lock is the fight's own lockAt when set, otherwise the scheduled start.
+// matchTime is a local "HH:MM" string alongside a date, so it has to be folded
+// in — using the bare date would treat every card as locking at midnight.
+function resolveFightLockAt(fight) {
+  if (fight.lockAt) return new Date(fight.lockAt);
+  if (!fight.matchDate) return null;
+  const base = new Date(fight.matchDate);
+  if (Number.isNaN(base.getTime())) return null;
+  const time = String(fight.matchTime || '').trim();
+  const parts = time.match(/^(\d{1,2}):(\d{2})$/);
+  if (parts) base.setHours(Number(parts[1]), Number(parts[2]), 0, 0);
+  return base;
+}
+
+function fightLabelOf(fight) {
+  return fight.matchName || `${fight.matchFighterA || 'Fighter A'} vs ${fight.matchFighterB || 'Fighter B'}`;
+}
+
+// Cards a stranded player can move to: open, paid or free, soonest first, and
+// never the one they were just refunded from.
+async function findAlternativeFights(excludeId, limit = 3) {
+  const now = new Date();
+  const rows = await Match.find({
+    _id: { $ne: excludeId },
+    voidedAt: { $exists: false },
+    matchDate: { $gte: now },
+    matchStatus: { $nin: ['finished', 'completed', 'Draft', 'draft'] },
+  }).select('matchName matchFighterA matchFighterB matchDate matchTokens pot').sort({ matchDate: 1 }).limit(limit).lean();
+  return rows.map((row) => ({
+    id: String(row._id),
+    label: fightLabelOf(row),
+    fee: Math.max(0, Number(row.matchTokens) || 0),
+    pot: Math.max(0, Number(row.pot) || 0),
+  }));
+}
+
+function alternativesHtml(alternatives) {
+  if (!alternatives.length) return 'New cards open all the time — keep an eye on the app.';
+  const items = alternatives.map((alt) => {
+    const cost = alt.fee > 0 ? `${alt.fee.toLocaleString()} to enter` : 'Free to enter';
+    return `<a href="${APP_ORIGIN}/fight/${alt.id}" style="color:#f2b544;">${alt.label}</a> — ${cost}, ${alt.pot.toLocaleString()} pot`;
+  });
+  return `These are open right now:<br>${items.join('<br>')}`;
+}
+
+async function entrantsOf(fightId) {
+  const rows = await Score.find({ matchId: String(fightId), refunded: { $ne: true } })
+    .select('playerId').lean();
+  const ids = [...new Set(rows.map((row) => String(row.playerId)).filter(Boolean))];
+  if (!ids.length) return [];
+  return User.find({ _id: { $in: ids } }).select('email firstName playerName').lean();
+}
+
+async function sweepShortFights({ now = new Date() } = {}) {
+  const summary = { checked: 0, promoterWarned: 0, playersWarned: 0, voided: 0, refunded: 0 };
+
+  // Only paid, unsettled, unvoided cards with a declared prize can be short.
+  const horizon = new Date(now.getTime() + PROMOTER_WARN_MS);
+  const fights = await Match.find({
+    voidedAt: { $exists: false },
+    prizesSettledAt: { $exists: false },
+    matchTokens: { $gt: 0 },
+    pot: { $gt: 0 },
+    matchDate: { $lte: horizon },
+  }).limit(200);
+
+  for (const fight of fights) {
+    const lockAt = resolveFightLockAt(fight);
+    if (!lockAt) continue;
+    summary.checked += 1;
+
+    const fee = Math.max(0, Math.round(Number(fight.matchTokens) || 0));
+    const pot = Math.max(0, Math.round(Number(fight.pot) || 0));
+    const stake = Math.max(0, Math.round(Number(fight.promoterStake) || 0));
+    const platformFunding = Math.max(0, Math.round(Number(fight.platformContribution) || 0));
+
+    // Guaranteed card: the promoter's money is already behind the prize, so a
+    // thin room is their problem and the fight still runs.
+    if (stake + platformFunding >= pot && pot > 0) continue;
+    if (fight.autoRefundIfShort === false) continue;
+
+    const breakEven = fee > 0 ? Math.ceil(Math.max(0, pot - stake - platformFunding) / fee) : 0;
+    const required = Math.max(0, Math.round(Number(fight.minimumEntrants) || 0)) || breakEven;
+    if (required <= 0) continue;
+
+    const entries = await Score.countDocuments({ matchId: String(fight._id), refunded: { $ne: true } });
+    if (entries >= required) continue;
+
+    const msToLock = lockAt.getTime() - now.getTime();
+    const short = required - entries;
+    const label = fightLabelOf(fight);
+
+    // ---- lock reached: void and refund ----------------------------------
+    if (msToLock <= 0) {
+      const refund = await refundFightEntries({
+        fightId: String(fight._id),
+        reason: `Card voided: ${entries} of ${required} entries needed.`,
+      });
+      fight.voidedAt = new Date();
+      fight.voidReason = `Only ${entries} of ${required} required entries at lock.`;
+      await fight.save();
+      clearPublicResponseCache();
+      summary.voided += 1;
+      summary.refunded += refund.refundedCount || 0;
+
+      const alternatives = await findAlternativeFights(fight._id);
+      const people = await entrantsOf(fight._id);
+      await Promise.allSettled(people.map((person) => sendMoneyNotice({
+        to: person.email,
+        subject: `${label} was voided — your entry has been refunded`,
+        heading: 'CARD VOIDED, MONEY BACK',
+        lines: [
+          `<strong>${label}</strong> did not get the entries it needed, so it was voided before it started.`,
+          'Your entry fee is back in your wallet in full. Nothing was scored and nothing was charged.',
+          alternativesHtml(alternatives),
+        ],
+        footer: 'You were told before the fight, not during it — that is the point of the lock check.',
+      })));
+
+      const promoter = fight.affiliateId ? await Affiliate.findById(fight.affiliateId).select('email').lean() : null;
+      if (promoter?.email) {
+        await sendMoneyNotice({
+          to: promoter.email,
+          subject: `${label} voided — ${entries} of ${required} entries`,
+          heading: 'YOUR CARD DID NOT FILL',
+          lines: [
+            `<strong>${label}</strong> closed on ${entries} entries against the ${required} it needed, so it voided and everyone was refunded.`,
+            'You were not charged anything. Next time: a smaller pot, or a higher buy-in, fills faster.',
+          ],
+        });
+      }
+      continue;
+    }
+
+    // ---- T-1h: warn the people who already paid --------------------------
+    if (msToLock <= PLAYER_WARN_MS && !fight.shortfallPlayersWarnedAt) {
+      const alternatives = await findAlternativeFights(fight._id);
+      const people = await entrantsOf(fight._id);
+      await Promise.allSettled(people.map((person) => sendMoneyNotice({
+        to: person.email,
+        subject: `${label} is short — it may void within the hour`,
+        heading: 'THIS CARD MAY NOT RUN',
+        lines: [
+          `<strong>${label}</strong> is ${short} ${short === 1 ? 'entry' : 'entries'} short with under an hour before predictions lock.`,
+          'If it does not fill, the card voids and your entry is refunded in full and automatically — you do not need to do anything.',
+          'Telling you now so you are not sitting down to watch a fight you no longer have action on.',
+          alternativesHtml(alternatives),
+        ],
+      })));
+      fight.shortfallPlayersWarnedAt = new Date();
+      await fight.save();
+      summary.playersWarned += 1;
+      continue;
+    }
+
+    // ---- T-6h: warn the promoter while they can still fix it -------------
+    if (msToLock <= PROMOTER_WARN_MS && !fight.shortfallPromoterWarnedAt) {
+      const promoter = fight.affiliateId ? await Affiliate.findById(fight.affiliateId).select('email').lean() : null;
+      const to = promoter?.email || FMM_MAIL_FROM;
+      const hours = Math.max(1, Math.round(msToLock / 3600000));
+      await sendMoneyNotice({
+        to,
+        subject: `${label} needs ${short} more ${short === 1 ? 'entry' : 'entries'}`,
+        heading: 'YOUR CARD IS SHORT',
+        lines: [
+          `<strong>${label}</strong> has ${entries} of the ${required} entries it needs, and predictions lock in about ${hours} ${hours === 1 ? 'hour' : 'hours'}.`,
+          `${short} more and it runs. Post it to your league now — that is usually all it takes.`,
+          `<a href="${APP_ORIGIN}/AffiliateDashboard" style="color:#f2b544;">Open your promotion desk</a>`,
+          'If it does not fill it voids at lock and every entry is refunded. You are not charged for a card that does not run.',
+        ],
+      });
+      fight.shortfallPromoterWarnedAt = new Date();
+      await fight.save();
+      summary.promoterWarned += 1;
+    }
+  }
+
+  return summary;
+}
+
+// Scheduled entry point. Vercel cron hits this; the shared secret keeps it from
+// being a public "refund everything" button.
+const runShortfallSweep = async (req, res) => {
+  const secret = String(process.env.CRON_SECRET || '');
+  const provided = String(req.headers['x-cron-secret'] || req.query.secret || '');
+  const isAdmin = Boolean(req.admin);
+  if (secret && provided !== secret && !isAdmin) {
+    return res.status(403).json({ message: 'Not authorised.', code: 'BAD_CRON_SECRET' });
+  }
+  try {
+    const summary = await sweepShortFights();
+    return res.json({ ok: true, ...summary });
+  } catch (error) {
+    console.error('Shortfall sweep failed:', error);
+    return res.status(500).json({ message: 'Sweep failed.', detail: error.message });
+  }
+};
+app.get('/api/cron/sweep-short-fights', runShortfallSweep);
+app.post('/api/cron/sweep-short-fights', runShortfallSweep);
+
+// No scheduler by design. The sweep rides ordinary traffic instead: every
+// request checks the clock, and at most one sweep runs every five minutes so it
+// can never pile up or slow a response (it is fired AFTER next(), so nothing
+// waits on it). Five minutes is tight enough that a lock-time void happens
+// while the card is still fresh, and the site always has traffic around a card
+// closing — that is exactly when entries are coming in.
+let lastOpportunisticSweep = 0;
+const OPPORTUNISTIC_SWEEP_MS = 5 * 60 * 1000;
+app.use((req, _res, next) => {
+  next();
+  if (Date.now() - lastOpportunisticSweep < OPPORTUNISTIC_SWEEP_MS) return;
+  lastOpportunisticSweep = Date.now();
+  sweepShortFights().catch((error) => console.warn('Opportunistic sweep failed:', error.message));
+});
+
+
+// Start server
+const server = app.listen(PORT, () => {
+  console.log(`Server started on port ${PORT}`);
+});
