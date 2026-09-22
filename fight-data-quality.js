@@ -515,6 +515,23 @@ function registerFightDataQualityRoutes(options) {
     res.json({ ok: true, softDeleted: true, fighter: serializeCombatFighter(fighter), note: 'Fighter was soft-deleted/inactivated. Existing fights keep their old name/image fallback fields.' });
   }));
 
+  app.delete('/api/admin/combat-fighters/:id/permanent', verifyAdminToken, asyncHandler(async (req, res) => {
+    const fighter = await CombatFighter.findById(req.params.id);
+    if (!fighter) return res.status(404).json({ ok: false, code: 'COMBAT_FIGHTER_NOT_FOUND', message: 'Combat fighter not found.' });
+
+    // Match documents retain fallback names and images. Removing a duplicate
+    // library row therefore cannot scramble an already-published fight card.
+    const linkedFights = await Match.countDocuments({ $or: [{ fighterAId: fighter._id }, { fighterBId: fighter._id }] });
+    await CombatFighter.deleteOne({ _id: fighter._id });
+    res.json({
+      ok: true,
+      permanentlyDeleted: true,
+      fighterId: String(fighter._id),
+      linkedFightsPreserved: linkedFights,
+      note: 'Duplicate removed. Existing fight names and images were preserved.',
+    });
+  }));
+
   app.post('/api/admin/combat-fighters/:id/restore', verifyAdminToken, asyncHandler(async (req, res) => {
     const fighter = await CombatFighter.findById(req.params.id);
     if (!fighter) return res.status(404).json({ ok: false, code: 'COMBAT_FIGHTER_NOT_FOUND', message: 'Combat fighter not found.' });
