@@ -3808,10 +3808,10 @@ app.post(
     mailOptions.html = `
       <div style="margin:0;padding:24px 10px;background:#05070b;color:#fff;font-family:Arial,sans-serif;">
         <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="width:100%;max-width:620px;margin:auto;background:#0b1018;border:1px solid #293243;border-radius:22px;overflow:hidden;box-shadow:0 18px 48px rgba(0,0,0,.5);">
-          <tr><td align="center" style="padding:26px 20px 18px;background:linear-gradient(135deg,#23050a,#0b1018 55%,#07172b);border-bottom:3px solid #ef1d31;">
-            <img src="https://res.cloudinary.com/daflot6fo/image/upload/v1736068036/bywcrrcqmcyczdyhjmdv.png" alt="FANTASY MMADNESS" style="width:112px;height:auto;display:block;" />
-            <p style="margin:12px 0 0;color:#f7b51b;font-size:12px;font-weight:900;letter-spacing:2px;">NEW FIGHT ALERT</p>
-            <h1 style="margin:7px 0 0;color:#fff;font-size:30px;line-height:1.05;">DON'T JUST WATCH. PREDICT IT.</h1>
+          <tr><td align="center" bgcolor="#19070d" style="padding:26px 20px 18px;background:#19070d;background-image:linear-gradient(135deg,#3a0711,#111a2a 58%,#07172b);border-bottom:3px solid #ef1d31;">
+            <img src="https://www.fantasymmadness.com/images/brand/fantasy-mmadness-clean-logo-2026.jpg" alt="FANTASY MMADNESS" style="width:150px;max-width:42%;height:auto;display:block;border:0;" />
+            <p style="margin:12px 0 0;color:#ffd45e !important;-webkit-text-fill-color:#ffd45e;font-size:12px;font-weight:900;letter-spacing:2px;text-shadow:0 1px 8px #000;">NEW FIGHT ALERT</p>
+            <h1 style="margin:7px 0 0;color:#ffffff !important;-webkit-text-fill-color:#ffffff;font-size:30px;line-height:1.05;font-weight:900;text-shadow:0 2px 10px #000;">DON'T JUST WATCH. PREDICT IT.</h1>
           </td></tr>
           <tr><td style="padding:22px 24px 8px;">
             <p style="margin:0 0 8px;color:#b7c0cf;font-size:15px;">Hello ${escapeHtml(user.firstName || 'Fight Fan')},</p>
@@ -3819,9 +3819,9 @@ app.post(
             <p style="margin:8px 0 0;color:#95a2b5;font-size:14px;line-height:1.55;">Call the action round by round, score points, and climb the leaderboard.</p>
           </td></tr>
           <tr><td style="padding:20px 14px;"><table role="presentation" width="100%" cellpadding="0" cellspacing="0"><tr>
-            <td width="42%" align="center"><div style="width:104px;height:104px;border-radius:50%;border:4px solid #ef1d31;background:#111827;overflow:hidden;box-shadow:0 0 24px rgba(239,29,49,.35);"><img src="${escapeHtml(savedMatch.fighterAImage || '')}" alt="${escapeHtml(savedMatch.matchFighterA || 'Fighter A')}" style="width:100%;height:100%;object-fit:cover;display:block;" /></div><p style="margin:12px 0 0;color:#fff;font-size:17px;font-weight:900;">${escapeHtml(savedMatch.matchFighterA || 'Fighter A')}</p></td>
+            <td width="42%" align="center"><img src="${escapeHtml(savedMatch.fighterAImage || '')}" alt="${escapeHtml(savedMatch.matchFighterA || 'Fighter A')}" width="150" style="width:150px;max-width:100%;height:180px;object-fit:contain;object-position:center bottom;display:block;border:0;border-radius:0;background:transparent;" /><p style="margin:12px 0 0;color:#fff;font-size:17px;font-weight:900;">${escapeHtml(savedMatch.matchFighterA || 'Fighter A')}</p></td>
             <td width="16%" align="center"><div style="width:54px;height:54px;border-radius:50%;background:#ef1d31;color:#fff;font-size:21px;font-weight:900;line-height:54px;">VS</div></td>
-            <td width="42%" align="center"><div style="width:104px;height:104px;border-radius:50%;border:4px solid #168fe6;background:#111827;overflow:hidden;box-shadow:0 0 24px rgba(22,143,230,.35);"><img src="${escapeHtml(savedMatch.fighterBImage || '')}" alt="${escapeHtml(savedMatch.matchFighterB || 'Fighter B')}" style="width:100%;height:100%;object-fit:cover;display:block;" /></div><p style="margin:12px 0 0;color:#fff;font-size:17px;font-weight:900;">${escapeHtml(savedMatch.matchFighterB || 'Fighter B')}</p></td>
+            <td width="42%" align="center"><img src="${escapeHtml(savedMatch.fighterBImage || '')}" alt="${escapeHtml(savedMatch.matchFighterB || 'Fighter B')}" width="150" style="width:150px;max-width:100%;height:180px;object-fit:contain;object-position:center bottom;display:block;border:0;border-radius:0;background:transparent;" /><p style="margin:12px 0 0;color:#fff;font-size:17px;font-weight:900;">${escapeHtml(savedMatch.matchFighterB || 'Fighter B')}</p></td>
           </tr></table></td></tr>
           <tr><td align="center" style="padding:20px 24px 28px;border-top:1px solid #263142;">
             <p style="margin:0 0 18px;color:#c7cfda;font-size:14px;"><strong style="color:#fff;">${escapeHtml(String(savedMatch.matchDate || '').slice(0, 10))}</strong> &nbsp;•&nbsp; ${escapeHtml(savedMatch.matchTime || 'Time TBA')} &nbsp;•&nbsp; ${Number(savedMatch.maxRounds || 0)} rounds</p>
