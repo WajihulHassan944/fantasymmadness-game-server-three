@@ -10347,6 +10347,28 @@ const sendAffiliateEmail = async (affiliate, user) => {
   await transporter.sendMail(mailOptions);
 };
 
+// A published affiliate fight or a fight announcement counts as promotion.
+// Ordinary logins, profile edits, and link previews never extend this window.
+const LEAGUE_ACTIVE_WINDOW_MS = 24 * 60 * 60 * 1000;
+async function getRecentLeaguePromotions(affiliateIds, now = Date.now()) {
+  const ids = [...new Set(affiliateIds.map(String))].filter(Boolean);
+  const activity = new Map();
+  if (!ids.length) return activity;
+  const cutoff = new Date(now - LEAGUE_ACTIVE_WINDOW_MS);
+  const [fights, notices] = await Promise.all([
+    Match.find({ affiliateId: { $in: ids }, createdAt: { $gte: cutoff }, matchStatus: { $nin: ['Draft', 'draft'] } })
+      .select('affiliateId createdAt').lean(),
+    LeagueNotice.find({ affiliateId: { $in: ids }, createdAt: { $gte: cutoff }, fightId: { $ne: '' } })
+      .select('affiliateId createdAt').lean(),
+  ]);
+  for (const record of [...fights, ...notices]) {
+    const id = String(record.affiliateId);
+    const timestamp = new Date(record.createdAt).getTime();
+    if (Number.isFinite(timestamp) && timestamp > (activity.get(id) || 0)) activity.set(id, timestamp);
+  }
+  return activity;
+}
+
 app.post('/affiliate/:affiliateId/join', verifyToken, requireScope(TOKEN_SCOPES.PLAYER), async (req, res) => {
   const { affiliateId } = req.params;
   // SECURITY: derived from the verified token. Body ids are ignored — otherwise
@@ -10366,6 +10388,11 @@ app.post('/affiliate/:affiliateId/join', verifyToken, requireScope(TOKEN_SCOPES.
 
     if (alreadyJoined) {
       return res.status(400).json({ message: 'User already joined this league' });
+    }
+
+    const activity = await getRecentLeaguePromotions([affiliateId]);
+    if (!activity.has(String(affiliateId))) {
+      return res.status(409).json({ message: 'This league is resting. New members can join after its promoter publishes or announces a fight.', code: 'LEAGUE_RESTING' });
     }
 
     // Fetch the user's details from the User collection using userId
@@ -10537,8 +10564,14 @@ app.get('/api/public/leagues', async (req, res) => {
     const sanitizedAffiliates = sanitizeAccountList(affiliates);
     // Keep the raw rows for the joined-user lookup below, but only publish the
     // public projection: this route used to hand out affiliate email + phone.
-    const leagueSource = sanitizedAffiliates.slice(0, limit);
-    const leagues = leagueSource.map(toPublicAffiliate);
+    const activity = await getRecentLeaguePromotions(sanitizedAffiliates.map((league) => league._id));
+    const leagueSource = sanitizedAffiliates.sort((a, b) =>
+      (activity.get(String(b._id)) || 0) - (activity.get(String(a._id)) || 0)).slice(0, limit);
+    const leagues = leagueSource.map((league) => ({
+      ...toPublicAffiliate(league),
+      leagueStatus: activity.has(String(league._id)) ? 'ACTIVE' : 'RESTING',
+      lastPromotionAt: activity.has(String(league._id)) ? new Date(activity.get(String(league._id))).toISOString() : null,
+    }));
     const joinedUserIds = [...new Set(leagueSource
       .flatMap((league) => Array.isArray(league.usersJoined) ? league.usersJoined : [])
       .map((entry) => String(entry?.userId || '').trim())
