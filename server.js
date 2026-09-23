@@ -23290,7 +23290,9 @@ app.post('/api/admin/fights/:fightId/prize-guard', verifyAdminToken, async (req,
       if (req.body?.[key] !== undefined) update[key] = ['true', '1', 'yes', true].includes(req.body[key]);
     });
     if (req.body?.matchStatus !== undefined) {
-      const allowedStatuses = ['Draft', 'Scheduled', 'Open', 'Live', 'Closed', 'Finished'];
+      // Published owner and affiliate fights are saved as Ongoing by /addMatch.
+      // The Economics Desk submits the existing status alongside its edits.
+      const allowedStatuses = ['Draft', 'Scheduled', 'Open', 'Live', 'Ongoing', 'Closed', 'Finished'];
       if (!allowedStatuses.includes(req.body.matchStatus)) return res.status(400).json({ ok: false, message: 'Invalid publishing status.' });
       update.matchStatus = req.body.matchStatus;
     }
