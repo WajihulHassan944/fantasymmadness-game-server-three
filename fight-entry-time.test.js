@@ -17,6 +17,10 @@ test('event time zone accounts for daylight saving time', () => {
   assert.equal(new Date(getFightEntryLockTime({ matchDateKey: '2026-07-15', matchTime: '20:00', eventTimeZone: 'America/New_York' })).toISOString(), '2026-07-16T00:00:00.000Z');
 });
 
+test('legacy fights without a time zone use the existing Eastern-time form convention', () => {
+  assert.equal(new Date(getFightEntryLockTime({ matchDateKey: '2026-09-23', matchTime: '22:00' })).toISOString(), '2026-09-24T02:00:00.000Z');
+});
+
 test('invalid scheduled times do not open entry indefinitely', () => {
   assert.ok(Number.isNaN(getFightEntryLockTime({ matchDateKey: '2026-09-23', matchTime: '26:00' })));
 });
