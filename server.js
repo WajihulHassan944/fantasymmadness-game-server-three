@@ -1,4 +1,5 @@
 const express = require('express');
+const { isFightOpenForEntry } = require('./fight-entry-time');
 const mongoose = require('mongoose');
 const bodyParser = require('body-parser');
 const moment = require('moment');
@@ -1588,6 +1589,7 @@ function attachCombatFighterReadFallbacks(fight = {}, sourceType = 'match') {
     matchDateKey,
     entryFee,
     entryFeeTokens: entryFee,
+    entryOpen: isFightOpenForEntry(item),
     prizePool,
     entryCount: submittedEntryCount,
     playerCount: submittedEntryCount,
@@ -1945,6 +1947,8 @@ const shadowSchema = new mongoose.Schema({
   matchDescription: String,
   matchVideoUrl: String,
   matchDate: Date,
+  lockAt: Date,
+  entryClosedAt: Date,
   matchDateKey: { type: String, index: true },
   eventTimeZone: String,
   matchTime: String,
@@ -2519,6 +2523,8 @@ const matchSchema = new mongoose.Schema({
   sourceLiveMatchId: { type: mongoose.Schema.Types.ObjectId, ref: 'Match', index: true },
   promotedShadowFightId: { type: mongoose.Schema.Types.ObjectId, ref: 'Shadow' },
   matchName: String,
+  lockAt: Date,
+  entryClosedAt: Date,
   matchFighterA: String,
   matchFighterB: String,
   // Optional normalized fighter references. Existing string/image fields remain authoritative
@@ -3569,6 +3575,9 @@ app.post(
       if (requestedMatchDate && !normalizedRequestedDate.date) {
         return res.status(400).json({ message: 'A valid match date is required.' });
       }
+      if (req.body?.lockAt && !Number.isFinite(new Date(req.body.lockAt).getTime())) {
+        return res.status(400).json({ message: 'A valid entry cutoff with a time zone is required.' });
+      }
 
       // Admin-created/affiliate-promoted public fight cards are LIVE by design.
       // Historical/template records live in Shadow and are created by the rollover job.
@@ -3584,6 +3593,7 @@ app.post(
         matchDescription,
         matchVideoUrl,
         matchDate: normalizedRequestedDate.date || requestedMatchDate,
+        lockAt: req.body?.lockAt ? new Date(req.body.lockAt) : undefined,
         matchDateKey: normalizedRequestedDate.key || undefined,
         eventTimeZone: req.body?.eventTimeZone || req.body?.timezone || undefined,
         matchTime: requestedMatchTime,
@@ -17819,15 +17829,33 @@ const fightEntryError = (status, message, code, extra = {}) => {
 
 // Entry is closed once the fight is finished/closed, a shadow is closed, or the
 // scheduled start time has passed.
-const isFightOpenForEntry = (fight) => {
-  const status = String(fight?.matchStatus || '').toLowerCase();
-  if (['finished', 'closed', 'draft'].includes(status)) return false;
-  if (String(fight?.matchShadowOpenStatus || 'open').toLowerCase() === 'closed') return false;
-  if (String(fight?.matchShadowStatus || 'active').toLowerCase() === 'inactive') return false;
-  const lockAt = fight?.lockAt || fight?.matchDate;
-  if (lockAt && new Date(lockAt).getTime() < Date.now()) return false;
-  return true;
-};
+// The bout's own entry cutoff is separate from its event date. The owner can
+// close entry immediately when the fighters start, even if the card runs late.
+app.post('/api/admin/fights/:fightId/entry-lock', verifyAdminToken, async (req, res) => {
+  try {
+    const fight = await Match.findById(req.params.fightId);
+    if (!fight) return res.status(404).json({ message: 'Published fight not found.' });
+    if (req.body?.action === 'close') {
+      fight.entryClosedAt = fight.entryClosedAt || new Date();
+    } else if (req.body?.action === 'schedule') {
+      const lockAt = new Date(req.body?.lockAt);
+      if (!Number.isFinite(lockAt.getTime()) || lockAt.getTime() <= Date.now()) {
+        return res.status(400).json({ message: 'Choose a future entry cutoff with a time zone.' });
+      }
+      if (fight.entryClosedAt) return res.status(409).json({ message: 'Entries were closed manually for this fight.' });
+      fight.lockAt = lockAt;
+    } else {
+      return res.status(400).json({ message: 'Choose close or schedule.' });
+    }
+    await fight.save();
+    clearPublicResponseCache();
+    return res.json({ ok: true, fightId: fight.id, entryOpen: isFightOpenForEntry(fight), lockAt: fight.lockAt || null, entryClosedAt: fight.entryClosedAt || null });
+  } catch (error) {
+    if (error?.name === 'CastError') return res.status(400).json({ message: 'Invalid fight ID.' });
+    console.error('Fight entry lock failed:', error);
+    return res.status(500).json({ message: 'Could not change the fight entry cutoff.' });
+  }
+});
 
 // Shared by BOTH the new endpoint and the legacy POST /api/scores, so there is
 // exactly one code path that can create a paid entry. Declared as a hoisted
