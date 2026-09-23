@@ -24,7 +24,9 @@ const getFightEntryLockTime = (fight) => {
   if (calendarDate.getUTCFullYear() !== year || calendarDate.getUTCMonth() !== month - 1 || calendarDate.getUTCDate() !== day || hour > 23 || minute > 59 || second > 59) return NaN;
 
   const target = Date.UTC(year, month - 1, day, hour, minute, second);
-  const zone = String(fight?.eventTimeZone || 'UTC');
+  // The existing admin and affiliate forms label their fight time as Eastern.
+  // Older records have no eventTimeZone, so preserve that contract.
+  const zone = String(fight?.eventTimeZone || 'America/New_York');
   let formatter;
   try {
     formatter = new Intl.DateTimeFormat('en-US', {
