@@ -1,6 +1,7 @@
 const express = require('express');
 const { isFightOpenForEntry } = require('./fight-entry-time');
 const { ownerReferralShare } = require('./owner-referral-share');
+const { registerAffiliateSocialRoutes } = require('./affiliate-social');
 const mongoose = require('mongoose');
 const bodyParser = require('body-parser');
 const moment = require('moment');
@@ -21785,6 +21786,9 @@ app.get('/api/affiliates/me/promotions/reach', verifyToken, requireScope(TOKEN_S
     return res.status(500).json({ ok: false, message: 'Could not load your reach.' });
   }
 });
+
+// Ready-made share text and link, so a promoter is not composing a post from
+registerAffiliateSocialRoutes({ app, mongoose, Affiliate, Match, verifyToken, requireScope, affiliateScope: TOKEN_SCOPES.AFFILIATE, isFightOpenForEntry });
 
 // Ready-made share text and link, so a promoter is not composing a post from
 // scratch every time. Distribution is mostly friction — this removes some.
