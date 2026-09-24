@@ -1,5 +1,6 @@
 const crypto = require('crypto');
 const axios = require('axios');
+const cloudinary = require('cloudinary').v2;
 
 // OAuth secrets live only on the server. Set SOCIAL_TOKEN_ENCRYPTION_KEY to a
 // random 64-character hex string before enabling any provider.
@@ -157,6 +158,11 @@ function registerAffiliateSocialRoutes({ app, mongoose, Affiliate, Match, verify
       ]);
       if (!account) return res.status(409).json({ message: 'Connect your account first.' });
       if (!fight || !isFightOpenForEntry(fight)) return res.status(409).json({ message: 'This fight is no longer open for promotion.' });
+      const posterData = req.body?.poster;
+      if (provider !== 'x' && (typeof posterData !== 'string' || !/^data:image\/png;base64,[a-z0-9+/=]+$/i.test(posterData) || posterData.length > 7_000_000)) {
+        return res.status(400).json({ message: 'Prepare your personal fight poster before publishing.' });
+      }
+      if (provider !== 'x' && !process.env.CLOUDINARY_CLOUD_NAME) return res.status(503).json({ message: 'Poster image publishing is not configured.' });
       const fightLink = `${siteBase}/fight/${encodeURIComponent(fightId)}?ref=${encodeURIComponent(affiliateId)}`;
       const title = `${fight.matchFighterA || 'Fight'} vs ${fight.matchFighterB || 'Fight'}`;
       const disclosure = 'I’m a FANTASY MMADNESS affiliate and may earn from eligible entries through my link.';
@@ -177,6 +183,15 @@ function registerAffiliateSocialRoutes({ app, mongoose, Affiliate, Match, verify
       try {
         let remoteId;
         let token = decrypt(account.encryptedToken);
+        let posterUrl = '';
+        if (provider !== 'x') {
+          const uploaded = await cloudinary.uploader.upload(posterData, {
+            folder: 'affiliate-fight-posters', resource_type: 'image',
+            public_id: `${fightId}-${affiliateId}-${provider}-${crypto.randomBytes(5).toString('hex')}`,
+          });
+          posterUrl = uploaded.secure_url;
+          if (!posterUrl?.startsWith('https://')) throw new Error('Could not prepare the personal fight poster for publishing.');
+        }
         if (provider === 'x') {
           if (account.expiresAt && account.expiresAt.getTime() < Date.now() + 60000) {
             if (!account.encryptedRefresh) throw new Error('Reconnect X to renew your permission.');
@@ -193,12 +208,10 @@ function registerAffiliateSocialRoutes({ app, mongoose, Affiliate, Match, verify
           const result = await http.post('https://api.x.com/2/tweets', { text }, { headers: { Authorization: `Bearer ${token}` } });
           remoteId = result.data.data?.id;
         } else if (provider === 'facebook') {
-          const result = await http.post(`${graph}/${account.accountId}/feed`, new URLSearchParams({ message: text, link: fightLink, access_token: token }));
+          const result = await http.post(`${graph}/${account.accountId}/photos`, new URLSearchParams({ caption: text, url: posterUrl, access_token: token }));
           remoteId = result.data.id;
         } else {
-          const poster = String(fight.promotionBackground || '');
-          if (!/^https:\/\//i.test(poster)) throw new Error('This fight needs a public HTTPS poster image for Instagram.');
-          const media = await http.post(`${graph}/${account.accountId}/media`, new URLSearchParams({ image_url: poster, caption: text, access_token: token }));
+          const media = await http.post(`${graph}/${account.accountId}/media`, new URLSearchParams({ image_url: posterUrl, caption: text, access_token: token }));
           if (!media.data.id) throw new Error('Instagram did not accept the image.');
           const result = await http.post(`${graph}/${account.accountId}/media_publish`, new URLSearchParams({ creation_id: media.data.id, access_token: token }));
           remoteId = result.data.id;
