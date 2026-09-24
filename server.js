@@ -1,5 +1,6 @@
 const express = require('express');
 const { isFightOpenForEntry } = require('./fight-entry-time');
+const { ownerReferralShare } = require('./owner-referral-share');
 const mongoose = require('mongoose');
 const bodyParser = require('body-parser');
 const moment = require('moment');
@@ -17905,7 +17906,7 @@ app.post('/api/admin/fights/:fightId/entry-lock', verifyAdminToken, async (req, 
 // Shared by BOTH the new endpoint and the legacy POST /api/scores, so there is
 // exactly one code path that can create a paid entry. Declared as a hoisted
 // `function` so the older route above can call it.
-async function createFightEntry({ userId, fightId, predictions, idempotencyKey }) {
+async function createFightEntry({ userId, fightId, predictions, idempotencyKey, referralAffiliateId }) {
   if (!userId) throw fightEntryError(401, 'Authentication is required to enter a fight.', 'UNAUTHENTICATED');
   if (!fightId) throw fightEntryError(400, 'A fight id is required.', 'INVALID_FIGHT_ID');
   if (!Array.isArray(predictions) || !predictions.length) {
@@ -17949,6 +17950,16 @@ async function createFightEntry({ userId, fightId, predictions, idempotencyKey }
 
     // AUTHORITATIVE FEE. Deliberately ignores anything the client sent.
     const entryFee = Math.max(0, Math.round(Number(fight.matchTokens) || 0));
+    let creditedAffiliateId = null;
+    if (entryFee > 0 && !fight.affiliateId && !(fight.AffiliateIds || []).length) {
+      const entrant = await withFightSession(User.findById(userId).select('email referredAffiliateId'), session).lean();
+      const requested = mongoose.isValidObjectId(referralAffiliateId) ? referralAffiliateId : entrant?.referredAffiliateId;
+      const promoter = mongoose.isValidObjectId(requested)
+        ? await withFightSession(Affiliate.findById(requested).select('verified email'), session).lean() : null;
+      if (promoter?.verified && String(promoter.email || '').toLowerCase() !== String(entrant?.email || '').toLowerCase()) {
+        creditedAffiliateId = String(promoter._id);
+      }
+    }
 
     // SELF-ENTRY BAN. An affiliate may not enter a contest they promote.
     // Enforced server-side because the client-side check is trivially bypassed,
@@ -18005,7 +18016,8 @@ async function createFightEntry({ userId, fightId, predictions, idempotencyKey }
         balanceBefore,
         balanceAfter,
         idempotencyKey: `fight:ledger:${key}`,
-        metadata: { category: fight.matchCategory || null },
+        metadata: { category: fight.matchCategory || null,
+          ...(creditedAffiliateId ? { referralAffiliateId: creditedAffiliateId } : {}) },
       }], session ? { session } : undefined);
     } else {
       const user = await withFightSession(User.findById(userId).select('tokens'), session).lean();
@@ -18073,6 +18085,7 @@ app.post('/api/fights/:fightId/entries', verifyToken, requireScope(TOKEN_SCOPES.
       fightId: String(req.params.fightId || '').trim(),
       predictions: req.body?.predictions,
       idempotencyKey: req.headers['idempotency-key'] || req.body?.idempotencyKey,
+      referralAffiliateId: req.body?.referralAffiliateId,
     });
 
     if (result.idempotent) {
@@ -22109,6 +22122,64 @@ app.get('/api/matches/:matchId/leaderboard', async (req, res) => {
 const PLATFORM_RAKE_PCT = Number(process.env.PLATFORM_RAKE_PCT || 15);
 const AFFILIATE_SPLIT_PCT = Number(process.env.AFFILIATE_SPLIT_PCT || 50);
 
+// Attribute only paid, unrefunded entries on owner fights. The same 50/50
+// affiliate split is applied to the platform's actual proceeds, in proportion
+// to fees brought in through each affiliate; prize money is never touched.
+const ownerReferralShares = async ({ fightId, pot, collectedFees, platformCut, entrants }) => {
+  const entryRows = await FightEntryLedger.find({ matchId: fightId, type: 'FIGHT_ENTRY', amount: { $lt: 0 },
+    'metadata.referralAffiliateId': { $exists: true } }).select('userId amount metadata').lean();
+  if (!entryRows.length || !entrants.length) return [];
+  const allowed = new Set(entrants.map((row) => String(row.userId)));
+  const refunds = await FightEntryLedger.find({ matchId: fightId, type: 'FIGHT_ENTRY_REFUND',
+    userId: { $in: entryRows.map((row) => row.userId) }, idempotencyKey: { $regex: `^fight:refund:${fightId}:` } })
+    .select('userId').lean();
+  const refunded = new Set(refunds.map((row) => String(row.userId)));
+  const byAffiliate = new Map();
+  for (const row of entryRows) {
+    if (!allowed.has(String(row.userId)) || refunded.has(String(row.userId))) continue;
+    const id = String(row.metadata.referralAffiliateId);
+    const group = byAffiliate.get(id) || { affiliateId: id, paidEntries: 0, referredFees: 0 };
+    group.paidEntries += 1; group.referredFees += Math.abs(Number(row.amount) || 0);
+    byAffiliate.set(id, group);
+  }
+  const total = Math.max(0, Number(collectedFees) || 0);
+  return [...byAffiliate.values()].map((group) => ({ ...group,
+    share: ownerReferralShare({ platformCut, referredFees: group.referredFees, collectedFees: total, splitPct: AFFILIATE_SPLIT_PCT }),
+    potTotal: pot,
+  })).filter((group) => group.share > 0);
+};
+
+const creditOwnerReferralShare = async (fightId, award) => {
+  const key = `move:owner_referral_share:${award.affiliateId}:${fightId}`;
+  const session = await mongoose.startSession();
+  try {
+    await session.withTransaction(async () => {
+      if (await FightEntryLedger.exists({ idempotencyKey: key }).session(session)) return;
+      const affiliate = await Affiliate.findById(award.affiliateId).session(session);
+      if (!affiliate) return;
+      const before = Number.parseInt(String(affiliate.tokens || '0'), 10) || 0;
+      affiliate.tokens = String(before + award.share);
+      await affiliate.save({ session });
+      await FightEntryLedger.create([{ userId: affiliate._id, matchId: fightId, sourceType: 'match',
+        type: 'FIGHT_ENTRY_REFUND', amount: award.share, balanceBefore: before, balanceAfter: before + award.share,
+        idempotencyKey: key, metadata: { reason: 'owner_referral_share', entrants: award.paidEntries,
+          collectedFees: award.referredFees, sharePct: AFFILIATE_SPLIT_PCT, potTotal: award.potTotal } }], { session });
+    });
+  } catch (error) {
+    if (error?.code !== 11000) throw error;
+  } finally { await session.endSession(); }
+};
+
+const settleOwnerReferralShares = async (fightId, fight, scored) => {
+  if (fight.affiliateId || (Array.isArray(fight.AffiliateIds) && fight.AffiliateIds.length)) return [];
+  const pot = Math.max(0, Math.round(Number(fight.pot) || 0));
+  const fees = Math.max(0, Math.round(Number(fight.collectedFees) || 0));
+  const platformCut = Math.floor((pot * PLATFORM_RAKE_PCT) / 100) + Math.max(0, fees - pot);
+  const awards = await ownerReferralShares({ fightId, pot, collectedFees: fees, platformCut, entrants: scored });
+  for (const award of awards) await creditOwnerReferralShare(fightId, award);
+  return awards;
+};
+
 const prizeSplitFor = (entrants) => {
   if (entrants <= 1) return [100];
   if (entrants < 5) return [100];            // too small to spread
@@ -22161,10 +22232,13 @@ app.post('/api/admin/fights/:fightId/settle', verifyAdminToken, async (req, res)
     if (!fight) return res.status(404).json({ message: 'Fight not found.', code: 'FIGHT_NOT_FOUND' });
 
     if (fight.prizesSettledAt) {
+      const existingScores = await Score.find({ matchId: fightId, refunded: { $ne: true } }).select('playerId').lean();
+      const referralShares = await settleOwnerReferralShares(fightId, fight, existingScores.map((row) => ({ userId: String(row.playerId) })));
       return res.status(200).json({
         message: 'This fight was already settled.',
         alreadySettled: true,
         settledAt: fight.prizesSettledAt,
+        referralShares,
       });
     }
 
@@ -22301,6 +22375,14 @@ app.post('/api/admin/fights/:fightId/settle', verifyAdminToken, async (req, res)
       }
     }
 
+    let referralShares = [];
+    let referralShareError = null;
+    if (!promoterId) {
+      try { referralShares = await settleOwnerReferralShares(fightId, fight, scored); }
+      catch (error) { referralShareError = error.message || 'Affiliate referral credit failed. Retry settlement to reconcile.';
+        console.error('Owner referral settlement failed:', error); }
+    }
+
     // Credit each winner.
     let totalPaid = 0;
     for (const award of awards) {
@@ -22394,11 +22476,14 @@ app.post('/api/admin/fights/:fightId/settle', verifyAdminToken, async (req, res)
       housePct,
       houseCut,
       promoterPaid,
+      referralShares,
+      referralShareError,
       collectedFees,
       declaredPrizePool: prizePool,
       surplus,
       promoterSurplusShare,
-      platformKept: (houseCut - (promoterId ? houseCut : 0)) + (surplus - promoterSurplusShare),
+      platformKept: (houseCut - (promoterId ? houseCut : 0)) + (surplus - promoterSurplusShare)
+        - referralShares.reduce((sum, award) => sum + award.share, 0),
       entrants: scored.length,
       minimumEntrants,
       breakEvenEntrants,
@@ -26303,21 +26388,49 @@ app.get('/api/affiliates/me/fight-referrals', verifyToken, requireScope(TOKEN_SC
     const affiliateId = String(req.user?.id || req.user?._id || '').trim();
     const referrals = await User.find({ referredAffiliateId: affiliateId, isTestAccount: { $ne: true } })
       .select('_id referredFightId createdAt verified').lean();
-    const ids = referrals.map((user) => user._id);
-    const entries = ids.length ? await FightEntryLedger.find({
-      userId: { $in: ids }, type: 'FIGHT_ENTRY', amount: { $lt: 0 },
-    }).select('userId matchId amount createdAt').lean() : [];
+    const entries = await FightEntryLedger.find({
+      'metadata.referralAffiliateId': affiliateId, type: 'FIGHT_ENTRY', amount: { $lt: 0 },
+    }).select('userId matchId amount createdAt').lean();
     const refunded = entries.length ? await FightEntryLedger.find({
-      userId: { $in: ids }, type: 'FIGHT_ENTRY_REFUND',
+      userId: { $in: entries.map((entry) => entry.userId) }, type: 'FIGHT_ENTRY_REFUND',
+      idempotencyKey: { $regex: '^fight:refund:' },
     }).select('userId matchId').lean() : [];
     const refundedKeys = new Set(refunded.map((entry) => `${entry.userId}:${entry.matchId}`));
     const eligibleEntries = entries.filter((entry) => !refundedKeys.has(`${entry.userId}:${entry.matchId}`));
+    const credits = await FightEntryLedger.find({ userId: affiliateId, 'metadata.reason': 'owner_referral_share' })
+      .select('matchId amount metadata createdAt').lean();
+    const byFight = new Map();
+    for (const entry of eligibleEntries) {
+      const key = String(entry.matchId);
+      const item = byFight.get(key) || { fightId: key, paidEntries: 0, referredFees: 0, earnedCoins: 0 };
+      item.paidEntries += 1; item.referredFees += Math.abs(Number(entry.amount) || 0);
+      byFight.set(key, item);
+    }
+    for (const credit of credits) {
+      const key = String(credit.matchId);
+      const item = byFight.get(key) || { fightId: key, paidEntries: 0, referredFees: 0, earnedCoins: 0 };
+      item.earnedCoins += Number(credit.amount) || 0;
+      byFight.set(key, item);
+    }
+    const labels = await Match.find({ _id: { $in: [...byFight.keys()].filter((key) => mongoose.isValidObjectId(key)) } })
+      .select('matchName matchFighterA matchFighterB prizesSettledAt pot collectedFees voidedAt').lean();
+    const fightLabels = new Map(labels.map((fight) => [String(fight._id), fight]));
+    const fights = [...byFight.values()].map((item) => {
+      const match = fightLabels.get(item.fightId);
+      const pot = Math.max(0, Number(match?.pot) || 0);
+      const collectedFees = Math.max(0, Number(match?.collectedFees) || 0);
+      const platformCut = Math.floor((pot * PLATFORM_RAKE_PCT) / 100) + Math.max(0, collectedFees - pot);
+      return { ...item, label: match?.matchName || [match?.matchFighterA, match?.matchFighterB].filter(Boolean).join(' vs ') || 'Fight',
+        settled: Boolean(match?.prizesSettledAt), voided: Boolean(match?.voidedAt),
+        estimatedCoins: !match?.prizesSettledAt && !match?.voidedAt
+          ? ownerReferralShare({ platformCut, referredFees: item.referredFees,
+            collectedFees, splitPct: AFFILIATE_SPLIT_PCT }) : 0 };
+    });
     res.json({ ok: true, signups: referrals.length, verifiedSignups: referrals.filter((user) => user.verified).length,
       participatingPlayers: new Set(eligibleEntries.map((entry) => String(entry.userId))).size,
       paidEntries: eligibleEntries.length,
-      // Commission for platform-owned fights is not configured. Never turn
-      // referred entries into an amount owed using a guessed rate.
-      commissionConfigured: false });
+      earnedCoins: credits.reduce((sum, entry) => sum + (Number(entry.amount) || 0), 0),
+      splitPct: AFFILIATE_SPLIT_PCT, fights });
   } catch (error) {
     console.error('Affiliate referral summary failed:', error);
     res.status(500).json({ ok: false, message: 'Could not load affiliate referral activity.' });
@@ -26335,7 +26448,7 @@ app.get('/api/affiliates/me/money', verifyToken, requireScope(TOKEN_SCOPES.AFFIL
     // --- earnings, straight from the settlement ledger ---------------------
     const ledgerRows = await FightEntryLedger.find({
       userId: affiliateId,
-      'metadata.reason': 'affiliate_pot_share',
+      'metadata.reason': { $in: ['affiliate_pot_share', 'owner_referral_share'] },
     }).sort({ createdAt: -1 }).limit(200).lean();
 
     const fightIds = [...new Set(ledgerRows.map((row) => String(row.matchId)).filter(Boolean))];
@@ -26351,6 +26464,7 @@ app.get('/api/affiliates/me/money', verifyToken, requireScope(TOKEN_SCOPES.AFFIL
         fightId: String(row.matchId),
         fightLabel: fight.matchName || `${fight.matchFighterA || ''} vs ${fight.matchFighterB || ''}`.trim(),
         category: fight.matchCategory || '',
+        source: meta.reason === 'owner_referral_share' ? 'Owner fight referrals' : 'Promoted card',
         settledAt: row.createdAt,
         entrants: Number(meta.entrants || 0),
         // What the contest took in, vs the pot that was promised out.
