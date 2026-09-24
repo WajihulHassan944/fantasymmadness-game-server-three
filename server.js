@@ -10631,15 +10631,27 @@ app.post('/send-email-affiliate', verifyAdminToken, async (req, res) => {
 
   try {
       let launchHtml;
+      let posterAttachment;
       if (req.body?.launchFightId) {
           const fightId = String(req.body.launchFightId);
           if (!mongoose.isValidObjectId(fightId)) return res.status(400).json({ message: 'Choose a valid fight for the affiliate alert.' });
           const [recipient, fight] = await Promise.all([
-              Affiliate.findOne({ email, verified: true }).select('firstName').lean(),
-              Match.findById(fightId).select('matchFighterA matchFighterB matchCategory matchCategoryTwo fighterAImage fighterBImage matchTokens pot').lean(),
+              Affiliate.findOne({ email, verified: true }).select('firstName leagueName playerName').lean(),
+              Match.findById(fightId).select('matchFighterA matchFighterB matchCategory matchCategoryTwo fighterAImage fighterBImage matchTokens pot fightPosterImage promotionBackground').lean()
+                .then((row) => row || Shadow.findById(fightId).select('matchFighterA matchFighterB matchCategory matchCategoryTwo fighterAImage fighterBImage matchTokens pot fightPosterImage promotionBackground').lean()),
           ]);
           if (!recipient || !fight) return res.status(400).json({ message: 'Approved affiliate and fight required for this alert.' });
-          launchHtml = affiliateFightEmail({ affiliate: recipient, fight, fightId, appUrl: process.env.PUBLIC_APP_URL });
+          const posterUrl = String(fight.fightPosterImage || fight.promotionBackground || '');
+          if (!posterUrl) return res.status(400).json({ message: 'Upload a fight poster before emailing affiliates.' });
+          if (new URL(posterUrl).protocol === 'https:' && new URL(posterUrl).hostname === 'res.cloudinary.com') {
+              const imageResponse = await fetch(posterUrl, { signal: AbortSignal.timeout(15000) });
+              if (!imageResponse.ok || !/^image\/(png|jpeg|webp)$/i.test((imageResponse.headers.get('content-type') || '').split(';')[0])) throw new Error('The uploaded fight poster could not be downloaded for this email.');
+              const imageBuffer = Buffer.from(await imageResponse.arrayBuffer());
+              if (!imageBuffer.length || imageBuffer.length > 5 * 1024 * 1024) throw new Error('The fight poster is too large for email. Upload a smaller poster.');
+              const mime = imageResponse.headers.get('content-type').split(';')[0].toLowerCase();
+              posterAttachment = { filename: `fight-poster.${mime === 'image/png' ? 'png' : mime === 'image/webp' ? 'webp' : 'jpg'}`, content: imageBuffer, contentType: mime, cid: 'affiliate-fight-poster' };
+          }
+          launchHtml = affiliateFightEmail({ affiliate: recipient, fight, fightId, appUrl: process.env.PUBLIC_APP_URL, message, posterCid: posterAttachment?.cid });
       }
       // Send mail with the defined transport object
       await transporter.sendMail({
@@ -10652,10 +10664,12 @@ app.post('/send-email-affiliate', verifyAdminToken, async (req, res) => {
           subject: subject, // Subject line
           text: message, // plain text body
           ...(launchHtml ? { html: launchHtml } : {}),
+          ...(posterAttachment ? { attachments: [posterAttachment] } : {}),
       });
 
       res.status(200).json({ message: 'Email sent successfully' });
   } catch (error) {
+      if (/fight poster/i.test(String(error?.message || ''))) return res.status(502).json({ message: error.message });
       const diagnostics = {
         code: String(error?.code || 'SMTP_DELIVERY_FAILED'),
         command: String(error?.command || ''),
