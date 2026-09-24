@@ -21810,7 +21810,7 @@ app.post('/api/admin/fights/:fightId/social-poster', verifyAdminToken, upload.si
     if (!req.file || !/^image\/(png|jpeg|webp)$/.test(req.file.mimetype) || req.file.size > 8 * 1024 * 1024) {
       return res.status(400).json({ message: 'Choose a PNG, JPEG, or WebP image under 8 MB.' });
     }
-    const fight = await Match.findById(req.params.fightId);
+    const fight = await Match.findById(req.params.fightId) || await Shadow.findById(req.params.fightId);
     if (!fight) return res.status(404).json({ message: 'Fight not found.' });
     const result = await new Promise((resolve, reject) => {
       cloudinary.uploader.upload_stream({ folder: 'fight_social_posters', resource_type: 'image' }, (error, uploaded) => {
@@ -21838,8 +21838,9 @@ app.get('/api/affiliates/me/promotions/:fightId/share', verifyToken, requireScop
     const affiliate = await Affiliate.findById(affiliateId).select('leagueName playerName profileUrl firstName lastName').lean();
     if (!affiliate) return res.status(404).json({ ok: false, message: 'Affiliate account not found.' });
 
+    const posterFields = 'matchFighterA matchFighterB matchName matchDate matchDateKey matchTime eventTimeZone matchTokens pot matchCategory matchCategoryTwo fightPosterImage promotionBackground fighterAImage fighterBImage';
     const fight = mongoose.isValidObjectId(fightId)
-      ? await Match.findById(fightId).select('matchFighterA matchFighterB matchName matchDate matchDateKey matchTime eventTimeZone matchTokens pot matchCategory matchCategoryTwo fightPosterImage promotionBackground fighterAImage fighterBImage').lean()
+      ? await Match.findById(fightId).select(posterFields).lean() || await Shadow.findById(fightId).select(posterFields).lean()
       : null;
 
     const appUrl = String(process.env.PUBLIC_APP_URL || 'https://www.fantasymmadness.com').replace(/\/$/, '');
@@ -21857,7 +21858,7 @@ app.get('/api/affiliates/me/promotions/:fightId/share', verifyToken, requireScop
       attribution: { affiliateId, leagueName: league },
       creative: {
         brandLogo: 'https://res.cloudinary.com/daflot6fo/image/upload/v1736068036/bywcrrcqmcyczdyhjmdv.png',
-        fightPoster: fight?.fightPosterImage || '',
+        fightPoster: fight?.fightPosterImage || fight?.promotionBackground || '',
         affiliateCover: affiliate.profileUrl || '',
         fighterAImage: fight?.fighterAImage || '',
         fighterBImage: fight?.fighterBImage || '',
