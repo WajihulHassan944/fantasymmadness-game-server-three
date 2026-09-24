@@ -1,6 +1,7 @@
 const express = require('express');
 const { isFightOpenForEntry } = require('./fight-entry-time');
 const { ownerReferralShare } = require('./owner-referral-share');
+const { affiliateFightEmail } = require('./affiliate-fight-email');
 const { registerAffiliateSocialRoutes } = require('./affiliate-social');
 const mongoose = require('mongoose');
 const bodyParser = require('body-parser');
@@ -10629,6 +10630,17 @@ app.post('/send-email-affiliate', verifyAdminToken, async (req, res) => {
   if (!SMTP_PASS) return res.status(503).json({ message: mailFailureMessage(), code: 'SMTP_NOT_CONFIGURED' });
 
   try {
+      let launchHtml;
+      if (req.body?.launchFightId) {
+          const fightId = String(req.body.launchFightId);
+          if (!mongoose.isValidObjectId(fightId)) return res.status(400).json({ message: 'Choose a valid fight for the affiliate alert.' });
+          const [recipient, fight] = await Promise.all([
+              Affiliate.findOne({ email, verified: true }).select('firstName').lean(),
+              Match.findById(fightId).select('matchFighterA matchFighterB matchCategory matchCategoryTwo fighterAImage fighterBImage matchTokens pot').lean(),
+          ]);
+          if (!recipient || !fight) return res.status(400).json({ message: 'Approved affiliate and fight required for this alert.' });
+          launchHtml = affiliateFightEmail({ affiliate: recipient, fight, fightId, appUrl: process.env.PUBLIC_APP_URL });
+      }
       // Send mail with the defined transport object
       await transporter.sendMail({
           // This operational route must use the authenticated mailbox for both
@@ -10639,6 +10651,7 @@ app.post('/send-email-affiliate', verifyAdminToken, async (req, res) => {
           envelope: { from: SMTP_USER, to: [email] },
           subject: subject, // Subject line
           text: message, // plain text body
+          ...(launchHtml ? { html: launchHtml } : {}),
       });
 
       res.status(200).json({ message: 'Email sent successfully' });
@@ -21800,7 +21813,7 @@ app.get('/api/affiliates/me/promotions/:fightId/share', verifyToken, requireScop
     if (!affiliate) return res.status(404).json({ ok: false, message: 'Affiliate account not found.' });
 
     const fight = mongoose.isValidObjectId(fightId)
-      ? await Match.findById(fightId).select('matchFighterA matchFighterB matchDate matchTokens matchCategory promotionBackground fighterAImage fighterBImage').lean()
+      ? await Match.findById(fightId).select('matchFighterA matchFighterB matchName matchDate matchDateKey matchTime eventTimeZone matchTokens pot matchCategory matchCategoryTwo promotionBackground fighterAImage fighterBImage').lean()
       : null;
 
     const appUrl = String(process.env.PUBLIC_APP_URL || 'https://www.fantasymmadness.com').replace(/\/$/, '');
@@ -21822,6 +21835,16 @@ app.get('/api/affiliates/me/promotions/:fightId/share', verifyToken, requireScop
         affiliateCover: affiliate.profileUrl || '',
         fighterAImage: fight?.fighterAImage || '',
         fighterBImage: fight?.fighterBImage || '',
+        fighterA: fight?.matchFighterA || '',
+        fighterB: fight?.matchFighterB || '',
+        event: fight?.matchName || '',
+        sport: fight?.matchCategoryTwo || fight?.matchCategory || '',
+        matchDate: fight?.matchDate || null,
+        matchDateKey: fight?.matchDateKey || '',
+        matchTime: fight?.matchTime || '',
+        eventTimeZone: fight?.eventTimeZone || '',
+        entryCoins: fee,
+        prizeCoins: Math.max(0, Math.round(Number(fight?.pot) || 0)),
         headline: pair || 'Join my Fantasy MMAdness league',
         promotedBy: [affiliate.firstName, affiliate.lastName].filter(Boolean).join(' ') || league,
       },
