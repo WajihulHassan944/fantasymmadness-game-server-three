@@ -10643,13 +10643,20 @@ app.post('/send-email-affiliate', verifyAdminToken, async (req, res) => {
           if (!recipient || !fight) return res.status(400).json({ message: 'Approved affiliate and fight required for this alert.' });
           const posterUrl = String(fight.fightPosterImage || fight.promotionBackground || '');
           if (!posterUrl) return res.status(400).json({ message: 'Upload a fight poster before emailing affiliates.' });
-          if (new URL(posterUrl).protocol === 'https:' && new URL(posterUrl).hostname === 'res.cloudinary.com') {
-              const imageResponse = await fetch(posterUrl, { signal: AbortSignal.timeout(15000) });
-              if (!imageResponse.ok || !/^image\/(png|jpeg|webp)$/i.test((imageResponse.headers.get('content-type') || '').split(';')[0])) throw new Error('The uploaded fight poster could not be downloaded for this email.');
-              const imageBuffer = Buffer.from(await imageResponse.arrayBuffer());
-              if (!imageBuffer.length || imageBuffer.length > 5 * 1024 * 1024) throw new Error('The fight poster is too large for email. Upload a smaller poster.');
-              const mime = imageResponse.headers.get('content-type').split(';')[0].toLowerCase();
-              posterAttachment = { filename: `fight-poster.${mime === 'image/png' ? 'png' : mime === 'image/webp' ? 'webp' : 'jpg'}`, content: imageBuffer, contentType: mime, cid: 'affiliate-fight-poster' };
+          const posterUri = new URL(posterUrl);
+          if (posterUri.protocol === 'https:' && posterUri.hostname === 'res.cloudinary.com' && posterUri.pathname.includes('/image/upload/')) {
+              try {
+                  // An email-sized copy of the owner's saved artwork keeps the SMTP message small.
+                  const emailPosterUrl = posterUrl.replace('/image/upload/', '/image/upload/w_900,q_auto,f_jpg/');
+                  const imageResponse = await fetch(emailPosterUrl, { signal: AbortSignal.timeout(15000) });
+                  if (!imageResponse.ok || (imageResponse.headers.get('content-type') || '').split(';')[0] !== 'image/jpeg') throw new Error('Poster preview was unavailable.');
+                  const imageBuffer = Buffer.from(await imageResponse.arrayBuffer());
+                  if (!imageBuffer.length || imageBuffer.length > 700 * 1024) throw new Error('Poster preview exceeded the email size limit.');
+                  posterAttachment = { filename: 'fight-poster-preview.jpg', content: imageBuffer, contentType: 'image/jpeg', cid: 'affiliate-fight-poster' };
+              } catch (posterError) {
+                  // Keep the original poster visible through its HTTPS image link if inline fetch fails.
+                  console.warn('Affiliate email poster preview unavailable:', posterError.message);
+              }
           }
           launchHtml = affiliateFightEmail({ affiliate: recipient, fight, fightId, appUrl: process.env.PUBLIC_APP_URL, message, posterCid: posterAttachment?.cid });
       }
