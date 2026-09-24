@@ -21803,6 +21803,32 @@ app.get('/api/affiliates/me/promotions/reach', verifyToken, requireScope(TOKEN_S
 // Ready-made share text and link, so a promoter is not composing a post from
 registerAffiliateSocialRoutes({ app, mongoose, Affiliate, Match, verifyToken, requireScope, affiliateScope: TOKEN_SCOPES.AFFILIATE, isFightOpenForEntry });
 
+// One owner upload becomes the base artwork for every affiliate's personal QR poster.
+app.post('/api/admin/fights/:fightId/social-poster', verifyAdminToken, upload.single('poster'), async (req, res) => {
+  try {
+    if (!mongoose.isValidObjectId(req.params.fightId)) return res.status(400).json({ message: 'Invalid fight ID.' });
+    if (!req.file || !/^image\/(png|jpeg|webp)$/.test(req.file.mimetype) || req.file.size > 8 * 1024 * 1024) {
+      return res.status(400).json({ message: 'Choose a PNG, JPEG, or WebP image under 8 MB.' });
+    }
+    const fight = await Match.findById(req.params.fightId);
+    if (!fight) return res.status(404).json({ message: 'Fight not found.' });
+    const result = await new Promise((resolve, reject) => {
+      cloudinary.uploader.upload_stream({ folder: 'fight_social_posters', resource_type: 'image' }, (error, uploaded) => {
+        if (error) reject(error); else resolve(uploaded);
+      }).end(req.file.buffer);
+    });
+    const previous = fight.fightPosterImageDeleteUrl;
+    fight.fightPosterImage = result.secure_url;
+    fight.fightPosterImageDeleteUrl = result.public_id;
+    await fight.save();
+    if (previous) cloudinary.uploader.destroy(previous).catch((error) => console.error('Old social poster cleanup failed:', error));
+    return res.json({ poster: result.secure_url });
+  } catch (error) {
+    console.error('Social poster upload failed:', error);
+    return res.status(500).json({ message: 'Could not save the fight poster.' });
+  }
+});
+
 // Ready-made share text and link, so a promoter is not composing a post from
 // scratch every time. Distribution is mostly friction — this removes some.
 app.get('/api/affiliates/me/promotions/:fightId/share', verifyToken, requireScope(TOKEN_SCOPES.AFFILIATE), async (req, res) => {
@@ -21813,7 +21839,7 @@ app.get('/api/affiliates/me/promotions/:fightId/share', verifyToken, requireScop
     if (!affiliate) return res.status(404).json({ ok: false, message: 'Affiliate account not found.' });
 
     const fight = mongoose.isValidObjectId(fightId)
-      ? await Match.findById(fightId).select('matchFighterA matchFighterB matchName matchDate matchDateKey matchTime eventTimeZone matchTokens pot matchCategory matchCategoryTwo promotionBackground fighterAImage fighterBImage').lean()
+      ? await Match.findById(fightId).select('matchFighterA matchFighterB matchName matchDate matchDateKey matchTime eventTimeZone matchTokens pot matchCategory matchCategoryTwo fightPosterImage promotionBackground fighterAImage fighterBImage').lean()
       : null;
 
     const appUrl = String(process.env.PUBLIC_APP_URL || 'https://www.fantasymmadness.com').replace(/\/$/, '');
@@ -21831,7 +21857,7 @@ app.get('/api/affiliates/me/promotions/:fightId/share', verifyToken, requireScop
       attribution: { affiliateId, leagueName: league },
       creative: {
         brandLogo: 'https://res.cloudinary.com/daflot6fo/image/upload/v1736068036/bywcrrcqmcyczdyhjmdv.png',
-        fightPoster: fight?.promotionBackground || '',
+        fightPoster: fight?.fightPosterImage || '',
         affiliateCover: affiliate.profileUrl || '',
         fighterAImage: fight?.fighterAImage || '',
         fighterBImage: fight?.fighterBImage || '',
