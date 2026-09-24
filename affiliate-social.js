@@ -154,7 +154,7 @@ function registerAffiliateSocialRoutes({ app, mongoose, Affiliate, Match, verify
     try {
       const [account, fight, affiliate] = await Promise.all([
         Account.findOne({ affiliateId, provider }),
-        Match.findById(fightId).select('matchFighterA matchFighterB matchDate matchDateKey matchStatus matchShadowOpenStatus matchShadowStatus entryClosedAt lockAt promotionBackground matchTime eventTimeZone pot').lean(),
+        Match.findById(fightId).select('matchFighterA matchFighterB matchDate matchDateKey matchStatus matchShadowOpenStatus matchShadowStatus entryClosedAt lockAt promotionBackground matchTime eventTimeZone pot matchTokens').lean(),
         Affiliate.findById(affiliateId).select('leagueName playerName').lean(),
       ]);
       if (!account) return res.status(409).json({ message: 'Connect your account first.' });
@@ -169,15 +169,18 @@ function registerAffiliateSocialRoutes({ app, mongoose, Affiliate, Match, verify
       const disclosure = 'I’m a FANTASY MMADNESS affiliate and may earn from eligible entries through my link.';
       const league = String(affiliate?.leagueName || affiliate?.playerName || 'my league').trim().slice(0, 60);
       const prize = Math.max(0, Math.round(Number(fight.pot) || 0));
-      const invitation = `Join ${league} for ${title}. Predict what happens round by round, score points, and climb our leaderboard.${prize ? ` This fight has a ${prize.toLocaleString()} FM prize pool.` : ''} Check the fight page for entry details and prize rules.`;
-      const xPrefix = `${disclosure} Join ${league.slice(0, 30)} for `;
-      const xSuffix = `. Predict rounds, score points${prize ? `, compete for ${prize.toLocaleString()} FM` : ''}. ${fightLink} #FANTASYMMADNESS`;
+      const reward = Number(fight.matchTokens) > 0 && prize > 0
+        ? `Compete for a ${prize.toLocaleString()} FM prize pool and eligible cash winnings.`
+        : prize > 0 ? `Compete for a ${prize.toLocaleString()} FM prize pool and other rewards.` : 'Compete for available prizes and bragging rights.';
+      const invitation = `I’m inviting you to join ${league} on FANTASY MMADNESS for ${title}. Make your picks before the fight and see how you stack up against other fans. ${reward} Open the fight page for entry details, eligibility, and prize rules.`;
+      const xPrefix = `Join ${league.slice(0, 30)} for `;
+      const xSuffix = `. Make your picks and compete for prizes where eligible. ${fightLink} Affiliate link; I may earn from entries.`;
       const xTitleLength = Math.max(0, 280 - xPrefix.length - xSuffix.length);
       const text = provider === 'x'
         ? `${xPrefix}${title.slice(0, xTitleLength)}${xSuffix}`
         : provider === 'instagram'
-          ? `${disclosure}\n\n${invitation}\n\nScan my QR on the poster to join. Fight link in bio.\n\n#FANTASYMMADNESS #CombatSports #FightNight`
-          : `${disclosure}\n\n${invitation}\n\nJoin here: ${fightLink}\n\n#FANTASYMMADNESS #CombatSports #FightNight`;
+          ? `${invitation}\n\nScan my personal QR on the poster to join my league.\n\n${disclosure}\n#FANTASYMMADNESS #FightNight`
+          : `${invitation}\n\nJoin my league through my personal fight link: ${fightLink}\n\n${disclosure}\n#FANTASYMMADNESS #FightNight`;
       // A unique claim prevents double-clicks and concurrent requests from posting twice.
       const filter = { affiliateId, provider, fightId };
       const claim = await Delivery.findOneAndUpdate({ ...filter, status: { $nin: ['publishing', 'published', 'review'] } },
