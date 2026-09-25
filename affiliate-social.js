@@ -179,7 +179,7 @@ function registerAffiliateSocialRoutes({ app, mongoose, Affiliate, Match, verify
       const text = provider === 'x'
         ? `${xPrefix}${title.slice(0, xTitleLength)}${xSuffix}`
         : provider === 'instagram'
-          ? `${invitation}\n\nScan my personal QR on the poster to join my league.\n\n${disclosure}\n#FANTASYMMADNESS #FightNight`
+          ? `${invitation}\n\nJOIN MY LEAGUE: ${fightLink}\nScan my personal QR on the poster to open this link.\n\n${disclosure}\n#FANTASYMMADNESS #FightNight`
           : `${invitation}\n\nJoin my league through my personal fight link: ${fightLink}\n\n${disclosure}\n#FANTASYMMADNESS #FightNight`;
       // A unique claim prevents double-clicks and concurrent requests from posting twice.
       const filter = { affiliateId, provider, fightId };
