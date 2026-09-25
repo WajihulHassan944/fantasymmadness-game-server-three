@@ -6182,6 +6182,7 @@ const mailFailureMessage = (error) => {
   const command = String(error?.command || '').toUpperCase();
   const responseCode = Number(error?.responseCode || 0);
   const providerResponse = safeMailProviderResponse(error).toLowerCase();
+  if (code.endsWith('_DELIVERY_FAILED')) return 'The transactional email provider rejected this message. Review the provider explanation below.';
   if (!SMTP_PASS) return 'Email delivery is not configured. Add the SMTP password in the backend production environment.';
   if (code === 'EAUTH' || responseCode === 535) return 'The email provider rejected the SMTP login. Update the backend SMTP username or app password.';
   if (['ECONNECTION', 'ETIMEDOUT', 'ESOCKET', 'ECONNREFUSED'].includes(code)) return 'The email provider could not be reached. Check the backend SMTP host, port, and secure setting.';
@@ -6204,7 +6205,7 @@ const transactionalMailProvider = () => {
   return 'smtp';
 };
 
-const sendTransactionalMail = async ({ to, subject, html }) => {
+const sendTransactionalMail = async ({ to, subject, html, text }) => {
   const recipient = String(to || '').trim().toLowerCase();
   const from = String(
     process.env.TRANSACTIONAL_MAIL_FROM
@@ -6222,7 +6223,8 @@ const sendTransactionalMail = async ({ to, subject, html }) => {
       to: recipient,
       envelope: SMTP_USER ? { from: SMTP_USER, to: [recipient] } : undefined,
       subject,
-      html,
+      ...(html ? { html } : {}),
+      ...(text ? { text } : {}),
     });
   }
 
@@ -6232,7 +6234,7 @@ const sendTransactionalMail = async ({ to, subject, html }) => {
   if (provider === 'resend') {
     url = 'https://api.resend.com/emails';
     headers.Authorization = `Bearer ${process.env.RESEND_API_KEY}`;
-    payload = { from, to: [recipient], subject, html };
+    payload = { from, to: [recipient], subject, ...(html ? { html } : {}), ...(text ? { text } : {}) };
   } else if (provider === 'sendgrid') {
     url = 'https://api.sendgrid.com/v3/mail/send';
     headers.Authorization = `Bearer ${process.env.SENDGRID_API_KEY}`;
@@ -6240,7 +6242,10 @@ const sendTransactionalMail = async ({ to, subject, html }) => {
       personalizations: [{ to: [{ email: recipient }] }],
       from: { email: from.replace(/^.*<([^>]+)>.*$/, '$1') },
       subject,
-      content: [{ type: 'text/html', value: html }],
+      content: [
+        ...(text ? [{ type: 'text/plain', value: text }] : []),
+        ...(html ? [{ type: 'text/html', value: html }] : []),
+      ],
     };
   } else if (provider === 'brevo') {
     url = 'https://api.brevo.com/v3/smtp/email';
@@ -6249,7 +6254,8 @@ const sendTransactionalMail = async ({ to, subject, html }) => {
       sender: { email: from.replace(/^.*<([^>]+)>.*$/, '$1'), name: 'Fantasy MMAdness' },
       to: [{ email: recipient }],
       subject,
-      htmlContent: html,
+      ...(html ? { htmlContent: html } : {}),
+      ...(text ? { textContent: text } : {}),
     };
   } else {
     url = 'https://api.postmarkapp.com/email';
@@ -6258,7 +6264,8 @@ const sendTransactionalMail = async ({ to, subject, html }) => {
       From: from.replace(/^.*<([^>]+)>.*$/, '$1'),
       To: recipient,
       Subject: subject,
-      HtmlBody: html,
+      ...(html ? { HtmlBody: html } : {}),
+      ...(text ? { TextBody: text } : {}),
       MessageStream: 'outbound',
     };
   }
@@ -10627,21 +10634,12 @@ app.post('/send-email-affiliate', verifyAdminToken, async (req, res) => {
   }
 
   if (!/^\S+@\S+\.\S+$/.test(email)) return res.status(400).json({ message: 'Enter a valid affiliate email address.' });
-  if (!SMTP_PASS) return res.status(503).json({ message: mailFailureMessage(), code: 'SMTP_NOT_CONFIGURED' });
+  if (transactionalMailProvider() === 'smtp' && !SMTP_PASS) return res.status(503).json({ message: mailFailureMessage(), code: 'SMTP_NOT_CONFIGURED' });
 
   try {
-      // Restore the original plain-text affiliate delivery path. The owner's
-      // composed message still carries each affiliate's personal kit and links.
-      await transporter.sendMail({
-          // This operational route must use the authenticated mailbox for both
-          // the visible header and SMTP envelope. Some providers reject even a
-          // configured alias until its domain has been separately verified.
-          from: SMTP_USER,
-          to: email,
-          envelope: { from: SMTP_USER, to: [email] },
-          subject: subject, // Subject line
-          text: message, // plain text body
-      });
+      // Keep the owner's plain-text message and personal affiliate links while
+      // using the configured transactional provider instead of forcing Gmail SMTP.
+      await sendTransactionalMail({ to: email, subject, text: message });
 
       res.status(200).json({ message: 'Email sent successfully' });
   } catch (error) {
