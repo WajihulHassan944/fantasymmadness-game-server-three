@@ -22,7 +22,11 @@ function affiliateFightEmail({ affiliate, fight, fightId, appUrl, message, poste
   const fighterB = escapeHtml(fight.matchFighterB || 'FIGHTER B');
   const photoA = safeImage(fight.fighterAImage);
   const photoB = safeImage(fight.fighterBImage);
-  const poster = posterCid ? `cid:${escapeHtml(posterCid)}` : safeImage(fight.fightPosterImage || fight.promotionBackground);
+  const originalPoster = String(fight.fightPosterImage || fight.promotionBackground || '');
+  const emailPoster = /^https:\/\/res\.cloudinary\.com\//i.test(originalPoster) && originalPoster.includes('/image/upload/')
+    ? originalPoster.replace('/image/upload/', '/image/upload/w_900,q_auto,f_jpg/')
+    : originalPoster;
+  const poster = posterCid ? `cid:${escapeHtml(posterCid)}` : safeImage(emailPoster);
   const name = escapeHtml(affiliate.firstName || 'Fight fan');
   const sport = escapeHtml(fight.matchCategoryTwo || fight.matchCategory || 'FIGHT NIGHT');
   const details = prize ? `PRIZE: ${prize.toLocaleString()} FM COINS` : 'PREDICT • SCORE • CLIMB';
