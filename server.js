@@ -10639,26 +10639,24 @@ app.post('/send-email-affiliate', verifyAdminToken, async (req, res) => {
   try {
       // Keep the editable plain-text message intact. The HTML alternative adds
       // a small, recognizable logo and clickable links for mail clients.
-      const linkedMessage = message.split(/(https?:\/\/[^\s<>"']+)/g).map((part) => (
+      const kitLine = /(?:OPEN YOUR (?:PERSONAL FIGHT POSTER|FIGHT SHARE KIT)):\s*(https:\/\/[^\s]+)/i;
+      const kitUrl = message.match(kitLine)?.[1];
+      // The HTML email has one clear action. The full URL remains in the
+      // plain-text alternative for mail clients that do not render HTML.
+      const displayMessage = kitUrl ? message.replace(kitLine, '').replace(/\n{3,}/g, '\n\n') : message;
+      const linkedMessage = displayMessage.split(/(https?:\/\/[^\s<>"']+)/g).map((part) => (
         /^https?:\/\//.test(part)
           ? `<a href="${escapeHtml(part)}" style="color:#d71932;overflow-wrap:anywhere">${escapeHtml(part)}</a>`
           : escapeHtml(part)
       )).join('');
-      const kitUrl = message.match(/OPEN YOUR PERSONAL FIGHT POSTER:\s*(https:\/\/[^\s]+)/i)?.[1];
-      const fightUrl = message.match(/YOUR FIGHT LINK:\s*(https:\/\/[^\s]+)/i)?.[1];
-      const qrUrl = message.match(/YOUR QR IMAGE[^\n]*:\s*(https:\/\/[^\s]+)/i)?.[1];
-      const buttons = [
-        ['Open your fight poster', kitUrl],
-        ['Join my league · fight link', fightUrl],
-        ['Download your QR', qrUrl],
-      ].filter(([, url]) => url && /^https:\/\/www\.fantasymmadness\.com\//i.test(url))
-        .map(([label, url]) => `<a href="${escapeHtml(url)}" target="_blank" style="display:inline-block;padding:12px 16px;margin:6px 8px 6px 0;background:#b7192c;color:#ffffff;text-decoration:none;font-weight:bold;border-radius:5px">${escapeHtml(label)}</a>`).join('');
+      const button = kitUrl && /^https:\/\/www\.fantasymmadness\.com\/affiliate\/fight-launch\?/i.test(kitUrl)
+        ? `<a href="${escapeHtml(kitUrl)}" target="_blank" style="display:inline-block;padding:12px 16px;background:#b7192c;color:#ffffff;text-decoration:none;font-weight:bold;border-radius:5px">Open my fight share kit</a>` : '';
       const html = `<div style="font-family:Arial,sans-serif;color:#171923;max-width:700px;margin:auto">
         <header style="padding:16px 0;border-bottom:2px solid #d71932">
           <img src="https://www.fantasymmadness.com/images/brand/fantasy-mmadness-main-logo-v23.jpg" width="72" height="72" alt="Fantasy MMAdness" style="width:72px;height:72px;object-fit:contain;vertical-align:middle" />
           <strong style="margin-left:12px;vertical-align:middle">FANTASY MMADNESS · Owner Office</strong>
         </header>
-        ${buttons ? `<div style="padding:18px 0">${buttons}</div>` : ''}
+        ${button ? `<div style="padding:18px 0">${button}</div>` : ''}
         <div style="white-space:pre-wrap;line-height:1.5;padding:18px 0">${linkedMessage}</div>
       </div>`;
       await sendTransactionalMail({ to: email, subject, text: message, html });
