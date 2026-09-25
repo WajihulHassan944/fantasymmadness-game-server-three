@@ -10414,7 +10414,15 @@ app.post('/affiliate/:affiliateId/join', verifyToken, requireScope(TOKEN_SCOPES.
 
     const activity = await getRecentLeaguePromotions([affiliateId]);
     if (!activity.has(String(affiliateId))) {
-      return res.status(409).json({ message: 'This league is resting. New members can join after its promoter publishes or announces a fight.', code: 'LEAGUE_RESTING' });
+      // An owner's active fight shared through a verified affiliate is also
+      // a live invitation, even when the affiliate did not create that fight.
+      const sharedFightId = String(req.body?.fightId || '');
+      const sharedFight = affiliate.verified && mongoose.isValidObjectId(sharedFightId)
+        ? await Match.findById(sharedFightId).lean() || await Shadow.findById(sharedFightId).lean()
+        : null;
+      if (!sharedFight || !isFightOpenForEntry(sharedFight)) {
+        return res.status(409).json({ message: 'This league is resting. New members can join after its promoter publishes or announces a fight.', code: 'LEAGUE_RESTING' });
+      }
     }
 
     // Fetch the user's details from the User collection using userId
@@ -10429,6 +10437,11 @@ app.post('/affiliate/:affiliateId/join', verifyToken, requireScope(TOKEN_SCOPES.
     // blank and made legacy/email-based notification recovery impossible.
     affiliate.usersJoined.push({ userId, email: String(user.email || '').trim().toLowerCase() });
     await affiliate.save();
+    if (!user.referredAffiliateId) {
+      user.referredAffiliateId = affiliate._id;
+      if (mongoose.isValidObjectId(req.body?.fightId)) user.referredFightId = req.body.fightId;
+      await user.save();
+    }
 
     // Send emails to both the user and the affiliate
     await sendUserEmail(user, affiliate);
@@ -21853,7 +21866,7 @@ app.get('/api/affiliates/me/promotions/:fightId/share', verifyToken, requireScop
     const appUrl = String(process.env.PUBLIC_APP_URL || 'https://www.fantasymmadness.com').replace(/\/$/, '');
     // The ref parameter is what ties a signup back to this promoter.
     const joinLink = `${appUrl}/?ref=${encodeURIComponent(affiliateId)}`;
-    const fightLink = fight ? `${appUrl}/fight/${encodeURIComponent(fightId)}?ref=${encodeURIComponent(affiliateId)}` : joinLink;
+    const fightLink = fight ? `${appUrl}/league/${encodeURIComponent(affiliateId)}?fightId=${encodeURIComponent(fightId)}` : joinLink;
     const pair = fight ? [fight.matchFighterA, fight.matchFighterB].filter(Boolean).join(' vs ') : '';
     const fee = fight ? Math.max(0, Math.round(Number(fight.matchTokens) || 0)) : 0;
     const league = [affiliate.leagueName, affiliate.playerName].map((v) => String(v || '').trim()).find(Boolean) || 'my league';
