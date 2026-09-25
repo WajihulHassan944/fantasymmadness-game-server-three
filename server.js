@@ -1,7 +1,6 @@
 const express = require('express');
 const { isFightOpenForEntry } = require('./fight-entry-time');
 const { ownerReferralShare } = require('./owner-referral-share');
-const { affiliateFightEmail } = require('./affiliate-fight-email');
 const { registerAffiliateSocialRoutes } = require('./affiliate-social');
 const mongoose = require('mongoose');
 const bodyParser = require('body-parser');
@@ -10631,19 +10630,8 @@ app.post('/send-email-affiliate', verifyAdminToken, async (req, res) => {
   if (!SMTP_PASS) return res.status(503).json({ message: mailFailureMessage(), code: 'SMTP_NOT_CONFIGURED' });
 
   try {
-      let launchHtml;
-      if (req.body?.launchFightId) {
-          const fightId = String(req.body.launchFightId);
-          if (!mongoose.isValidObjectId(fightId)) return res.status(400).json({ message: 'Choose a valid fight for the affiliate alert.' });
-          const [recipient, fight] = await Promise.all([
-              Affiliate.findOne({ email, verified: true }).select('firstName leagueName playerName').lean(),
-              Match.findById(fightId).select('matchFighterA matchFighterB matchCategory matchCategoryTwo fighterAImage fighterBImage matchTokens pot fightPosterImage promotionBackground').lean()
-                .then((row) => row || Shadow.findById(fightId).select('matchFighterA matchFighterB matchCategory matchCategoryTwo fighterAImage fighterBImage matchTokens pot fightPosterImage promotionBackground').lean()),
-          ]);
-          if (!recipient || !fight) return res.status(400).json({ message: 'Approved affiliate and fight required for this alert.' });
-          launchHtml = affiliateFightEmail({ affiliate: recipient, fight, fightId, appUrl: process.env.PUBLIC_APP_URL, message });
-      }
-      // Send mail with the defined transport object
+      // Restore the original plain-text affiliate delivery path. The owner's
+      // composed message still carries each affiliate's personal kit and links.
       await transporter.sendMail({
           // This operational route must use the authenticated mailbox for both
           // the visible header and SMTP envelope. Some providers reject even a
@@ -10653,7 +10641,6 @@ app.post('/send-email-affiliate', verifyAdminToken, async (req, res) => {
           envelope: { from: SMTP_USER, to: [email] },
           subject: subject, // Subject line
           text: message, // plain text body
-          ...(launchHtml ? { html: launchHtml } : {}),
       });
 
       res.status(200).json({ message: 'Email sent successfully' });
