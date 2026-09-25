@@ -7316,9 +7316,8 @@ app.post('/register', submitLimiter, async (req, res) => {
     await newUser.save();
     console.log(`✅ User created successfully: ${email}`);
 
-    // Notification
-    await new Notification({ title: `New User Signed Up: ${newUser.firstName}` }).save();
-    sendAdminPush({ title: 'New player sign-up', body: `${newUser.firstName} just joined.`, url: '/administration/RegisteredUsers' }).catch(() => null);
+    // The account is pending until the email link is opened. Notify the owner
+    // only after verification so a pending record isn't mistaken for a player.
 
     // Handle referral safely
     if (!affiliateRef && referrerId && referrerId !== newUser._id.toString()) {
@@ -7340,29 +7339,8 @@ app.post('/register', submitLimiter, async (req, res) => {
       }
     }
 
-    // Schedule verification timeout cleanup. Was 120000ms (2 minutes) — far
-    // too aggressive: any real-world email delay (spam filtering, provider
-    // lag) meant the account was deleted before the person could even open
-    // their inbox, so a late-arriving link failed with no clear reason and
-    // there was no way to get a fresh one. 24 hours, plus a real resend route
-    // below.
-    setTimeout(async () => {
-      try {
-        const user = await User.findOne({ email });
-        if (user && !user.verified) {
-          console.log(`Deleting unverified user: ${email}`);
-          await transporter.sendMail({
-            from: FMM_MAIL_FROM,
-            to: email,
-            subject: 'Verification Failed',
-            html: `<p>Dear ${user.firstName}, your registration was removed due to unverified email.</p>`,
-          });
-          await User.deleteOne({ email });
-        }
-      } catch (err) {
-        console.error('Error during verification timeout cleanup:', err);
-      }
-    }, 24 * 60 * 60 * 1000);
+    // Keep pending accounts for resend. Timers are not durable on serverless
+    // functions and deleting an account makes a delayed link unusable.
 
     // Send verification email. A failure here must NOT fail the whole signup —
     // the account is already saved, and the resend-verification endpoint can
@@ -7429,6 +7407,10 @@ app.get('/verify-email', async (req, res) => {
   const { token } = req.query;
   const frontendOrigin = String(process.env.FRONTEND_URL || process.env.APP_URL || 'https://www.fantasymmadness.com').replace(/\/$/, '');
 
+  if (typeof token !== 'string' || !/^[a-f0-9]{40}$/i.test(token)) {
+    return res.redirect(`${frontendOrigin}/auth?mode=login&role=player&verification=invalid`);
+  }
+
   const user = await User.findOne({ verificationToken: token });
 
   if (!user) {
@@ -7438,6 +7420,9 @@ app.get('/verify-email', async (req, res) => {
   user.verified = true;
   user.verificationToken = null; // Clear the token after verification
   await user.save();
+
+  await new Notification({ title: `New User Verified: ${user.firstName}` }).save().catch((error) => console.error('Could not create verification notification:', error));
+  sendAdminPush({ title: 'New verified player', body: `${user.firstName} verified their email.`, url: '/administration/RegisteredUsers' }).catch(() => null);
 
   return res.redirect(`${frontendOrigin}/auth?mode=login&role=player&verified=1`);
 });
