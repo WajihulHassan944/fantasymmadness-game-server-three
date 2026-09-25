@@ -10637,9 +10637,21 @@ app.post('/send-email-affiliate', verifyAdminToken, async (req, res) => {
   if (transactionalMailProvider() === 'smtp' && !SMTP_PASS) return res.status(503).json({ message: mailFailureMessage(), code: 'SMTP_NOT_CONFIGURED' });
 
   try {
-      // Keep the owner's plain-text message and personal affiliate links while
-      // using the configured transactional provider instead of forcing Gmail SMTP.
-      await sendTransactionalMail({ to: email, subject, text: message });
+      // Keep the editable plain-text message intact. The HTML alternative adds
+      // a small, recognizable logo and clickable links for mail clients.
+      const linkedMessage = message.split(/(https?:\/\/[^\s<>"']+)/g).map((part) => (
+        /^https?:\/\//.test(part)
+          ? `<a href="${escapeHtml(part)}" style="color:#d71932;overflow-wrap:anywhere">${escapeHtml(part)}</a>`
+          : escapeHtml(part)
+      )).join('');
+      const html = `<div style="font-family:Arial,sans-serif;color:#171923;max-width:700px;margin:auto">
+        <header style="padding:16px 0;border-bottom:2px solid #d71932">
+          <img src="https://www.fantasymmadness.com/images/brand/fantasy-mmadness-main-logo-v23.jpg" width="72" height="72" alt="Fantasy MMAdness" style="width:72px;height:72px;object-fit:contain;vertical-align:middle" />
+          <strong style="margin-left:12px;vertical-align:middle">FANTASY MMADNESS · Owner Office</strong>
+        </header>
+        <div style="white-space:pre-wrap;line-height:1.5;padding:18px 0">${linkedMessage}</div>
+      </div>`;
+      await sendTransactionalMail({ to: email, subject, text: message, html });
 
       res.status(200).json({ message: 'Email sent successfully' });
   } catch (error) {
