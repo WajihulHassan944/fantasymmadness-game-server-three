@@ -10631,7 +10631,6 @@ app.post('/send-email-affiliate', verifyAdminToken, async (req, res) => {
 
   try {
       let launchHtml;
-      let posterAttachment;
       if (req.body?.launchFightId) {
           const fightId = String(req.body.launchFightId);
           if (!mongoose.isValidObjectId(fightId)) return res.status(400).json({ message: 'Choose a valid fight for the affiliate alert.' });
@@ -10641,24 +10640,7 @@ app.post('/send-email-affiliate', verifyAdminToken, async (req, res) => {
                 .then((row) => row || Shadow.findById(fightId).select('matchFighterA matchFighterB matchCategory matchCategoryTwo fighterAImage fighterBImage matchTokens pot fightPosterImage promotionBackground').lean()),
           ]);
           if (!recipient || !fight) return res.status(400).json({ message: 'Approved affiliate and fight required for this alert.' });
-          const posterUrl = String(fight.fightPosterImage || fight.promotionBackground || '');
-          if (!posterUrl) return res.status(400).json({ message: 'Upload a fight poster before emailing affiliates.' });
-          const posterUri = new URL(posterUrl);
-          if (posterUri.protocol === 'https:' && posterUri.hostname === 'res.cloudinary.com' && posterUri.pathname.includes('/image/upload/')) {
-              try {
-                  // An email-sized copy of the owner's saved artwork keeps the SMTP message small.
-                  const emailPosterUrl = posterUrl.replace('/image/upload/', '/image/upload/w_900,q_auto,f_jpg/');
-                  const imageResponse = await fetch(emailPosterUrl, { signal: AbortSignal.timeout(15000) });
-                  if (!imageResponse.ok || (imageResponse.headers.get('content-type') || '').split(';')[0] !== 'image/jpeg') throw new Error('Poster preview was unavailable.');
-                  const imageBuffer = Buffer.from(await imageResponse.arrayBuffer());
-                  if (!imageBuffer.length || imageBuffer.length > 700 * 1024) throw new Error('Poster preview exceeded the email size limit.');
-                  posterAttachment = { filename: 'fight-poster-preview.jpg', content: imageBuffer, contentType: 'image/jpeg', cid: 'affiliate-fight-poster' };
-              } catch (posterError) {
-                  // Keep the original poster visible through its HTTPS image link if inline fetch fails.
-                  console.warn('Affiliate email poster preview unavailable:', posterError.message);
-              }
-          }
-          launchHtml = affiliateFightEmail({ affiliate: recipient, fight, fightId, appUrl: process.env.PUBLIC_APP_URL, message, posterCid: posterAttachment?.cid });
+          launchHtml = affiliateFightEmail({ affiliate: recipient, fight, fightId, appUrl: process.env.PUBLIC_APP_URL, message });
       }
       // Send mail with the defined transport object
       await transporter.sendMail({
@@ -10671,12 +10653,10 @@ app.post('/send-email-affiliate', verifyAdminToken, async (req, res) => {
           subject: subject, // Subject line
           text: message, // plain text body
           ...(launchHtml ? { html: launchHtml } : {}),
-          ...(posterAttachment ? { attachments: [posterAttachment] } : {}),
       });
 
       res.status(200).json({ message: 'Email sent successfully' });
   } catch (error) {
-      if (/fight poster/i.test(String(error?.message || ''))) return res.status(502).json({ message: error.message });
       const diagnostics = {
         code: String(error?.code || 'SMTP_DELIVERY_FAILED'),
         command: String(error?.command || ''),
