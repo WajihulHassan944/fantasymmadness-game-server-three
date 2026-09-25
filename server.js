@@ -10587,6 +10587,34 @@ app.get('/affiliates', verifyAdminToken, async (req, res) => {
   }
 });
 
+// Promote a verified player without changing their player account or wallet.
+// The affiliate is a separate account scope, so preserve the player's existing
+// password hash for affiliate login; Google-only players use affiliate Google login.
+app.post('/api/admin/users/:userId/make-affiliate', verifyAdminToken, async (req, res) => {
+  try {
+    if (!mongoose.isValidObjectId(req.params.userId)) return res.status(400).json({ message: 'Invalid player ID.' });
+    const player = await User.findById(req.params.userId).select('+password').lean();
+    if (!player) return res.status(404).json({ message: 'Player not found.' });
+    if (!player.verified) return res.status(409).json({ message: 'Verify the player email before enabling affiliate access.' });
+    const existing = await Affiliate.findOne({ email: player.email }).lean();
+    if (existing) return res.json({ ok: true, alreadyAffiliate: true, affiliateId: existing._id, verified: Boolean(existing.verified), message: 'An affiliate account already exists for this email.' });
+    const affiliate = await Affiliate.create({
+      firstName: player.firstName, lastName: player.lastName, playerName: player.playerName,
+      email: player.email, phone: player.phone, zipCode: player.zipCode,
+      profileUrl: player.profileUrl, ...(player.password ? { password: player.password } : {}),
+      verified: true, isAgreed: Boolean(player.isAgreed),
+      isNotificationsEnabled: Boolean(player.isNotificationsEnabled), isSubscribed: Boolean(player.isSubscribed),
+    });
+    return res.status(201).json({ ok: true, affiliateId: affiliate._id, verified: true,
+      loginMethod: player.password ? 'password-or-google' : 'google',
+      message: 'Affiliate access is active. The player can choose Affiliate at login using the same credentials.' });
+  } catch (error) {
+    if (error?.code === 11000) return res.status(409).json({ message: 'An affiliate account already exists for this email.' });
+    console.error('Could not promote player to affiliate:', error);
+    return res.status(500).json({ message: 'Could not enable affiliate access.' });
+  }
+});
+
 app.get('/api/public/leagues', async (req, res) => {
   try {
     const limit = parsePositiveInteger(req.query.limit, 12, 100);
