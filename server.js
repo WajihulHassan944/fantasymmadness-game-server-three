@@ -7386,16 +7386,28 @@ app.post('/resend-verification', submitLimiter, async (req, res) => {
     if (!user || user.verified) {
       return res.status(200).json({ message: 'If that account needs verification, a new email is on its way.' });
     }
+    if (!SMTP_PASS) {
+      return res.status(503).json({ message: mailFailureMessage(), code: 'SMTP_NOT_CONFIGURED' });
+    }
+    const previousToken = user.verificationToken;
     const verificationToken = crypto.randomBytes(20).toString('hex');
     user.verificationToken = verificationToken;
     await user.save();
     const verificationLink = `https://fantasymmadness-game-server-three.vercel.app/verify-email?token=${verificationToken}`;
-    await transporter.sendMail({
-      from: FMM_MAIL_FROM,
-      to: email,
-      subject: 'Email Verification',
-      html: `<p>Click below to verify your email:</p><a href="${verificationLink}">Verify Email</a>`,
-    });
+    try {
+      await transporter.sendMail({
+        from: FMM_MAIL_FROM,
+        envelope: { from: SMTP_USER, to: [email] },
+        to: email,
+        subject: 'Verify your FANTASY MMADNESS account',
+        html: `<p>Click below to verify your FANTASY MMADNESS account:</p><a href="${verificationLink}">Verify Email</a>`,
+      });
+    } catch (mailError) {
+      await User.updateOne({ _id: user._id, verificationToken }, { $set: { verificationToken: previousToken } }).catch((restoreError) => {
+        console.error('Could not restore previous verification link:', restoreError);
+      });
+      throw mailError;
+    }
     res.status(200).json({ message: 'Verification email resent.' });
   } catch (error) {
     console.error('Error resending verification email:', error);
