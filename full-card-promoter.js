@@ -273,7 +273,10 @@ module.exports = function registerFullCardPromoter({
   });
 
   // Public event, progress and aggregate leaderboard.
-  app.get('/api/full-cards/:slug/:promoterCode', async (req, res) => {
+  app.get('/api/full-cards/:slug/:promoterCode', async (req, res, next) => {
+    // This route precedes /:cardId/leaderboard and /:cardId/progress.
+    // Those paths have the same shape, so let them reach their own handlers.
+    if (!/^[a-f0-9]{10}$/i.test(req.params.promoterCode)) return next();
     const card = await FullCard.findOne({ slug: req.params.slug, promoterCode: req.params.promoterCode, status: { $in: ['UPCOMING', 'LIVE', 'COMPLETED'] } });
     if (!card) return res.status(404).json({ ok: false, message: 'Full Card not found.' });
     const promoter = await Affiliate.findById(card.affiliateId).select('_id firstName lastName playerName').lean();
