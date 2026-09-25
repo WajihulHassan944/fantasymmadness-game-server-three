@@ -7291,6 +7291,14 @@ app.post('/register', submitLimiter, async (req, res) => {
     const verificationToken = crypto.randomBytes(20).toString('hex');
 
     const hashedPassword = await bcrypt.hash(password, 10);
+    const signupState = String(req.body?.residenceState || '').trim().toUpperCase();
+    const signupDob = req.body?.dateOfBirth ? new Date(req.body.dateOfBirth) : null;
+    if (signupState && !/^[A-Z]{2}$/.test(signupState)) {
+      return res.status(400).json({ message: 'Use a two-letter state code.', code: 'INVALID_STATE' });
+    }
+    if (req.body?.dateOfBirth && (!signupDob || Number.isNaN(signupDob.getTime()) || signupDob > new Date())) {
+      return res.status(400).json({ message: 'Enter a valid date of birth.', code: 'INVALID_DOB' });
+    }
     const affiliateRef = mongoose.isValidObjectId(referrerId)
       ? await Affiliate.findById(referrerId).select('_id verified').lean() : null;
     const newUser = new User({
@@ -7300,6 +7308,8 @@ app.post('/register', submitLimiter, async (req, res) => {
       email,
       phone,
       zipCode,
+      ...(signupState ? { residenceState: signupState } : {}),
+      ...(signupDob ? { dateOfBirth: signupDob } : {}),
       isNotificationsEnabled,
       isSubscribed,
       isUSCitizen,
