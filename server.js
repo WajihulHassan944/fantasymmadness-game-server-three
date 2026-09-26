@@ -7359,12 +7359,14 @@ app.post('/register', submitLimiter, async (req, res) => {
     // the user stuck with no account confirmation and no email, ever.
     const verificationLink = `https://fantasymmadness-game-server-three.vercel.app/verify-email?token=${verificationToken}`;
     try {
-      await transporter.sendMail({
-        from: FMM_MAIL_FROM,
+      await sendTransactionalMail({
         to: email,
-        subject: 'Email Verification',
-        html: `<p>Click below to verify your email:</p>
-               <a href="${verificationLink}">Verify Email</a>`,
+        subject: 'Verify your FANTASY MMADNESS account',
+        text: `Verify your FANTASY MMADNESS account: ${verificationLink}`,
+        html: `<p>Click below to verify your FANTASY MMADNESS account:</p><a href="${verificationLink}">Verify Email</a>`,
+        ...(transactionalMailProvider() === 'resend'
+          ? { fromOverride: 'FANTASY MMADNESS <updates@fantasymmadness.com>' }
+          : {}),
       });
       console.log(`Verification email sent to: ${email}`);
       return res.status(200).json({
@@ -7395,7 +7397,7 @@ app.post('/resend-verification', submitLimiter, async (req, res) => {
     if (!user || user.verified) {
       return res.status(200).json({ message: 'If that account needs verification, a new email is on its way.' });
     }
-    if (!SMTP_PASS) {
+    if (transactionalMailProvider() === 'smtp' && !SMTP_PASS) {
       return res.status(503).json({ message: mailFailureMessage(), code: 'SMTP_NOT_CONFIGURED' });
     }
     const previousToken = user.verificationToken;
@@ -7404,12 +7406,14 @@ app.post('/resend-verification', submitLimiter, async (req, res) => {
     await user.save();
     const verificationLink = `https://fantasymmadness-game-server-three.vercel.app/verify-email?token=${verificationToken}`;
     try {
-      await transporter.sendMail({
-        from: FMM_MAIL_FROM,
-        envelope: { from: SMTP_USER, to: [email] },
+      await sendTransactionalMail({
         to: email,
         subject: 'Verify your FANTASY MMADNESS account',
+        text: `Verify your FANTASY MMADNESS account: ${verificationLink}`,
         html: `<p>Click below to verify your FANTASY MMADNESS account:</p><a href="${verificationLink}">Verify Email</a>`,
+        ...(transactionalMailProvider() === 'resend'
+          ? { fromOverride: 'FANTASY MMADNESS <updates@fantasymmadness.com>' }
+          : {}),
       });
     } catch (mailError) {
       await User.updateOne({ _id: user._id, verificationToken }, { $set: { verificationToken: previousToken } }).catch((restoreError) => {
@@ -7420,7 +7424,7 @@ app.post('/resend-verification', submitLimiter, async (req, res) => {
     res.status(200).json({ message: 'Verification email resent.' });
   } catch (error) {
     console.error('Error resending verification email:', error);
-    res.status(500).json({ message: 'Could not resend the verification email.' });
+    res.status(502).json({ message: mailFailureMessage(error), code: String(error?.code || 'MAIL_DELIVERY_FAILED') });
   }
 });
 
