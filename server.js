@@ -10580,6 +10580,20 @@ app.get('/api/public/affiliates', async (req, res) => {
   }
 });
 
+app.get('/api/public/affiliates/:affiliateId', async (req, res) => {
+  try {
+    if (!mongoose.isValidObjectId(req.params.affiliateId)) return res.status(404).json({ message: 'Affiliate not found.' });
+    const affiliate = await Affiliate.findOne({ _id: req.params.affiliateId, verified: true })
+      .select(AFFILIATE_SAFE_SELECT).lean();
+    if (!affiliate) return res.status(404).json({ message: 'Affiliate not found.' });
+    const safe = sanitizeAccountList([affiliate])[0];
+    return res.json(toPublicAffiliate(safe));
+  } catch (error) {
+    console.error('Error fetching public affiliate:', error);
+    return res.status(500).json({ message: 'Could not load affiliate.' });
+  }
+});
+
 app.get('/affiliates', verifyAdminToken, async (req, res) => {
   try {
     const affiliates = await Affiliate.find().select(AFFILIATE_SAFE_SELECT).sort({ createdAt: -1 }).lean();
