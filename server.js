@@ -6205,10 +6205,11 @@ const transactionalMailProvider = () => {
   return 'smtp';
 };
 
-const sendTransactionalMail = async ({ to, subject, html, text }) => {
+const sendTransactionalMail = async ({ to, subject, html, text, fromOverride }) => {
   const recipient = String(to || '').trim().toLowerCase();
   const from = String(
-    process.env.TRANSACTIONAL_MAIL_FROM
+    fromOverride
+    || process.env.TRANSACTIONAL_MAIL_FROM
     || process.env.RESEND_FROM
     || process.env.SENDGRID_FROM
     || process.env.BREVO_FROM
@@ -10579,6 +10580,20 @@ app.get('/api/public/affiliates', async (req, res) => {
   }
 });
 
+app.get('/api/public/affiliates/:affiliateId', async (req, res) => {
+  try {
+    if (!mongoose.isValidObjectId(req.params.affiliateId)) return res.status(404).json({ message: 'Affiliate not found.' });
+    const affiliate = await Affiliate.findOne({ _id: req.params.affiliateId, verified: true })
+      .select(AFFILIATE_SAFE_SELECT).lean();
+    if (!affiliate) return res.status(404).json({ message: 'Affiliate not found.' });
+    const safe = sanitizeAccountList([affiliate])[0];
+    return res.json(toPublicAffiliate(safe));
+  } catch (error) {
+    console.error('Error fetching public affiliate:', error);
+    return res.status(500).json({ message: 'Could not load affiliate.' });
+  }
+});
+
 app.get('/affiliates', verifyAdminToken, async (req, res) => {
   try {
     const affiliates = await Affiliate.find().select(AFFILIATE_SAFE_SELECT).sort({ createdAt: -1 }).lean();
@@ -10669,7 +10684,15 @@ app.post('/send-email-affiliate', verifyAdminToken, async (req, res) => {
         ${button ? `<div style="padding:18px 0">${button}</div>` : ''}
         <div style="white-space:pre-wrap;line-height:1.5;padding:18px 0">${linkedMessage}</div>
       </div>`;
-      await sendTransactionalMail({ to: email, subject, text: message, html });
+      // Affiliate campaign mail uses the verified FANTASY MMADNESS domain.
+      // The Resend DKIM signature and send subdomain can then align with the
+      // visible From address instead of falling back to a personal Gmail box.
+      await sendTransactionalMail({
+        to: email, subject, text: message, html,
+        ...(transactionalMailProvider() === 'resend'
+          ? { fromOverride: 'FANTASY MMADNESS <updates@fantasymmadness.com>' }
+          : {}),
+      });
 
       res.status(200).json({ message: 'Email sent successfully' });
   } catch (error) {
