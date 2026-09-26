@@ -5449,6 +5449,7 @@ app.post('/resetPassword-user/:token', submitLimiter, async (req, res) => {
     user.resetPasswordExpires = undefined;
 
     await user.save();
+    await Affiliate.updateOne({ linkedPlayerId: user._id }, { $set: { password: user.password } });
 
     res.status(200).send('Password has been reset');
   } catch (error) {
@@ -6135,8 +6136,15 @@ app.get('/api/public/user-directory', async (req, res) => {
 
 app.get('/users', verifyAdminToken, async (req, res) => {
   try {
-    const users = await User.find().select(USER_SAFE_SELECT).sort({ createdAt: -1 }).lean();
-    res.send(sanitizeAccountList(users));
+    const [users, affiliates] = await Promise.all([
+      User.find().select(USER_SAFE_SELECT).sort({ createdAt: -1 }).lean(),
+      Affiliate.find().select('email verified').lean(),
+    ]);
+    const affiliateEmails = new Set(affiliates.filter((row) => row.verified).map((row) => String(row.email || '').trim().toLowerCase()));
+    res.send(sanitizeAccountList(users).map((user) => ({
+      ...user,
+      isAffiliate: affiliateEmails.has(String(user.email || '').trim().toLowerCase()),
+    })));
   } catch (error) {
     console.error('Error fetching users:', error);
     res.status(500).json({ message: 'Error fetching users' });
@@ -9306,7 +9314,10 @@ verified: { type: Boolean, default: false },
   resetPasswordExpires: { type: Date, select: false },
   rewardTitle: String,
 rewardImageUrl: String,
-rewardImageDeleteUrl: { type: String, select: false },
+  rewardImageDeleteUrl: { type: String, select: false },
+  // An admin-promoted player keeps their player account and can also sign in
+  // as an affiliate with the same credentials.
+  linkedPlayerId: { type: mongoose.Schema.Types.ObjectId, ref: 'User', select: false },
 
   usersJoined: [{
     userId: { type: mongoose.Schema.Types.ObjectId, ref: 'User' }, // User who joined
@@ -9549,6 +9560,41 @@ app.post('/admin/add-affiliate', verifyAdminToken, async (req, res) => {
   } catch (error) {
     console.error(error);
     res.status(500).json({ message: 'An error occurred while adding the affiliate.' });
+  }
+});
+
+// Grant an existing verified player affiliate access without a second signup
+// or a plaintext password email. The player account, entries, and wallet stay
+// intact; the affiliate profile has its own earnings and promoter controls.
+app.post('/api/admin/users/:userId/promote-affiliate', verifyAdminToken, async (req, res) => {
+  try {
+    if (!mongoose.isValidObjectId(req.params.userId)) return res.status(400).json({ message: 'Invalid player ID.' });
+    const player = await User.findById(req.params.userId)
+      .select('_id firstName lastName playerName email phone zipCode profileUrl verified isNotificationsEnabled isSubscribed isUSCitizen isAgreed +password').lean();
+    if (!player) return res.status(404).json({ message: 'Player not found.' });
+    if (!player.verified) return res.status(409).json({ message: 'The player must verify their email before affiliate access is enabled.' });
+    const email = String(player.email || '').trim();
+    if (!email) return res.status(400).json({ message: 'The player needs an email address.' });
+    const escapedEmail = email.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const existing = await Affiliate.findOne({ email: { $regex: `^${escapedEmail}$`, $options: 'i' } });
+    if (existing) {
+      if (!existing.verified) {
+        existing.verified = true;
+        await existing.save();
+      }
+      return res.json({ message: 'Affiliate access is active. Use the existing affiliate sign-in.', alreadyAffiliate: true, affiliateId: existing._id });
+    }
+    const affiliate = await Affiliate.create({
+      firstName: player.firstName, lastName: player.lastName, playerName: player.playerName,
+      email, phone: player.phone, zipCode: player.zipCode, profileUrl: player.profileUrl,
+      password: player.password, linkedPlayerId: player._id, verified: true,
+      isNotificationsEnabled: player.isNotificationsEnabled !== false,
+      isSubscribed: player.isSubscribed, isUSCitizen: player.isUSCitizen, isAgreed: player.isAgreed,
+    });
+    return res.status(201).json({ message: 'Affiliate access is active. Sign in as an affiliate with your existing player credentials.', affiliateId: affiliate._id });
+  } catch (error) {
+    console.error('Could not promote player to affiliate:', error);
+    return res.status(500).json({ message: 'Could not enable affiliate access.' });
   }
 });
 
@@ -9823,7 +9869,7 @@ app.post('/resetPassword/:token', submitLimiter, async (req, res) => {
     const affiliate = await Affiliate.findOne({
       resetPasswordToken: resetTokenHash,
       resetPasswordExpires: { $gt: Date.now() }, // Ensure token is not expired
-    });
+    }).select('+linkedPlayerId');
 
     if (!affiliate) {
       return res.status(400).send('Invalid or expired token');
@@ -9835,6 +9881,9 @@ app.post('/resetPassword/:token', submitLimiter, async (req, res) => {
     affiliate.resetPasswordExpires = undefined;
 
     await affiliate.save();
+    if (affiliate.linkedPlayerId) {
+      await User.updateOne({ _id: affiliate.linkedPlayerId }, { $set: { password: affiliate.password } });
+    }
 
     res.status(200).send('Password has been reset');
   } catch (error) {
