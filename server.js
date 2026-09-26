@@ -6205,10 +6205,11 @@ const transactionalMailProvider = () => {
   return 'smtp';
 };
 
-const sendTransactionalMail = async ({ to, subject, html, text }) => {
+const sendTransactionalMail = async ({ to, subject, html, text, fromOverride }) => {
   const recipient = String(to || '').trim().toLowerCase();
   const from = String(
-    process.env.TRANSACTIONAL_MAIL_FROM
+    fromOverride
+    || process.env.TRANSACTIONAL_MAIL_FROM
     || process.env.RESEND_FROM
     || process.env.SENDGRID_FROM
     || process.env.BREVO_FROM
@@ -10669,7 +10670,15 @@ app.post('/send-email-affiliate', verifyAdminToken, async (req, res) => {
         ${button ? `<div style="padding:18px 0">${button}</div>` : ''}
         <div style="white-space:pre-wrap;line-height:1.5;padding:18px 0">${linkedMessage}</div>
       </div>`;
-      await sendTransactionalMail({ to: email, subject, text: message, html });
+      // Affiliate campaign mail uses the verified FANTASY MMADNESS domain.
+      // The Resend DKIM signature and send subdomain can then align with the
+      // visible From address instead of falling back to a personal Gmail box.
+      await sendTransactionalMail({
+        to: email, subject, text: message, html,
+        ...(transactionalMailProvider() === 'resend'
+          ? { fromOverride: 'FANTASY MMADNESS <updates@fantasymmadness.com>' }
+          : {}),
+      });
 
       res.status(200).json({ message: 'Email sent successfully' });
   } catch (error) {
