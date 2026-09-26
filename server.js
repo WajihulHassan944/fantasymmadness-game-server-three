@@ -1658,6 +1658,7 @@ function pickPublicFightFields(fight = {}, sourceType = 'match') {
     shadowExpiresAt: item.shadowExpiresAt || null,
     shadowLastUsedAt: item.shadowLastUsedAt || null,
     homepagePromoted: Boolean(item.homepagePromoted),
+    homepageSlot: Math.max(0, Math.min(5, Number(item.homepageSlot) || 0)),
     featuredThisWeek: Boolean(item.featuredThisWeek),
     featuredFight: Boolean(item.featuredFight),
     featuredThisWeekImage: identityHidden ? '' : (item.featuredThisWeekImage || ''),
@@ -17706,16 +17707,19 @@ app.get('/api/public/homepage/promoted-fights', async (req, res) => {
       $or: [{ homepagePromoted: true }, { featuredThisWeek: true }, { featuredFight: true }],
     }, { playable: 'true' });
     const queryLimit = Math.min(Math.max(limit * 4, limit), 120);
-    const [matches, shadows] = await Promise.all([
+    const pinnedFilter = { ...visiblePromotedFilter, homepageSlot: { $gte: 1, $lte: 5 } };
+    const [matches, shadows, pinnedMatches, pinnedShadows] = await Promise.all([
       applyFightFreshSortLean(Match.find(visiblePromotedFilter).populate('fighterAId fighterBId')).limit(queryLimit),
       applyFightFreshSortLean(Shadow.find(visiblePromotedFilter).populate('fighterAId fighterBId')).limit(queryLimit).catch(() => []),
+      Match.find(pinnedFilter).populate('fighterAId fighterBId').limit(50).lean(),
+      Shadow.find(pinnedFilter).populate('fighterAId fighterBId').limit(50).lean().catch(() => []),
     ]);
-    const items = [
-      ...matches.map((fight) => pickPublicFightFields(fight, 'match')),
-      ...shadows.map((fight) => pickPublicFightFields(fight, 'shadow')),
-    ]
+    const byFight = new Map();
+    [...matches, ...pinnedMatches].forEach((fight) => byFight.set(`match:${fight._id}`, pickPublicFightFields(fight, 'match')));
+    [...shadows, ...pinnedShadows].forEach((fight) => byFight.set(`shadow:${fight._id}`, pickPublicFightFields(fight, 'shadow')));
+    const items = [...byFight.values()]
       .filter((fight) => isHomepagePromotionVisible(fight, now) && isPublicHomeActiveFightRecord(fight, now))
-      .sort(compareHomepagePromotedFights)
+      .sort((a, b) => Number(Boolean(b.homepageSlot)) - Number(Boolean(a.homepageSlot)) || compareHomepagePromotedFights(a, b))
       .slice(0, limit);
 
     res.setHeader('Cache-Control', 'private, no-store, no-cache, max-age=0, must-revalidate');
