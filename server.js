@@ -3550,20 +3550,23 @@ app.post(
       let fighterBImageDeleteUrl = fighterBImageDeleteUrlFromReq || null;
       let promotionBackgroundDeleteUrl = promotionBackgroundDeleteUrlFromReq || null;
 
-      if (req.files?.fighterAImage) {
-        const resultA = await uploadToCloudinary(req.files.fighterAImage[0].buffer, 'fighter_images');
+      // Send independent images concurrently. Sequential Cloudinary uploads
+      // previously held the publish request open long enough for the browser
+      // to lose its connection before the fight and library records were saved.
+      const [resultA, resultB, resultBackground] = await Promise.all([
+        req.files?.fighterAImage ? uploadToCloudinary(req.files.fighterAImage[0].buffer, 'fighter_images') : null,
+        req.files?.fighterBImage ? uploadToCloudinary(req.files.fighterBImage[0].buffer, 'fighter_images') : null,
+        req.files?.promotionBackground ? uploadToCloudinary(req.files.promotionBackground[0].buffer, 'promotion_backgrounds') : null,
+      ]);
+      if (resultA) {
         fighterAImage = resultA.secure_url;
         fighterAImageDeleteUrl = resultA.public_id;
       }
-
-      if (req.files?.fighterBImage) {
-        const resultB = await uploadToCloudinary(req.files.fighterBImage[0].buffer, 'fighter_images');
+      if (resultB) {
         fighterBImage = resultB.secure_url;
         fighterBImageDeleteUrl = resultB.public_id;
       }
-
-      if (req.files?.promotionBackground) {
-        const resultBackground = await uploadToCloudinary(req.files.promotionBackground[0].buffer, 'promotion_backgrounds');
+      if (resultBackground) {
         promotionBackground = resultBackground.secure_url;
         promotionBackgroundDeleteUrl = resultBackground.public_id;
       }
