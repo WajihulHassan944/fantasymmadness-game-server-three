@@ -10721,8 +10721,13 @@ app.post('/send-email-affiliate', verifyAdminToken, async (req, res) => {
   try {
       // Keep the editable plain-text message intact. The HTML alternative adds
       // a small, recognizable logo and clickable links for mail clients.
-      const kitLine = /(?:OPEN YOUR (?:PERSONAL FIGHT POSTER|FIGHT SHARE KIT)):\s*(https:\/\/[^\s]+)/i;
-      const kitUrl = message.match(kitLine)?.[1];
+      const kitLine = /(?:OPEN YOUR (?:PERSONAL FIGHT POSTER|FIGHT SHARE KIT|SHARE KIT)):\s*(https:\/\/[^\s]+)/i;
+      const launchFightId = String(req.body?.launchFightId || '').trim();
+      // The action comes from the fight selected in the back office, not from
+      // editable email copy. A wording change must not remove the kit button.
+      const kitUrl = mongoose.isValidObjectId(launchFightId)
+        ? `https://www.fantasymmadness.com/affiliate/fight-launch?fightId=${encodeURIComponent(launchFightId)}`
+        : message.match(kitLine)?.[1];
       // The HTML email has one clear action. The full URL remains in the
       // plain-text alternative for mail clients that do not render HTML.
       const displayMessage = kitUrl ? message.replace(kitLine, '').replace(/\n{3,}/g, '\n\n') : message;
