@@ -10774,8 +10774,12 @@ app.post('/send-email-affiliate', verifyAdminToken, async (req, res) => {
         if (!kitLink || !message.includes(kitLink)) return res.status(400).json({ message: 'The fight share-kit link is missing or does not match the selected fight. No email was sent.', code: 'INVALID_SHARE_KIT_LINK' });
         const [affiliate, fight] = await Promise.all([
           Affiliate.findOne({ email, verified: true }).select('_id').lean(),
-          Match.findOne(applyFightPublicVisibilityFilter({ _id: launchFightId }, {}))
-            .select('matchFighterA matchFighterB fighterAImage fighterBImage fighterAId fighterBId fightPosterImage promotionBackground matchStatus').lean(),
+          (async () => {
+            const visible = applyFightPublicVisibilityFilter({ _id: launchFightId }, {});
+            const fields = 'matchFighterA matchFighterB fighterAImage fighterBImage fighterAId fighterBId fightPosterImage promotionBackground matchStatus';
+            return await Match.findOne(visible).select(fields).lean()
+              || await Shadow.findOne(visible).select(fields).lean();
+          })(),
         ]);
         if (!affiliate) return res.status(400).json({ message: 'This recipient is not an approved affiliate. No email was sent.', code: 'AFFILIATE_NOT_APPROVED' });
         if (!fight || isDraftFightRecord(fight)) return res.status(400).json({ message: 'The selected fight is not available to affiliates. No email was sent.', code: 'FIGHT_NOT_AVAILABLE' });
@@ -26994,7 +26998,3 @@ const runShortfallSweep = async (req, res) => {
   const provided = String(req.headers['x-cron-secret'] || req.query.secret || '');
   const isAdmin = Boolean(req.admin);
   if (secret && provided !== secret && !isAdmin) {
-    return res.status(403).json({ message: 'Not authorised.', code: 'BAD_CRON_SECRET' });
-  }
-  try {
-    const summary = await sweepShortFights();
