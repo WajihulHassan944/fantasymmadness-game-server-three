@@ -1,6 +1,7 @@
 const express = require('express');
 const { isFightOpenForEntry } = require('./fight-entry-time');
 const { ownerReferralShare } = require('./owner-referral-share');
+const { assessPublishedFight, affiliateKitUrl } = require('./publish-integrity');
 const { registerAffiliateSocialRoutes } = require('./affiliate-social');
 const mongoose = require('mongoose');
 const bodyParser = require('body-parser');
@@ -3453,6 +3454,21 @@ app.delete('/api/matches/:id', verifyAdminOrAffiliateToken, requireAdminOrFightO
 });
 
 
+// An exact idempotency-key lookup tells the browser what happened after a
+// dropped response. Names and dates are not unique enough to prevent repeats.
+app.get('/api/admin/fights/publish-status/:requestId', verifyAdminToken, async (req, res) => {
+  try {
+    const requestId = String(req.params.requestId || '').trim().slice(0, 160);
+    const match = requestId ? await Match.findOne({ publishRequestId: requestId })
+      .select('_id matchFighterA matchFighterB fighterAImage fighterBImage fighterAId fighterBId').lean() : null;
+    if (!match) return res.json({ found: false, ready: false });
+    return res.json({ found: true, matchId: match._id, ...assessPublishedFight(match) });
+  } catch (error) {
+    console.error('Fight publish status lookup failed:', error);
+    return res.status(500).json({ message: 'Could not check fight publication status.' });
+  }
+});
+
 app.post(
   '/addMatch',
   verifyAdminOrAffiliateToken,
@@ -3502,11 +3518,14 @@ app.post(
 
       publishRequestId = String(req.body.publishRequestId || req.get('Idempotency-Key') || '').trim().slice(0, 160);
       if (publishRequestId) {
-        const existingPublish = await Match.findOne({ publishRequestId }).select('_id').lean();
+        const existingPublish = await Match.findOne({ publishRequestId }).select('_id matchFighterA matchFighterB fighterAImage fighterBImage fighterAId fighterBId').lean();
         if (existingPublish) {
+          const integrity = assessPublishedFight(existingPublish);
           return res.status(200).json({
             message: 'This fight was already published. Returning the original registry record.',
             matchId: existingPublish._id,
+            publishVerified: integrity.ready,
+            problems: integrity.problems,
             duplicatePrevented: true,
             emailDelivery: { queued: 0, duplicatePrevented: true },
             automation: { queued: false, duplicatePrevented: true },
@@ -3575,6 +3594,14 @@ app.post(
         fighterAId, fighterBId, matchFighterA, matchFighterB, fighterAImage, fighterBImage,
         fighterAImagePublicId: fighterAImageDeleteUrl, fighterBImagePublicId: fighterBImageDeleteUrl, matchCategory: matchCategoryTwo || matchCategory,
       });
+      for (const [side, id, name, image, selected] of [
+        ['A', fighterAId, matchFighterA, fighterAImage, fighterSelection.fighterA],
+        ['B', fighterBId, matchFighterB, fighterBImage, fighterSelection.fighterB],
+      ]) {
+        if (!selected && !id && name && image) {
+          return res.status(503).json({ message: `Fighter ${side} picture uploaded, but the fighter library did not save them. The fight was not published. Please try again.`, code: 'FIGHTER_LIBRARY_SAVE_FAILED' });
+        }
+      }
       const requestedMatchDate = matchDate || req.body?.fightDate || req.body?.scheduledDate;
       const requestedMatchTime = matchTime || req.body?.fightTime || req.body?.scheduledTime;
       const normalizedRequestedDate = normalizeCalendarDateInput(requestedMatchDate);
@@ -3666,6 +3693,14 @@ app.post(
       const newMatch = new Match(matchData);
       const savedMatch = await newMatch.save();
       clearPublicResponseCache();
+      const confirmedMatch = await Match.findById(savedMatch._id).select('matchFighterA matchFighterB fighterAImage fighterBImage fighterAId fighterBId').lean();
+      const publishIntegrity = assessPublishedFight(confirmedMatch);
+      if (!publishIntegrity.ready) {
+        console.error('Fight saved without complete fighter registry data:', { matchId: String(savedMatch._id), problems: publishIntegrity.problems });
+        return res.status(200).json({ matchId: savedMatch._id, publishVerified: false,
+          message: 'Fight saved, but its fighter library or pictures need attention. No player alerts were sent.',
+          problems: publishIntegrity.problems });
+      }
 
   // Roster upkeep: make sure both fighters exist as profiles and their
   // appearance counts are current. Wrapped so a roster problem can never stop a
@@ -3919,18 +3954,32 @@ const nonRegisteredUserMailPromises = nonRegisteredUsers.map(user => {
   return res.status(200).json({
     message: 'Fight published. Player notifications are being delivered in the background.',
     matchId: savedMatch._id,
+    publishVerified: true,
     emailDelivery: { queued: registeredUserMailOptions.length },
     automation: { queued: true },
   });
 }
 } catch (error) {
   console.error('Error adding match:', error);
+  // Side effects after save (admin notification, shadow linkage, recipient
+  // lookup) can fail. Never report a saved fight as an unpublished 500.
+  if (publishRequestId) {
+    const saved = await Match.findOne({ publishRequestId }).select('_id matchFighterA matchFighterB fighterAImage fighterBImage fighterAId fighterBId').lean().catch(() => null);
+    if (saved) {
+      const integrity = assessPublishedFight(saved);
+      return res.status(200).json({ matchId: saved._id, publishVerified: integrity.ready,
+        problems: integrity.problems, publishWarning: 'Fight saved, but a follow-up task failed. Check notifications before sending a campaign.' });
+    }
+  }
   if (error?.code === 11000 && publishRequestId) {
-    const existingPublish = await Match.findOne({ publishRequestId }).select('_id').lean().catch(() => null);
+    const existingPublish = await Match.findOne({ publishRequestId }).select('_id matchFighterA matchFighterB fighterAImage fighterBImage fighterAId fighterBId').lean().catch(() => null);
     if (existingPublish) {
+      const integrity = assessPublishedFight(existingPublish);
       return res.status(200).json({
         message: 'This fight was already published. Returning the original registry record.',
         matchId: existingPublish._id,
+        publishVerified: integrity.ready,
+        problems: integrity.problems,
         duplicatePrevented: true,
       });
     }
@@ -10719,14 +10768,32 @@ app.post('/send-email-affiliate', verifyAdminToken, async (req, res) => {
   if (transactionalMailProvider() === 'smtp' && !SMTP_PASS) return res.status(503).json({ message: mailFailureMessage(), code: 'SMTP_NOT_CONFIGURED' });
 
   try {
+      const launchFightId = String(req.body?.launchFightId || '').trim();
+      if (launchFightId) {
+        const kitLink = affiliateKitUrl(launchFightId);
+        if (!kitLink || !message.includes(kitLink)) return res.status(400).json({ message: 'The fight share-kit link is missing or does not match the selected fight. No email was sent.', code: 'INVALID_SHARE_KIT_LINK' });
+        const [affiliate, fight] = await Promise.all([
+          Affiliate.findOne({ email, verified: true }).select('_id').lean(),
+          (async () => {
+            const visible = applyFightPublicVisibilityFilter({ _id: launchFightId }, {});
+            const fields = 'matchFighterA matchFighterB fighterAImage fighterBImage fighterAId fighterBId fightPosterImage promotionBackground matchStatus';
+            return await Match.findOne(visible).select(fields).lean()
+              || await Shadow.findOne(visible).select(fields).lean();
+          })(),
+        ]);
+        if (!affiliate) return res.status(400).json({ message: 'This recipient is not an approved affiliate. No email was sent.', code: 'AFFILIATE_NOT_APPROVED' });
+        if (!fight || isDraftFightRecord(fight)) return res.status(400).json({ message: 'The selected fight is not available to affiliates. No email was sent.', code: 'FIGHT_NOT_AVAILABLE' });
+        if (!fight.matchFighterA || !fight.matchFighterB || !(fight.fightPosterImage || fight.promotionBackground || (fight.fighterAImage && fight.fighterBImage))) {
+          return res.status(400).json({ message: 'The fight is missing its names or poster pictures. Fix the fight before sending affiliates a link.', code: 'FIGHT_CREATIVE_INCOMPLETE' });
+        }
+      }
       // Keep the editable plain-text message intact. The HTML alternative adds
       // a small, recognizable logo and clickable links for mail clients.
       const kitLine = /(?:OPEN YOUR (?:PERSONAL FIGHT POSTER|FIGHT SHARE KIT|SHARE KIT)):\s*(https:\/\/[^\s]+)/i;
-      const launchFightId = String(req.body?.launchFightId || '').trim();
       // The action comes from the fight selected in the back office, not from
       // editable email copy. A wording change must not remove the kit button.
-      const kitUrl = mongoose.isValidObjectId(launchFightId)
-        ? `https://www.fantasymmadness.com/affiliate/fight-launch?fightId=${encodeURIComponent(launchFightId)}`
+      const kitUrl = affiliateKitUrl(launchFightId)
+        ? affiliateKitUrl(launchFightId)
         : message.match(kitLine)?.[1];
       // The HTML email has one clear action. The full URL remains in the
       // plain-text alternative for mail clients that do not render HTML.
@@ -21947,11 +22014,12 @@ app.get('/api/affiliates/me/promotions/:fightId/share', verifyToken, requireScop
     const fight = mongoose.isValidObjectId(fightId)
       ? await Match.findById(fightId).select(posterFields).lean() || await Shadow.findById(fightId).select(posterFields).lean()
       : null;
+    if (!fight || isDraftFightRecord(fight)) return res.status(404).json({ ok: false, message: 'This fight share kit is not available. Ask the owner for a current fight link.' });
 
     const appUrl = String(process.env.PUBLIC_APP_URL || 'https://www.fantasymmadness.com').replace(/\/$/, '');
     // The ref parameter is what ties a signup back to this promoter.
     const joinLink = `${appUrl}/?ref=${encodeURIComponent(affiliateId)}`;
-    const fightLink = fight ? `${appUrl}/league/${encodeURIComponent(affiliateId)}?fightId=${encodeURIComponent(fightId)}` : joinLink;
+    const fightLink = `${appUrl}/league/${encodeURIComponent(affiliateId)}?fightId=${encodeURIComponent(fightId)}`;
     const pair = fight ? [fight.matchFighterA, fight.matchFighterB].filter(Boolean).join(' vs ') : '';
     const fee = fight ? Math.max(0, Math.round(Number(fight.matchTokens) || 0)) : 0;
     const league = [affiliate.leagueName, affiliate.playerName].map((v) => String(v || '').trim()).find(Boolean) || 'my league';
@@ -26930,36 +26998,3 @@ const runShortfallSweep = async (req, res) => {
   const provided = String(req.headers['x-cron-secret'] || req.query.secret || '');
   const isAdmin = Boolean(req.admin);
   if (secret && provided !== secret && !isAdmin) {
-    return res.status(403).json({ message: 'Not authorised.', code: 'BAD_CRON_SECRET' });
-  }
-  try {
-    const summary = await sweepShortFights();
-    return res.json({ ok: true, ...summary });
-  } catch (error) {
-    console.error('Shortfall sweep failed:', error);
-    return res.status(500).json({ message: 'Sweep failed.', detail: error.message });
-  }
-};
-app.get('/api/cron/sweep-short-fights', runShortfallSweep);
-app.post('/api/cron/sweep-short-fights', runShortfallSweep);
-
-// No scheduler by design. The sweep rides ordinary traffic instead: every
-// request checks the clock, and at most one sweep runs every five minutes so it
-// can never pile up or slow a response (it is fired AFTER next(), so nothing
-// waits on it). Five minutes is tight enough that a lock-time void happens
-// while the card is still fresh, and the site always has traffic around a card
-// closing — that is exactly when entries are coming in.
-let lastOpportunisticSweep = 0;
-const OPPORTUNISTIC_SWEEP_MS = 5 * 60 * 1000;
-app.use((req, _res, next) => {
-  next();
-  if (Date.now() - lastOpportunisticSweep < OPPORTUNISTIC_SWEEP_MS) return;
-  lastOpportunisticSweep = Date.now();
-  sweepShortFights().catch((error) => console.warn('Opportunistic sweep failed:', error.message));
-});
-
-
-// Start server
-const server = app.listen(PORT, () => {
-  console.log(`Server started on port ${PORT}`);
-});
