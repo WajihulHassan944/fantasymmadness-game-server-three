@@ -89,6 +89,21 @@ const upload = { single: (field) => (req, res, next) => rawUpload.single(field)(
   return next();
 }) };
 
+capturedApp.post('/api/admin/fights/:fightId/social-poster', verifyAdminToken, upload.single('poster'), async (req, res, next) => {
+  try {
+    if (!mongoose.isValidObjectId(req.params.fightId)) return res.status(400).json({ ok: false, message: 'Invalid fight id.' });
+    if (!req.file?.buffer) return res.status(400).json({ ok: false, message: 'Choose a fight poster to upload.' });
+    const fight = await Match.findById(req.params.fightId).select('_id').lean();
+    if (!fight) return res.status(404).json({ ok: false, message: 'Fight not found.' });
+    const uploaded = await new Promise((resolve, reject) => {
+      const stream = cloudinary.uploader.upload_stream({ folder: 'fantasymmadness/fight-posters', resource_type: 'image' }, (error, result) => error ? reject(error) : resolve(result));
+      stream.end(req.file.buffer);
+    });
+    await Match.collection.updateOne({ _id: new mongoose.Types.ObjectId(req.params.fightId) }, { $set: { fightPosterImage: uploaded.secure_url, promotionBackground: uploaded.secure_url, fightPosterUpdatedAt: new Date() } });
+    return res.status(201).json({ ok: true, poster: uploaded.secure_url });
+  } catch (error) { return next(error); }
+});
+
 require('./full-card-promoter')({
   app: capturedApp, mongoose, crypto, Affiliate, Match, Score, User,
   verifyToken, verifyAdminToken, requireScope,
