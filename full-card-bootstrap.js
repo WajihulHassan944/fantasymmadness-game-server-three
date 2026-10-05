@@ -50,6 +50,9 @@ const verifyAdminToken = (req, res, next) => {
   try { req.admin = jwt.verify(token, process.env.JWT_SECRET_ADMIN); return next(); }
   catch (_error) { return res.status(401).json({ message: 'Invalid or expired admin session.' }); }
 };
+const { registerRevenueAnalyticsRoutes } = require('./revenue-analytics');
+registerRevenueAnalyticsRoutes({ app: capturedApp, mongoose, verifyAdminToken });
+
 const requireScope = (...allowed) => (req, res, next) => {
   const scope = String(req.user?.scope || '');
   if (!scope || scope === 'owner-preview' || allowed.includes(scope)) return next();
