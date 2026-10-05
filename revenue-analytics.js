@@ -1,0 +1,78 @@
+'use strict';
+
+function registerRevenueAnalyticsRoutes({ app, mongoose, verifyAdminToken }) {
+  if (!app || !mongoose || !verifyAdminToken) throw new Error('Revenue analytics requires app, mongoose and admin auth.');
+
+  const schema = new mongoose.Schema({
+    event: { type: String, required: true, index: true },
+    sessionId: { type: String, default: '', index: true },
+    fightId: { type: String, default: '', index: true },
+    affiliateRef: { type: String, default: '', index: true },
+    path: { type: String, default: '' },
+    referrer: { type: String, default: '' },
+    entryFee: { type: Number, default: 0 },
+    signedIn: { type: Boolean, default: false },
+    metadata: { type: mongoose.Schema.Types.Mixed, default: {} },
+  }, { timestamps: true, minimize: true });
+
+  schema.index({ createdAt: -1, event: 1 });
+  const RevenueEvent = mongoose.models.RevenueEvent || mongoose.model('RevenueEvent', schema, 'revenue_events');
+  const allowed = new Set(['fight_view','play_click','prediction_start','signup_gate','coin_checkout','paid_entry','free_entry','challenge_share','partner_lead']);
+
+  app.post('/api/revenue/events', async (req, res) => {
+    try {
+      const body = req.body || {};
+      const event = String(body.event || '').trim();
+      if (!allowed.has(event)) return res.status(400).json({ ok: false, message: 'Unknown revenue event.' });
+      const metadata = body.metadata && typeof body.metadata === 'object' ? body.metadata : {};
+      await RevenueEvent.create({
+        event,
+        sessionId: String(body.sessionId || '').slice(0, 160),
+        fightId: String(body.fightId || '').slice(0, 160),
+        affiliateRef: String(body.affiliateRef || '').slice(0, 160),
+        path: String(body.path || '').slice(0, 500),
+        referrer: String(body.referrer || '').slice(0, 1000),
+        entryFee: Math.max(0, Number(body.entryFee || 0)),
+        signedIn: Boolean(body.signedIn),
+        metadata,
+      });
+      return res.status(202).json({ ok: true });
+    } catch (error) {
+      console.error('Revenue event capture failed:', error);
+      return res.status(500).json({ ok: false, message: 'Revenue event could not be recorded.' });
+    }
+  });
+
+  app.get('/api/admin/revenue/summary', verifyAdminToken, async (req, res) => {
+    try {
+      const days = Math.min(365, Math.max(1, Number(req.query.days || 30)));
+      const since = new Date(Date.now() - days * 86400000);
+      const [totals, uniqueSessions, recent] = await Promise.all([
+        RevenueEvent.aggregate([{ $match: { createdAt: { $gte: since } } }, { $group: { _id: '$event', count: { $sum: 1 }, entryValue: { $sum: '$entryFee' } } }]),
+        RevenueEvent.distinct('sessionId', { createdAt: { $gte: since }, sessionId: { $ne: '' } }),
+        RevenueEvent.find({ createdAt: { $gte: since } }).sort({ createdAt: -1 }).limit(50).lean(),
+      ]);
+      const byEvent = Object.fromEntries(totals.map(row => [row._id, { count: row.count, entryValue: row.entryValue || 0 }]));
+      const count = key => Number(byEvent[key]?.count || 0);
+      const rate = (n, d) => d ? Number(((n / d) * 100).toFixed(1)) : 0;
+      return res.json({
+        ok: true, days, uniqueSessions: uniqueSessions.length, byEvent,
+        funnel: {
+          viewToPlay: rate(count('play_click'), count('fight_view')),
+          playToPrediction: rate(count('prediction_start'), count('play_click')),
+          predictionToPaid: rate(count('paid_entry'), count('prediction_start')),
+          challengeRate: rate(count('challenge_share'), count('paid_entry') + count('free_entry')),
+        },
+        fmCoinsCommitted: Number(byEvent.paid_entry?.entryValue || 0),
+        recent,
+      });
+    } catch (error) {
+      console.error('Revenue summary failed:', error);
+      return res.status(500).json({ ok: false, message: 'Revenue summary could not be loaded.' });
+    }
+  });
+
+  return { RevenueEvent };
+}
+
+module.exports = { registerRevenueAnalyticsRoutes };
