@@ -246,12 +246,33 @@ module.exports = function registerFullCardPromoter({
 
   const materializeBouts = async (card) => {
     for (const bout of card.bouts) {
-      if (bout.fightId || ['CANCELLED', 'REMOVED'].includes(bout.status)) continue;
+      if (['CANCELLED', 'REMOVED'].includes(bout.status)) continue;
+
+      // A promoter can edit the economics after a bout has already been
+      // materialized. Keep the public Match record in sync so BUY-IN and
+      // prize pool never get stranded on the FullCard document only.
+      if (bout.fightId) {
+        await Match.updateOne(
+          { _id: bout.fightId, affiliateId: String(card.affiliateId) },
+          { $set: {
+            pot: clampNumber(bout.pot, 0, 100000000, 0),
+            matchTokens: clampNumber(bout.entryTokens, 0, 10000000, 0),
+            matchDate: card.eventDate,
+            matchTime: card.startTime,
+            venue: card.venue,
+            eventCity: card.location,
+          } },
+        );
+        continue;
+      }
+
       const fight = await Match.create({
         matchName: `${card.eventName} — ${bout.boutLabel}`, matchFighterA: bout.fighterAName, matchFighterB: bout.fighterBName,
         fighterAImage: bout.fighterAImage, fighterBImage: bout.fighterBImage, matchCategory: bout.category,
         matchDate: card.eventDate, matchTime: card.startTime, venue: card.venue, eventCity: card.location,
-        pot: bout.pot, matchTokens: bout.entryTokens, affiliateId: String(card.affiliateId), matchBy: 'affiliate',
+        pot: clampNumber(bout.pot, 0, 100000000, 0),
+        matchTokens: clampNumber(bout.entryTokens, 0, 10000000, 0),
+        affiliateId: String(card.affiliateId), matchBy: 'affiliate',
         matchStatus: 'Scheduled', matchShadowStatus: 'active', homepagePromoted: false,
         fullCardId: String(card._id), fullCardBoutOrder: bout.order,
       });
