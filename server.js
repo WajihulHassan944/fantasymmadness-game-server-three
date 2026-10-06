@@ -1600,8 +1600,8 @@ function attachCombatFighterReadFallbacks(fight = {}, sourceType = 'match') {
     // fighter library is now the source of truth whenever refs are populated.
     matchFighterA: fighterA?.displayName || item.matchFighterA || '',
     matchFighterB: fighterB?.displayName || item.matchFighterB || '',
-    fighterAImage: fighterA?.primaryImage || item.fighterAImage || '',
-    fighterBImage: fighterB?.primaryImage || item.fighterBImage || '',
+    fighterAImage: (item.fighterAImageOverride && item.fighterAImage) || fighterA?.primaryImage || item.fighterAImage || '',
+    fighterBImage: (item.fighterBImageOverride && item.fighterBImage) || fighterB?.primaryImage || item.fighterBImage || '',
   };
 }
 
@@ -1981,6 +1981,8 @@ const shadowSchema = new mongoose.Schema({
   homepagePromotionUpdatedAt: Date,
   homepagePromotionUpdatedBy: String,
   fighterAImage: String,  // URL of Fighter A's image
+  fighterAImageOverride: { type: Boolean, default: false },
+  fighterBImageOverride: { type: Boolean, default: false },
   fighterBImage: String,  // URL of Fighter B's image
   matchType: String,      // LIVE or SHADOW
   sourceShadowId: { type: mongoose.Schema.Types.ObjectId, ref: 'Shadow', index: true },
@@ -2307,6 +2309,8 @@ app.post(
       if (parsedShadowBoxingMatch) existingMatch.BoxingMatch = parsedShadowBoxingMatch;
       if (parsedShadowMMAMatch) existingMatch.MMAMatch = parsedShadowMMAMatch;
 
+      if (req.files?.fighterAImage?.length) existingMatch.fighterAImageOverride = true;
+      if (req.files?.fighterBImage?.length) existingMatch.fighterBImageOverride = true;
       if (fighterAImage) existingMatch.fighterAImage = fighterAImage;
       if (fighterBImage) existingMatch.fighterBImage = fighterBImage;
       if (fighterAImageDeleteUrl) existingMatch.fighterAImageDeleteUrl = fighterAImageDeleteUrl;
@@ -2606,6 +2610,8 @@ matchReward: { type: String, enum: ['Rewarded', 'NotRewarded'], default: 'NotRew
   profit: Number,
   amountOverPotBudget: Number,
   fighterAImage: String,  // URL of Fighter A's image
+  fighterAImageOverride: { type: Boolean, default: false },
+  fighterBImageOverride: { type: Boolean, default: false },
   fighterBImage: String,  // URL of Fighter B's image
   matchType: String,      // LIVE or SHADOW
   sourceShadowId: { type: mongoose.Schema.Types.ObjectId, ref: 'Shadow', index: true },
@@ -4062,6 +4068,10 @@ app.post(
       });
       const selectedFighterPatch = applyCombatFighterSelectionToMatchPayload({}, fighterSelection);
 
+      // A different library fighter uses its own photo unless a replacement is uploaded.
+      if (selectedFighterPatch.fighterAId && String(selectedFighterPatch.fighterAId) !== String(existingMatch.fighterAId || '')) existingMatch.fighterAImageOverride = false;
+      if (selectedFighterPatch.fighterBId && String(selectedFighterPatch.fighterBId) !== String(existingMatch.fighterBId || '')) existingMatch.fighterBImageOverride = false;
+
       // Update the match object. Use explicit provided-value checks so 0 remains valid.
       assignIfProvided(existingMatch, 'fighterAId', selectedFighterPatch.fighterAId);
       assignIfProvided(existingMatch, 'fighterBId', selectedFighterPatch.fighterBId);
@@ -4101,6 +4111,8 @@ app.post(
       if (!fighterAImageDeleteUrl && selectedFighterPatch.fighterAImageDeleteUrl) fighterAImageDeleteUrl = selectedFighterPatch.fighterAImageDeleteUrl;
       if (!fighterBImageDeleteUrl && selectedFighterPatch.fighterBImageDeleteUrl) fighterBImageDeleteUrl = selectedFighterPatch.fighterBImageDeleteUrl;
 
+      if (req.files?.fighterAImage?.length) existingMatch.fighterAImageOverride = true;
+      if (req.files?.fighterBImage?.length) existingMatch.fighterBImageOverride = true;
       if (fighterAImage) existingMatch.fighterAImage = fighterAImage;
       if (fighterBImage) existingMatch.fighterBImage = fighterBImage;
       if (fighterAImageDeleteUrl)
