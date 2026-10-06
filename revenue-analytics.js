@@ -56,6 +56,7 @@ function registerRevenueAnalyticsRoutes({ app, mongoose, verifyAdminToken }) {
           { $group: {
             _id: '$fightId',
             views: { $sum: { $cond: [{ $eq: ['$event', 'fight_view'] }, 1, 0] } },
+            visitorSessions: { $addToSet: { $cond: [{ $and: [{ $eq: ['$event', 'fight_view'] }, { $ne: ['$sessionId', ''] }] }, '$sessionId', '$REMOVE'] } },
             playClicks: { $sum: { $cond: [{ $eq: ['$event', 'play_click'] }, 1, 0] } },
             predictionStarts: { $sum: { $cond: [{ $eq: ['$event', 'prediction_start'] }, 1, 0] } },
             paidEntries: { $sum: { $cond: [{ $eq: ['$event', 'paid_entry'] }, 1, 0] } },
@@ -66,6 +67,28 @@ function registerRevenueAnalyticsRoutes({ app, mongoose, verifyAdminToken }) {
           { $limit: 100 },
         ]),
       ]);
+      // Older analytics events may only contain fightId. Hydrate the fight
+      // name from the real Match record so the admin never has to decipher IDs.
+      const fightIds = fightBreakdown.map(row => String(row._id || '')).filter(Boolean);
+      const Match = mongoose.models.Match;
+      let fightNamesById = {};
+      if (Match && fightIds.length) {
+        const objectIds = fightIds.filter(id => mongoose.Types.ObjectId.isValid(id)).map(id => new mongoose.Types.ObjectId(id));
+        const matches = objectIds.length
+          ? await Match.find({ _id: { $in: objectIds } }).select('_id matchName matchFighterA matchFighterB fighterAName fighterBName matchDate matchCategory').lean()
+          : [];
+        fightNamesById = Object.fromEntries(matches.map(match => {
+          const a = String(match.matchFighterA || match.fighterAName || '').trim();
+          const b = String(match.matchFighterB || match.fighterBName || '').trim();
+          const name = String(match.matchName || '').trim() || (a && b ? `${a} vs ${b}` : '');
+          return [String(match._id), {
+            fightName: name,
+            matchDate: match.matchDate || null,
+            category: match.matchCategory || '',
+          }];
+        }));
+      }
+
       const byEvent = Object.fromEntries(totals.map(row => [row._id, { count: row.count, entryValue: row.entryValue || 0 }]));
       const count = key => Number(byEvent[key]?.count || 0);
       const rate = (n, d) => d ? Number(((n / d) * 100).toFixed(1)) : 0;
@@ -80,8 +103,11 @@ function registerRevenueAnalyticsRoutes({ app, mongoose, verifyAdminToken }) {
         fmCoinsCommitted: Number(byEvent.paid_entry?.entryValue || 0),
         fights: fightBreakdown.map(row => ({
           fightId: row._id,
-          fightName: String(row.fightName || ''),
+          fightName: String(row.fightName || fightNamesById[String(row._id)]?.fightName || ''),
+          matchDate: fightNamesById[String(row._id)]?.matchDate || null,
+          category: String(fightNamesById[String(row._id)]?.category || ''),
           views: Number(row.views || 0),
+          uniqueVisitors: Array.isArray(row.visitorSessions) ? row.visitorSessions.length : 0,
           playClicks: Number(row.playClicks || 0),
           predictionStarts: Number(row.predictionStarts || 0),
           paidEntries: Number(row.paidEntries || 0),
