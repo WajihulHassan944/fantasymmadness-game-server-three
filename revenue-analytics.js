@@ -47,10 +47,24 @@ function registerRevenueAnalyticsRoutes({ app, mongoose, verifyAdminToken }) {
     try {
       const days = Math.min(365, Math.max(1, Number(req.query.days || 30)));
       const since = new Date(Date.now() - days * 86400000);
-      const [totals, uniqueSessions, recent] = await Promise.all([
+      const [totals, uniqueSessions, recent, fightBreakdown] = await Promise.all([
         RevenueEvent.aggregate([{ $match: { createdAt: { $gte: since } } }, { $group: { _id: '$event', count: { $sum: 1 }, entryValue: { $sum: '$entryFee' } } }]),
         RevenueEvent.distinct('sessionId', { createdAt: { $gte: since }, sessionId: { $ne: '' } }),
         RevenueEvent.find({ createdAt: { $gte: since } }).sort({ createdAt: -1 }).limit(50).lean(),
+        RevenueEvent.aggregate([
+          { $match: { createdAt: { $gte: since }, fightId: { $ne: '' }, event: { $in: ['fight_view','play_click','prediction_start','paid_entry'] } } },
+          { $group: {
+            _id: '$fightId',
+            views: { $sum: { $cond: [{ $eq: ['$event', 'fight_view'] }, 1, 0] } },
+            playClicks: { $sum: { $cond: [{ $eq: ['$event', 'play_click'] }, 1, 0] } },
+            predictionStarts: { $sum: { $cond: [{ $eq: ['$event', 'prediction_start'] }, 1, 0] } },
+            paidEntries: { $sum: { $cond: [{ $eq: ['$event', 'paid_entry'] }, 1, 0] } },
+            fmCoinsCommitted: { $sum: { $cond: [{ $eq: ['$event', 'paid_entry'] }, '$entryFee', 0] } },
+            fightName: { $last: '$metadata.fightName' },
+          } },
+          { $sort: { views: -1, playClicks: -1, predictionStarts: -1 } },
+          { $limit: 100 },
+        ]),
       ]);
       const byEvent = Object.fromEntries(totals.map(row => [row._id, { count: row.count, entryValue: row.entryValue || 0 }]));
       const count = key => Number(byEvent[key]?.count || 0);
@@ -64,6 +78,16 @@ function registerRevenueAnalyticsRoutes({ app, mongoose, verifyAdminToken }) {
           challengeRate: rate(count('challenge_share'), count('paid_entry') + count('free_entry')),
         },
         fmCoinsCommitted: Number(byEvent.paid_entry?.entryValue || 0),
+        fights: fightBreakdown.map(row => ({
+          fightId: row._id,
+          fightName: String(row.fightName || ''),
+          views: Number(row.views || 0),
+          playClicks: Number(row.playClicks || 0),
+          predictionStarts: Number(row.predictionStarts || 0),
+          paidEntries: Number(row.paidEntries || 0),
+          conversionRate: row.views ? Number(((Number(row.paidEntries || 0) / row.views) * 100).toFixed(1)) : 0,
+          fmCoinsCommitted: Number(row.fmCoinsCommitted || 0),
+        })),
         recent,
       });
     } catch (error) {
