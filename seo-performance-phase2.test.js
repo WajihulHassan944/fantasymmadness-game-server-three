@@ -25,4 +25,7 @@ assert.ok(
   'Public fight detail must populate fighterAId/fighterBId before serialization.'
 );
 
+assert.ok(source.includes('pot: fight?.pot'), 'Public fight detail must preserve the stored prize pot.');
+assert.ok(source.includes('matchTokens: fight?.matchTokens'), 'Public fight detail must preserve the stored buy-in.');
+
 console.log('seo-performance-phase2 tests passed');
