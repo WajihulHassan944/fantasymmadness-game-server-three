@@ -565,7 +565,10 @@ async function findFightById(Match, Shadow, id, query = {}) {
   if (!cleanString(id) || !id.match(/^[a-f0-9]{24}$/i)) return null;
   const tryFind = async (Model) => {
     if (!Model) return null;
-    const fight = await Model.findById(id).lean();
+    // The detail route must hydrate the same fighter-library references as the list route.
+    // Without this populate, page two loses CombatFighter.primaryImage and falls back to
+    // legacy Fighter A/B artwork even when the fight is correctly linked.
+    const fight = await Model.findById(id).populate('fighterAId fighterBId').lean();
     if (!fight) return null;
     if (!shouldIncludeDraftFights(query) && isDraftFightRecord(fight)) return null;
     return fight;
