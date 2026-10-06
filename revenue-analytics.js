@@ -17,7 +17,7 @@ function registerRevenueAnalyticsRoutes({ app, mongoose, verifyAdminToken }) {
 
   schema.index({ createdAt: -1, event: 1 });
   const RevenueEvent = mongoose.models.RevenueEvent || mongoose.model('RevenueEvent', schema, 'revenue_events');
-  const allowed = new Set(['fight_view','play_click','prediction_start','signup_gate','coin_checkout','paid_entry','free_entry','challenge_share','partner_lead']);
+  const allowed = new Set(['fight_view','play_click','prediction_start','first_prediction','prediction_complete','signup_gate','coin_checkout','paid_entry','free_entry','challenge_share','partner_lead']);
 
   app.post('/api/revenue/events', async (req, res) => {
     try {
@@ -52,13 +52,17 @@ function registerRevenueAnalyticsRoutes({ app, mongoose, verifyAdminToken }) {
         RevenueEvent.distinct('sessionId', { createdAt: { $gte: since }, sessionId: { $ne: '' } }),
         RevenueEvent.find({ createdAt: { $gte: since } }).sort({ createdAt: -1 }).limit(50).lean(),
         RevenueEvent.aggregate([
-          { $match: { createdAt: { $gte: since }, fightId: { $ne: '' }, event: { $in: ['fight_view','play_click','prediction_start','paid_entry'] } } },
+          { $match: { createdAt: { $gte: since }, fightId: { $ne: '' }, event: { $in: ['fight_view','play_click','prediction_start','first_prediction','prediction_complete','signup_gate','coin_checkout','paid_entry'] } } },
           { $group: {
             _id: '$fightId',
             views: { $sum: { $cond: [{ $eq: ['$event', 'fight_view'] }, 1, 0] } },
             visitorSessions: { $addToSet: { $cond: [{ $and: [{ $eq: ['$event', 'fight_view'] }, { $ne: ['$sessionId', ''] }] }, '$sessionId', '$REMOVE'] } },
             playClicks: { $sum: { $cond: [{ $eq: ['$event', 'play_click'] }, 1, 0] } },
             predictionStarts: { $sum: { $cond: [{ $eq: ['$event', 'prediction_start'] }, 1, 0] } },
+            firstPredictions: { $sum: { $cond: [{ $eq: ['$event', 'first_prediction'] }, 1, 0] } },
+            predictionCompletes: { $sum: { $cond: [{ $eq: ['$event', 'prediction_complete'] }, 1, 0] } },
+            signupGates: { $sum: { $cond: [{ $eq: ['$event', 'signup_gate'] }, 1, 0] } },
+            checkoutStarts: { $sum: { $cond: [{ $eq: ['$event', 'coin_checkout'] }, 1, 0] } },
             paidEntries: { $sum: { $cond: [{ $eq: ['$event', 'paid_entry'] }, 1, 0] } },
             fmCoinsCommitted: { $sum: { $cond: [{ $eq: ['$event', 'paid_entry'] }, '$entryFee', 0] } },
             fightName: { $last: '$metadata.fightName' },
@@ -113,6 +117,10 @@ function registerRevenueAnalyticsRoutes({ app, mongoose, verifyAdminToken }) {
           uniqueVisitors: Array.isArray(row.visitorSessions) ? row.visitorSessions.length : 0,
           playClicks: Number(row.playClicks || 0),
           predictionStarts: Number(row.predictionStarts || 0),
+          firstPredictions: Number(row.firstPredictions || 0),
+          predictionCompletes: Number(row.predictionCompletes || 0),
+          signupGates: Number(row.signupGates || 0),
+          checkoutStarts: Number(row.checkoutStarts || 0),
           paidEntries: Number(row.paidEntries || 0),
           conversionRate: row.views ? Number(((Number(row.paidEntries || 0) / row.views) * 100).toFixed(1)) : 0,
           fmCoinsCommitted: Number(row.fmCoinsCommitted || 0),
