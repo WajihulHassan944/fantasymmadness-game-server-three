@@ -1648,6 +1648,7 @@ function pickPublicFightFields(fight = {}, sourceType = 'match') {
     matchDate: item.matchDate,
     matchDateKey: item.matchDateKey,
     matchTime: item.matchTime,
+    timeTba: item.timeTba === true,
     venue: item.venue,
     maxRounds: item.maxRounds,
     aiScoutingReport: !identityHidden && item.aiScoutingReport && typeof item.aiScoutingReport === 'object' ? item.aiScoutingReport : null,
@@ -1954,6 +1955,7 @@ const shadowSchema = new mongoose.Schema({
   entryClosedAt: Date,
   matchDateKey: { type: String, index: true },
   eventTimeZone: String,
+  timeTba: { type: Boolean, default: false },
   matchTime: String,
   venue: String,
   sourceMatchId: { type: mongoose.Schema.Types.ObjectId, ref: 'Match', index: true },
@@ -2300,7 +2302,13 @@ app.post(
         existingMatch.matchDate = normalizedDate.date;
         existingMatch.matchDateKey = normalizedDate.key;
       }
-      assignIfProvided(existingMatch, 'matchTime', matchTime);
+      if (req.body.timeTba !== undefined) {
+        existingMatch.timeTba = req.body.timeTba === true || req.body.timeTba === 'true';
+        existingMatch.matchTime = existingMatch.timeTba ? '' : (matchTime || '');
+      } else if (matchTime !== undefined) {
+        existingMatch.matchTime = matchTime;
+        existingMatch.timeTba = !matchTime;
+      }
       assignIfProvided(existingMatch, 'venue', venue);
       assignIfProvided(existingMatch, 'matchStatus', matchStatus);
 
@@ -2552,6 +2560,7 @@ matchReward: { type: String, enum: ['Rewarded', 'NotRewarded'], default: 'NotRew
   matchDate: Date,
   matchDateKey: { type: String, index: true },
   eventTimeZone: String,
+  timeTba: { type: Boolean, default: false },
   matchTime: String,  // Store the match time as a string in 'HH:MM' format
   venue: String,
   // Auto-discovered UFC/upcoming-event metadata. These fields are additive and
@@ -3582,7 +3591,8 @@ app.post(
         fighterAImagePublicId: fighterAImageDeleteUrl, fighterBImagePublicId: fighterBImageDeleteUrl, matchCategory: matchCategoryTwo || matchCategory,
       });
       const requestedMatchDate = matchDate || req.body?.fightDate || req.body?.scheduledDate;
-      const requestedMatchTime = matchTime || req.body?.fightTime || req.body?.scheduledTime;
+      const requestedTimeTba = req.body.timeTba === true || req.body.timeTba === 'true';
+      const requestedMatchTime = requestedTimeTba ? '' : (matchTime || req.body?.fightTime || req.body?.scheduledTime);
       const normalizedRequestedDate = normalizeCalendarDateInput(requestedMatchDate);
       if (requestedMatchDate && !normalizedRequestedDate.date) {
         return res.status(400).json({ message: 'A valid match date is required.' });
@@ -3609,6 +3619,7 @@ app.post(
         matchDateKey: normalizedRequestedDate.key || undefined,
         eventTimeZone: req.body?.eventTimeZone || req.body?.timezone || undefined,
         matchTime: requestedMatchTime,
+        timeTba: requestedTimeTba,
         matchTokens,
         matchStatus: normalizedLiveStatus,
         pot,
@@ -4088,7 +4099,13 @@ app.post(
         existingMatch.matchDateKey = normalizedDate.key;
       }
       assignIfProvided(existingMatch, 'eventTimeZone', req.body?.eventTimeZone || req.body?.timezone);
-      assignIfProvided(existingMatch, 'matchTime', matchTime);
+      if (req.body.timeTba !== undefined) {
+        existingMatch.timeTba = req.body.timeTba === true || req.body.timeTba === 'true';
+        existingMatch.matchTime = existingMatch.timeTba ? '' : (matchTime || '');
+      } else if (matchTime !== undefined) {
+        existingMatch.matchTime = matchTime;
+        existingMatch.timeTba = !matchTime;
+      }
       assignIfProvided(existingMatch, 'matchTokens', matchTokens);
       assignIfProvided(existingMatch, 'pot', pot);
       assignIfProvided(existingMatch, 'matchType', matchType);
