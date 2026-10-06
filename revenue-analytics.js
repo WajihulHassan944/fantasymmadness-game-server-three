@@ -71,20 +71,23 @@ function registerRevenueAnalyticsRoutes({ app, mongoose, verifyAdminToken }) {
       // name from the real Match record so the admin never has to decipher IDs.
       const fightIds = fightBreakdown.map(row => String(row._id || '')).filter(Boolean);
       const Match = mongoose.models.Match;
+      const Shadow = mongoose.models.Shadow || mongoose.models.ShadowFight || mongoose.models.ShadowMatch;
       let fightNamesById = {};
-      if (Match && fightIds.length) {
+      if (fightIds.length) {
         const objectIds = fightIds.filter(id => mongoose.Types.ObjectId.isValid(id)).map(id => new mongoose.Types.ObjectId(id));
-        const matches = objectIds.length
-          ? await Match.find({ _id: { $in: objectIds } }).select('_id matchName matchFighterA matchFighterB fighterAName fighterBName matchDate matchCategory').lean()
-          : [];
-        fightNamesById = Object.fromEntries(matches.map(match => {
+        const projection = '_id matchName title matchFighterA matchFighterB fighterAName fighterBName matchDate date matchCategory category';
+        const [matches, shadows] = await Promise.all([
+          Match && objectIds.length ? Match.find({ _id: { $in: objectIds } }).select(projection).lean() : [],
+          Shadow && objectIds.length ? Shadow.find({ _id: { $in: objectIds } }).select(projection).lean() : [],
+        ]);
+        fightNamesById = Object.fromEntries([...matches, ...shadows].map(match => {
           const a = String(match.matchFighterA || match.fighterAName || '').trim();
           const b = String(match.matchFighterB || match.fighterBName || '').trim();
-          const name = String(match.matchName || '').trim() || (a && b ? `${a} vs ${b}` : '');
+          const name = String(match.matchName || match.title || '').trim() || (a && b ? `${a} vs ${b}` : '');
           return [String(match._id), {
             fightName: name,
-            matchDate: match.matchDate || null,
-            category: match.matchCategory || '',
+            matchDate: match.matchDate || match.date || null,
+            category: match.matchCategory || match.category || '',
           }];
         }));
       }
