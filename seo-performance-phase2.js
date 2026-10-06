@@ -607,6 +607,10 @@ function serializeFight(fight, req) {
     matchType: fight?.matchType,
     matchDate: fight?.matchDate,
     matchTime: fight?.matchTime,
+    lockAt: fight?.lockAt,
+    timeTba: fight?.timeTba,
+    matchTimeTba: fight?.matchTimeTba,
+    entryOpen: fight?.entryOpen,
     venue: fight?.venue,
     // Preserve fight economics on the public detail payload. The detail page
     // must receive the same stored pot/prize and buy-in values as fight cards.
