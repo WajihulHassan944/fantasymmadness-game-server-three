@@ -2141,19 +2141,19 @@ app.post('/compare-matches', verifyAdminToken, async (req, res) => {
   }
 });
 
-// Uncached admin fetch for a single fight, by id, across MMA/Boxing/wrestling
-// collections. Edit screens must never read through the public-fights cache
+// Uncached admin fetch from the same Match collection that /editMatch updates.
+// MMA/Boxing scoring documents are not editable fight registry records.
+// Edit screens must never read through the public-fights cache
 // (clearPublicResponseCache() runs on save, but CDN/edge layers in front of
 // the public route can still serve a stale copy) — this always hits the DB.
 app.get('/api/admin/matches/:id', verifyAdminToken, async (req, res) => {
   try {
     const { id } = req.params;
     if (!mongoose.isValidObjectId(id)) return res.status(400).json({ message: 'Invalid fight id.' });
-    const match = (await MMAMatch.findById(id).lean())
-      || (await BoxingMatch.findById(id).lean())
-      || (await ProWrestlingMatch.findById(id).lean());
+    const match = await Match.findById(id).populate('fighterAId fighterBId').lean();
     if (!match) return res.status(404).json({ message: 'Fight not found.' });
-    res.json({ match });
+    res.set('Cache-Control', 'no-store');
+    res.json({ match: attachCombatFighterReadFallbacks(match, 'match') });
   } catch (error) {
     console.error('Error loading admin match by id:', error);
     res.status(500).json({ message: 'Could not load this fight.' });
