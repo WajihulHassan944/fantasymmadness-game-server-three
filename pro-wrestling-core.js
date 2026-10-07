@@ -295,6 +295,22 @@ function isWrestlingPredictionLocked(match, now = new Date()) {
   return Boolean(lockAt && !Number.isNaN(lockAt.getTime()) && lockAt.getTime() <= new Date(now).getTime());
 }
 
+// TBA contests have no invented start or automatic cutoff. LIVE/LOCKED still lock entries.
+function normalizeWrestlingSchedule(source) {
+  const timeTba = source.timeTba === true || source.timeTba === 'true';
+  const eventDate = String(source.eventDate || '');
+  if (eventDate && (!/^\d{4}-\d{2}-\d{2}$/.test(eventDate) || new Date(`${eventDate}T12:00:00Z`).toISOString().slice(0, 10) !== eventDate)) {
+    throw new Error('Enter a valid event date.');
+  }
+  if (timeTba) return { timeTba, eventDate, matchDate: eventDate ? new Date(`${eventDate}T12:00:00Z`) : null, lockAt: null };
+  const matchDate = source.matchDate ? new Date(source.matchDate) : null;
+  const lockAt = source.lockAt ? new Date(source.lockAt) : matchDate;
+  if (!matchDate || Number.isNaN(matchDate.getTime()) || !lockAt || Number.isNaN(lockAt.getTime()) || lockAt > matchDate) {
+    throw new Error('Enter a valid start time; an earlier cutoff cannot be after the start.');
+  }
+  return { timeTba, eventDate, matchDate, lockAt };
+}
+
 function validateWrestlingPredictionPayload(payload) {
   const errors = [];
   const source = payload && typeof payload === 'object' ? payload : {};
@@ -340,4 +356,5 @@ module.exports = {
   canTransitionWrestlingStatus,
   isWrestlingPredictionLocked,
   validateWrestlingPredictionPayload,
+  normalizeWrestlingSchedule,
 };

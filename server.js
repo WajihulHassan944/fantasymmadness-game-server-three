@@ -14914,6 +14914,7 @@ const {
   canTransitionWrestlingStatus,
   isWrestlingPredictionLocked,
   validateWrestlingPredictionPayload,
+  normalizeWrestlingSchedule,
 } = require('./pro-wrestling-core');
 
 const PRO_WRESTLING_GAME_MODE = 'PRO_WRESTLING';
@@ -15037,9 +15038,11 @@ const proWrestlingMatchSchema = new mongoose.Schema({
   },
   competitorA: { type: wrestlingCompetitorSchema, required: true },
   competitorB: { type: wrestlingCompetitorSchema, required: true },
-  matchDate: { type: Date, required: true, index: true },
+  matchDate: { type: Date, required: function () { return !this.timeTba; }, index: true },
+  eventDate: String,
+  timeTba: { type: Boolean, default: false },
   matchTime: String,
-  lockAt: { type: Date, required: true, index: true },
+  lockAt: { type: Date, required: function () { return !this.timeTba; }, index: true },
   entryFeeTokens: { type: Number, min: 0, default: 0 },
   basePot: { type: Number, min: 0, default: 0 },
   currentPot: { type: Number, min: 0, default: 0 },
@@ -15632,7 +15635,7 @@ const lockWrestlingMatch = async (match, session) => {
 
 const autoLockWrestlingMatches = async () => {
   const now = new Date();
-  const dueMatches = await ProWrestlingMatch.find({ status: 'OPEN', lockAt: { $lte: now } }).limit(100);
+  const dueMatches = await ProWrestlingMatch.find({ status: 'OPEN', lockAt: { $ne: null, $lte: now } }).limit(100);
   let locked = 0;
   for (const match of dueMatches) {
     if (match.minimumParticipants > match.participantCount && match.autoCancelIfMinimumNotMet) continue;
@@ -16438,12 +16441,9 @@ app.post('/api/admin/wrestling/matches', requireProWrestlingEnabled, verifyAdmin
     }
     const scoringRules = await getWrestlingScoringRule(req.body.scoringRuleVersion);
     const payoutRules = await getWrestlingPayoutRule(req.body.payoutRuleVersion);
-    const matchDate = new Date(req.body.matchDate);
-    const lockAt = new Date(req.body.lockAt);
-    if (Number.isNaN(matchDate.getTime()) || Number.isNaN(lockAt.getTime())) {
-      throw wrestlingHttpError(400, 'Valid matchDate and lockAt values are required.', 'INVALID_MATCH_DATES');
-    }
-    if (lockAt >= matchDate) throw wrestlingHttpError(400, 'Prediction lock time must occur before match time.', 'INVALID_LOCK_TIME');
+    let schedule;
+    try { schedule = normalizeWrestlingSchedule(req.body); }
+    catch (error) { throw wrestlingHttpError(400, error.message, 'INVALID_MATCH_DATES'); }
     const status = String(req.body.status || 'DRAFT').toUpperCase();
     if (!['DRAFT', 'OPEN'].includes(status)) throw wrestlingHttpError(400, 'New wrestling matches can only start as DRAFT or OPEN.', 'INVALID_INITIAL_STATUS');
     const basePot = Math.max(0, Math.round(wrestlingNumber(req.body.basePot ?? req.body.pot, 0)));
@@ -16463,9 +16463,8 @@ app.post('/api/admin/wrestling/matches', requireProWrestlingEnabled, verifyAdmin
       matchFormat: String(req.body.matchFormat || 'SINGLES').toUpperCase(),
       competitorA,
       competitorB,
-      matchDate,
-      matchTime: req.body.matchTime,
-      lockAt,
+      ...schedule,
+      matchTime: schedule.timeTba ? 'TIME TBA' : req.body.matchTime,
       entryFeeTokens: Math.max(0, Math.round(wrestlingNumber(req.body.entryFeeTokens, 0))),
       basePot,
       currentPot: basePot,
@@ -16539,11 +16538,13 @@ app.put('/api/admin/wrestling/matches/:id', requireProWrestlingEnabled, verifyAd
     editableFields.forEach((field) => {
       if (req.body[field] !== undefined && !protectedFields.has(field)) match[field] = req.body[field];
     });
-    if (req.body.matchDate !== undefined) match.matchDate = new Date(req.body.matchDate);
-    if (req.body.lockAt !== undefined) match.lockAt = new Date(req.body.lockAt);
-    if (Number.isNaN(match.matchDate.getTime()) || Number.isNaN(match.lockAt.getTime()) || match.lockAt >= match.matchDate) {
-      throw wrestlingHttpError(400, 'Match and lock dates are invalid.', 'INVALID_MATCH_DATES');
-    }
+    try {
+      Object.assign(match, normalizeWrestlingSchedule({
+        matchDate: match.matchDate, lockAt: match.lockAt, timeTba: match.timeTba, eventDate: match.eventDate,
+        ...Object.fromEntries(['matchDate', 'lockAt', 'timeTba', 'eventDate'].filter((key) => req.body[key] !== undefined).map((key) => [key, req.body[key]])),
+      }));
+      if (match.timeTba) match.matchTime = 'TIME TBA';
+    } catch (error) { throw wrestlingHttpError(400, error.message, 'INVALID_MATCH_DATES'); }
     if (match.participantCount === 0 && match.status === 'DRAFT') {
       if (req.body.competitorA !== undefined || req.body.competitorAId) match.competitorA = await resolveWrestlingCompetitor(req.body.competitorA, req.body.competitorAId);
       if (req.body.competitorB !== undefined || req.body.competitorBId) match.competitorB = await resolveWrestlingCompetitor(req.body.competitorB, req.body.competitorBId);
@@ -17367,7 +17368,7 @@ app.get('/api/admin/wrestling/docs', requireProWrestlingEnabled, verifyAdminToke
 app.get('/api/wrestling/cron/process', requireProWrestlingEnabled, verifyWrestlingCronOrAdmin, async (req, res) => {
   try {
     const now = new Date();
-    const dueMatches = await ProWrestlingMatch.find({ status: 'OPEN', lockAt: { $lte: now } }).limit(100).lean();
+    const dueMatches = await ProWrestlingMatch.find({ status: 'OPEN', lockAt: { $ne: null, $lte: now } }).limit(100).lean();
     let locked = 0;
     let cancelled = 0;
     for (const due of dueMatches) {
@@ -17394,6 +17395,7 @@ app.get('/api/wrestling/cron/process', requireProWrestlingEnabled, verifyWrestli
     const startingSoonLimit = new Date(now.getTime() + 60 * 60 * 1000);
     const startingSoonMatches = await ProWrestlingMatch.find({
       status: 'OPEN',
+      timeTba: { $ne: true },
       matchDate: { $gt: now, $lte: startingSoonLimit },
       startingSoonNotificationSent: false,
     });
