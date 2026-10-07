@@ -9,6 +9,7 @@ const {
   canTransitionWrestlingStatus,
   isWrestlingPredictionLocked,
   validateWrestlingPredictionPayload,
+  normalizeWrestlingSchedule,
 } = require('./pro-wrestling-core');
 
 const exactPrediction = {
@@ -63,3 +64,15 @@ assert.deepStrictEqual(validateWrestlingPredictionPayload(exactPrediction), []);
 assert(validateWrestlingPredictionPayload({ competitorA: {}, competitorB: {}, winnerPrediction: 'X' }).length > 0);
 
 console.log('Pro Wrestling core tests passed.');
+
+const scheduled = normalizeWrestlingSchedule({ matchDate: '2026-10-10T20:00:00Z' });
+assert.strictEqual(scheduled.lockAt.getTime(), scheduled.matchDate.getTime());
+assert.strictEqual(isWrestlingPredictionLocked({ ...scheduled, status: 'OPEN' }, scheduled.matchDate), true);
+assert.throws(() => normalizeWrestlingSchedule({ matchDate: '2026-10-10T20:00:00Z', lockAt: '2026-10-10T21:00:00Z' }));
+assert.throws(() => normalizeWrestlingSchedule({ timeTba: true, eventDate: '2026-02-30' }));
+const tba = normalizeWrestlingSchedule({ timeTba: 'true', eventDate: '2026-10-10', lockAt: '2020-01-01' });
+assert.strictEqual(tba.lockAt, null);
+assert.strictEqual(isWrestlingPredictionLocked({ ...tba, status: 'OPEN' }, new Date('2027-01-01')), false);
+for (const status of ['LOCKED', 'LIVE', 'SCORING']) assert.strictEqual(isWrestlingPredictionLocked({ ...tba, status }), true);
+assert.strictEqual(normalizeWrestlingSchedule({ timeTba: true }).matchDate, null);
+console.log('Wrestling automatic cutoff and TBA schedule tests passed.');
