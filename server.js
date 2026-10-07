@@ -15882,7 +15882,7 @@ const listWrestlingMatches = async (req, res) => {
     }
     if (req.query.featured !== undefined) query.featured = wrestlingBoolean(req.query.featured);
     if (req.query.affiliateId && mongoose.isValidObjectId(req.query.affiliateId)) query.affiliateId = req.query.affiliateId;
-    if (req.query.upcoming === 'true') query.matchDate = { $gte: new Date() };
+    if (req.query.upcoming === 'true') query.$and = [{ $or: [{ matchDate: { $gte: new Date() } }, { timeTba: true, status: 'OPEN' }] }];
     if (req.query.search) {
       const search = String(req.query.search).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
       query.$or = [
