@@ -1,3 +1,4 @@
+const { wrestlingPromotionFight, isWrestlingPromotionOpen } = require('./wrestling-promotion');
 const express = require('express');
 const { isFightOpenForEntry } = require('./fight-entry-time');
 const { ownerReferralShare } = require('./owner-referral-share');
@@ -10502,9 +10503,9 @@ app.post('/affiliate/:affiliateId/join', verifyToken, requireScope(TOKEN_SCOPES.
       // a live invitation, even when the affiliate did not create that fight.
       const sharedFightId = String(req.body?.fightId || '');
       const sharedFight = affiliate.verified && mongoose.isValidObjectId(sharedFightId)
-        ? await Match.findById(sharedFightId).lean() || await Shadow.findById(sharedFightId).lean()
+        ? await findAffiliatePromotionFight(sharedFightId)
         : null;
-      if (!sharedFight || !isFightOpenForEntry(sharedFight)) {
+      if (!sharedFight || !isAffiliatePromotionOpen(sharedFight)) {
         return res.status(409).json({ message: 'This league is resting. New members can join after its promoter publishes or announces a fight.', code: 'LEAGUE_RESTING' });
       }
     }
@@ -15065,6 +15066,8 @@ const proWrestlingMatchSchema = new mongoose.Schema({
   description: String,
   bannerImage: String,
   bannerImageDeleteUrl: String,
+  fightPosterImage: String,
+  fightPosterImageDeleteUrl: String,
   featured: { type: Boolean, default: false },
   publicVisible: { type: Boolean, default: true },
   affiliateId: { type: mongoose.Schema.Types.ObjectId, ref: 'Affiliate' },
@@ -21937,7 +21940,18 @@ app.get('/api/affiliates/me/promotions/reach', verifyToken, requireScope(TOKEN_S
 });
 
 // Ready-made share text and link, so a promoter is not composing a post from
-registerAffiliateSocialRoutes({ app, mongoose, Affiliate, Match, verifyToken, requireScope, affiliateScope: TOKEN_SCOPES.AFFILIATE, isFightOpenForEntry });
+registerAffiliateSocialRoutes({ app, mongoose, Affiliate, Match, verifyToken, requireScope, affiliateScope: TOKEN_SCOPES.AFFILIATE, isFightOpenForEntry: isAffiliatePromotionOpen, findPromotionFight: findAffiliatePromotionFight });
+
+async function findAffiliatePromotionFight(fightId) {
+  if (!mongoose.isValidObjectId(fightId)) return null;
+  const standard = await Match.findById(fightId).lean() || await Shadow.findById(fightId).lean();
+  if (standard) return standard;
+  const match = await ProWrestlingMatch.findOne({ _id: fightId, publicVisible: true, status: { $ne: 'DRAFT' } }).lean();
+  return wrestlingPromotionFight(match);
+}
+function isAffiliatePromotionOpen(fight) {
+  return fight?.gameMode === 'PRO_WRESTLING' ? isWrestlingPromotionOpen(fight) : isFightOpenForEntry(fight);
+}
 
 // One owner upload becomes the base artwork for every affiliate's personal QR poster.
 app.post('/api/admin/fights/:fightId/social-poster', verifyAdminToken, upload.single('poster'), async (req, res) => {
@@ -21946,7 +21960,7 @@ app.post('/api/admin/fights/:fightId/social-poster', verifyAdminToken, upload.si
     if (!req.file || !/^image\/(png|jpeg|webp)$/.test(req.file.mimetype) || req.file.size > 8 * 1024 * 1024) {
       return res.status(400).json({ message: 'Choose a PNG, JPEG, or WebP image under 8 MB.' });
     }
-    const fight = await Match.findById(req.params.fightId) || await Shadow.findById(req.params.fightId);
+    const fight = await Match.findById(req.params.fightId) || await Shadow.findById(req.params.fightId) || await ProWrestlingMatch.findById(req.params.fightId);
     if (!fight) return res.status(404).json({ message: 'Fight not found.' });
     const result = await new Promise((resolve, reject) => {
       cloudinary.uploader.upload_stream({ folder: 'fight_social_posters', resource_type: 'image' }, (error, uploaded) => {
@@ -21974,10 +21988,8 @@ app.get('/api/affiliates/me/promotions/:fightId/share', verifyToken, requireScop
     const affiliate = await Affiliate.findById(affiliateId).select('leagueName playerName profileUrl firstName lastName').lean();
     if (!affiliate) return res.status(404).json({ ok: false, message: 'Affiliate account not found.' });
 
-    const posterFields = 'matchFighterA matchFighterB matchName matchDate matchDateKey matchTime eventTimeZone matchTokens pot matchCategory matchCategoryTwo fightPosterImage promotionBackground fighterAImage fighterBImage';
-    const fight = mongoose.isValidObjectId(fightId)
-      ? await Match.findById(fightId).select(posterFields).lean() || await Shadow.findById(fightId).select(posterFields).lean()
-      : null;
+    const fight = await findAffiliatePromotionFight(fightId);
+    if (!fight) return res.status(404).json({ ok: false, message: 'Published fight not found.' });
 
     const appUrl = String(process.env.PUBLIC_APP_URL || 'https://www.fantasymmadness.com').replace(/\/$/, '');
     // The ref parameter is what ties a signup back to this promoter.
@@ -22003,6 +22015,8 @@ app.get('/api/affiliates/me/promotions/:fightId/share', verifyToken, requireScop
         event: fight?.matchName || '',
         sport: fight?.matchCategoryTwo || fight?.matchCategory || '',
         matchDate: fight?.matchDate || null,
+        gameMode: fight?.gameMode || '',
+        timeTba: Boolean(fight?.timeTba),
         matchDateKey: fight?.matchDateKey || '',
         matchTime: fight?.matchTime || '',
         eventTimeZone: fight?.eventTimeZone || '',
