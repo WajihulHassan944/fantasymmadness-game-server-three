@@ -1607,6 +1607,7 @@ function attachCombatFighterReadFallbacks(fight = {}, sourceType = 'match') {
 }
 
 function pickPublicFightFields(fight = {}, sourceType = 'match') {
+  if (sourceType === 'pro_wrestling' || sourceType === 'PRO_WRESTLING') return wrestlingPromotionFight(wrestlingPlainObject(fight));
   const item = attachCombatFighterReadFallbacks(fight, sourceType);
   const identityHidden = sourceType === 'shadow' && Boolean(item.shadowIdentityHidden);
   const entryCount = Array.isArray(item.userPredictions)
@@ -15068,6 +15069,21 @@ const proWrestlingMatchSchema = new mongoose.Schema({
   bannerImageDeleteUrl: String,
   fightPosterImage: String,
   fightPosterImageDeleteUrl: String,
+  homepagePromoted: { type: Boolean, default: false },
+  homepageSlot: { type: Number, min: 0, max: 5, default: 0 },
+  homepagePromotionRank: { type: Number, default: 0 },
+  homepagePromotionUpdatedAt: Date,
+  homepagePromotionUpdatedBy: String,
+  homepagePromotionTitle: String,
+  homepagePromotionSubtitle: String,
+  homepagePromotionStartsAt: Date,
+  homepagePromotionEndsAt: Date,
+  featuredThisWeek: { type: Boolean, default: false },
+  featuredFight: { type: Boolean, default: false },
+  featuredThisWeekImage: String,
+  featuredFightBackgroundImage: String,
+  featuredFightFighterAImage: String,
+  featuredFightFighterBImage: String,
   featured: { type: Boolean, default: false },
   publicVisible: { type: Boolean, default: true },
   affiliateId: { type: mongoose.Schema.Types.ObjectId, ref: 'Affiliate' },
@@ -17487,6 +17503,10 @@ function compareHomepagePromotedFights(a = {}, b = {}) {
 async function resolveFightDocumentForAdminPromotion(id, requestedSourceType = '') {
   if (!mongoose.Types.ObjectId.isValid(id)) return null;
   const source = String(requestedSourceType || '').toLowerCase();
+  if (source === 'pro_wrestling') {
+    const doc = await ProWrestlingMatch.findById(id);
+    return doc ? { model: ProWrestlingMatch, doc, sourceType: 'pro_wrestling' } : null;
+  }
   if (source === 'shadow') {
     const shadow = await Shadow.findById(id).populate('fighterAId fighterBId');
     return shadow ? { model: Shadow, doc: shadow, sourceType: 'shadow' } : null;
@@ -17596,6 +17616,7 @@ app.patch('/api/admin/fights/:id/homepage-placement', verifyAdminToken, async (r
       await Promise.all([
         Match.updateMany({ _id: { $ne: resolved.doc._id }, [placementField]: true }, clear),
         Shadow.updateMany({ _id: { $ne: resolved.doc._id }, [placementField]: true }, clear),
+        ProWrestlingMatch.updateMany({ _id: { $ne: resolved.doc._id }, [placementField]: true }, clear),
       ]);
     }
     resolved.doc[placementField] = selected;
@@ -17756,7 +17777,9 @@ app.get('/api/public/homepage/promoted-fights', async (req, res) => {
       Match.find(pinnedFilter).populate('fighterAId fighterBId').limit(50).lean(),
       Shadow.find(pinnedFilter).populate('fighterAId fighterBId').limit(50).lean().catch(() => []),
     ]);
+    const wrestling = await ProWrestlingMatch.find({ publicVisible: true, status: { $nin: ['DRAFT', 'FINALIZED', 'CANCELLED', 'NO_CONTEST'] }, $or: [{ homepagePromoted: true }, { featuredThisWeek: true }, { featuredFight: true }] }).sort({ homepageSlot: -1, homepagePromotionRank: -1, createdAt: -1 }).limit(queryLimit).lean();
     const byFight = new Map();
+    wrestling.forEach((fight) => byFight.set(`wrestling:${fight._id}`, wrestlingPromotionFight(fight)));
     [...matches, ...pinnedMatches].forEach((fight) => byFight.set(`match:${fight._id}`, pickPublicFightFields(fight, 'match')));
     [...shadows, ...pinnedShadows].forEach((fight) => byFight.set(`shadow:${fight._id}`, pickPublicFightFields(fight, 'shadow')));
     const items = [...byFight.values()]
@@ -26133,6 +26156,7 @@ const scorerAccountSchema = new mongoose.Schema({
 const scorerAssignmentSchema = new mongoose.Schema({
   fightId: { type: String, required: true, index: true },
   fightLabel: { type: String, default: '' },
+  gameMode: { type: String, default: '' },
   mode: { type: String, enum: ['link', 'account'], required: true },
   scorerName: { type: String, trim: true, default: '' },
   scorerEmail: { type: String, trim: true, lowercase: true, default: '' },
@@ -26208,6 +26232,13 @@ const verifyScorerToken = async (req, res, next) => {
 // The ONLY fight shape a scorer token can read. No pot, no matchTokens, no
 // entrants, no affiliate, no sibling fights on the card.
 function buildScorerFightView(match, assignment) {
+  if (match.gameMode === 'PRO_WRESTLING') return {
+    id: String(match._id), gameMode: 'PRO_WRESTLING', name: match.eventName,
+    fighterA: match.competitorA.displayName, fighterB: match.competitorB.displayName,
+    fighterAImage: match.competitorA.image, fighterBImage: match.competitorB.image,
+    status: match.status, officialStats: match.officialStats, statsVersion: match.statsVersion,
+    assignment: { id: String(assignment._id), scorerName: assignment.scorerName },
+  };
   const category = normalizeCombatCategory(match.matchCategory);
   const container = category === 'boxing' ? (match.BoxingMatch || {}) : (match.MMAMatch || {});
   return {
@@ -26289,17 +26320,18 @@ app.patch('/api/admin/scorers/:id', verifyAdminToken, async (req, res) => {
 app.post('/api/admin/fights/:fightId/scorers', verifyAdminToken, async (req, res) => {
   try {
     const fightId = String(req.params.fightId || '').trim();
-    const match = await Match.findById(fightId).select('matchName matchFighterA matchFighterB');
+    const wrestling = String(req.body.sourceType || '').toUpperCase() === 'PRO_WRESTLING';
+    const match = wrestling ? await ProWrestlingMatch.findById(fightId) : await Match.findById(fightId).select('matchName matchFighterA matchFighterB');
     if (!match) return res.status(404).json({ message: 'Fight not found.' });
 
     const mode = String(req.body.mode || 'link').toLowerCase() === 'account' ? 'account' : 'link';
-    const fightLabel = match.matchName || `${match.matchFighterA} vs ${match.matchFighterB}`;
+    const fightLabel = wrestling ? match.matchTitle : match.matchName || `${match.matchFighterA} vs ${match.matchFighterB}`;
 
     if (mode === 'account') {
       const account = await ScorerAccount.findById(String(req.body.accountId || ''));
       if (!account || !account.active) return res.status(400).json({ message: 'Pick an active scorer account.' });
       const assignment = await ScorerAssignment.create({
-        fightId, fightLabel, mode: 'account',
+        fightId, fightLabel, gameMode: wrestling ? 'PRO_WRESTLING' : '', mode: 'account',
         accountId: String(account._id),
         scorerName: account.name || account.email,
         scorerEmail: account.email,
@@ -26311,7 +26343,7 @@ app.post('/api/admin/fights/:fightId/scorers', verifyAdminToken, async (req, res
     const rawToken = crypto.randomBytes(24).toString('hex');
     const expiresAt = new Date(Date.now() + SCORER_LINK_TTL_HOURS * 60 * 60 * 1000);
     const assignment = await ScorerAssignment.create({
-      fightId, fightLabel, mode: 'link',
+      fightId, fightLabel, gameMode: wrestling ? 'PRO_WRESTLING' : '', mode: 'link',
       scorerName: String(req.body.scorerName || '').trim(),
       scorerEmail: String(req.body.scorerEmail || '').trim().toLowerCase(),
       tokenHash: hashScorerToken(rawToken),
@@ -26330,7 +26362,7 @@ app.post('/api/admin/fights/:fightId/scorers', verifyAdminToken, async (req, res
           from: FMM_MAIL_FROM,
           to: assignment.scorerEmail,
           subject: `You are scoring ${fightLabel}`,
-          html: `<p>You have been asked to score <strong>${fightLabel}</strong>.</p>
+          html: `<p>You have been asked to score <strong>${escapeHtml(fightLabel)}</strong>.</p>
                  <p><a href="${link}">Open the scorecard</a></p>
                  <p>This link works once and expires in ${SCORER_LINK_TTL_HOURS} hours. You can submit rounds as they happen; only the promoter can finalize the fight.</p>`,
         });
@@ -26440,12 +26472,37 @@ app.post('/api/scorer/login', submitLimiter, async (req, res) => {
 // --- scorer: the desk ------------------------------------------------------
 app.get('/api/scorer/fight', verifyScorerToken, async (req, res) => {
   try {
-    const match = await Match.findById(req.scorer.fightId);
+    const match = req.scorer.gameMode === 'PRO_WRESTLING' ? await ProWrestlingMatch.findById(req.scorer.fightId) : await Match.findById(req.scorer.fightId);
     if (!match) return res.status(404).json({ message: 'Fight not found.' });
     return res.json({ ok: true, fight: buildScorerFightView(match, req.scorer) });
   } catch (error) {
     return res.status(500).json({ message: 'Could not load the fight.' });
   }
+});
+
+// Delegated wrestling scorers can update live totals only, never results or payouts.
+app.put('/api/scorer/wrestling/live-stats', verifyScorerToken, scorerLimiter, async (req, res) => {
+  try {
+    if (req.scorer.gameMode !== 'PRO_WRESTLING') return res.status(403).json({ message: 'This assignment is not for wrestling.' });
+    const statsA = normalizeWrestlingStats(req.body.competitorA);
+    const statsB = normalizeWrestlingStats(req.body.competitorB);
+    const match = await runWrestlingTransaction(async (session) => {
+      const match = await applyWrestlingSession(ProWrestlingMatch.findById(req.scorer.fightId), session);
+      if (!match) throw wrestlingHttpError(404, 'Wrestling match not found.', 'MATCH_NOT_FOUND');
+      if (!['OPEN', 'LOCKED', 'LIVE', 'SCORING'].includes(match.status)) throw wrestlingHttpError(409, 'This match cannot be scored.', 'MATCH_CLOSED');
+      const before = wrestlingPlainObject(match);
+      match.officialStats = { competitorA: statsA, competitorB: statsB };
+      match.statsVersion += 1;
+      if (['OPEN', 'LOCKED'].includes(match.status)) { match.status = 'LIVE'; match.liveStartedAt = new Date(); }
+      await match.save(session ? { session } : undefined);
+      await recalculateWrestlingScores(match, session);
+      await writeWrestlingAudit({ req, action: 'WRESTLING_SCORER_STATS_UPDATED', entityType: 'ProWrestlingMatch', entityId: match._id, before, after: match, session });
+      return match;
+    });
+    await ScorerLog.create({ assignmentId: String(req.scorer._id), fightId: String(match._id), scorer: req.scorer.scorerName || req.scorer.scorerEmail, payload: { competitorA: statsA, competitorB: statsB } });
+    await safeWrestlingTrigger('live-stats', { matchId: String(match._id), statsVersion: match.statsVersion });
+    return res.json({ ok: true, fight: buildScorerFightView(match, req.scorer) });
+  } catch (error) { handleWrestlingError(res, error); }
 });
 
 // Rounds go live the moment they are submitted. This is the same write path
