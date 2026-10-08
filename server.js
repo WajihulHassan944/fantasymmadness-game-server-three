@@ -15116,6 +15116,16 @@ const proWrestlingMatchSchema = new mongoose.Schema({
   cancellationReason: String,
   startingSoonNotificationSent: { type: Boolean, default: false },
   liveNotificationSent: { type: Boolean, default: false },
+  notify: { type: Boolean, default: false },
+  memberNotification: {
+    state: { type: String, enum: ['queued', 'completed', 'failed'] },
+    queuedAt: Date,
+    completedAt: Date,
+    attempted: Number,
+    delivered: Number,
+    failed: Number,
+    firstError: String,
+  },
   createdBy: { type: mongoose.Schema.Types.ObjectId, ref: 'Admin' },
   updatedBy: { type: mongoose.Schema.Types.ObjectId, ref: 'Admin' },
 }, { timestamps: true });
@@ -15607,6 +15617,51 @@ const createWrestlingNotification = async ({ userId, matchId, type, title, messa
   if (!userId) return null;
   const documents = [{ userId, matchId, type, title, message, metadata }];
   return ProWrestlingNotification.create(documents, session ? { session } : undefined);
+};
+
+// Atomic claim prevents edits/retries from announcing the same contest twice.
+const queueWrestlingMemberAnnouncement = async (match) => {
+  if (!match.notify || match.status !== 'OPEN' || match.publicVisible === false) return;
+  const claimed = await ProWrestlingMatch.findOneAndUpdate({
+    _id: match._id, notify: true, status: 'OPEN', publicVisible: true,
+    'memberNotification.queuedAt': { $exists: false },
+  }, { $set: { memberNotification: { state: 'queued', queuedAt: new Date() } } }, { new: true });
+  if (!claimed) return;
+  match.memberNotification = claimed.memberNotification;
+  const work = (async () => {
+    const members = await User.find({ fightEmailNotifications: { $ne: false } })
+      .select('email firstName').limit(20000).lean();
+    const seen = new Set();
+    const recipients = members.filter((member) => {
+      const email = String(member.email || '').trim().toLowerCase();
+      if (!email || seen.has(email)) return false;
+      seen.add(email);
+      return true;
+    });
+    const label = escapeHtml(claimed.matchTitle || claimed.eventName || 'Pro Wrestling');
+    const url = `${APP_ORIGIN}/pro-wrestling/matches/${claimed._id}`;
+    const delivery = await sendMailBatch(recipients.map((member) => ({
+      from: FMM_MAIL_FROM, to: member.email,
+      subject: `${claimed.matchTitle || claimed.eventName} — New FANTASY MMADNESS Wrestling Contest`,
+      html: `<div style="font-family:Arial,sans-serif"><h2>FANTASY MMADNESS</h2><p>Hello ${escapeHtml(member.firstName || 'Fight Fan')},</p><p><strong>${label}</strong> is open for predictions.</p><p>Don't just watch the fight. Predict it.</p><p><a href="${url}">Open the wrestling contest</a></p></div>`,
+    })), 3);
+    await ProWrestlingMatch.updateOne({ _id: claimed._id }, { $set: {
+      'memberNotification.state': delivery.failed ? 'failed' : 'completed',
+      'memberNotification.completedAt': new Date(),
+      'memberNotification.attempted': delivery.attempted,
+      'memberNotification.delivered': delivery.delivered,
+      'memberNotification.failed': delivery.failed,
+      'memberNotification.firstError': delivery.firstError,
+    } });
+    console.log('Wrestling member email delivery:', { matchId: String(claimed._id), ...delivery });
+  })().catch(async (error) => {
+    console.error('Wrestling member announcement failed:', error.message);
+    await ProWrestlingMatch.updateOne({ _id: claimed._id }, { $set: {
+      'memberNotification.state': 'failed', 'memberNotification.completedAt': new Date(),
+      'memberNotification.firstError': 'Member email delivery could not be completed.',
+    } }).catch(() => {});
+  });
+  waitUntil(work);
 };
 
 const notifyWrestlingEntrants = async ({ match, type, title, message, metadata, session }) => {
@@ -16494,6 +16549,7 @@ app.post('/api/admin/wrestling/matches', requireProWrestlingEnabled, verifyAdmin
       description: req.body.description,
       bannerImage: bannerUpload?.url || req.body.bannerImageUrl || req.body.bannerImage,
       bannerImageDeleteUrl: bannerUpload?.deleteUrl,
+      notify: wrestlingBoolean(req.body.notify, false),
       featured: wrestlingBoolean(req.body.featured, false),
       publicVisible: wrestlingBoolean(req.body.publicVisible, true),
       affiliateId: mongoose.isValidObjectId(req.body.affiliateId) ? req.body.affiliateId : undefined,
@@ -16508,6 +16564,7 @@ app.post('/api/admin/wrestling/matches', requireProWrestlingEnabled, verifyAdmin
       createdBy: req.admin.id,
       updatedBy: req.admin.id,
     });
+    await queueWrestlingMemberAnnouncement(match);
     await writeWrestlingAudit({ req, action: 'WRESTLING_MATCH_CREATED', entityType: 'ProWrestlingMatch', entityId: match._id, after: match });
     res.status(201).json(match);
   } catch (error) {
@@ -16595,6 +16652,7 @@ app.put('/api/admin/wrestling/matches/:id', requireProWrestlingEnabled, verifyAd
       else if (mongoose.isValidObjectId(req.body.affiliateId)) match.affiliateId = req.body.affiliateId;
       else throw wrestlingHttpError(400, 'affiliateId must be a valid identifier.', 'INVALID_AFFILIATE_ID');
     }
+    if (req.body.notify !== undefined) match.notify = wrestlingBoolean(req.body.notify);
     if (req.body.featured !== undefined) match.featured = wrestlingBoolean(req.body.featured);
     if (req.body.publicVisible !== undefined) match.publicVisible = wrestlingBoolean(req.body.publicVisible);
     if (req.body.affiliateCommissionPercentage !== undefined) match.affiliateCommissionPercentage = Math.min(100, Math.max(0, wrestlingNumber(req.body.affiliateCommissionPercentage, 0)));
@@ -16607,6 +16665,7 @@ app.put('/api/admin/wrestling/matches/:id', requireProWrestlingEnabled, verifyAd
     }
     match.updatedBy = req.admin.id;
     await match.save();
+    await queueWrestlingMemberAnnouncement(match);
     await writeWrestlingAudit({ req, action: 'WRESTLING_MATCH_UPDATED', entityType: 'ProWrestlingMatch', entityId: match._id, before, after: match, reason: req.body.reason });
     res.json(match);
   } catch (error) {
@@ -16668,6 +16727,7 @@ app.put('/api/admin/wrestling/matches/:id/status', requireProWrestlingEnabled, v
       await writeWrestlingAudit({ req, action: 'WRESTLING_MATCH_STATUS_UPDATED', entityType: 'ProWrestlingMatch', entityId: match._id, before, after: match, reason: req.body.reason, session });
       return match;
     });
+    await queueWrestlingMemberAnnouncement(result);
     await safeWrestlingTrigger('match-status', { matchId: String(result._id), status: result.status });
     if (result.status === 'OPEN') {
       app.locals.swarmPhase2?.triggerAutomationEvent?.({
@@ -22102,6 +22162,18 @@ app.get('/api/users/me/notifications', verifyToken, async (req, res) => {
         at: fight.createdAt,
       });
     });
+
+    // Published wrestling member announcements share the main player bell.
+    const wrestlingAnnouncements = await ProWrestlingMatch.find({
+      publicVisible: true, status: { $nin: ['DRAFT', 'CANCELLED', 'NO_CONTEST'] },
+      'memberNotification.queuedAt': { $gte: since },
+    }).select('matchTitle eventName entryFeeTokens memberNotification.queuedAt').sort({ 'memberNotification.queuedAt': -1 }).limit(40).lean();
+    wrestlingAnnouncements.forEach((match) => notifications.push({
+      id: 'wrestling:' + match._id, type: 'NEW_FIGHT', gameMode: 'PRO_WRESTLING',
+      title: `New wrestling contest: ${match.matchTitle || match.eventName}`,
+      body: `PRO WRESTLING · ${Number(match.entryFeeTokens || 0).toLocaleString()} FM COINS entry`,
+      fightId: String(match._id), at: match.memberNotification.queuedAt,
+    }));
 
     // 2. Results for fights this player actually entered — a settled fight they
     //    were not in is not news for them.
