@@ -1,3 +1,4 @@
+const { wrestlingPromotionFight } = require('./wrestling-promotion');
 'use strict';
 
 /**
@@ -110,7 +111,7 @@ function registerSeoPerformancePhase2Routes(options = {}) {
   }));
 
   app.get('/api/public/fights/:id', cachePublicResponse, asyncHandler(async (req, res) => {
-    const fight = await findFightById(models.Match, models.Shadow, req.params.id, req.query);
+    const fight = await findFightById(models.Match, models.Shadow, req.params.id, req.query) || (models.ProWrestlingMatch && /^[a-f\d]{24}$/i.test(req.params.id) && wrestlingPromotionFight(await models.ProWrestlingMatch.findOne({ _id: req.params.id, publicVisible: true, status: { $ne: 'DRAFT' } }).lean()));
     if (!fight) return res.status(404).json({ ok: false, code: 'FIGHT_NOT_FOUND', message: 'Fight not found.' });
     const related = await buildInternalLinks({ query: { entityType: 'fight', entityId: req.params.id, limit: 8 }, req, models });
     res.json({ ok: true, fight: serializeFight(fight, req), related });
@@ -590,6 +591,8 @@ function serializeFight(fight, req) {
     _id: fight?._id,
     id,
     sourceType: fight?.sourceType,
+    gameMode: fight?.gameMode,
+    matchDateKey: fight?.matchDateKey,
     title,
     matchName: fight?.matchName,
     matchFighterA: fighterAName,
@@ -597,6 +600,7 @@ function serializeFight(fight, req) {
     fighterAImage,
     fighterBImage,
     promotionBackground: fight?.promotionBackground,
+    fightPosterImage: fight?.fightPosterImage,
     matchDescription: fight?.matchDescription,
     matchCategory: fight?.matchCategory,
     matchCategoryTwo: fight?.matchCategoryTwo,

@@ -4,7 +4,7 @@ const cloudinary = require('cloudinary').v2;
 
 // OAuth secrets live only on the server. Set SOCIAL_TOKEN_ENCRYPTION_KEY to a
 // random 64-character hex string before enabling any provider.
-function registerAffiliateSocialRoutes({ app, mongoose, Affiliate, Match, verifyToken, requireScope, affiliateScope, isFightOpenForEntry }) {
+function registerAffiliateSocialRoutes({ app, mongoose, Affiliate, Match, verifyToken, requireScope, affiliateScope, isFightOpenForEntry, findPromotionFight }) {
   const schemaOptions = { strict: true, timestamps: true };
   const State = mongoose.models.AffiliateSocialState || mongoose.model('AffiliateSocialState', new mongoose.Schema({
     stateHash: { type: String, required: true, unique: true }, affiliateId: mongoose.Schema.Types.ObjectId,
@@ -154,7 +154,7 @@ function registerAffiliateSocialRoutes({ app, mongoose, Affiliate, Match, verify
     try {
       const [account, fight, affiliate] = await Promise.all([
         Account.findOne({ affiliateId, provider }),
-        Match.findById(fightId).select('matchFighterA matchFighterB matchDate matchDateKey matchStatus matchShadowOpenStatus matchShadowStatus entryClosedAt lockAt promotionBackground matchTime eventTimeZone pot matchTokens').lean(),
+        findPromotionFight ? findPromotionFight(fightId) : Match.findById(fightId).lean(),
         Affiliate.findById(affiliateId).select('leagueName playerName').lean(),
       ]);
       if (!account) return res.status(409).json({ message: 'Connect your account first.' });
@@ -164,7 +164,7 @@ function registerAffiliateSocialRoutes({ app, mongoose, Affiliate, Match, verify
         return res.status(400).json({ message: 'Prepare your personal fight poster before publishing.' });
       }
       if (provider !== 'x' && !process.env.CLOUDINARY_CLOUD_NAME) return res.status(503).json({ message: 'Poster image publishing is not configured.' });
-      const fightLink = `${siteBase}/fight/${encodeURIComponent(fightId)}?ref=${encodeURIComponent(affiliateId)}`;
+      const fightLink = `${siteBase}/league/${encodeURIComponent(affiliateId)}?fightId=${encodeURIComponent(fightId)}`;
       const title = `${fight.matchFighterA || 'Fight'} vs ${fight.matchFighterB || 'Fight'}`;
       const disclosure = 'I’m a FANTASY MMADNESS affiliate and may earn from eligible entries through my link.';
       const league = String(affiliate?.leagueName || affiliate?.playerName || 'my league').trim().slice(0, 60);
