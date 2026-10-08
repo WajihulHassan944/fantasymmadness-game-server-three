@@ -9,6 +9,8 @@ function wrestlingPromotionFight(match) {
     fighterAImage: match.competitorA?.image || '', fighterBImage: match.competitorB?.image || '',
     matchCategory: 'Pro Wrestling', matchCategoryTwo: 'Pro Wrestling',
     matchStatus: match.status, status: match.status, publicVisible: match.publicVisible,
+    entryOpen: isWrestlingPromotionOpen(match),
+    createdAt: match.createdAt, updatedAt: match.updatedAt,
     matchDate: match.matchDate, matchDateKey: match.eventDate || '', eventDate: match.eventDate || '',
     matchTime: match.matchTime, timeTba: Boolean(match.timeTba), lockAt: match.lockAt,
     matchTokens: match.entryFeeTokens || 0, pot: match.currentPot ?? match.basePot ?? 0,
