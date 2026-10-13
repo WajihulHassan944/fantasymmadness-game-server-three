@@ -32,3 +32,14 @@ test('scheduled and manual locks both stop new entries for only that bout', () =
   assert.equal(isFightOpenForEntry({ ...bout, entryClosedAt: new Date('2026-09-23T20:00:00Z') }, Date.parse('2026-09-23T20:00:01Z')), false);
   assert.equal(isFightOpenForEntry({ ...bout, lockAt: '2026-09-23T21:00:00Z' }, Date.parse('2026-09-23T21:00:00Z')), false);
 });
+
+test('published live fights ignore inherited shadow closure but retain entry locks', () => {
+  const bout = { matchType: 'LIVE', matchStatus: 'Ongoing', matchDate: '2026-10-17T00:00:00.000Z', matchTime: '23:00', matchShadowOpenStatus: 'closed', matchShadowStatus: 'inactive' };
+  const now = Date.parse('2026-10-13T12:00:00Z');
+  assert.equal(isFightOpenForEntry(bout, now), true);
+  assert.equal(isFightOpenForEntry({ ...bout, entryClosedAt: new Date(now) }, now), false);
+  assert.equal(isFightOpenForEntry({ ...bout, lockAt: new Date(now) }, now), false);
+  assert.equal(isFightOpenForEntry({ ...bout, matchStatus: 'Finished' }, now), false);
+  assert.equal(isFightOpenForEntry(bout, getFightEntryLockTime(bout)), false);
+  assert.equal(isFightOpenForEntry({ ...bout, matchType: 'SHADOW' }, now), false);
+});
