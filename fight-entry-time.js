@@ -50,8 +50,12 @@ const getFightEntryLockTime = (fight) => {
 const isFightOpenForEntry = (fight, now = Date.now()) => {
   const status = String(fight?.matchStatus || '').toLowerCase();
   if (['finished', 'closed', 'draft'].includes(status) || fight?.entryClosedAt) return false;
-  if (String(fight?.matchShadowOpenStatus || 'open').toLowerCase() === 'closed') return false;
-  if (String(fight?.matchShadowStatus || 'active').toLowerCase() === 'inactive') return false;
+  // Published LIVE fights retain old shadow fields after activation. Only
+  // shadow records use those flags; live entries obey explicit closures and cutoff.
+  if (String(fight?.matchType || '').toUpperCase() !== 'LIVE') {
+    if (String(fight?.matchShadowOpenStatus || 'open').toLowerCase() === 'closed') return false;
+    if (String(fight?.matchShadowStatus || 'active').toLowerCase() === 'inactive') return false;
+  }
   const lock = getFightEntryLockTime(fight);
   return Number.isFinite(lock) && lock > now;
 };
