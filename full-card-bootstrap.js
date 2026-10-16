@@ -50,6 +50,7 @@ const verifyAdminToken = (req, res, next) => {
   try { req.admin = jwt.verify(token, process.env.JWT_SECRET_ADMIN); return next(); }
   catch (_error) { return res.status(401).json({ message: 'Invalid or expired admin session.' }); }
 };
+require('./etsy-integration')({app:capturedApp,mongoose,verifyAdminToken});
 const { registerIncidentRoutes } = require('./admin-incidents');
 const { reportIncident } = registerIncidentRoutes({ app: capturedApp, mongoose, verifyAdminToken });
 // Read-only proactive inspection; runs only when an authenticated admin requests it.
