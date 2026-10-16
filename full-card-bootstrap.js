@@ -105,10 +105,23 @@ const runFightReadinessScan = async (req, res) => {
     }
     // A previously reported issue is cleared only when this scan verifies the
     // same fight record is now complete. No changes to the fight itself.
+    // Recheck all outstanding readiness incidents by exact record ID, even when
+    // their fights fall outside the latest-250 scan window.
+    const Incident=mongoose.models.AdminIncident;
+    if(Incident){
+      const open=await Incident.find({source:'fight-readiness-scan',status:{$ne:'resolved'}}).select('affectedId').limit(1000).lean();
+      const outside=open.map(x=>String(x.affectedId||'')).filter(id=>mongoose.isValidObjectId(id) && !fights.some(f=>String(f._id)===id));
+      if(outside.length){
+        const records=await Match.find({_id:{$in:outside}}).select('_id matchFighterA matchFighterB fighterAImage fighterBImage').lean();
+        const byId=new Map(records.map(x=>[String(x._id),x]));
+        const clear=outside.filter(id=>!byId.has(id)||readinessComplete(byId.get(id)));
+        if(clear.length)await Incident.updateMany({key:{$in:clear.map(id=>'fight-readiness:'+id)},status:{$ne:'resolved'}},
+          {$set:{status:'resolved',resolvedAt:new Date(),resolutionNote:'Verified complete or removed from registry by readiness rescan.'}});
+      }
+    }
     const inspectedIds=fights.map(f=>String(f._id));
     const warningIds=new Set(warnings.map(w=>w.fightId));
     const healthyIds=inspectedIds.filter(id=>!warningIds.has(id));
-    const Incident=mongoose.models.AdminIncident;
     if(Incident && healthyIds.length)await Incident.updateMany({
       key:{$in:healthyIds.map(id=>'fight-readiness:'+id)},status:{$ne:'resolved'}
     },{$set:{status:'resolved',resolvedAt:new Date(),resolutionNote:'Verified by subsequent fight readiness inspection: required names and photos are present.'}});
