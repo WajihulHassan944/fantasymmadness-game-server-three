@@ -84,7 +84,7 @@ module.exports = ({app,mongoose,verifyAdminToken}) => {
       const token=await response.json();
       const tokens={...token,expiresAt:Date.now()+Number(token.expires_in||3600)*1000};
       await Config.updateOne({_id:'main'},{$set:{encrypted:encrypt(tokens),updatedAt:new Date()}});
-      res.redirect(303,'https://www.fantasymmadness.com/admin?etsy=connected');
+      res.redirect(303,'https://www.fantasymmadness.com/administration/notifications?etsy=connected');
     }catch(_){res.status(500).send('Etsy connection failed. Check backend configuration and retry.');}
   });
   app.get('/api/admin/integrations/etsy/orders',verifyAdminToken,async(req,res)=>{
