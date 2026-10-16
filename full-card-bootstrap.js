@@ -51,7 +51,30 @@ const verifyAdminToken = (req, res, next) => {
   catch (_error) { return res.status(401).json({ message: 'Invalid or expired admin session.' }); }
 };
 const { registerIncidentRoutes } = require('./admin-incidents');
-registerIncidentRoutes({ app: capturedApp, mongoose, verifyAdminToken });
+const { reportIncident } = registerIncidentRoutes({ app: capturedApp, mongoose, verifyAdminToken });
+// Read-only proactive inspection; runs only when an authenticated admin requests it.
+capturedApp.get('/api/admin/incidents/scan', verifyAdminToken, async (req, res) => {
+  try {
+    const fights = await Match.find({matchStatus:{$nin:['Finished','Cancelled','Canceled','Deleted']}})
+      .select('_id matchName matchFighterA matchFighterB fighterAImage fighterBImage matchDate matchStatus')
+      .sort({updatedAt:-1}).limit(250).lean();
+    const warnings=[];
+    for(const fight of fights){
+      const missing=[];
+      if(!String(fight.matchFighterA||'').trim())missing.push('fighter A name');
+      if(!String(fight.matchFighterB||'').trim())missing.push('fighter B name');
+      if(!String(fight.fighterAImage||'').trim())missing.push('fighter A photo');
+      if(!String(fight.fighterBImage||'').trim())missing.push('fighter B photo');
+      if(!missing.length)continue;
+      const id=String(fight._id);
+      const title='Fight record needs review: '+String(fight.matchName||id).slice(0,100);
+      const description='Missing '+missing.join(', ')+'. Verify this fight before promoting it.';
+      warnings.push({fightId:id,title,description});
+      await reportIncident({key:'fight-readiness:'+id,source:'fight-readiness-scan',severity:'review',title,description,affectedType:'fight',affectedId:id,actionUrl:'/administration/upcomingFights'});
+    }
+    res.json({ok:true,inspected:fights.length,warnings,limited:fights.length===250,checkedAt:new Date().toISOString()});
+  }catch(error){res.status(500).json({ok:false,message:'Fight readiness inspection failed.'});}
+});
 const { registerRevenueAnalyticsRoutes } = require('./revenue-analytics');
 registerRevenueAnalyticsRoutes({ app: capturedApp, mongoose, verifyAdminToken });
 
