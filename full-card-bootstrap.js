@@ -6,7 +6,7 @@
 const expressPath = require.resolve('express');
 const expressOriginal = require(expressPath);
 let capturedApp = null;
-const expressCapture = (...args) => { capturedApp = expressOriginal(...args); return capturedApp; };
+const expressCapture = (...args) => { capturedApp = expressOriginal(...args); capturedApp.use(require('./passive-incident-monitor').passiveIncidentMonitor); return capturedApp; };
 Object.assign(expressCapture, expressOriginal);
 require.cache[expressPath].exports = expressCapture;
 require('./server');
