@@ -83,7 +83,14 @@ capturedApp.get('/api/admin/incidents/scan', verifyAdminToken, async (req, res) 
     },{$set:{status:'resolved',resolvedAt:new Date(),resolutionNote:'Verified by subsequent fight readiness inspection: required names and photos are present.'}});
     res.json({ok:true,inspected:fights.length,warnings,limited:fights.length===250,checkedAt:new Date().toISOString()});
   }catch(error){res.status(500).json({ok:false,message:'Fight readiness inspection failed.'});}
-});
+};
+capturedApp.get('/api/admin/incidents/scan', verifyAdminToken, runFightReadinessScan);
+capturedApp.get('/api/cron/jarvis-health', (req,res,next) => {
+  const secret=process.env.CRON_SECRET;
+  if(!secret || req.headers.authorization !== 'Bearer '+secret)
+    return res.status(401).json({ok:false,message:'Monitoring cron authorization required'});
+  return next();
+}, runFightReadinessScan);
 const { registerRevenueAnalyticsRoutes } = require('./revenue-analytics');
 registerRevenueAnalyticsRoutes({ app: capturedApp, mongoose, verifyAdminToken });
 
