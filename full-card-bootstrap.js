@@ -91,6 +91,7 @@ capturedApp.get('/api/cron/jarvis-health', (req,res,next) => {
     return res.status(401).json({ok:false,message:'Monitoring cron authorization required'});
   return next();
 }, runFightReadinessScan);
+require('./operations-snapshot').registerOperationsSnapshot({app:capturedApp,mongoose,verifyAdminToken});
 const { registerRevenueAnalyticsRoutes } = require('./revenue-analytics');
 registerRevenueAnalyticsRoutes({ app: capturedApp, mongoose, verifyAdminToken });
 
