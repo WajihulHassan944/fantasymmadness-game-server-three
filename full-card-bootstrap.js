@@ -54,6 +54,29 @@ require('./etsy-integration')({app:capturedApp,mongoose,verifyAdminToken});
 const { registerIncidentRoutes } = require('./admin-incidents');
 const { reportIncident } = registerIncidentRoutes({ app: capturedApp, mongoose, verifyAdminToken });
 // Read-only proactive inspection; runs only when an authenticated admin requests it.
+// Resolve readiness incidents whenever a Match document is saved or updated.
+// The write is intentionally fire-and-forget; it cannot block match publishing.
+const readinessComplete = fight => {
+  const has = value => typeof value === 'string' ? !!value.trim() : !!value;
+  return has(fight.matchFighterA) && has(fight.matchFighterB) &&
+    has(fight.fighterAImage) && has(fight.fighterBImage);
+};
+const resolveFightReadiness = async fightId => {
+  if (!fightId) return;
+  const record=await Match.findById(fightId).select('matchFighterA matchFighterB fighterAImage fighterBImage').lean();
+  if (!record || !readinessComplete(record)) return;
+  const Incident=mongoose.models.AdminIncident;
+  if (Incident) await Incident.updateOne({key:'fight-readiness:'+String(fightId),status:{$ne:'resolved'}},
+    {$set:{status:'resolved',resolvedAt:new Date(),resolutionNote:'Verified complete after fight record update.'}});
+};
+Match.schema.post('save',function(doc){resolveFightReadiness(doc?._id).catch(()=>{});});
+for(const operation of ['findOneAndUpdate','updateOne','updateMany','replaceOne']){
+  Match.schema.post(operation,function(){
+    const query=this.getQuery();
+    const id=query?._id;
+    if(id && (typeof id==='string' || id.toString))resolveFightReadiness(id).catch(()=>{});
+  });
+}
 const runFightReadinessScan = async (req, res) => {
   try {
     const fights = await Match.find({matchStatus:{$nin:['Finished','Cancelled','Canceled','Deleted']}})
