@@ -72,6 +72,15 @@ capturedApp.get('/api/admin/incidents/scan', verifyAdminToken, async (req, res) 
       warnings.push({fightId:id,title,description});
       await reportIncident({key:'fight-readiness:'+id,source:'fight-readiness-scan',severity:'review',title,description,affectedType:'fight',affectedId:id,actionUrl:'/administration/upcomingFights'});
     }
+    // A previously reported issue is cleared only when this scan verifies the
+    // same fight record is now complete. No changes to the fight itself.
+    const inspectedIds=fights.map(f=>String(f._id));
+    const warningIds=new Set(warnings.map(w=>w.fightId));
+    const healthyIds=inspectedIds.filter(id=>!warningIds.has(id));
+    const Incident=mongoose.models.AdminIncident;
+    if(Incident && healthyIds.length)await Incident.updateMany({
+      key:{$in:healthyIds.map(id=>'fight-readiness:'+id)},status:{$ne:'resolved'}
+    },{$set:{status:'resolved',resolvedAt:new Date(),resolutionNote:'Verified by subsequent fight readiness inspection: required names and photos are present.'}});
     res.json({ok:true,inspected:fights.length,warnings,limited:fights.length===250,checkedAt:new Date().toISOString()});
   }catch(error){res.status(500).json({ok:false,message:'Fight readiness inspection failed.'});}
 });
