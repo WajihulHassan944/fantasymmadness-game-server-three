@@ -41,6 +41,10 @@
     {
       "path": "/api/cron/retry-league-emails",
       "schedule": "15 14 * * *"
+    },
+    {
+      "path": "/api/cron/jarvis-health",
+      "schedule": "*/5 * * * *"
     }
   ]
 }
