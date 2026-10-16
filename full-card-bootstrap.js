@@ -65,6 +65,13 @@ const runFightReadinessScan = async (req, res) => {
       if(!String(fight.matchFighterB||'').trim())missing.push('fighter B name');
       if(!String(fight.fighterAImage||'').trim())missing.push('fighter A photo');
       if(!String(fight.fighterBImage||'').trim())missing.push('fighter B photo');
+      const scheduled=fight.matchDate ? new Date(fight.matchDate) : null;
+      const hoursToFight=scheduled && !Number.isNaN(scheduled.getTime()) ? (scheduled.getTime()-Date.now())/3600000 : null;
+      // Warn early for incomplete cards due in the next 48 hours; do not
+      // manufacture a deadline for TBA or invalid dates.
+      if(missing.length && hoursToFight!==null && hoursToFight>=0 && hoursToFight<=48){
+        missing.push(hoursToFight<=24?'fight starts within 24 hours':'fight starts within 48 hours');
+      }
       if(!missing.length)continue;
       const id=String(fight._id);
       const title='Fight record needs review: '+String(fight.matchName||id).slice(0,100);
