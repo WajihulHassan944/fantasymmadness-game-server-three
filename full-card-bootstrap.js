@@ -53,7 +53,7 @@ const verifyAdminToken = (req, res, next) => {
 const { registerIncidentRoutes } = require('./admin-incidents');
 const { reportIncident } = registerIncidentRoutes({ app: capturedApp, mongoose, verifyAdminToken });
 // Read-only proactive inspection; runs only when an authenticated admin requests it.
-capturedApp.get('/api/admin/incidents/scan', verifyAdminToken, async (req, res) => {
+const runFightReadinessScan = async (req, res) => {
   try {
     const fights = await Match.find({matchStatus:{$nin:['Finished','Cancelled','Canceled','Deleted']}})
       .select('_id matchName matchFighterA matchFighterB fighterAImage fighterBImage matchDate matchStatus')
