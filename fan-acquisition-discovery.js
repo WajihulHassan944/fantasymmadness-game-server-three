@@ -120,7 +120,10 @@ module.exports=({app,verifyAdminToken,mongoose})=>{
   record.campaignDrafts=await createDrafts(record);
   return record;
  };
- // Standard affiliate invitations follow published signup terms and need no owner approval.\n // Custom revenue shares, promoter deals, sponsorships and commercial commitments require owner approval.\n // No outbound sending is configured here; review states do not imply messages were sent.\n app.get('/api/cron/fan-acquisition',async(req,res)=>{
+ // Standard affiliate invitations follow published signup terms and need no owner approval.
+ // Custom revenue shares, promoter deals, sponsorships and commercial commitments require owner approval.
+ // No outbound sending is configured here; review states do not imply messages were sent.
+ app.get('/api/cron/fan-acquisition',async(req,res)=>{
   if(!process.env.CRON_SECRET || req.headers.authorization!=='Bearer '+process.env.CRON_SECRET)return res.status(401).json({ok:false});
   try{const record=await run();return res.json({ok:true,createdAt:record.createdAt,agents:record.agents.map(a=>({id:a.id,status:a.status,discovered:a.discovered,audiencesIdentified:a.audiencesIdentified}))});}catch(e){return res.status(503).json({ok:false,message:'Research run could not be saved'});}
  });
