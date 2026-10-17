@@ -56,7 +56,7 @@ module.exports=({app,verifyAdminToken,mongoose})=>{
    if(existing.length)return res.json({ok:true,created:0,campaigns:existing});
    const docs=last.agents.flatMap(agent=>(agent.opportunities||[]).slice(0,3).map(opportunity=>({
     runId:String(last._id),sport:agent.id,sportName:agent.name,sourceTitle:opportunity.title,sourceUrl:opportunity.url,
-    message:'Fight fans: the action is happening now. Put your fight IQ to the test with FANTASY MMADNESS. Predict the punches, rounds and finishes. Don\\'t just watch the fight—predict it! https://www.fantasymmadness.com',
+    message:"Fight fans: the action is happening now. Put your fight IQ to the test with FANTASY MMADNESS. Predict the punches, rounds and finishes. Don't just watch the fight—predict it! https://www.fantasymmadness.com",
     status:'awaiting_review',createdAt:new Date(),publishedAt:null,channel:null
    })));
    if(docs.length)await campaigns().insertMany(docs);
