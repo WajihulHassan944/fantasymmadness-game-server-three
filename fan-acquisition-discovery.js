@@ -16,6 +16,20 @@ const COMMUNITIES={
  kickboxing:[['r/MuayThai','https://www.reddit.com/r/MuayThai/'],['r/Kickboxing','https://www.reddit.com/r/Kickboxing/']],
  wrestling:[['r/SquaredCircle','https://www.reddit.com/r/SquaredCircle/'],['r/WWE','https://www.reddit.com/r/WWE/']]
 };
+const FIGHTER_NETWORKS={
+ boxing:[
+ ['USA Boxing Alumni Association','https://www.usaboxing.org/alumni','alumni_network'],
+ ['British Boxing Board Ex-Boxers Associations','https://w.bbbofc.com/exboxer','veteran_fighter_network'],
+ ['Veteran Boxers Association Ring One','https://www.vbaringone.com/about','veteran_fighter_network'],
+ ['IBA Champions and Veterans Committee','https://www.iba.sport/about-iba/organizational-structure/committees/technical-management-committees/champions-and-veterans-committee/','veteran_fighter_network']
+ ],
+ mma:[], 'bare-knuckle':[], kickboxing:[], wrestling:[]
+};
+const fighterNetworks=genre=>(FIGHTER_NETWORKS[genre.id]||[]).map(([name,url,type])=>({
+ name,url,type,status:'directory_candidate_unverified',source:'Public fighter/alumni organization directory',
+ contactMethod:'Approach organization publicly for an introduction; invite individual fighters to opt in',
+ proposedRole:'fighter_affiliate',affiliateStatus:'not_invited',outreachSent:false
+}));
 const VIDEO_QUERIES={
  boxing:'boxing fight predictions breakdown',
  mma:'UFC MMA fight predictions breakdown',
@@ -80,10 +94,10 @@ module.exports=({app,verifyAdminToken,mongoose})=>{
       source:'Google News public feed'
     })).filter(x=>x.url);
     const directory=(COMMUNITIES[genre.id]||[]).map(([name,url])=>({name,url,type:url.includes('reddit.com')?'public_community':'promoter',status:'directory_candidate_unverified',source:'Curated starting directory',contactMethod:'Review community rules or official partnership contact',outreachSent:false}));
-    const audiences=[...video.audiences,...podcasts.audiences,...directory].filter((a,i,all)=>all.findIndex(b=>b.url===a.url)===i);
+    const audiences=[...video.audiences,...podcasts.audiences,...directory,...fighterNetworks(genre)].filter((a,i,all)=>all.findIndex(b=>b.url===a.url)===i);
     const data={id:genre.id,name:genre.name,status:'research_ready',videoSearchStatus:video.status,podcastSearchStatus:podcasts.status,opportunities,audiences,discovered:opportunities.length,audiencesIdentified:audiences.length};
     cache.set(genre.id,{at:now,data});return data;
-   }catch(err){const podcasts=await podcastDiscover(genre);const directory=(COMMUNITIES[genre.id]||[]).map(([name,url])=>({name,url,type:url.includes('reddit.com')?'public_community':'promoter',status:'directory_candidate_unverified',source:'Curated starting directory',contactMethod:'Review community rules or official partnership contact',outreachSent:false}));const audiences=[...podcasts.audiences,...directory];return {id:genre.id,name:genre.name,status:audiences.length?'partial_research_ready':'research_unavailable',podcastSearchStatus:podcasts.status,videoSearchStatus:'unavailable',opportunities:[],audiences,discovered:0,audiencesIdentified:audiences.length,error:'News research feed unavailable; alternative audience discovery attempted'};}
+   }catch(err){const podcasts=await podcastDiscover(genre);const directory=(COMMUNITIES[genre.id]||[]).map(([name,url])=>({name,url,type:url.includes('reddit.com')?'public_community':'promoter',status:'directory_candidate_unverified',source:'Curated starting directory',contactMethod:'Review community rules or official partnership contact',outreachSent:false}));const audiences=[...podcasts.audiences,...directory,...fighterNetworks(genre)];return {id:genre.id,name:genre.name,status:audiences.length?'partial_research_ready':'research_unavailable',podcastSearchStatus:podcasts.status,videoSearchStatus:'unavailable',opportunities:[],audiences,discovered:0,audiencesIdentified:audiences.length,error:'News research feed unavailable; alternative audience discovery attempted'};}
   }));
   return result;
  };
@@ -92,7 +106,7 @@ module.exports=({app,verifyAdminToken,mongoose})=>{
  const createDrafts=async(record)=>{
   const existing=await campaigns().find({runId:String(record._id)}).toArray();
   if(existing.length)return {created:0,campaigns:existing};
-  const docs=record.agents.flatMap(agent=>(agent.audiences||[]).map(audience=>({runId:String(record._id),sport:agent.id,sportName:agent.name,sourceTitle:audience.name,sourceUrl:audience.url,audienceType:audience.type,contactMethod:audience.contactMethod,message:"Fight fans: the action is happening now. Put your fight IQ to the test with FANTASY MMADNESS. Predict the punches, rounds and finishes. Don't just watch the fight—predict it! https://www.fantasymmadness.com",status:'awaiting_review',createdAt:new Date(),publishedAt:null,channel:null})));
+  const docs=record.agents.flatMap(agent=>(agent.audiences||[]).map(audience=>({runId:String(record._id),sport:agent.id,sportName:agent.name,sourceTitle:audience.name,sourceUrl:audience.url,audienceType:audience.type,proposedRole:audience.proposedRole||'audience_partner',contactMethod:audience.contactMethod,message:"Fight fans: the action is happening now. Put your fight IQ to the test with FANTASY MMADNESS. Predict the punches, rounds and finishes. Don't just watch the fight—predict it! https://www.fantasymmadness.com",status:'awaiting_review',createdAt:new Date(),publishedAt:null,channel:null})));
   if(docs.length)await campaigns().insertMany(docs);
   return {created:docs.length,campaigns:docs};
  };
