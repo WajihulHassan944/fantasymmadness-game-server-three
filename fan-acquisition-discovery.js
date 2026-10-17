@@ -11,8 +11,10 @@ const GENRES=[
 ];
 const cache=new Map();
 const safeUrl=url=>{try{const u=new URL(url);return ['https:','http:'].includes(u.protocol)?u.href:null;}catch{return null;}};
-module.exports=({app,verifyAdminToken})=>{
- app.get('/api/admin/fan-acquisition/discover',verifyAdminToken,async(req,res)=>{
+module.exports=({app,verifyAdminToken,mongoose})=>{
+ const Collection=()=>mongoose.connection.db.collection('fan_acquisition_runs');
+ const discover=async()=>{
+
   const now=Date.now();
   const result=await Promise.all(GENRES.map(async genre=>{
    const cached=cache.get(genre.id);
@@ -30,7 +32,22 @@ module.exports=({app,verifyAdminToken})=>{
     cache.set(genre.id,{at:now,data});return data;
    }catch(err){return {id:genre.id,name:genre.name,status:'research_unavailable',opportunities:[],discovered:0,error:'Public research feed unavailable'};}
   }));
-  res.set('Cache-Control','private, no-store');
-  res.json({ok:true,mode:'research_only',agents:result,acquisitionMetrics:{fansReached:null,visitors:null,signups:null,players:null},publishingEnabled:false,note:'Public news research is not evidence of outreach, fan contact, or acquisition.'});
+  return result;
+ };
+ const run=async()=>{
+  const agents=await discover();
+  const record={createdAt:new Date(),agents:agents.map(a=>({id:a.id,name:a.name,status:a.status,discovered:a.discovered,opportunities:a.opportunities.map(o=>({...o,invitation:'Fight fans: put your fight IQ to the test. Predict the action at https://www.fantasymmadness.com'}))})),mode:'research_only'};
+  await Collection().insertOne(record);
+  return record;
+ };
+ app.get('/api/cron/fan-acquisition',async(req,res)=>{
+  if(!process.env.CRON_SECRET || req.headers.authorization!=='Bearer '+process.env.CRON_SECRET)return res.status(401).json({ok:false});
+  try{const record=await run();return res.json({ok:true,createdAt:record.createdAt,agents:record.agents.map(a=>({id:a.id,status:a.status,discovered:a.discovered}))});}catch(e){return res.status(503).json({ok:false,message:'Research run could not be saved'});}
+ });
+ app.post('/api/admin/fan-acquisition/run',verifyAdminToken,async(req,res)=>{
+  try{const record=await run();return res.json({ok:true,createdAt:record.createdAt,agents:record.agents});}catch(e){return res.status(503).json({ok:false,message:'Research run could not be saved'});}
+ });
+ app.get('/api/admin/fan-acquisition/discover',verifyAdminToken,async(req,res)=>{
+  try{const last=await Collection().findOne({},{sort:{createdAt:-1}});const agents=last?.agents||await discover();res.set('Cache-Control','private, no-store');return res.json({ok:true,mode:'research_only',lastRunAt:last?.createdAt||null,agents,acquisitionMetrics:{fansReached:null,visitors:null,signups:null,players:null},publishingEnabled:false,note:'Research is not fan acquisition. No automatic social posting is configured.'});}catch(e){return res.status(503).json({ok:false,message:'Fan acquisition data unavailable'});}
  });
 };
