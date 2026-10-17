@@ -47,6 +47,26 @@ module.exports=({app,verifyAdminToken,mongoose})=>{
  app.post('/api/admin/fan-acquisition/run',verifyAdminToken,async(req,res)=>{
   try{const record=await run();return res.json({ok:true,createdAt:record.createdAt,agents:record.agents});}catch(e){return res.status(503).json({ok:false,message:'Research run could not be saved'});}
  });
+ const campaigns=()=>mongoose.connection.db.collection('fan_acquisition_campaigns');
+ app.post('/api/admin/fan-acquisition/campaigns/generate',verifyAdminToken,async(req,res)=>{
+  try{
+   const last=await Collection().findOne({},{sort:{createdAt:-1}});
+   if(!last)return res.status(409).json({ok:false,message:'Run all five research agents first.'});
+   const existing=await campaigns().find({runId:String(last._id)}).toArray();
+   if(existing.length)return res.json({ok:true,created:0,campaigns:existing});
+   const docs=last.agents.flatMap(agent=>(agent.opportunities||[]).slice(0,3).map(opportunity=>({
+    runId:String(last._id),sport:agent.id,sportName:agent.name,sourceTitle:opportunity.title,sourceUrl:opportunity.url,
+    message:'Fight fans: the action is happening now. Put your fight IQ to the test with FANTASY MMADNESS. Predict the punches, rounds and finishes. Don\\'t just watch the fight—predict it! https://www.fantasymmadness.com',
+    status:'awaiting_review',createdAt:new Date(),publishedAt:null,channel:null
+   })));
+   if(docs.length)await campaigns().insertMany(docs);
+   return res.json({ok:true,created:docs.length,campaigns:docs});
+  }catch(e){return res.status(503).json({ok:false,message:'Campaign generation unavailable'});}
+ });
+ app.get('/api/admin/fan-acquisition/campaigns',verifyAdminToken,async(req,res)=>{
+  try{return res.json({ok:true,campaigns:await campaigns().find({}).sort({createdAt:-1}).limit(100).toArray()});}
+  catch(e){return res.status(503).json({ok:false,message:'Campaign queue unavailable'});}
+ });
  app.get('/api/admin/fan-acquisition/discover',verifyAdminToken,async(req,res)=>{
   try{const last=await Collection().findOne({},{sort:{createdAt:-1}});const agents=last?.agents||await discover();res.set('Cache-Control','private, no-store');return res.json({ok:true,mode:'research_only',lastRunAt:last?.createdAt||null,agents,acquisitionMetrics:{fansReached:null,visitors:null,signups:null,players:null},publishingEnabled:false,note:'Research is not fan acquisition. No automatic social posting is configured.'});}catch(e){return res.status(503).json({ok:false,message:'Fan acquisition data unavailable'});}
  });
