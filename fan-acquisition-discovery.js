@@ -145,6 +145,18 @@ module.exports=({app,verifyAdminToken,mongoose})=>{
   try{return res.json({ok:true,campaigns:await campaigns().find({}).sort({createdAt:-1}).limit(100).toArray()});}
   catch(e){return res.status(503).json({ok:false,message:'Campaign queue unavailable'});}
  });
+ app.patch('/api/admin/fan-acquisition/campaigns/:id/status',verifyAdminToken,async(req,res)=>{
+  try{
+   const {ObjectId}=require('mongodb');
+   const id=String(req.params.id||'');const status=String(req.body?.status||'');
+   if(!ObjectId.isValid(id)||!['ready_to_contact','contacted','replied','interested','declined'].includes(status))return res.status(400).json({ok:false,message:'Invalid campaign or status'});
+   const changes={status,updatedAt:new Date()};
+   if(status==='contacted')changes.contactedAt=new Date();
+   const result=await campaigns().updateOne({_id:new ObjectId(id)},{$set:changes});
+   if(!result.matchedCount)return res.status(404).json({ok:false,message:'Campaign not found'});
+   return res.json({ok:true,status});
+  }catch(e){return res.status(503).json({ok:false,message:'Campaign status could not be saved'});}
+ });
  app.get('/api/admin/fan-acquisition/discover',verifyAdminToken,async(req,res)=>{
   try{const last=await Collection().findOne({},{sort:{createdAt:-1}});const agents=last?.agents||await discover();res.set('Cache-Control','private, no-store');return res.json({ok:true,mode:'research_only',lastRunAt:last?.createdAt||null,agents,acquisitionMetrics:{fansReached:null,visitors:null,signups:null,players:null},publishingEnabled:false,note:'Research is not fan acquisition. No automatic social posting is configured.'});}catch(e){return res.status(503).json({ok:false,message:'Fan acquisition data unavailable'});}
  });
