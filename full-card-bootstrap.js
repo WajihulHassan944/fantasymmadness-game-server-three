@@ -101,7 +101,7 @@ const runFightReadinessScan = async (req, res) => {
       const title='Fight record needs review: '+String(fight.matchName||id).slice(0,100);
       const description='Missing '+missing.join(', ')+'. Verify this fight before promoting it.';
       warnings.push({fightId:id,title,description});
-      await reportIncident({key:'fight-readiness:'+id,source:'fight-readiness-scan',severity:'review',title,description,affectedType:'fight',affectedId:id,actionUrl:'/administration/upcomingFights?fightId='+encodeURIComponent(id)});
+      await reportIncident({key:'fight-readiness:'+id,source:'fight-readiness-scan',severity:'review',title,description,affectedType:'fight',affectedId:id,actionUrl:'/administration/DeleteUpdateMatches?matchId='+encodeURIComponent(id)});
     }
     // A previously reported issue is cleared only when this scan verifies the
     // same fight record is now complete. No changes to the fight itself.
