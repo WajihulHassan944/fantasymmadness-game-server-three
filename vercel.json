@@ -45,6 +45,10 @@
     {
       "path": "/api/cron/jarvis-health",
       "schedule": "0 8 * * *"
+    },
+    {
+      "path": "/api/cron/fan-acquisition",
+      "schedule": "0 12 * * *"
     }
   ]
 }
