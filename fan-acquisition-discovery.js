@@ -34,10 +34,20 @@ module.exports=({app,verifyAdminToken,mongoose})=>{
   }));
   return result;
  };
+ const campaigns=()=>mongoose.connection.db.collection('fan_acquisition_campaigns');
+ const createDrafts=async(record)=>{
+  const existing=await campaigns().find({runId:String(record._id)}).toArray();
+  if(existing.length)return {created:0,campaigns:existing};
+  const docs=record.agents.flatMap(agent=>(agent.opportunities||[]).slice(0,3).map(opportunity=>({runId:String(record._id),sport:agent.id,sportName:agent.name,sourceTitle:opportunity.title,sourceUrl:opportunity.url,message:"Fight fans: the action is happening now. Put your fight IQ to the test with FANTASY MMADNESS. Predict the punches, rounds and finishes. Don't just watch the fight—predict it! https://www.fantasymmadness.com",status:'awaiting_review',createdAt:new Date(),publishedAt:null,channel:null})));
+  if(docs.length)await campaigns().insertMany(docs);
+  return {created:docs.length,campaigns:docs};
+ };
  const run=async()=>{
   const agents=await discover();
   const record={createdAt:new Date(),agents:agents.map(a=>({id:a.id,name:a.name,status:a.status,discovered:a.discovered,opportunities:a.opportunities.map(o=>({...o,invitation:'Fight fans: put your fight IQ to the test. Predict the action at https://www.fantasymmadness.com'}))})),mode:'research_only'};
-  await Collection().insertOne(record);
+  const saved=await Collection().insertOne(record);
+  record._id=saved.insertedId;
+  record.campaignDrafts=await createDrafts(record);
   return record;
  };
  app.get('/api/cron/fan-acquisition',async(req,res)=>{
@@ -47,20 +57,12 @@ module.exports=({app,verifyAdminToken,mongoose})=>{
  app.post('/api/admin/fan-acquisition/run',verifyAdminToken,async(req,res)=>{
   try{const record=await run();return res.json({ok:true,createdAt:record.createdAt,agents:record.agents});}catch(e){return res.status(503).json({ok:false,message:'Research run could not be saved'});}
  });
- const campaigns=()=>mongoose.connection.db.collection('fan_acquisition_campaigns');
  app.post('/api/admin/fan-acquisition/campaigns/generate',verifyAdminToken,async(req,res)=>{
   try{
    const last=await Collection().findOne({},{sort:{createdAt:-1}});
    if(!last)return res.status(409).json({ok:false,message:'Run all five research agents first.'});
-   const existing=await campaigns().find({runId:String(last._id)}).toArray();
-   if(existing.length)return res.json({ok:true,created:0,campaigns:existing});
-   const docs=last.agents.flatMap(agent=>(agent.opportunities||[]).slice(0,3).map(opportunity=>({
-    runId:String(last._id),sport:agent.id,sportName:agent.name,sourceTitle:opportunity.title,sourceUrl:opportunity.url,
-    message:"Fight fans: the action is happening now. Put your fight IQ to the test with FANTASY MMADNESS. Predict the punches, rounds and finishes. Don't just watch the fight—predict it! https://www.fantasymmadness.com",
-    status:'awaiting_review',createdAt:new Date(),publishedAt:null,channel:null
-   })));
-   if(docs.length)await campaigns().insertMany(docs);
-   return res.json({ok:true,created:docs.length,campaigns:docs});
+   const result=await createDrafts(last);
+   return res.json({ok:true,...result});
   }catch(e){return res.status(503).json({ok:false,message:'Campaign generation unavailable'});}
  });
  app.get('/api/admin/fan-acquisition/campaigns',verifyAdminToken,async(req,res)=>{
