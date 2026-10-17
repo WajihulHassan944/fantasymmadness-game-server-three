@@ -83,7 +83,7 @@ module.exports=({app,verifyAdminToken,mongoose})=>{
     const audiences=[...video.audiences,...podcasts.audiences,...directory].filter((a,i,all)=>all.findIndex(b=>b.url===a.url)===i);
     const data={id:genre.id,name:genre.name,status:'research_ready',videoSearchStatus:video.status,podcastSearchStatus:podcasts.status,opportunities,audiences,discovered:opportunities.length,audiencesIdentified:audiences.length};
     cache.set(genre.id,{at:now,data});return data;
-   }catch(err){return {id:genre.id,name:genre.name,status:'research_unavailable',opportunities:[],audiences:[],discovered:0,audiencesIdentified:0,error:'Public research feed unavailable'};}
+   }catch(err){const podcasts=await podcastDiscover(genre);const directory=(COMMUNITIES[genre.id]||[]).map(([name,url])=>({name,url,type:url.includes('reddit.com')?'public_community':'promoter',status:'directory_candidate_unverified',source:'Curated starting directory',contactMethod:'Review community rules or official partnership contact',outreachSent:false}));const audiences=[...podcasts.audiences,...directory];return {id:genre.id,name:genre.name,status:audiences.length?'partial_research_ready':'research_unavailable',podcastSearchStatus:podcasts.status,videoSearchStatus:'unavailable',opportunities:[],audiences,discovered:0,audiencesIdentified:audiences.length,error:'News research feed unavailable; alternative audience discovery attempted'};}
   }));
   return result;
  };
