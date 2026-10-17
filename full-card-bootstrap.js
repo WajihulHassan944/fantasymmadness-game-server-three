@@ -79,6 +79,7 @@ for(const operation of ['findOneAndUpdate','updateOne','updateMany','replaceOne'
 }
 const runFightReadinessScan = async (req, res) => {
   try {
+    if (mongoose.connection.readyState !== 1) return res.status(503).json({ok:false,message:'Fight readiness scan deferred: database is not connected.'});
     const fights = await Match.find({matchStatus:{$nin:['Finished','Cancelled','Canceled','Deleted']}})
       .select('_id matchName matchFighterA matchFighterB fighterAImage fighterBImage matchDate matchStatus')
       .sort({updatedAt:-1}).limit(250).lean();
