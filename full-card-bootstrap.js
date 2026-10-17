@@ -51,7 +51,7 @@ const verifyAdminToken = (req, res, next) => {
   catch (_error) { return res.status(401).json({ message: 'Invalid or expired admin session.' }); }
 };
 require('./etsy-integration')({app:capturedApp,mongoose,verifyAdminToken});
-require('./fan-acquisition-discovery')({app:capturedApp,verifyAdminToken});
+require('./fan-acquisition-discovery')({app:capturedApp,verifyAdminToken,mongoose});
 const { registerIncidentRoutes } = require('./admin-incidents');
 const { reportIncident } = registerIncidentRoutes({ app: capturedApp, mongoose, verifyAdminToken });
 // Read-only proactive inspection; runs only when an authenticated admin requests it.
