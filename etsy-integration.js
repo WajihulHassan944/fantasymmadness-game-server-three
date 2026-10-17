@@ -93,8 +93,7 @@ module.exports = ({app,mongoose,verifyAdminToken}) => {
       const me=await api('/application/users/me',token);
       const userId=me.user_id;
       if(!userId)return res.status(502).json({ok:false,message:'Could not identify Etsy account'});
-      const shops=await api('/application/users/'+encodeURIComponent(userId)+'/shops',token);
-      const shop=shops.results?.find(s=>String(s.shop_name||'').toUpperCase()==='FANTASYMMADNESS');
+      const shop=await api('/application/shops/FANTASYMMADNESS',token);
       if(!shop)return res.status(403).json({ok:false,message:'Authorized Etsy account does not own FANTASYMMADNESS'});
       const limit=Math.min(100,Math.max(1,Number(req.query.limit)||50));
       const offset=Math.max(0,Number(req.query.offset)||0);
