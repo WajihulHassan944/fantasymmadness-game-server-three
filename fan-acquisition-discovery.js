@@ -70,6 +70,7 @@ module.exports=({app,verifyAdminToken,mongoose})=>{
   return result;
  };
  const campaigns=()=>mongoose.connection.db.collection('fan_acquisition_campaigns');
+ const audienceStore=()=>mongoose.connection.db.collection('fan_acquisition_audiences');
  const createDrafts=async(record)=>{
   const existing=await campaigns().find({runId:String(record._id)}).toArray();
   if(existing.length)return {created:0,campaigns:existing};
@@ -82,6 +83,8 @@ module.exports=({app,verifyAdminToken,mongoose})=>{
   const record={createdAt:new Date(),agents:agents.map(a=>({id:a.id,name:a.name,status:a.status,videoSearchStatus:a.videoSearchStatus||'not_configured',discovered:a.discovered,audiences:a.audiences||[],audiencesIdentified:a.audiencesIdentified||0,opportunities:a.opportunities.map(o=>({...o,invitation:'Fight fans: put your fight IQ to the test. Predict the action at https://www.fantasymmadness.com'}))})),mode:'research_only'};
   const saved=await Collection().insertOne(record);
   record._id=saved.insertedId;
+  const candidates=record.agents.flatMap(agent=>(agent.audiences||[]).map(a=>({...a,sport:agent.id,sportName:agent.name,updatedAt:new Date()})));
+  if(candidates.length)await Promise.all(candidates.map(a=>audienceStore().updateOne({sport:a.sport,url:a.url},{$set:a,$setOnInsert:{firstSeenAt:new Date(),outreachStatus:'not_contacted'}},{upsert:true})));
   record.campaignDrafts=await createDrafts(record);
   return record;
  };
@@ -99,6 +102,9 @@ module.exports=({app,verifyAdminToken,mongoose})=>{
    const result=await createDrafts(last);
    return res.json({ok:true,...result});
   }catch(e){return res.status(503).json({ok:false,message:'Campaign generation unavailable'});}
+ });
+ app.get('/api/admin/fan-acquisition/audiences',verifyAdminToken,async(req,res)=>{
+  try{return res.json({ok:true,audiences:await audienceStore().find({}).sort({updatedAt:-1}).limit(150).toArray()});}catch(e){return res.status(503).json({ok:false,message:'Audience pipeline unavailable'});}
  });
  app.get('/api/admin/fan-acquisition/campaigns',verifyAdminToken,async(req,res)=>{
   try{return res.json({ok:true,campaigns:await campaigns().find({}).sort({createdAt:-1}).limit(100).toArray()});}
