@@ -106,7 +106,7 @@ module.exports=({app,verifyAdminToken,mongoose})=>{
  const createDrafts=async(record)=>{
   const existing=await campaigns().find({runId:String(record._id)}).toArray();
   if(existing.length)return {created:0,campaigns:existing};
-  const docs=record.agents.flatMap(agent=>(agent.audiences||[]).map(audience=>({runId:String(record._id),sport:agent.id,sportName:agent.name,sourceTitle:audience.name,sourceUrl:audience.url,audienceType:audience.type,proposedRole:audience.proposedRole||'audience_partner',contactMethod:audience.contactMethod,message:"Fight fans: the action is happening now. Put your fight IQ to the test with FANTASY MMADNESS. Predict the punches, rounds and finishes. Don't just watch the fight—predict it! https://www.fantasymmadness.com",status:'awaiting_owner_approval',requiresOwnerApproval:true,ownerApprovedAt:null,createdAt:new Date(),publishedAt:null,channel:null})));
+  const docs=record.agents.flatMap(agent=>(agent.audiences||[]).map(audience=>({runId:String(record._id),sport:agent.id,sportName:agent.name,sourceTitle:audience.name,sourceUrl:audience.url,audienceType:audience.type,proposedRole:audience.proposedRole||'audience_partner',contactMethod:audience.contactMethod,message:"Fight fans: the action is happening now. Put your fight IQ to the test with FANTASY MMADNESS. Predict the punches, rounds and finishes. Don't just watch the fight—predict it! https://www.fantasymmadness.com",status:audience.proposedRole==='fighter_affiliate'?'affiliate_invitation_ready':'awaiting_outreach_review',requiresOwnerApproval:false,commercialProposal:false,ownerApprovedAt:null,createdAt:new Date(),publishedAt:null,channel:null})));
   if(docs.length)await campaigns().insertMany(docs);
   return {created:docs.length,campaigns:docs};
  };
@@ -120,7 +120,7 @@ module.exports=({app,verifyAdminToken,mongoose})=>{
   record.campaignDrafts=await createDrafts(record);
   return record;
  };
- // Business propositions are draft-only. Never send or publish without explicit owner approval.\n app.get('/api/cron/fan-acquisition',async(req,res)=>{
+ // Standard affiliate invitations follow published signup terms and need no owner approval.\n // Custom revenue shares, promoter deals, sponsorships and commercial commitments require owner approval.\n // No outbound sending is configured here; review states do not imply messages were sent.\n app.get('/api/cron/fan-acquisition',async(req,res)=>{
   if(!process.env.CRON_SECRET || req.headers.authorization!=='Bearer '+process.env.CRON_SECRET)return res.status(401).json({ok:false});
   try{const record=await run();return res.json({ok:true,createdAt:record.createdAt,agents:record.agents.map(a=>({id:a.id,status:a.status,discovered:a.discovered,audiencesIdentified:a.audiencesIdentified}))});}catch(e){return res.status(503).json({ok:false,message:'Research run could not be saved'});}
  });
