@@ -1024,6 +1024,7 @@ function registerSwarmPhase2Routes(options) {
 
   app.get('/api/admin/swarm/jobs', verifyAdminToken, asyncHandler(async (req, res) => {
     const config = getSwarmConfig();
+    if (mongoose.connection.readyState !== 1) return res.status(503).json({ ok: false, code: 'DATABASE_NOT_READY', message: 'Swarm job list temporarily unavailable: database connection is not ready. Existing jobs are preserved.' });
     const epoch = await swarmEpoch().findOne({ _id: 'active' });
     if (epoch?.startedAt && String(req.query.includeLegacy || '') !== 'true') {
       const fresh = await listLocalJobs(models, { ...req.query, freshSince: epoch.startedAt });
