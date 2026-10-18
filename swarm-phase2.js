@@ -1120,13 +1120,7 @@ function registerSwarmPhase2Routes(options) {
       { 'metadata.backendCorrelationId': local.backendCorrelationId },
     ];
     if (local.artifactId) artifactOr.push({ artifactId: local.artifactId });
-    if (campaignId) artifactOr.push({ 'metadata.campaignId': campaignId });
-    if (fightId) {
-      artifactOr.push({ 'metadata.fightId': fightId });
-      artifactOr.push({ 'metadata.matchId': fightId });
-      artifactOr.push({ 'payload.fightId': fightId });
-      artifactOr.push({ 'payload.matchId': fightId });
-    }
+    // Only include artifacts explicitly associated with this job.
 
     if (local.artifactId && config.enabled && String(req.query.source || '').toLowerCase() !== 'cache') {
       try {
