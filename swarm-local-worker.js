@@ -74,7 +74,7 @@ async function runLocalJob({ axios, mongoose, models, normalized, localJob, subm
   localJob.jobId = localJob.jobId || `local_${localJob._id}`;
   localJob.metadata = {
     ...(localJob.metadata || {}),
-      executionEngine: config.provider === 'vercel_ai_gateway' ? 'vercel_ai_gateway' : 'local_openai',
+      executionEngine: freeOnlyMode ? 'deterministic_template' : (config.provider === 'vercel_ai_gateway' ? 'vercel_ai_gateway' : 'local_openai'),
     externalFallbackUsed: Boolean(fallbackError),
     externalFallbackError: fallbackError || undefined,
   };
