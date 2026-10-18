@@ -1009,8 +1009,26 @@ function registerSwarmPhase2Routes(options) {
     }
   }));
 
+  // A fresh operational epoch keeps legacy remote jobs from repopulating the active queue.
+  // Existing records remain available for audit and recovery; this is not a remote deletion.
+  const swarmEpoch = () => mongoose.connection.db.collection('swarm_operational_epoch');
+  app.post('/api/admin/swarm/jobs/fresh-start', verifyAdminToken, asyncHandler(async (req, res) => {
+    const startedAt = new Date();
+    await swarmEpoch().updateOne({ _id: 'active' }, { $set: { startedAt, initiatedBy: adminActor(req.admin), updatedAt: startedAt } }, { upsert: true });
+    return res.json({ ok: true, startedAt, mode: 'fresh_active_queue', note: 'Legacy jobs hidden from active view; remote records not deleted.' });
+  }));
+  app.get('/api/admin/swarm/jobs/fresh-start', verifyAdminToken, asyncHandler(async (req, res) => {
+    const epoch = await swarmEpoch().findOne({ _id: 'active' });
+    return res.json({ ok: true, startedAt: epoch?.startedAt || null });
+  }));
+
   app.get('/api/admin/swarm/jobs', verifyAdminToken, asyncHandler(async (req, res) => {
     const config = getSwarmConfig();
+    const epoch = await swarmEpoch().findOne({ _id: 'active' });
+    if (epoch?.startedAt && String(req.query.includeLegacy || '') !== 'true') {
+      const fresh = await listLocalJobs(models, { ...req.query, freshSince: epoch.startedAt });
+      return res.json({ ok: true, source: 'fresh-active-queue', freshStartAt: epoch.startedAt, ...fresh });
+    }
     const useCacheOnly = String(req.query.source || '').toLowerCase() === 'cache' || !config.enabled;
     const needsLocalSearch = Boolean(
       cleanString(req.query.search)
@@ -2635,6 +2653,7 @@ async function listLocalJobs(models, query) {
   const limit = clamp(toInt(query.limit, 25), 1, 100);
   const filter = {};
   const andFilters = [];
+  if (query.freshSince) filter.createdAt = { $gte: new Date(query.freshSince) };
   if (query.status) filter.status = query.status;
   if (query.vertical) filter.vertical = normalizeVertical(query.vertical);
   if (query.jobType) filter.jobType = query.jobType;
