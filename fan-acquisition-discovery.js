@@ -135,6 +135,25 @@ module.exports=({app,verifyAdminToken,mongoose})=>{
   const candidates=record.agents.flatMap(agent=>(agent.audiences||[]).filter(a=>safeUrl(a.url)).map(a=>({...a,sport:agent.id,sportName:agent.name,updatedAt:new Date()})));
   if(candidates.length)await Promise.all(candidates.map(a=>audienceStore().updateOne({sport:a.sport,url:a.url},{$set:a,$setOnInsert:{firstSeenAt:new Date(),outreachStatus:'not_contacted'}},{upsert:true})));
   record.campaignDrafts=await createDrafts(record);
+  // Bridge research into the existing Swarm campaign engine. One reviewable
+  // campaign per run avoids flooding the queue with every unverified lead.
+  const triggerCampaign=app.locals.swarmPhase2?.triggerCampaign;
+  const leads=record.agents.flatMap(agent=>(agent.opportunities||[]).slice(0,3).map(o=>({sport:agent.id,title:o.title||o.name||'',url:o.url||o.link||''}))).filter(o=>safeUrl(o.url));
+  record.swarmHandoff={status:'not_connected',jobsCreated:0};
+  if(typeof triggerCampaign==='function' && leads.length){
+   try{
+    const response=await triggerCampaign({
+     campaignType:'custom',title:'Fan acquisition opportunities '+record.createdAt.toISOString().slice(0,10),
+     sport:'mma',mode:'APPROVAL_REQUIRED',includeAll:false,
+     idempotencyKey:'fan-acquisition:'+String(record._id),
+     sourceEntity:{type:'fan_acquisition_run',id:String(record._id),label:'Five-sport fan acquisition'},
+     input:{title:'Public combat sports fan acquisition opportunities',opportunities:leads.slice(0,12),requestedOutput:'Prepare permission-based outreach and content drafts for these public audience opportunities. No automatic publishing or unsolicited messages.'},
+     metadata:{origin:'fan-acquisition',runId:String(record._id)},reason:'fan-acquisition-research-handoff'
+    });
+    record.swarmHandoff={status:response?.errors?.length?'partial':'submitted',jobsCreated:Array.isArray(response?.jobs)?response.jobs.length:0,campaignId:response?.campaign?.campaignId||null};
+   }catch(err){record.swarmHandoff={status:'failed',jobsCreated:0,error:String(err?.message||'Swarm handoff unavailable').slice(0,180)};}
+  }else if(typeof triggerCampaign==='function')record.swarmHandoff={status:'no_verified_opportunities',jobsCreated:0};
+  await Collection().updateOne({_id:record._id},{$set:{swarmHandoff:record.swarmHandoff}});
   return record;
  };
  // Standard affiliate invitations follow published signup terms and need no owner approval.
