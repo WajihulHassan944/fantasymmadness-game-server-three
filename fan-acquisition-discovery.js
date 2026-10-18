@@ -16,6 +16,14 @@ const COMMUNITIES={
  kickboxing:[['r/MuayThai','https://www.reddit.com/r/MuayThai/'],['r/Kickboxing','https://www.reddit.com/r/Kickboxing/']],
  wrestling:[['r/SquaredCircle','https://www.reddit.com/r/SquaredCircle/'],['r/WWE','https://www.reddit.com/r/WWE/']]
 };
+const FAN_TOUCHPOINTS={
+ boxing:[['Boxing ticketing and venue partnerships','event_ticketing','Find official event organizers and venues for consent-based co-promotion'],['Boxing gym and amateur networks','gym_network','Invite gyms and coaches to share tracked prediction challenges']],
+ mma:[['UFC event ticketing and venue partnerships','event_ticketing','Approach event organizers and venues; never request private ticket buyer records'],['MMA gyms and watch parties','watch_party','Invite participating venues to share event-specific prediction links']],
+ 'bare-knuckle':[['BKFC event venues and ticketing partners','event_ticketing','Offer event-specific QR codes and voluntary fan participation'],['Bare knuckle fighter fan clubs','fighter_community','Seek public official fan community partnership contacts']],
+ kickboxing:[['ONE Championship and Muay Thai venues','event_ticketing','Seek official event and venue promotional partnerships'],['Kickboxing and Muay Thai gyms','gym_network','Invite coaches and gyms to participate through public business channels']],
+ wrestling:[['WWE and AEW event venues','event_ticketing','Seek authorized venue or event promotional partnerships'],['Wrestling watch parties and fan conventions','watch_party','Find event organizers for opt-in prediction experiences']]
+};
+const audienceChannels=genre=>(FAN_TOUCHPOINTS[genre.id]||[]).map(([name,type,contactMethod])=>({name,type,contactMethod,status:'partnership_category_not_contacted',source:'Strategic discovery category; no verified contact or private audience data',outreachSent:false}));
 const FIGHTER_NETWORKS={
  boxing:[
  ['USA Boxing Alumni Association','https://www.usaboxing.org/alumni','alumni_network'],
@@ -103,10 +111,10 @@ module.exports=({app,verifyAdminToken,mongoose})=>{
     })).filter(x=>x.url);
     opportunities.forEach(item=>Object.assign(item,scoreOpportunity(item)));
     const directory=(COMMUNITIES[genre.id]||[]).map(([name,url])=>({name,url,type:url.includes('reddit.com')?'public_community':'promoter',status:'directory_candidate_unverified',source:'Curated starting directory',contactMethod:'Review community rules or official partnership contact',outreachSent:false}));
-    const audiences=[...video.audiences,...podcasts.audiences,...directory,...fighterNetworks(genre)].filter((a,i,all)=>all.findIndex(b=>b.url===a.url)===i);
+    const audiences=[...video.audiences,...podcasts.audiences,...directory,...fighterNetworks(genre),...audienceChannels(genre)].filter((a,i,all)=>all.findIndex(b=>b.url===a.url)===i);
     const data={id:genre.id,name:genre.name,status:'research_ready',videoSearchStatus:video.status,podcastSearchStatus:podcasts.status,opportunities,audiences,discovered:opportunities.length,audiencesIdentified:audiences.length};
     cache.set(genre.id,{at:now,data});return data;
-   }catch(err){const podcasts=await podcastDiscover(genre);const directory=(COMMUNITIES[genre.id]||[]).map(([name,url])=>({name,url,type:url.includes('reddit.com')?'public_community':'promoter',status:'directory_candidate_unverified',source:'Curated starting directory',contactMethod:'Review community rules or official partnership contact',outreachSent:false}));const audiences=[...podcasts.audiences,...directory,...fighterNetworks(genre)];return {id:genre.id,name:genre.name,status:audiences.length?'partial_research_ready':'research_unavailable',podcastSearchStatus:podcasts.status,videoSearchStatus:'unavailable',opportunities:[],audiences,discovered:0,audiencesIdentified:audiences.length,error:'News research feed unavailable; alternative audience discovery attempted'};}
+   }catch(err){const podcasts=await podcastDiscover(genre);const directory=(COMMUNITIES[genre.id]||[]).map(([name,url])=>({name,url,type:url.includes('reddit.com')?'public_community':'promoter',status:'directory_candidate_unverified',source:'Curated starting directory',contactMethod:'Review community rules or official partnership contact',outreachSent:false}));const audiences=[...podcasts.audiences,...directory,...fighterNetworks(genre),...audienceChannels(genre)];return {id:genre.id,name:genre.name,status:audiences.length?'partial_research_ready':'research_unavailable',podcastSearchStatus:podcasts.status,videoSearchStatus:'unavailable',opportunities:[],audiences,discovered:0,audiencesIdentified:audiences.length,error:'News research feed unavailable; alternative audience discovery attempted'};}
   }));
   return result;
  };
@@ -115,7 +123,7 @@ module.exports=({app,verifyAdminToken,mongoose})=>{
  const createDrafts=async(record)=>{
   const existing=await campaigns().find({runId:String(record._id)}).toArray();
   if(existing.length)return {created:0,campaigns:existing};
-  const docs=record.agents.flatMap(agent=>(agent.audiences||[]).map(audience=>({runId:String(record._id),sport:agent.id,sportName:agent.name,sourceTitle:audience.name,sourceUrl:audience.url,audienceType:audience.type,proposedRole:audience.proposedRole||'audience_partner',contactMethod:audience.contactMethod,message:"Fight fans: the action is happening now. Put your fight IQ to the test with FANTASY MMADNESS. Predict the punches, rounds and finishes. Don't just watch the fight—predict it! https://www.fantasymmadness.com",status:audience.proposedRole==='fighter_affiliate'?'affiliate_invitation_ready':'awaiting_outreach_review',requiresOwnerApproval:false,commercialProposal:false,ownerApprovedAt:null,createdAt:new Date(),publishedAt:null,channel:null})));
+  const docs=record.agents.flatMap(agent=>(agent.audiences||[]).filter(audience=>safeUrl(audience.url)).map(audience=>({runId:String(record._id),sport:agent.id,sportName:agent.name,sourceTitle:audience.name,sourceUrl:audience.url,audienceType:audience.type,proposedRole:audience.proposedRole||'audience_partner',contactMethod:audience.contactMethod,message:"Fight fans: the action is happening now. Put your fight IQ to the test with FANTASY MMADNESS. Predict the punches, rounds and finishes. Don't just watch the fight—predict it! https://www.fantasymmadness.com",status:audience.proposedRole==='fighter_affiliate'?'affiliate_invitation_ready':'awaiting_outreach_review',requiresOwnerApproval:false,commercialProposal:false,ownerApprovedAt:null,createdAt:new Date(),publishedAt:null,channel:null})));
   if(docs.length)await campaigns().insertMany(docs);
   return {created:docs.length,campaigns:docs};
  };
@@ -124,7 +132,7 @@ module.exports=({app,verifyAdminToken,mongoose})=>{
   const record={createdAt:new Date(),agents:agents.map(a=>({id:a.id,name:a.name,status:a.status,videoSearchStatus:a.videoSearchStatus||'not_configured',podcastSearchStatus:a.podcastSearchStatus||'unavailable',discovered:a.discovered,audiences:a.audiences||[],audiencesIdentified:a.audiencesIdentified||0,opportunities:a.opportunities.map(o=>({...o,invitation:'Fight fans: put your fight IQ to the test. Predict the action at https://www.fantasymmadness.com'}))})),mode:'research_only'};
   const saved=await Collection().insertOne(record);
   record._id=saved.insertedId;
-  const candidates=record.agents.flatMap(agent=>(agent.audiences||[]).map(a=>({...a,sport:agent.id,sportName:agent.name,updatedAt:new Date()})));
+  const candidates=record.agents.flatMap(agent=>(agent.audiences||[]).filter(a=>safeUrl(a.url)).map(a=>({...a,sport:agent.id,sportName:agent.name,updatedAt:new Date()})));
   if(candidates.length)await Promise.all(candidates.map(a=>audienceStore().updateOne({sport:a.sport,url:a.url},{$set:a,$setOnInsert:{firstSeenAt:new Date(),outreachStatus:'not_contacted'}},{upsert:true})));
   record.campaignDrafts=await createDrafts(record);
   return record;
