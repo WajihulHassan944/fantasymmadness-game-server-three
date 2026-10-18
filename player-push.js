@@ -13,7 +13,7 @@ function registerPlayerPushRoutes({ app, mongoose, verifyToken, User }) {
 
   const publicKey = process.env.VAPID_PUBLIC_KEY || '';
   const privateKey = process.env.VAPID_PRIVATE_KEY || '';
-  const subject = process.env.VAPID_SUBJECT || 'mailto:contact@fantasymmadness.com';
+  const subject = process.env.VAPID_SUBJECT || 'mailto:contact@fantasymmadnesscom.com';
   const configured = Boolean(publicKey && privateKey);
   if (configured) webpush.setVapidDetails(subject, publicKey, privateKey);
 
