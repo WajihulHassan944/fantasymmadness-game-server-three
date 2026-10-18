@@ -73,6 +73,14 @@ const podcastDiscover=async genre=>{
  }catch(e){return {status:'provider_unavailable',audiences:[]};}
  finally{clearTimeout(timer);}
 };
+const scoreOpportunity=(item)=>{
+ const title=String(item.title||'').toLowerCase();
+ const ageHours=item.publishedAt?Math.max(0,(Date.now()-new Date(item.publishedAt).getTime())/3600000):999;
+ let score=ageHours<=24?50:ageHours<=72?35:ageHours<=168?20:5;
+ const triggers=['announced','confirmed','fight week','weigh-in','weigh in','faceoff','face-off','prediction','predictions','main event','title fight','fight card','tonight','tomorrow','this weekend'];
+ const hits=triggers.filter(term=>title.includes(term));score+=Math.min(40,hits.length*12);
+ return {priorityScore:Math.min(100,score),timingSignals:hits,priorityLabel:score>=65?'high':score>=35?'medium':'low'};
+};
 const cache=new Map();
 const safeUrl=url=>{try{const u=new URL(url);return ['https:','http:'].includes(u.protocol)?u.href:null;}catch{return null;}};
 module.exports=({app,verifyAdminToken,mongoose})=>{
@@ -93,6 +101,7 @@ module.exports=({app,verifyAdminToken,mongoose})=>{
       publishedAt:item.isoDate||item.pubDate||null,
       source:'Google News public feed'
     })).filter(x=>x.url);
+    opportunities.forEach(item=>Object.assign(item,scoreOpportunity(item)));
     const directory=(COMMUNITIES[genre.id]||[]).map(([name,url])=>({name,url,type:url.includes('reddit.com')?'public_community':'promoter',status:'directory_candidate_unverified',source:'Curated starting directory',contactMethod:'Review community rules or official partnership contact',outreachSent:false}));
     const audiences=[...video.audiences,...podcasts.audiences,...directory,...fighterNetworks(genre)].filter((a,i,all)=>all.findIndex(b=>b.url===a.url)===i);
     const data={id:genre.id,name:genre.name,status:'research_ready',videoSearchStatus:video.status,podcastSearchStatus:podcasts.status,opportunities,audiences,discovered:opportunities.length,audiencesIdentified:audiences.length};
@@ -156,6 +165,14 @@ module.exports=({app,verifyAdminToken,mongoose})=>{
    if(!result.matchedCount)return res.status(404).json({ok:false,message:'Campaign not found'});
    return res.json({ok:true,status});
   }catch(e){return res.status(503).json({ok:false,message:'Campaign status could not be saved'});}
+ });
+ app.get('/api/admin/fan-acquisition/opportunities',verifyAdminToken,async(req,res)=>{
+  try{
+   const last=await Collection().findOne({},{sort:{createdAt:-1}});
+   const agents=last?.agents||await discover();
+   const opportunities=agents.flatMap(agent=>(agent.opportunities||[]).map(o=>({...o,sport:agent.id,sportName:agent.name,...scoreOpportunity(o)}))).sort((a,b)=>b.priorityScore-a.priorityScore).slice(0,30);
+   res.set('Cache-Control','private, no-store');return res.json({ok:true,opportunities,scannedAt:last?.createdAt||null,note:'Public conversation timing signals only; no individual fan identification or outreach delivery.'});
+  }catch(e){return res.status(503).json({ok:false,message:'Opportunity radar unavailable'});}
  });
  app.get('/api/admin/fan-acquisition/discover',verifyAdminToken,async(req,res)=>{
   try{const last=await Collection().findOne({},{sort:{createdAt:-1}});const agents=last?.agents||await discover();res.set('Cache-Control','private, no-store');return res.json({ok:true,mode:'research_only',lastRunAt:last?.createdAt||null,agents,acquisitionMetrics:{fansReached:null,visitors:null,signups:null,players:null},publishingEnabled:false,note:'Research is not fan acquisition. No automatic social posting is configured.'});}catch(e){return res.status(503).json({ok:false,message:'Fan acquisition data unavailable'});}
