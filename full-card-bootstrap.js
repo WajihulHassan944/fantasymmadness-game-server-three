@@ -206,6 +206,17 @@ require('./full-card-promoter')({
   upload, cloudinary,
 });
 
+// Existing affiliate social OAuth and publishing use the canonical fight entry lock.
+try {
+  require('./affiliate-social').registerAffiliateSocialRoutes({
+    app: capturedApp, mongoose, Affiliate, Match, verifyToken, requireScope,
+    affiliateScope: 'affiliate',
+    isFightOpenForEntry: require('./fight-entry-time').isFightOpenForEntry,
+  });
+} catch (error) {
+  console.error('[affiliate-social] Optional routes unavailable:', error?.message);
+}
+
 require('./affiliate-league-roster')({
   app: capturedApp, mongoose, Affiliate, User, verifyToken, requireScope,
   affiliateScope: 'affiliate',
