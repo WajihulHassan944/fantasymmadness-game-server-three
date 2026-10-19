@@ -29,8 +29,11 @@ function registrationCapture(req,res,next) {
     if (!User || mongoose.connection.readyState !== 1) return;
     const escaped=email.replace(/[.*+?^${}()|[\]\\]/g,'\\$&');
     const user=await User.collection.findOne({email:{$regex:'^'+escaped+'$', $options:'i'}},{projection:{_id:1,createdAt:1,campaignAttribution:1}});
-    if (!user || user.campaignAttribution || !user.createdAt) return;
-    const created=new Date(user.createdAt).getTime();
+    if (!user || user.campaignAttribution) return;
+    // Legacy user records may not carry createdAt; Mongo ObjectId contains creation time.
+    // Never infer a new registration from an existing account older than this request.
+    const created=user.createdAt ? new Date(user.createdAt).getTime() :
+      (user._id && typeof user._id.getTimestamp === 'function' ? user._id.getTimestamp().getTime() : NaN);
     if (!Number.isFinite(created) || created < requestedAt.getTime()-60000 || created > Date.now()+60000) return;
     await User.collection.updateOne({_id:user._id,campaignAttribution:{$exists:false}},{$set:{campaignAttribution:{...attribution,registeredAt:new Date()}}});
    } catch(error){console.error('[acquisition] attribution capture skipped:',error?.message);}
