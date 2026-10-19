@@ -6,7 +6,7 @@
 const expressPath = require.resolve('express');
 const expressOriginal = require(expressPath);
 let capturedApp = null;
-const expressCapture = (...args) => { capturedApp = expressOriginal(...args); capturedApp.use(require('./passive-incident-monitor').passiveIncidentMonitor); return capturedApp; };
+const expressCapture = (...args) => { capturedApp = expressOriginal(...args); capturedApp.use(require('./passive-incident-monitor').passiveIncidentMonitor); capturedApp.use(require('./fan-acquisition-attribution').registrationCapture); return capturedApp; };
 Object.assign(expressCapture, expressOriginal);
 require.cache[expressPath].exports = expressCapture;
 require('./server');
@@ -51,6 +51,7 @@ const verifyAdminToken = (req, res, next) => {
   catch (_error) { return res.status(401).json({ message: 'Invalid or expired admin session.' }); }
 };
 require('./etsy-integration')({app:capturedApp,mongoose,verifyAdminToken});
+require('./fan-acquisition-attribution').installReports({app:capturedApp,mongoose,verifyAdminToken});
 // Optional acquisition sidecar: failures must never prevent the established back office from booting.
 try {
   require('./fan-acquisition-discovery')({app:capturedApp,verifyAdminToken,mongoose});
