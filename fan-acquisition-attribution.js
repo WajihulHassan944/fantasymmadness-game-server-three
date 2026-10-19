@@ -13,12 +13,13 @@ function normalize(input) {
 }
 function registrationCapture(req,res,next) {
  if (req.method !== 'POST' || req.path !== '/register') return next();
- const attribution=normalize(req.body?.campaignAttribution);
- const email=String(req.body?.email || '').trim().toLowerCase();
- if (!attribution || !email || email.length > 254) return next();
  const requestedAt=new Date();
  res.once('finish',()=>{
   if (res.statusCode < 200 || res.statusCode >= 300) return;
+  // Express parses the body downstream of this early-mounted middleware.
+  const attribution=normalize(req.body?.campaignAttribution);
+  const email=String(req.body?.email || '').trim().toLowerCase();
+  if (!attribution || !email || email.length > 254) return;
   // Account must have been created during this request. Never attach campaigns
   // to older users, even if they try registering again.
   setImmediate(async()=>{
