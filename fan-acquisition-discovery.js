@@ -188,7 +188,8 @@ module.exports=({app,verifyAdminToken,mongoose})=>{
    const id=String(req.params.id||'');const status=String(req.body?.status||'');
    if(!ObjectId.isValid(id)||!['ready_to_contact','contacted','replied','interested','declined'].includes(status))return res.status(400).json({ok:false,message:'Invalid campaign or status'});
    const changes={status,updatedAt:new Date()};
-   if(status==='contacted')changes.contactedAt=new Date();
+   // A manual status change is not evidence of a delivered email or social post.
+   if(status==='contacted'){changes.contactedAt=new Date();changes.deliveryVerified=false;changes.deliverySource='manual_status_only';}
    const result=await campaigns().updateOne({_id:new ObjectId(id)},{$set:changes});
    if(!result.matchedCount)return res.status(404).json({ok:false,message:'Campaign not found'});
    return res.json({ok:true,status});
