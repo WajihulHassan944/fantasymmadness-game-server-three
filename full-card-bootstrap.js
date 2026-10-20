@@ -26,15 +26,41 @@ const expressCapture = (...args) => {
       const client = await auth.getClient();
       const days = Math.max(1, Math.min(365, Number(req.query.days) || 30));
       const url = 'https://analyticsdata.googleapis.com/v1beta/properties/' + encodeURIComponent(propertyId) + ':runReport';
-      const report = await client.request({ url, method: 'POST', data: {
-        dateRanges: [{ startDate: (days - 1) + 'daysAgo', endDate: 'today' }],
-        metrics: [{ name: 'activeUsers' }, { name: 'totalUsers' }, { name: 'sessions' }, { name: 'screenPageViews' }, { name: 'eventCount' }],
-      } });
-      const metrics = {};
-      const names = (report.data.metricHeaders || []).map(x => x.name);
-      (report.data.totals || report.data.rows || []).slice(0, 1).forEach(row => (row.metricValues || []).forEach((v, i) => { metrics[names[i]] = Number(v.value || 0); }));
+      const dateRanges = [{ startDate: (days - 1) + 'daysAgo', endDate: 'today' }];
+      const runReport = async (dimensions, metrics, limit = 20) => {
+        const response = await client.request({ url, method: 'POST', data: {
+          dateRanges, dimensions: dimensions.map(name => ({ name })),
+          metrics: metrics.map(name => ({ name })), limit,
+        } });
+        return response.data;
+      };
+      const [overview, sourceReport, pageReport] = await Promise.all([
+        runReport([], ['activeUsers', 'totalUsers', 'newUsers', 'sessions', 'screenPageViews', 'engagedSessions', 'eventCount'], 1),
+        runReport(['sessionDefaultChannelGroup'], ['sessions'], 15),
+        runReport(['pagePath'], ['screenPageViews'], 20),
+      ]);
+      const summary = {};
+      const names = (overview.metricHeaders || []).map(x => x.name);
+      const first = (overview.rows || [])[0];
+      (first?.metricValues || []).forEach((v, i) => { summary[names[i]] = Number(v.value || 0); });
+      const list = (data) => (data.rows || []).map(row => ({
+        name: row.dimensionValues?.[0]?.value || '(not set)',
+        value: Number(row.metricValues?.[0]?.value || 0),
+      }));
       res.setHeader('Cache-Control', 'private, no-store');
-      return res.json({ ok: true, source: 'GA4 Data API', propertyId, days, metrics, totals: metrics, report: report.data });
+      return res.json({
+        ok: true, source: 'GA4 Data API', propertyId, days,
+        summary: {
+          activeUsers: summary.activeUsers || 0,
+          sessions: summary.sessions || 0,
+          pageViews: summary.screenPageViews || 0,
+          newUsers: summary.newUsers || 0,
+          engagedSessions: summary.engagedSessions || 0,
+          totalUsers: summary.totalUsers || 0,
+          eventCount: summary.eventCount || 0,
+        },
+        sources: list(sourceReport), pages: list(pageReport), fetchedAt: new Date().toISOString(),
+      });
     } catch (error) {
       console.error('GA4 report failed:', error.message);
       return res.status(502).json({ ok: false, message: 'GA4 reporting request failed. Check service account permission and credentials.' });
