@@ -6,7 +6,43 @@
 const expressPath = require.resolve('express');
 const expressOriginal = require(expressPath);
 let capturedApp = null;
-const expressCapture = (...args) => { capturedApp = expressOriginal(...args); capturedApp.use(require('./passive-incident-monitor').passiveIncidentMonitor); return capturedApp; };
+const expressCapture = (...args) => {
+  capturedApp = expressOriginal(...args);
+  // Register before legacy handlers so GA4 reports cannot be mistaken for legacy click counts.
+  capturedApp.get('/api/admin/analytics/ga4', async (req, res) => {
+    const token = String(req.headers.authorization || '').replace(/^Bearer\\s+/i, '');
+    try {
+      if (!token) return res.status(401).json({ ok: false, message: 'Admin authentication required' });
+      require('jsonwebtoken').verify(token, process.env.JWT_SECRET_ADMIN);
+    } catch (_) { return res.status(401).json({ ok: false, message: 'Invalid admin session' }); }
+    const propertyId = String(process.env.GA4_PROPERTY_ID || '').trim();
+    const raw = process.env.GA4_SERVICE_ACCOUNT_JSON;
+    if (!propertyId || !raw) return res.status(503).json({ ok: false, message: 'GA4 reporting credentials are not configured' });
+    try {
+      const credentials = JSON.parse(raw);
+      if (credentials.type !== 'service_account' || !credentials.client_email || !credentials.private_key) throw new Error('Invalid service account credentials');
+      const { GoogleAuth } = require('google-auth-library');
+      const auth = new GoogleAuth({ credentials, scopes: ['https://www.googleapis.com/auth/analytics.readonly'] });
+      const client = await auth.getClient();
+      const days = Math.max(1, Math.min(365, Number(req.query.days) || 30));
+      const url = 'https://analyticsdata.googleapis.com/v1beta/properties/' + encodeURIComponent(propertyId) + ':runReport';
+      const report = await client.request({ url, method: 'POST', data: {
+        dateRanges: [{ startDate: (days - 1) + 'daysAgo', endDate: 'today' }],
+        metrics: [{ name: 'activeUsers' }, { name: 'totalUsers' }, { name: 'sessions' }, { name: 'screenPageViews' }, { name: 'eventCount' }],
+      } });
+      const metrics = {};
+      const names = (report.data.metricHeaders || []).map(x => x.name);
+      (report.data.totals || report.data.rows || []).slice(0, 1).forEach(row => (row.metricValues || []).forEach((v, i) => { metrics[names[i]] = Number(v.value || 0); }));
+      res.setHeader('Cache-Control', 'private, no-store');
+      return res.json({ ok: true, source: 'GA4 Data API', propertyId, days, metrics, totals: metrics, report: report.data });
+    } catch (error) {
+      console.error('GA4 report failed:', error.message);
+      return res.status(502).json({ ok: false, message: 'GA4 reporting request failed. Check service account permission and credentials.' });
+    }
+  });
+  capturedApp.use(require('./passive-incident-monitor').passiveIncidentMonitor);
+  return capturedApp;
+};
 Object.assign(expressCapture, expressOriginal);
 require.cache[expressPath].exports = expressCapture;
 require('./server');
