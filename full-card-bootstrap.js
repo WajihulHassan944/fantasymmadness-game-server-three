@@ -52,6 +52,7 @@ const verifyAdminToken = (req, res, next) => {
 };
 require('./etsy-integration')({app:capturedApp,mongoose,verifyAdminToken});
 require('./fan-acquisition-attribution').installReports({app:capturedApp,mongoose,verifyAdminToken});
+require('./ga4-admin-report')({app:capturedApp,verifyAdminToken});
 // Optional acquisition sidecar: failures must never prevent the established back office from booting.
 try {
   require('./fan-acquisition-discovery')({app:capturedApp,verifyAdminToken,mongoose});
