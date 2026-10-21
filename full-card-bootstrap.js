@@ -51,6 +51,7 @@ const verifyAdminToken = (req, res, next) => {
   catch (_error) { return res.status(401).json({ message: 'Invalid or expired admin session.' }); }
 };
 require('./etsy-integration')({app:capturedApp,mongoose,verifyAdminToken});
+require('./merchant-statement-routes').registerMerchantStatementRoutes({ app: capturedApp, mongoose, verifyAdminToken });
 require('./fan-acquisition-attribution').installReports({app:capturedApp,mongoose,verifyAdminToken});
 require('./ga4-admin-report')({app:capturedApp,verifyAdminToken});
 // Optional acquisition sidecar: failures must never prevent the established back office from booting.
