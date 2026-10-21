@@ -133,6 +133,7 @@ function registerRevenueAnalyticsRoutes({ app, mongoose, verifyAdminToken }) {
     }
   });
 
+  require('./merchant-statement-routes').registerMerchantStatementRoutes({ app, mongoose, verifyAdminToken });
   return { RevenueEvent };
 }
 
