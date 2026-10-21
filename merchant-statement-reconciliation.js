@@ -15,7 +15,7 @@ const money = value => Number((value / 100).toFixed(2));
 function reconcileStatement(input) {
   if (!input || typeof input !== 'object') throw new Error('Statement is required.');
   const period = String(input.period || '');
-  if (!/^\\d{4}-\\d{2}$/.test(period)) throw new Error('Expected YYYY-MM statement period.');
+  if (!/^\d{4}-\d{2}$/.test(period)) throw new Error('Expected YYYY-MM statement period.');
   const gross = cents(input.grossSales);
   const refunds = cents(input.refunds);
   const adjustments = cents(input.adjustments);
