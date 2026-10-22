@@ -110,7 +110,7 @@ function registerRevenueAnalyticsRoutes({ app, mongoose, verifyAdminToken }) {
         fmCoinsCommitted: Number(byEvent.paid_entry?.entryValue || 0),
         fights: fightBreakdown.map(row => ({
           fightId: row._id,
-          fightName: String(row.fightName || fightNamesById[String(row._id)]?.fightName || ''),
+          fightName: String(fightNamesById[String(row._id)]?.fightName || row.fightName || '').trim(),
           matchDate: fightNamesById[String(row._id)]?.matchDate || null,
           category: String(fightNamesById[String(row._id)]?.category || ''),
           views: Number(row.views || 0),
