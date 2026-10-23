@@ -10713,7 +10713,8 @@ app.get('/api/public/affiliates/resolve', async (req, res) => {
         }
       }
     } else {
-      const all = await Affiliate.find(publicFilter).select(fields).sort({ createdAt: 1, _id: 1 }).lean();
+      // Light pass: names + id only (no joined-player lists), then load the single winner in full.
+      const all = await Affiliate.find(publicFilter).select('_id firstName lastName playerName createdAt').sort({ createdAt: 1, _id: 1 }).lean();
       const exactSuffix = all.filter((a) => `${affiliateSlugOf(a)}-${String(a._id).slice(-6)}` === slug);
       if (exactSuffix.length === 1) found = exactSuffix[0];
       else {
@@ -10722,11 +10723,13 @@ app.get('/api/public/affiliates/resolve', async (req, res) => {
         found = matches[0] || null;
       }
       if (!found) return res.status(404).json({ message: 'Affiliate not found.' });
+      found = await Affiliate.findOne({ _id: found._id, ...publicFilter }).select(fields).lean();
+      if (!found) return res.status(404).json({ message: 'Affiliate not found.' });
     }
     const safe = sanitizeAccountList([found])[0];
     return res.json({ ...toPublicAffiliate(safe), slug: affiliateSlugOf(found) });
   } catch (error) {
-    console.error('Error resolving public affiliate:', error);
+    console.error('Error resolving public affiliate:', error && error.stack || error);
     return res.status(500).json({ message: 'Could not load affiliate.' });
   }
 });
