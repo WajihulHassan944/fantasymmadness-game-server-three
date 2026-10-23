@@ -200,10 +200,31 @@ app.use(cors({
 const MONGODB_URI = process.env.MONGODB_URI;
 const PORT = process.env.PORT || 3000;
 
-mongoose.connect(MONGODB_URI, {
-  useNewUrlParser: true,
-  useUnifiedTopology: true,
-});
+// Serverless-safe connection. Each cold start used to fire one connect() and let every
+// early request queue inside Mongoose until its 10 s buffer ran out ("buffering timed
+// out after 10000ms"). Now one shared connect attempt is reused, it fails fast with a
+// clear message, and a failed attempt is retried by the next request instead of
+// leaving the instance stuck.
+let databaseConnectPromise = null;
+const connectDatabase = () => {
+  if (mongoose.connection.readyState === 1) return Promise.resolve();
+  if (!databaseConnectPromise) {
+    databaseConnectPromise = mongoose.connect(MONGODB_URI, {
+      useNewUrlParser: true,
+      useUnifiedTopology: true,
+      serverSelectionTimeoutMS: 8000,
+      connectTimeoutMS: 8000,
+      socketTimeoutMS: 45000,
+      maxPoolSize: 10,
+    }).then(() => undefined).catch((error) => {
+      databaseConnectPromise = null;
+      console.error('MongoDB connection failed:', error && error.name, error && error.message);
+      throw error;
+    });
+  }
+  return databaseConnectPromise;
+};
+connectDatabase().catch(() => {});
 
 // --------------------------------------------------------------------------
 // REPLICA SET DETECTION
@@ -287,6 +308,23 @@ const ensureDatabaseCapability = async () => {
 };
 
 mongoose.connection.once('open', () => { detectDatabaseCapability(); });
+
+// Wait (briefly) for the database before running any route, so a cold start produces one
+// clear, retryable answer instead of a 10-second buffering timeout.
+app.use(async (req, res, next) => {
+  if (req.method === 'OPTIONS' || mongoose.connection.readyState === 1) return next();
+  try {
+    await Promise.race([
+      connectDatabase(),
+      new Promise((_, reject) => setTimeout(() => reject(new Error('database wait timed out')), 9000)),
+    ]);
+    return next();
+  } catch (error) {
+    console.error('Request held back, database not ready:', req.method, req.path, error && error.message);
+    res.set('Retry-After', '3');
+    return res.status(503).json({ message: 'The game database is waking up. Please try again in a few seconds.', code: 'DATABASE_NOT_READY' });
+  }
+});
 
 // Middleware
 app.use(bodyParser.urlencoded({ extended: false, limit: URLENCODED_BODY_LIMIT }));
