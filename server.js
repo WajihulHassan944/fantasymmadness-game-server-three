@@ -26829,7 +26829,7 @@ app.post('/api/integrations/fight-data/:provider', verifyFightDataFeed, async (r
 // ledger rows settlement already wrote (reason: 'affiliate_pot_share'), so this
 // page can never disagree with what was actually paid.
 // ==========================================================================
-app.get('/api/affiliates/me/fight-referrals', verifyToken, requireScope(TOKEN_SCOPES.AFFILIATE), async (req, res) => {
+const affiliateFightReferralsHandler = async (req, res) => {
   try {
     const affiliateId = String(req.user?.id || req.user?._id || '').trim();
     const referrals = await User.find({ referredAffiliateId: affiliateId, isTestAccount: { $ne: true } })
@@ -26881,9 +26881,10 @@ app.get('/api/affiliates/me/fight-referrals', verifyToken, requireScope(TOKEN_SC
     console.error('Affiliate referral summary failed:', error);
     res.status(500).json({ ok: false, message: 'Could not load affiliate referral activity.' });
   }
-});
+};
+app.get('/api/affiliates/me/fight-referrals', verifyToken, requireScope(TOKEN_SCOPES.AFFILIATE), affiliateFightReferralsHandler);
 
-app.get('/api/affiliates/me/money', verifyToken, requireScope(TOKEN_SCOPES.AFFILIATE), async (req, res) => {
+const affiliateMoneyHandler = async (req, res) => {
   try {
     const affiliateId = String(req.user?.id || req.user?._id || '').trim();
     const affiliate = await Affiliate.findById(affiliateId).select('affiliateName email tokens payouts');
@@ -26998,7 +26999,38 @@ app.get('/api/affiliates/me/money', verifyToken, requireScope(TOKEN_SCOPES.AFFIL
     console.error('Affiliate money page failed:', error);
     return res.status(500).json({ message: 'Could not load your earnings.' });
   }
-});
+};
+app.get('/api/affiliates/me/money', verifyToken, requireScope(TOKEN_SCOPES.AFFILIATE), affiliateMoneyHandler);
+
+// --------------------------------------------------------------------------
+// ADMIN-ONLY, READ-ONLY VIEW OF AN AFFILIATE'S PRIVATE BACK OFFICE
+// The administrator keeps their own admin session; nothing here signs in as the
+// affiliate or issues an affiliate token. Each route runs the same handler the
+// affiliate's own dashboard uses, but with the affiliate chosen in the URL, so the
+// numbers are exactly what that affiliate sees. GET only: no payout or money actions.
+// --------------------------------------------------------------------------
+const adminAffiliateView = (handler) => async (req, res) => {
+  const affiliateId = String(req.params.affiliateId || '').trim();
+  if (!mongoose.isValidObjectId(affiliateId)) {
+    return res.status(400).json({ message: 'A valid affiliate id is required.' });
+  }
+  res.set('Cache-Control', 'no-store');
+  const scoped = Object.create(req, { user: { value: { id: affiliateId, _id: affiliateId, viewedByAdmin: true } } });
+  return handler(scoped, res);
+};
+
+app.get('/api/admin/affiliates/:affiliateId/back-office/profile', verifyAdminToken, adminAffiliateView(async (req, res) => {
+  try {
+    const user = await Affiliate.findById(req.user.id).select(AFFILIATE_SAFE_SELECT);
+    if (!user) return res.status(404).json({ message: 'Affiliate not found.' });
+    return res.status(200).json({ user });
+  } catch (error) {
+    console.error('Admin affiliate profile view failed:', error);
+    return res.status(500).json({ message: 'Could not load this affiliate.' });
+  }
+}));
+app.get('/api/admin/affiliates/:affiliateId/back-office/fight-referrals', verifyAdminToken, adminAffiliateView(affiliateFightReferralsHandler));
+app.get('/api/admin/affiliates/:affiliateId/back-office/money', verifyAdminToken, adminAffiliateView(affiliateMoneyHandler));
 
 
 // ==========================================================================
