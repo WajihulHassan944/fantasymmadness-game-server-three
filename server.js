@@ -208,6 +208,8 @@ const PORT = process.env.PORT || 3000;
 let databaseConnectPromise = null;
 const connectDatabase = () => {
   if (mongoose.connection.readyState === 1) return Promise.resolve();
+  // A previous attempt finished but the connection has since closed: start a fresh one.
+  if (databaseConnectPromise && mongoose.connection.readyState === 0) databaseConnectPromise = null;
   if (!databaseConnectPromise) {
     databaseConnectPromise = mongoose.connect(MONGODB_URI, {
       useNewUrlParser: true,
@@ -215,7 +217,12 @@ const connectDatabase = () => {
       serverSelectionTimeoutMS: 8000,
       connectTimeoutMS: 8000,
       socketTimeoutMS: 45000,
-      maxPoolSize: 10,
+      // Small pool: every Vercel instance opens its own pool, and Atlas shared tiers allow
+      // only a few hundred connections in total. The driver default (100 per instance) can
+      // exhaust that and cause refused/closed connections and TLS resets.
+      maxPoolSize: 5,
+      minPoolSize: 0,
+      maxIdleTimeMS: 30000,
     }).then(() => undefined).catch((error) => {
       databaseConnectPromise = null;
       console.error('MongoDB connection failed:', error && error.name, error && error.message);
@@ -225,6 +232,8 @@ const connectDatabase = () => {
   return databaseConnectPromise;
 };
 connectDatabase().catch(() => {});
+mongoose.connection.on('disconnected', () => { console.warn('MongoDB disconnected; the next request will reconnect.'); });
+mongoose.connection.on('error', (error) => { console.error('MongoDB connection error:', error && error.name, error && error.message); });
 
 // --------------------------------------------------------------------------
 // REPLICA SET DETECTION
