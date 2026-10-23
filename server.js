@@ -8191,6 +8191,9 @@ async function requestAuthorizeNetHostedToken(order) {
       transactionRequest: {
         transactionType: 'authCaptureTransaction',
         amount: (Number(order.subtotalCents || 0) / 100).toFixed(2),
+        // The webhook finds the order by transaction.order.invoiceNumber. Without
+        // this, a hosted-page payment is captured but can never be matched/credited.
+        order: { invoiceNumber, description },
       },
       hostedPaymentSettings: {
         setting: [
