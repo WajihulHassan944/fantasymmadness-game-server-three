@@ -8155,6 +8155,19 @@ app.get('/api/diagnostics/authorize-net', verifyAdminToken, async (req, res) => 
     // even when the basic credential check above passes, so probe it too with a
     // throwaway $0.01 request — no order is created, nothing is saved.
     if (result.credentialsValid) {
+      // Card-form check: the browser form needs the account's public client key to match the Login ID.
+      const accountClientKey = await fetchAuthorizeNetAccountClientKey();
+      const configuredClientKey = String(process.env.AUTHORIZE_NET_CLIENT_KEY || '').trim();
+      result.cardForm = {
+        accountKeyAvailable: Boolean(accountClientKey),
+        configuredKeyMatchesAccount: accountClientKey ? configuredClientKey === accountClientKey : null,
+        ok: accountClientKey ? true : Boolean(configuredClientKey),
+        message: !accountClientKey
+          ? 'Could not read the account public client key; the configured key will be used as-is.'
+          : configuredClientKey === accountClientKey
+            ? 'The configured public client key matches the account.'
+            : 'The configured public client key does NOT match the account; checkout is using the account key automatically. Update AUTHORIZE_NET_CLIENT_KEY in Vercel.',
+      };
       try {
         const hppResponse = await axios.post(environment.apiUrl, {
           getHostedPaymentPageRequest: {
@@ -8407,8 +8420,49 @@ function getAuthorizeNetClientConfig() {
   };
 }
 
-app.get('/api/checkout/accept-js-config', (req, res) => {
+// The card form (Accept.js) authenticates with the API Login ID plus the account's PUBLIC client
+// key. Those two must belong to the same account, otherwise the browser reports "User
+// authentication failed due to invalid authentication values" (Accept.js error E_WC_21)
+// before any transaction reaches Authorize.Net. The health check only tests the Login ID and
+// Transaction Key, so a stale AUTHORIZE_NET_CLIENT_KEY slipped through. The account itself can
+// tell us its real public client key (getMerchantDetails), so we ask, and prefer it.
+let authorizeNetAccountKeyCache = { value: '', fetchedAt: 0, loginId: '', apiUrl: '' };
+async function fetchAuthorizeNetAccountClientKey() {
+  const environment = getAuthorizeNetEnvironment();
+  const auth = authorizeNetMerchantAuthentication();
+  const cache = authorizeNetAccountKeyCache;
+  if (cache.value && cache.loginId === auth.name && cache.apiUrl === environment.apiUrl && Date.now() - cache.fetchedAt < 10 * 60 * 1000) return cache.value;
+  try {
+    const response = await axios.post(environment.apiUrl, {
+      getMerchantDetailsRequest: { merchantAuthentication: auth },
+    }, { headers: { 'Content-Type': 'application/json' }, timeout: 8000 });
+    const raw = typeof response.data === 'string' ? response.data.replace(/^\uFEFF/, '') : response.data;
+    const payload = typeof raw === 'string' ? JSON.parse(raw) : raw;
+    const key = String(payload?.publicClientKey || '').trim();
+    if (payload?.messages?.resultCode === 'Ok' && key) {
+      authorizeNetAccountKeyCache = { value: key, fetchedAt: Date.now(), loginId: auth.name, apiUrl: environment.apiUrl };
+      return key;
+    }
+  } catch (error) {
+    console.error('[authorize-net-checkout] Could not read the account public client key:', error && error.message);
+  }
+  return '';
+}
+
+async function resolveAuthorizeNetClientConfig() {
   const config = getAuthorizeNetClientConfig();
+  if (!config.apiLoginID) return config;
+  const accountKey = await fetchAuthorizeNetAccountClientKey();
+  if (accountKey && accountKey !== config.clientKey) {
+    console.warn('[authorize-net-checkout] AUTHORIZE_NET_CLIENT_KEY does not match the account\'s public client key; using the account\'s key. Update the Vercel setting to remove this warning.');
+    return { ...config, ok: true, clientKey: accountKey };
+  }
+  return config;
+}
+
+app.get('/api/checkout/accept-js-config', async (req, res) => {
+  res.set('Cache-Control', 'no-store');
+  const config = await resolveAuthorizeNetClientConfig();
   if (!config.ok) return res.status(503).json({ ok: false, code: 'AUTHORIZE_NET_NOT_CONFIGURED', message: 'Secure card entry is awaiting merchant gateway configuration.' });
   return res.json(config);
 });
