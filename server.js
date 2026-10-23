@@ -4334,7 +4334,7 @@ app.get('/match', async (req, res) => {
       if (matchIds.length) {
         try {
           const rows = await Score.aggregate([
-            { $match: { matchId: { $in: matchIds }, entryStatus: { $ne: 'refunded' } } },
+            { $match: { matchId: { $in: matchIds }, entryStatus: { $ne: 'refunded' }, refunded: { $ne: true } } },
             { $group: { _id: '$matchId', count: { $sum: 1 } } },
           ]);
           entrantCounts = Object.fromEntries(rows.map((row) => [String(row._id), row.count]));
@@ -22489,7 +22489,8 @@ app.get('/api/matches/:matchId/leaderboard', async (req, res) => {
     const twoStats = category === 'boxing' ? fight?.BoxingMatch?.fighterTwoStats : fight?.MMAMatch?.fighterTwoStats;
     const scoreable = Array.isArray(oneStats) && Array.isArray(twoStats);
 
-    const active = rows.filter((r) => String(r.entryStatus || '').toLowerCase() !== 'refunded');
+    // Refunded entries are flagged with the boolean `refunded` (the old `entryStatus` field is never set).
+    const active = rows.filter((r) => r.refunded !== true && String(r.entryStatus || '').toLowerCase() !== 'refunded');
     const ids = active.map((r) => r.playerId).filter(Boolean);
     const users = await User.find({ _id: { $in: ids } })
       .select('_id firstName lastName playerName profileUrl').lean();
