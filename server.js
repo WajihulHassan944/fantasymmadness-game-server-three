@@ -8191,6 +8191,9 @@ async function requestAuthorizeNetHostedToken(order) {
       transactionRequest: {
         transactionType: 'authCaptureTransaction',
         amount: (Number(order.subtotalCents || 0) / 100).toFixed(2),
+        // The webhook finds the order by transaction.order.invoiceNumber. Without
+        // this, a hosted-page payment is captured but can never be matched/credited.
+        order: { invoiceNumber, description },
       },
       hostedPaymentSettings: {
         setting: [
@@ -9838,17 +9841,21 @@ const notification = new Notification({
 app.post('/affiliate/:affiliateId/incrementViews', submitLimiter, async (req, res) => {
   try {
     const { affiliateId } = req.params;
+    if (!mongoose.isValidObjectId(affiliateId)) {
+      return res.status(404).json({ message: 'Affiliate not found' });
+    }
+    // Public, unauthenticated route: never echo the affiliate record back.
     const updatedAffiliate = await Affiliate.findByIdAndUpdate(
       affiliateId,
       { $inc: { totalViews: 1 } },
-      { new: true }
-    );
+      { new: true, projection: { _id: 1, totalViews: 1 } }
+    ).lean();
 
     if (!updatedAffiliate) {
       return res.status(404).json({ message: 'Affiliate not found' });
     }
 
-    res.status(200).json(updatedAffiliate);
+    res.status(200).json({ ok: true, totalViews: updatedAffiliate.totalViews });
   } catch (error) {
     console.error('Error incrementing views:', error);
     res.status(500).json({ message: 'Internal server error' });
@@ -10291,18 +10298,23 @@ app.get('/affiliateByName', async (req, res) => {
   }
 
   try {
-      // Assuming you have a model called Affiliate
-      // Safe projection only. This used to return the entire document —
-      // payouts, tax fields, email, payment details — to anyone who guessed a name.
-      const affiliate = await Affiliate.findOne({
-          $expr: { 
-              $eq: [{ $concat: ["$firstName", " ", "$lastName"] }, fullName] 
-          }
-      }).select('_id firstName lastName playerName profileUrl totalViews').lean();
+      // Same rules as /api/public/affiliates/resolve: case/space/slug tolerant,
+      // verified public accounts only, and never an arbitrary pick when two
+      // affiliates share a name.
+      const wanted = slugifyAffiliateName(fullName);
+      const candidates = await Affiliate.find({ verified: true, isTestAccount: { $ne: true } })
+          .select('_id firstName lastName playerName profileUrl totalViews createdAt').sort({ createdAt: 1, _id: 1 }).lean();
+      const suffixed = candidates.filter((a) => `${affiliateSlugOf(a)}-${String(a._id).slice(-6)}` === wanted);
+      const named = candidates.filter((a) => affiliateSlugOf(a) === wanted);
+      if (!suffixed.length && named.length > 1) {
+          return res.status(409).json({ message: 'More than one affiliate uses that name.', code: 'AMBIGUOUS_SLUG' });
+      }
+      const affiliate = suffixed[0] || named[0] || null;
 
       if (!affiliate) {
           return res.status(404).json({ message: 'Affiliate not found' });
       }
+      delete affiliate.createdAt;
 
       res.status(200).json(affiliate);
   } catch (error) {
@@ -10533,7 +10545,7 @@ app.post('/affiliate/:affiliateId/join', verifyToken, requireScope(TOKEN_SCOPES.
     await sendUserEmail(user, affiliate);
     await sendAffiliateEmail(affiliate, user);
 
-    return res.status(200).json({ message: 'User successfully joined the league', affiliate });
+    return res.status(200).json({ message: 'User successfully joined the league', affiliate: toPublicAffiliate(affiliate.toObject ? affiliate.toObject() : affiliate) });
   } catch (error) {
     console.error('Request failed:', error);
     return res.status(500).json({ message: 'Error joining the league' });
@@ -10657,14 +10669,65 @@ function toPublicAffiliate(affiliate) {
 app.get('/api/public/affiliates', async (req, res) => {
   try {
     const limit = parsePositiveInteger(req.query.limit, 60, 200);
-    const affiliates = await Affiliate.find({ verified: true })
+    const affiliates = await Affiliate.find({ verified: true, isTestAccount: { $ne: true } })
       .select(AFFILIATE_SAFE_SELECT)
+      .sort({ createdAt: 1, _id: 1 })
       .limit(limit)
       .lean();
     res.json(sanitizeAccountList(affiliates).map(toPublicAffiliate));
   } catch (error) {
     console.error('Error fetching public affiliates:', error);
     res.status(500).json({ message: 'Error fetching affiliates' });
+  }
+});
+
+// Authoritative public resolver. Accepts an exact account id OR a slug and returns
+// exactly one verified affiliate. Never falls back to a different person:
+//   404 = nobody matches, 409 = slug is ambiguous (caller must use the id).
+// Query: ?id=<24-hex>&slug=<slug>. If both are given they must be the same record.
+const slugifyAffiliateName = (value) => String(value || '')
+  .normalize('NFKD').replace(/[\u0300-\u036f]/g, '').toLowerCase()
+  .replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '');
+const affiliateSlugOf = (a) => slugifyAffiliateName(
+  [a.firstName, a.lastName].filter(Boolean).join(' ') || a.playerName || '',
+);
+
+app.get('/api/public/affiliates/resolve', async (req, res) => {
+  try {
+    const id = String(req.query.id || '').trim();
+    const slug = slugifyAffiliateName(req.query.slug || '');
+    if (!id && !slug) return res.status(400).json({ message: 'id or slug is required.' });
+    const publicFilter = { verified: true, isTestAccount: { $ne: true } };
+    const fields = AFFILIATE_SAFE_SELECT;
+
+    let found = null;
+    if (id) {
+      if (!mongoose.isValidObjectId(id)) return res.status(404).json({ message: 'Affiliate not found.' });
+      found = await Affiliate.findOne({ _id: id, ...publicFilter }).select(fields).lean();
+      if (!found) return res.status(404).json({ message: 'Affiliate not found.' });
+      if (slug) {
+        const own = affiliateSlugOf(found);
+        const withSuffix = `${own}-${String(found._id).slice(-6)}`;
+        if (slug !== own && slug !== withSuffix) {
+          return res.status(404).json({ message: 'Affiliate not found.' });
+        }
+      }
+    } else {
+      const all = await Affiliate.find(publicFilter).select(fields).sort({ createdAt: 1, _id: 1 }).lean();
+      const exactSuffix = all.filter((a) => `${affiliateSlugOf(a)}-${String(a._id).slice(-6)}` === slug);
+      if (exactSuffix.length === 1) found = exactSuffix[0];
+      else {
+        const matches = all.filter((a) => affiliateSlugOf(a) === slug);
+        if (matches.length > 1) return res.status(409).json({ message: 'More than one affiliate uses that name. Use the account id link.', code: 'AMBIGUOUS_SLUG' });
+        found = matches[0] || null;
+      }
+      if (!found) return res.status(404).json({ message: 'Affiliate not found.' });
+    }
+    const safe = sanitizeAccountList([found])[0];
+    return res.json({ ...toPublicAffiliate(safe), slug: affiliateSlugOf(found) });
+  } catch (error) {
+    console.error('Error resolving public affiliate:', error);
+    return res.status(500).json({ message: 'Could not load affiliate.' });
   }
 });
 
@@ -10695,7 +10758,7 @@ app.get('/affiliates', verifyAdminToken, async (req, res) => {
 app.get('/api/public/leagues', async (req, res) => {
   try {
     const limit = parsePositiveInteger(req.query.limit, 12, 100);
-    const affiliates = await Affiliate.find().select(AFFILIATE_SAFE_SELECT).lean();
+    const affiliates = await Affiliate.find({ verified: true, isTestAccount: { $ne: true } }).select(AFFILIATE_SAFE_SELECT).lean();
     const sanitizedAffiliates = sanitizeAccountList(affiliates);
     // Keep the raw rows for the joined-user lookup below, but only publish the
     // public projection: this route used to hand out affiliate email + phone.
