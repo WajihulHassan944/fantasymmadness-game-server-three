@@ -8086,7 +8086,8 @@ const mask = (value) => {
   return str.length <= 4 ? '*'.repeat(str.length) : `${str.slice(0, 2)}${'*'.repeat(Math.max(0, str.length - 6))}${str.slice(-4)}`;
 };
 
-app.get('/api/diagnostics/authorize-net-checkout-test', async (req, res) => {
+// Administrator-only: this creates a real hosted-payment-page request, so it must not be public.
+app.get('/api/diagnostics/authorize-net-checkout-test', verifyAdminToken, async (req, res) => {
   try {
     const testOrder = { subtotalCents: 1000, orderNumber: `DIAG-${Date.now()}`, returnUrl: '' };
     const hosted = await requestAuthorizeNetHostedToken(testOrder);
@@ -8096,7 +8097,10 @@ app.get('/api/diagnostics/authorize-net-checkout-test', async (req, res) => {
   }
 });
 
-app.get('/api/diagnostics/authorize-net', async (req, res) => {
+// Administrator-only gateway health check. Reports mode and whether the gateway accepts the
+// stored credentials; never returns any part of a key. No charge is made.
+app.get('/api/diagnostics/authorize-net', verifyAdminToken, async (req, res) => {
+  res.set('Cache-Control', 'no-store');
   const keys = {
     AUTHORIZE_NET_API_LOGIN_ID: process.env.AUTHORIZE_NET_API_LOGIN_ID,
     AUTHORIZE_NET_TRANSACTION_KEY: process.env.AUTHORIZE_NET_TRANSACTION_KEY,
@@ -8105,7 +8109,7 @@ app.get('/api/diagnostics/authorize-net', async (req, res) => {
   };
   const keyStatus = Object.fromEntries(Object.entries(keys).map(([name, value]) => [
     name,
-    { loaded: Boolean(String(value || '').trim()), masked: mask(value) },
+    { loaded: Boolean(String(value || '').trim()) },
   ]));
   const allLoaded = Object.values(keyStatus).every((entry) => entry.loaded);
   const environment = getAuthorizeNetEnvironment();
