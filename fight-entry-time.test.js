@@ -43,3 +43,33 @@ test('published live fights ignore inherited shadow closure but retain entry loc
   assert.equal(isFightOpenForEntry(bout, getFightEntryLockTime(bout)), false);
   assert.equal(isFightOpenForEntry({ ...bout, matchType: 'SHADOW' }, now), false);
 });
+
+const { closeEntriesForScoring } = require('./fight-entry-time');
+
+test('first scoring action closes an open fight with an audit trail', () => {
+  const bout = { matchDateKey: '2026-10-24', matchTime: '20:00', eventTimeZone: 'America/New_York', matchStatus: 'Ongoing', matchType: 'LIVE' };
+  const before = Date.parse('2026-10-24T23:00:00Z'); // 7 PM ET, before the 8 PM cutoff
+  assert.equal(isFightOpenForEntry(bout, before), true);
+  const at = new Date('2026-10-24T23:05:00Z');
+  assert.equal(closeEntriesForScoring(bout, { actor: 'scorer:judge@example.com', now: at }), true);
+  assert.equal(isFightOpenForEntry(bout, before), false);
+  assert.equal(bout.entryClosedReason, 'scoring_started');
+  assert.equal(bout.entryClosedBy, 'scorer:judge@example.com');
+  assert.equal(bout.entryClosedAt, at);
+});
+
+test('later scoring rounds keep the original closure time, reason and actor', () => {
+  const first = new Date('2026-10-24T23:05:00Z');
+  const bout = { matchStatus: 'Ongoing', entryClosedAt: first, entryClosedReason: 'scoring_started', entryClosedBy: 'scorer:a' };
+  assert.equal(closeEntriesForScoring(bout, { actor: 'scorer:b', now: new Date('2026-10-24T23:30:00Z') }), false);
+  assert.equal(bout.entryClosedAt, first);
+  assert.equal(bout.entryClosedBy, 'scorer:a');
+});
+
+test('a manual admin closure is not relabelled by scoring', () => {
+  const manual = new Date('2026-10-24T22:00:00Z');
+  const bout = { entryClosedAt: manual };
+  assert.equal(closeEntriesForScoring(bout, { actor: 'admin:x' }), false);
+  assert.equal(bout.entryClosedAt, manual);
+  assert.equal(bout.entryClosedReason, undefined);
+});

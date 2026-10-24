@@ -60,4 +60,16 @@ const isFightOpenForEntry = (fight, now = Date.now()) => {
   return Number.isFinite(lock) && lock > now;
 };
 
-module.exports = { getFightEntryLockTime, isFightOpenForEntry };
+// Issue #181: the first accepted scoring action closes entries and prediction
+// edits for that fight. Idempotent: an existing closure (manual or earlier
+// scoring) keeps its original time, reason and actor. Returns true only when
+// this call closed the fight.
+const closeEntriesForScoring = (fight, { actor = '', now = new Date() } = {}) => {
+  if (!fight || fight.entryClosedAt) return false;
+  fight.entryClosedAt = now;
+  fight.entryClosedReason = 'scoring_started';
+  fight.entryClosedBy = String(actor || '').slice(0, 120);
+  return true;
+};
+
+module.exports = { getFightEntryLockTime, isFightOpenForEntry, closeEntriesForScoring };

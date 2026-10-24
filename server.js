@@ -1,6 +1,6 @@
 const { wrestlingPromotionFight, isWrestlingPromotionOpen } = require('./wrestling-promotion');
 const express = require('express');
-const { isFightOpenForEntry } = require('./fight-entry-time');
+const { isFightOpenForEntry, closeEntriesForScoring } = require('./fight-entry-time');
 const { ownerReferralShare } = require('./owner-referral-share');
 const { registerAffiliateSocialRoutes } = require('./affiliate-social');
 const mongoose = require('mongoose');
@@ -2002,6 +2002,8 @@ const shadowSchema = new mongoose.Schema({
   matchDate: Date,
   lockAt: Date,
   entryClosedAt: Date,
+  entryClosedReason: String,
+  entryClosedBy: String,
   matchDateKey: { type: String, index: true },
   eventTimeZone: String,
   timeTba: { type: Boolean, default: false },
@@ -2457,6 +2459,8 @@ app.post('/shadow/addShadowRoundResults/:id', verifyAdminToken, async (req, res)
     } catch (scoringError) {
       return res.status(scoringError.statusCode || 400).json({ message: scoringError.message });
     }
+    // Scoring has begun: no new entries or prediction edits (Issue #181).
+    closeEntriesForScoring(match, { actor: `admin:${req.admin?.email || req.admin?.id || req.user?.id || 'admin'}` });
 
     // Save the updated match document
     await match.save();
@@ -2589,6 +2593,8 @@ const matchSchema = new mongoose.Schema({
   matchName: String,
   lockAt: Date,
   entryClosedAt: Date,
+  entryClosedReason: String,
+  entryClosedBy: String,
   matchFighterA: String,
   matchFighterB: String,
   // Optional normalized fighter references. Existing string/image fields remain authoritative
@@ -4482,6 +4488,8 @@ app.post('/match/addRoundResults/:id', verifyAdminToken, async (req, res) => {
     } catch (scoringError) {
       return res.status(scoringError.statusCode || 400).json({ message: scoringError.message });
     }
+    // Scoring has begun: no new entries or prediction edits (Issue #181).
+    closeEntriesForScoring(match, { actor: `admin:${req.admin?.email || req.admin?.id || req.user?.id || 'admin'}` });
 
     // Save the updated match document
     await match.save();
@@ -26770,6 +26778,8 @@ app.post('/api/scorer/fight/rounds', verifyScorerToken, scorerLimiter, async (re
     } catch (scoringError) {
       return res.status(scoringError.statusCode || 400).json({ message: scoringError.message });
     }
+    // Scoring has begun: no new entries or prediction edits (Issue #181).
+    closeEntriesForScoring(match, { actor: `scorer:${req.scorer.scorerEmail || req.scorer.scorerName || req.scorer._id}` });
     await match.save();
 
     const roundNumber = Number(req.body?.fighterOneStats?.roundNumber || req.body?.fighterTwoStats?.roundNumber || 0);
