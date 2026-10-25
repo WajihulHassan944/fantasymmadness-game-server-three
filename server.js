@@ -7383,7 +7383,7 @@ app.post('/register', submitLimiter, async (req, res) => {
       console.log(`Duplicate registration attempt: ${email}`);
       if (!existingUser.verified) {
         // Their original account is kept; they only need a fresh verification link.
-        return res.status(400).json({ error: 'This email is already registered and your account is saved. Sign in page → "Resend verification email" to get a new link.', code: 'PENDING_VERIFICATION' });
+        return res.status(400).json({ error: 'This email is already registered and your account is saved. On the sign-in page, press "Resend verification email" to get a new link.', code: 'PENDING_VERIFICATION' });
       }
       return res.status(400).json({ error: 'Email already registered' });
     }
@@ -20161,11 +20161,18 @@ const checkDuplicateSignup = async ({ email, deviceId, ip }) => {
   // reports traced back to. Query is now direct (no wasted call), and capped
   // with a hard timeout so a slow scan fails OPEN instead of hanging signup.
   const aliasMatch = await Promise.race([
-    User.find({}).select('email').limit(5000).lean()
+    User.find({}).select('email verified').limit(5000).lean()
       .then((candidates) => candidates.find((u) => normalizeEmailForDupes(u.email) === normalizedEmail)),
     new Promise((resolve) => setTimeout(() => resolve(null), 2500)),
   ]).catch(() => null);
 
+  if (aliasMatch && !aliasMatch.verified) {
+    // The earlier sign-up is saved but unverified (e.g. the verification link was broken).
+    return {
+      code: 'PENDING_VERIFICATION',
+      message: 'This email is already registered and your account is saved. On the sign-in page, press "Resend verification email" to get a new link.',
+    };
+  }
   if (aliasMatch) {
     return {
       code: 'DUPLICATE_EMAIL_ALIAS',
