@@ -7525,8 +7525,31 @@ app.locals.sendTransactionalMail = sendTransactionalMail;
 app.locals.transactionalMailProvider = transactionalMailProvider;
 app.locals.backendPublicUrl = BACKEND_PUBLIC_URL;
 
+// ---------------------------------------------------------------------------
+// Verification -> signed-in handoff.
+// After a successful verification the browser is sent to /verified with a ONE-TIME
+// handoff code in the URL fragment (never sent to any server, erased by the page).
+// The page exchanges it once, within 10 minutes, for a normal player session.
+// The code is not a session token: only its SHA-256 hash is stored, it works once,
+// and it expires on its own. Old sign-ups (over 7 days) verify but sign in manually.
+// ---------------------------------------------------------------------------
+const HANDOFF_TTL_MS = 10 * 60 * 1000;
+const HANDOFF_MAX_ACCOUNT_AGE_MS = 7 * 24 * 60 * 60 * 1000;
+const verificationHandoffSchema = new mongoose.Schema({
+  codeHash: { type: String, required: true, unique: true },
+  userId: { type: mongoose.Schema.Types.ObjectId, required: true },
+  expiresAt: { type: Date, required: true },
+  usedAt: { type: Date, default: null },
+}, { versionKey: false });
+verificationHandoffSchema.index({ expiresAt: 1 }, { expireAfterSeconds: 3600 });
+const VerificationHandoff = mongoose.models.VerificationHandoff || mongoose.model('VerificationHandoff', verificationHandoffSchema);
+const hashHandoffCode = (code) => crypto.createHash('sha256').update(String(code)).digest('hex');
+
 app.get('/verify-email', async (req, res) => {
   const { token } = req.query;
+  // Never let a shared cache or the next page see this response's URL.
+  res.set('Cache-Control', 'no-store');
+  res.set('Referrer-Policy', 'no-referrer');
   // FRONTEND_URL/APP_URL on Vercel hold a developer address (localhost); never send
   // real players there — fall back to the live site.
   const configuredFrontend = String(process.env.FRONTEND_URL || process.env.APP_URL || '').trim();
@@ -7534,14 +7557,15 @@ app.get('/verify-email', async (req, res) => {
     ? configuredFrontend : 'https://www.fantasymmadness.com').replace(/\/$/, '');
 
   if (typeof token !== 'string' || !/^[a-f0-9]{40}$/i.test(token)) {
-    return res.redirect(`${frontendOrigin}/auth?mode=login&role=player&verification=invalid`);
+    return res.redirect(`${frontendOrigin}/verified#status=invalid`);
   }
 
   let user;
   try {
     user = await User.findOne({ verificationToken: token });
     if (!user) {
-      return res.redirect(`${frontendOrigin}/auth?mode=login&role=player&verification=invalid`);
+      // Already used, replaced by a newer link, or never existed.
+      return res.redirect(`${frontendOrigin}/verified#status=invalid`);
     }
     user.verified = true;
     user.verificationToken = null; // Clear the token after verification
@@ -7549,13 +7573,64 @@ app.get('/verify-email', async (req, res) => {
   } catch (error) {
     // Database hiccup: keep the token so the same link works on the next try.
     console.error('Email verification failed:', error && error.message);
-    return res.redirect(`${frontendOrigin}/auth?mode=login&role=player&verification=error`);
+    return res.redirect(`${frontendOrigin}/verified#status=error`);
   }
 
   await new Notification({ title: `New User Verified: ${user.firstName}` }).save().catch((error) => console.error('Could not create verification notification:', error));
   sendAdminPush({ title: 'New verified player', body: `${user.firstName} verified their email.`, url: '/administration/RegisteredUsers' }).catch(() => null);
 
-  return res.redirect(`${frontendOrigin}/auth?mode=login&role=player&verified=1`);
+  // Signed-in handoff for recent sign-ups only; anything unusual falls back to sign-in.
+  try {
+    const createdAt = user.createdAt || (user._id && user._id.getTimestamp && user._id.getTimestamp());
+    const recent = createdAt && (Date.now() - new Date(createdAt).getTime()) <= HANDOFF_MAX_ACCOUNT_AGE_MS;
+    if (recent && !user.isTestAccount) {
+      const code = crypto.randomBytes(32).toString('base64url');
+      await VerificationHandoff.create({ codeHash: hashHandoffCode(code), userId: user._id, expiresAt: new Date(Date.now() + HANDOFF_TTL_MS) });
+      return res.redirect(`${frontendOrigin}/verified#code=${code}`);
+    }
+  } catch (handoffError) {
+    console.error('Verification handoff could not be created:', handoffError && handoffError.message);
+  }
+  return res.redirect(`${frontendOrigin}/verified#status=signin`);
+});
+
+// Exchange a one-time handoff code for a normal player session (same as /login).
+app.post('/api/auth/verification-handoff', loginLimiter, async (req, res) => {
+  res.set('Cache-Control', 'no-store');
+  try {
+    const code = String(req.body?.code || '');
+    if (!/^[A-Za-z0-9_-]{40,60}$/.test(code)) return res.status(400).json({ message: 'This sign-in link is not valid.', code: 'HANDOFF_INVALID' });
+    const now = new Date();
+    const handoff = await VerificationHandoff.findOneAndUpdate(
+      { codeHash: hashHandoffCode(code), usedAt: null, expiresAt: { $gt: now } },
+      { $set: { usedAt: now } },
+      { new: true },
+    ).lean();
+    if (!handoff) return res.status(410).json({ message: 'This sign-in link has already been used or has expired.', code: 'HANDOFF_EXPIRED' });
+    const user = await User.findById(handoff.userId).select('_id verified referredAffiliateId referredFightId').lean();
+    if (!user || !user.verified) return res.status(410).json({ message: 'Please sign in to continue.', code: 'HANDOFF_EXPIRED' });
+
+    const token = jwt.sign({ id: user._id, scope: TOKEN_SCOPES.PLAYER }, process.env.JWT_SECRET, { expiresIn: SESSION_TOKEN_TTL });
+    res.cookie('token', token, { httpOnly: true, maxAge: SESSION_COOKIE_MAX_AGE });
+
+    // Where to continue after the welcome: the fight or league they signed up from.
+    let returnTo = '';
+    let returnLabel = '';
+    const affiliateId = user.referredAffiliateId ? String(user.referredAffiliateId) : '';
+    if (user.referredFightId && mongoose.isValidObjectId(user.referredFightId)) {
+      returnTo = `/fight/${String(user.referredFightId)}?play=1${affiliateId ? `&ref=${affiliateId}` : ''}`;
+      returnLabel = 'Continue to your fight';
+    } else if (affiliateId) {
+      const affiliate = await Affiliate.findById(affiliateId).select('firstName lastName playerName').lean().catch(() => null);
+      const slug = affiliate ? affiliateSlugOf(affiliate) : '';
+      returnTo = `/affiliate/${encodeURIComponent(slug || affiliateId)}?affiliateId=${affiliateId}`;
+      returnLabel = 'Continue to your league';
+    }
+    return res.status(200).json({ message: 'Signed in', token, user: { id: user._id, verified: true }, returnTo, returnLabel });
+  } catch (error) {
+    console.error('Verification handoff failed:', error && error.message);
+    return res.status(500).json({ message: 'Automatic sign-in is not available right now.', code: 'HANDOFF_ERROR' });
+  }
 });
 
 
