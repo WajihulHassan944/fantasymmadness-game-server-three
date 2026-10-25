@@ -6,7 +6,7 @@
 const expressPath = require.resolve('express');
 const expressOriginal = require(expressPath);
 let capturedApp = null;
-const expressCapture = (...args) => { capturedApp = expressOriginal(...args); capturedApp.use(require('./passive-incident-monitor').passiveIncidentMonitor); capturedApp.use(require('./fan-acquisition-attribution').registrationCapture); return capturedApp; };
+const expressCapture = (...args) => { capturedApp = expressOriginal(...args); capturedApp.use(require('./passive-incident-monitor').passiveIncidentMonitor); capturedApp.use(require('./fan-acquisition-attribution').registrationCapture); capturedApp.use(require('./registration-attempts').attemptRecorder); return capturedApp; };
 Object.assign(expressCapture, expressOriginal);
 require.cache[expressPath].exports = expressCapture;
 require('./server');
@@ -59,6 +59,12 @@ try {
   require('./fan-acquisition-discovery')({app:capturedApp,verifyAdminToken,mongoose});
 } catch (error) {
   console.error('[fan-acquisition] Optional module disabled:', error?.message || 'initialization failed');
+}
+// Registration attempt tracking (admin-only report + limited browser reports).
+try {
+  require('./registration-attempts').registerRegistrationAttemptRoutes({ app: capturedApp, verifyAdminToken });
+} catch (error) {
+  console.error('[registration-attempts] Optional routes disabled:', error?.message || 'initialization failed');
 }
 // Admin Player Recovery (read-mostly; never edits player records). Optional: a failure here
 // must never stop the rest of the server from starting.
