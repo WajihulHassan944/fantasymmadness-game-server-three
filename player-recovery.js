@@ -168,7 +168,7 @@ module.exports = function registerPlayerRecovery({ app, mongoose, verifyAdminTok
       res.set('Cache-Control', 'no-store');
       return res.json({
         generatedAt: new Date().toISOString(),
-        accounts: { total, verified, pending, pendingWithLink, pendingWithoutLink: pending - pendingWithLink, pendingWithAffiliate, pendingLast7Days: pending7, pendingLast30Days: pending30, pendingCoinBalanceTotal: pendingCoins, testAccountsExcluded: testAccounts },
+        accounts: { allAccountsIncludingTest: total + testAccounts, total, verified, pending, pendingWithLink, pendingWithoutLink: pending - pendingWithLink, pendingWithAffiliate, pendingLast7Days: pending7, pendingLast30Days: pending30, pendingCoinBalanceTotal: pendingCoins, testAccountsExcluded: testAccounts },
         recovery: { cohort: cohortIds.length, returned: cohortReturned, stillPending: cohortIds.length - cohortReturned, emailsSent: sent, emailsFailed: failed, emailsInFlight: inFlight, returnedAfterEmail, remainingRecipients: remaining, campaignApproved: Boolean(campaign?.approvedAt), approvedAt: campaign?.approvedAt || null, approvedTotal: campaign?.approvedTotal ?? null },
         otherRecords: { signupRecordsWithoutAccount: orphanSignupRecords, emailListSignupsNotAccounts: emailListOnly },
         backupParts: Math.max(1, Math.ceil((total + testAccounts) / BACKUP_PART_SIZE)),
@@ -207,9 +207,21 @@ module.exports = function registerPlayerRecovery({ app, mongoose, verifyAdminTok
         users().findOne(filter, { projection: { firstName: 1 } }),
       ]);
       const skippedNoLink = pendingAll - pendingWithLink;
+      // Prove the links will work: they use each player's EXISTING token on this
+      // server's own address, and that address must answer right now.
+      const linkBase = String(app.locals.backendPublicUrl || '').replace(/\/$/, '');
+      let linkServerResponding = false;
+      try {
+        const controller = new AbortController();
+        const timer = setTimeout(() => controller.abort(), 5000);
+        const probe = await fetch(`${linkBase}/verify-email`, { redirect: 'manual', signal: controller.signal });
+        clearTimeout(timer);
+        linkServerResponding = probe.status === 302 && /fantasymmadness\.com\/auth/.test(probe.headers.get('location') || '');
+      } catch (_probeError) { linkServerResponding = false; }
+      const linkCheck = { linkBase, usesExistingTokens: true, linkServerResponding, oldBrokenServer: 'https://fantasymmadness-game-server-three.vercel.app', usesOldBrokenServer: /\/\/fantasymmadness-game-server-three\.vercel\.app/i.test(linkBase) };
       const preview = buildRecoveryEmail({ firstName: sample?.firstName || 'Alex', link: `${app.locals.backendPublicUrl || ''}/verify-email?token=(each player's own link)` });
       res.set('Cache-Control', 'no-store');
-      return res.json({ campaignId: CAMPAIGN_ID, recipients, skippedNoLink, confirmPhrase: CONFIRM_PHRASE, maxBatch: MAX_BATCH, mailProvider: typeof app.locals.transactionalMailProvider === 'function' ? app.locals.transactionalMailProvider() : 'unknown', ...preview });
+      return res.json({ campaignId: CAMPAIGN_ID, recipients, skippedNoLink, linkCheck, confirmPhrase: CONFIRM_PHRASE, maxBatch: MAX_BATCH, mailProvider: typeof app.locals.transactionalMailProvider === 'function' ? app.locals.transactionalMailProvider() : 'unknown', ...preview });
     } catch (error) {
       console.error('[player-recovery] campaign preview failed:', error && error.message);
       return res.status(500).json({ message: 'Could not build the campaign preview.' });
@@ -224,6 +236,7 @@ module.exports = function registerPlayerRecovery({ app, mongoose, verifyAdminTok
       const send = app.locals.sendTransactionalMail;
       const base = String(app.locals.backendPublicUrl || '').replace(/\/$/, '');
       if (typeof send !== 'function' || !/^https:\/\//.test(base)) return res.status(503).json({ message: 'Email sending is not available on this server.' });
+      if (/\/\/fantasymmadness-game-server-three\.vercel\.app/i.test(base)) return res.status(503).json({ message: 'Links would point at the old broken server. Sending is blocked.' });
       let campaign = await Campaign.findOne({ campaignId: CAMPAIGN_ID }).lean();
       const filter = await recipientFilter();
       if (!campaign?.approvedAt) {
