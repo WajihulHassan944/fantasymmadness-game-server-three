@@ -60,6 +60,13 @@ try {
 } catch (error) {
   console.error('[fan-acquisition] Optional module disabled:', error?.message || 'initialization failed');
 }
+// Admin Player Recovery (read-mostly; never edits player records). Optional: a failure here
+// must never stop the rest of the server from starting.
+try {
+  require('./player-recovery')({ app: capturedApp, mongoose, verifyAdminToken });
+} catch (error) {
+  console.error('[player-recovery] Optional module disabled:', error?.message || 'initialization failed');
+}
 const { registerIncidentRoutes } = require('./admin-incidents');
 const { reportIncident } = registerIncidentRoutes({ app: capturedApp, mongoose, verifyAdminToken });
 // Read-only proactive inspection; runs only when an authenticated admin requests it.

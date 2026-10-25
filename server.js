@@ -7378,9 +7378,13 @@ app.post('/register', submitLimiter, async (req, res) => {
     }
 
     // Check if email already exists
-    const existingUser = await User.findOne({ email }).lean();
+    const existingUser = await User.findOne({ email }).select('_id verified').lean();
     if (existingUser) {
       console.log(`Duplicate registration attempt: ${email}`);
+      if (!existingUser.verified) {
+        // Their original account is kept; they only need a fresh verification link.
+        return res.status(400).json({ error: 'This email is already registered and your account is saved. Sign in page → "Resend verification email" to get a new link.', code: 'PENDING_VERIFICATION' });
+      }
       return res.status(400).json({ error: 'Email already registered' });
     }
 
@@ -7515,6 +7519,11 @@ app.post('/resend-verification', submitLimiter, async (req, res) => {
     res.status(502).json({ message: mailFailureMessage(error), code: String(error?.code || 'MAIL_DELIVERY_FAILED') });
   }
 });
+
+// Shared with the admin Player Recovery module (player-recovery.js).
+app.locals.sendTransactionalMail = sendTransactionalMail;
+app.locals.transactionalMailProvider = transactionalMailProvider;
+app.locals.backendPublicUrl = BACKEND_PUBLIC_URL;
 
 app.get('/verify-email', async (req, res) => {
   const { token } = req.query;
