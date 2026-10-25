@@ -7518,7 +7518,11 @@ app.post('/resend-verification', submitLimiter, async (req, res) => {
 
 app.get('/verify-email', async (req, res) => {
   const { token } = req.query;
-  const frontendOrigin = String(process.env.FRONTEND_URL || process.env.APP_URL || 'https://www.fantasymmadness.com').replace(/\/$/, '');
+  // FRONTEND_URL/APP_URL on Vercel hold a developer address (localhost); never send
+  // real players there — fall back to the live site.
+  const configuredFrontend = String(process.env.FRONTEND_URL || process.env.APP_URL || '').trim();
+  const frontendOrigin = (/^https:\/\//i.test(configuredFrontend) && !/localhost|127\.0\.0\.1|0\.0\.0\.0/i.test(configuredFrontend)
+    ? configuredFrontend : 'https://www.fantasymmadness.com').replace(/\/$/, '');
 
   if (typeof token !== 'string' || !/^[a-f0-9]{40}$/i.test(token)) {
     return res.redirect(`${frontendOrigin}/auth?mode=login&role=player&verification=invalid`);
