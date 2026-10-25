@@ -305,6 +305,8 @@ module.exports = function registerPlayerRecovery({ app, mongoose, verifyAdminTok
   // time (Eastern, daylight/standard handled automatically).
   // ---------------------------------------------------------------------------
   const ZONE = 'America/New_York';
+  // When the corrected verification link went live (production deploy, 2026-10-25 09:48 ET).
+  const LINK_FIX_DEPLOYED_AT = Date.parse('2026-10-25T13:48:02Z');
   const zoneOffsetMinutes = (date) => {
     const part = new Intl.DateTimeFormat('en-US', { timeZone: ZONE, timeZoneName: 'shortOffset' })
       .formatToParts(date).find((p) => p.type === 'timeZoneName')?.value || 'GMT-5';
@@ -364,7 +366,9 @@ module.exports = function registerPlayerRecovery({ app, mongoose, verifyAdminTok
       let verificationEmail;
       if (google) verificationEmail = 'Not needed (signed up with Google)';
       else if (r.verified) verificationEmail = 'Sent and used (player verified)';
-      else verificationEmail = 'Sent automatically at sign-up; delivery not recorded. Link pointed to the old broken server';
+      else verificationEmail = created && new Date(created).getTime() < LINK_FIX_DEPLOYED_AT
+        ? 'Sent automatically at sign-up; delivery not recorded. Link pointed to the old broken server'
+        : 'Sent automatically at sign-up; delivery not recorded. Link points to our live server';
       if (recoverySent.has(String(r._id))) verificationEmail += ' · Recovery email sent';
       const affId = r.referredAffiliateId ? String(r.referredAffiliateId) : '';
       return {
