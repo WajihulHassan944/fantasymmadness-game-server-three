@@ -200,6 +200,12 @@ app.use(cors({
 const MONGODB_URI = process.env.MONGODB_URI;
 const PORT = process.env.PORT || 3000;
 
+// Public address of THIS backend, used in links we email (verify email, affiliate
+// approval, unsubscribe). It must be a domain this Vercel project owns: the bare
+// "fantasymmadness-game-server-three.vercel.app" belongs to a different, broken
+// deployment, so links to it fail with FUNCTION_INVOCATION_FAILED.
+const BACKEND_PUBLIC_URL = String(process.env.BACKEND_PUBLIC_URL || 'https://fantasymmadness-game-server-three-taupe.vercel.app').replace(/\/$/, '');
+
 // Serverless-safe connection. Each cold start used to fire one connect() and let every
 // early request queue inside Mongoose until its 10 s buffer ran out ("buffering timed
 // out after 10000ms"). Now one shared connect attempt is reused, it fails fast with a
@@ -7439,7 +7445,7 @@ app.post('/register', submitLimiter, async (req, res) => {
     // the backend, which silently drops every outgoing email including this
     // one). Previously this threw a 500 after the account existed, leaving
     // the user stuck with no account confirmation and no email, ever.
-    const verificationLink = `https://fantasymmadness-game-server-three.vercel.app/verify-email?token=${verificationToken}`;
+    const verificationLink = `${BACKEND_PUBLIC_URL}/verify-email?token=${verificationToken}`;
     try {
       await sendTransactionalMail({
         to: email,
@@ -7486,7 +7492,7 @@ app.post('/resend-verification', submitLimiter, async (req, res) => {
     const verificationToken = crypto.randomBytes(20).toString('hex');
     user.verificationToken = verificationToken;
     await user.save();
-    const verificationLink = `https://fantasymmadness-game-server-three.vercel.app/verify-email?token=${verificationToken}`;
+    const verificationLink = `${BACKEND_PUBLIC_URL}/verify-email?token=${verificationToken}`;
     try {
       await sendTransactionalMail({
         to: email,
@@ -7518,15 +7524,20 @@ app.get('/verify-email', async (req, res) => {
     return res.redirect(`${frontendOrigin}/auth?mode=login&role=player&verification=invalid`);
   }
 
-  const user = await User.findOne({ verificationToken: token });
-
-  if (!user) {
-    return res.redirect(`${frontendOrigin}/auth?mode=login&role=player&verification=invalid`);
+  let user;
+  try {
+    user = await User.findOne({ verificationToken: token });
+    if (!user) {
+      return res.redirect(`${frontendOrigin}/auth?mode=login&role=player&verification=invalid`);
+    }
+    user.verified = true;
+    user.verificationToken = null; // Clear the token after verification
+    await user.save();
+  } catch (error) {
+    // Database hiccup: keep the token so the same link works on the next try.
+    console.error('Email verification failed:', error && error.message);
+    return res.redirect(`${frontendOrigin}/auth?mode=login&role=player&verification=error`);
   }
-
-  user.verified = true;
-  user.verificationToken = null; // Clear the token after verification
-  await user.save();
 
   await new Notification({ title: `New User Verified: ${user.firstName}` }).save().catch((error) => console.error('Could not create verification notification:', error));
   sendAdminPush({ title: 'New verified player', body: `${user.firstName} verified their email.`, url: '/administration/RegisteredUsers' }).catch(() => null);
@@ -9823,7 +9834,7 @@ const notification = new Notification({
 
 
       // Send email notification to admin for approval
-      const approvalLink = `https://fantasymmadness-game-server-three.vercel.app/approveAffiliate/${affiliate._id}?t=${signActionToken('affiliate-approval', affiliate._id)}`;
+      const approvalLink = `${BACKEND_PUBLIC_URL}/approveAffiliate/${affiliate._id}?t=${signActionToken('affiliate-approval', affiliate._id)}`;
       sendAdminPush({ title: 'New affiliate sign-up', body: `${affiliate.firstName} needs approval.`, url: '/administration/AffiliateUsers' }).catch(() => null);
 
       await transporter.sendMail({
@@ -11151,7 +11162,7 @@ const notification = new Notification({
       return res.status(201).json({ message: redeemedInvite.promoterAccess ? 'Promoter account created and instantly approved.' : 'Affiliate account created and instantly approved.', instantApproved: true, promoterApproved: Boolean(redeemedInvite.promoterAccess) });
     }
 
-    const approvalLink = `https://fantasymmadness-game-server-three.vercel.app/approveAffiliate/${newUser._id}?t=${signActionToken('affiliate-approval', newUser._id)}`;
+    const approvalLink = `${BACKEND_PUBLIC_URL}/approveAffiliate/${newUser._id}?t=${signActionToken('affiliate-approval', newUser._id)}`;
     sendAdminPush({ title: 'New affiliate sign-up', body: `${newUser.firstName} needs approval.`, url: '/administration/AffiliateUsers' }).catch(() => null);
 
     // Send email notification to the admin
@@ -13869,7 +13880,7 @@ app.post('/news', verifyAdminToken, async (req, res) => {
 
       if (subscribedUsers.length > 0) {
         const emailPromises = subscribedUsers.map(user => {
-          const unsubscribeUrl = `https://fantasymmadness-game-server-three.vercel.app/unsubscribe-user/${user._id}?t=${signActionToken('unsubscribe', user._id)}`;
+          const unsubscribeUrl = `${BACKEND_PUBLIC_URL}/unsubscribe-user/${user._id}?t=${signActionToken('unsubscribe', user._id)}`;
           const mailOptions = {
             from: FMM_MAIL_FROM,
             to: user.email,
