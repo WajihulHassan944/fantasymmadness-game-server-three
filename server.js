@@ -7776,6 +7776,14 @@ app.post('/upload-avatar', verifyToken, upload.single('image'), async (req, res)
 
 
 
+// Membership plans grant a starting amount of FM COINS. Choosing a plan may raise a
+// low balance up to that amount but must never lower a player's existing coins.
+function planAllotmentBalance(currentBalance, planAllotment) {
+  const current = Math.max(0, Math.floor(Number(currentBalance) || 0));
+  const allotment = Math.max(0, Math.floor(Number(planAllotment) || 0));
+  return Math.max(current, allotment);
+}
+
 app.post('/user/:email/subscribe', verifyToken, async (req, res) => {
   // Bound to the signed-in account so one user cannot alter another's subscription.
   {
@@ -7807,12 +7815,15 @@ app.post('/user/:email/subscribe', verifyToken, async (req, res) => {
       user.freePlanExpiryDate = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000); // 1 month from now
       user.hasAvailedFreePlan = true;
       freePlanBefore = Number.parseInt(String(user.tokens || '0'), 10) || 0;
-      user.tokens = '20'; // Allot 20 free tokens for the Free plan
+      // The plan's 20 coins are a minimum, never a replacement: a player who already
+      // has more (e.g. the 500 sign-up coins) keeps every coin.
+      if (planAllotmentBalance(freePlanBefore, 20) > freePlanBefore) user.tokens = String(planAllotmentBalance(freePlanBefore, 20));
 
     } else if (plan === 'Standard') {
       user.currentPlan = 'Standard';
       stdPlanBefore = Number.parseInt(String(user.tokens || '0'), 10) || 0;
-      user.tokens = '100'; // Allot 100 free tokens for the Standard plan
+      // Same rule: top up to 100 if lower, never reduce an existing balance.
+      if (planAllotmentBalance(stdPlanBefore, 100) > stdPlanBefore) user.tokens = String(planAllotmentBalance(stdPlanBefore, 100));
     }
 
     await user.save();
@@ -7820,7 +7831,7 @@ app.post('/user/:email/subscribe', verifyToken, async (req, res) => {
     // previously invisible in any history.
     const planAfter = Number.parseInt(String(user.tokens || '0'), 10) || 0;
     const planBefore = plan === 'Standard' ? stdPlanBefore : freePlanBefore;
-    if (Number.isFinite(planBefore)) {
+    if (Number.isFinite(planBefore) && planAfter !== planBefore) {
       await recordWalletMove({
         userId: user._id,
         amount: planAfter - planBefore,
