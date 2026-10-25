@@ -300,6 +300,144 @@ module.exports = function registerPlayerRecovery({ app, mongoose, verifyAdminTok
     }
   });
 
+  // ---------------------------------------------------------------------------
+  // Daily registration report (read-only). The day is a calendar day in New York
+  // time (Eastern, daylight/standard handled automatically).
+  // ---------------------------------------------------------------------------
+  const ZONE = 'America/New_York';
+  const zoneOffsetMinutes = (date) => {
+    const part = new Intl.DateTimeFormat('en-US', { timeZone: ZONE, timeZoneName: 'shortOffset' })
+      .formatToParts(date).find((p) => p.type === 'timeZoneName')?.value || 'GMT-5';
+    const m = part.match(/GMT([+-])(\d{1,2})(?::(\d{2}))?/);
+    if (!m) return 0;
+    return (m[1] === '-' ? -1 : 1) * (Number(m[2]) * 60 + Number(m[3] || 0));
+  };
+  // UTC instant of local midnight for YYYY-MM-DD in New York.
+  const nyMidnight = (ymd) => {
+    const [y, mo, d] = ymd.split('-').map(Number);
+    const guess = new Date(Date.UTC(y, mo - 1, d, 12));
+    const offset = zoneOffsetMinutes(guess);
+    let start = new Date(Date.UTC(y, mo - 1, d) - offset * 60000);
+    // Re-check at the computed instant (covers the rare DST-change day).
+    const offsetAtStart = zoneOffsetMinutes(start);
+    if (offsetAtStart !== offset) start = new Date(Date.UTC(y, mo - 1, d) - offsetAtStart * 60000);
+    return start;
+  };
+  const nextDay = (ymd) => { const t = new Date(`${ymd}T12:00:00Z`); t.setUTCDate(t.getUTCDate() + 1); return t.toISOString().slice(0, 10); };
+  const formatET = (date) => (date ? new Intl.DateTimeFormat('en-US', { timeZone: ZONE, year: 'numeric', month: '2-digit', day: '2-digit', hour: 'numeric', minute: '2-digit', second: '2-digit', timeZoneName: 'short' }).format(date) : '');
+  const csvCell = (value) => {
+    let text = String(value ?? '');
+    if (/^[=+\-@\t\r]/.test(text)) text = `'${text}`; // stop spreadsheet formulas
+    return /[",\n\r]/.test(text) ? `"${text.replace(/"/g, '""')}"` : text;
+  };
+
+  const buildDayReport = async (ymd) => {
+    const start = nyMidnight(ymd);
+    const end = nyMidnight(nextDay(ymd));
+    // Older records may lack createdAt; their id still carries the creation time.
+    const idStart = mongoose.Types.ObjectId.createFromTime(Math.floor(start.getTime() / 1000));
+    const idEnd = mongoose.Types.ObjectId.createFromTime(Math.floor(end.getTime() / 1000));
+    const rows = await users().aggregate([
+      { $match: { $or: [{ createdAt: { $gte: start, $lt: end } }, { createdAt: { $exists: false }, _id: { $gte: idStart, $lt: idEnd } }] } },
+      { $project: {
+        email: 1, firstName: 1, lastName: 1, playerName: 1, createdAt: 1, verified: 1, isTestAccount: 1,
+        referredAffiliateId: 1, referredFightId: 1, campaignSource: '$campaignAttribution.source',
+        hasPassword: { $eq: [{ $type: '$password' }, 'string'] },
+        
+      } },
+      { $sort: { createdAt: 1, _id: 1 } },
+    ]).toArray();
+
+    const affiliateIds = [...new Set(rows.map((r) => r.referredAffiliateId).filter(Boolean).map(String))];
+    const Affiliate = mongoose.models.Affiliate;
+    const affiliates = affiliateIds.length && Affiliate
+      ? await Affiliate.collection.find({ _id: { $in: affiliateIds.map((id) => new mongoose.Types.ObjectId(id)) } }, { projection: { firstName: 1, lastName: 1, playerName: 1 } }).toArray()
+      : [];
+    const affiliateName = new Map(affiliates.map((a) => [String(a._id), [a.firstName, a.lastName].filter(Boolean).join(' ') || a.playerName || '']));
+    const Referral = mongoose.models.Referral;
+    const playerReferred = Referral && rows.length ? new Set((await Referral.collection.find({ referredUser: { $in: rows.map((r) => r._id) } }, { projection: { referredUser: 1 } }).toArray()).map((r) => String(r.referredUser))) : new Set();
+    const recoverySent = new Set((await Message.find({ campaignId: CAMPAIGN_ID, status: 'sent', userId: { $in: rows.map((r) => r._id) } }).select('userId').lean()).map((m) => String(m.userId)));
+
+    const list = rows.map((r) => {
+      const created = createdOf(r);
+      const google = !r.hasPassword;
+      let verificationEmail;
+      if (google) verificationEmail = 'Not needed (signed up with Google)';
+      else if (r.verified) verificationEmail = 'Sent and used (player verified)';
+      else verificationEmail = 'Sent automatically at sign-up; delivery not recorded. Link pointed to the old broken server';
+      if (recoverySent.has(String(r._id))) verificationEmail += ' · Recovery email sent';
+      const affId = r.referredAffiliateId ? String(r.referredAffiliateId) : '';
+      return {
+        id: String(r._id),
+        email: r.email || '',
+        firstName: r.firstName || '',
+        lastName: r.lastName || '',
+        registeredAtET: formatET(created),
+        registeredAtUTC: created ? new Date(created).toISOString() : '',
+        status: r.verified ? 'Verified' : 'Pending verification',
+        signupMethod: google ? 'Google' : 'Email and password',
+        verificationEmail,
+        viaAffiliate: affId ? 'Yes' : 'No',
+        affiliateName: affId ? (affiliateName.get(affId) || '(affiliate not found)') : '',
+        affiliateId: affId,
+        referredFightId: r.referredFightId ? String(r.referredFightId) : '',
+        referredByPlayer: playerReferred.has(String(r._id)) ? 'Yes' : 'No',
+        campaignSource: r.campaignSource || '',
+        testAccount: r.isTestAccount ? 'Yes' : 'No',
+      };
+    });
+
+    // Attempts that never became accounts: only anonymous counts exist (no emails stored).
+    let signupPageSends = null;
+    const RevenueEvent = mongoose.models.RevenueEvent;
+    if (RevenueEvent) signupPageSends = await RevenueEvent.countDocuments({ event: 'signup_gate', createdAt: { $gte: start, $lt: end } });
+    let emailListSignups = [];
+    if (mongoose.models.Usernonregistered) {
+      emailListSignups = (await mongoose.models.Usernonregistered.collection.find({ createdAt: { $gte: start, $lt: end } }, { projection: { email: 1, fullName: 1, createdAt: 1 } }).toArray())
+        .map((e) => ({ email: e.email || '', name: e.fullName || '', atET: formatET(e.createdAt) }));
+    }
+
+    const real = list.filter((r) => r.testAccount === 'No');
+    return {
+      date: ymd,
+      timeZone: 'Eastern Time (America/New_York)',
+      windowET: `${formatET(start)} to ${formatET(new Date(end.getTime() - 1000))}`,
+      windowUTC: { start: start.toISOString(), end: end.toISOString() },
+      totals: { accounts: list.length, realAccounts: real.length, verified: real.filter((r) => r.status === 'Verified').length, pending: real.filter((r) => r.status !== 'Verified').length, viaAffiliate: real.filter((r) => r.viaAffiliate === 'Yes').length, google: real.filter((r) => r.signupMethod === 'Google').length, testAccounts: list.length - real.length },
+      registrations: list,
+      failedAttempts: {
+        identifiableWithEmail: 0,
+        signupPageVisitsFromFights: signupPageSends,
+        emailListSignupsNotAccounts: emailListSignups,
+        unavailable: [
+          'Sign-up attempts that failed before an account was saved are not stored in the database, so their email addresses cannot be recovered from it.',
+          'The sign-up device log exists in the code but is never written, so it holds no attempts.',
+          'Whether each automatic verification email was delivered was never recorded.',
+          'Server request logs (kept by Vercel, not in the database) are short-lived and were not readable from here.',
+        ],
+      },
+    };
+  };
+
+  const dayParam = (value) => (/^\d{4}-\d{2}-\d{2}$/.test(String(value || '')) ? String(value) : '2026-10-24');
+
+  app.get('/api/admin/player-recovery/registrations', verifyAdminToken, async (req, res) => {
+    try {
+      const report = await buildDayReport(dayParam(req.query.date));
+      res.set('Cache-Control', 'no-store');
+      if (req.query.format !== 'csv') return res.json(report);
+      const headers = ['Email', 'First name', 'Last name', 'Registered (Eastern Time)', 'Registered (UTC)', 'Status', 'Sign-up method', 'Verification email', 'Via affiliate', 'Affiliate name', 'Affiliate ID', 'Referred fight ID', 'Referred by a player', 'Campaign source', 'Test account', 'Account ID'];
+      const keys = ['email', 'firstName', 'lastName', 'registeredAtET', 'registeredAtUTC', 'status', 'signupMethod', 'verificationEmail', 'viaAffiliate', 'affiliateName', 'affiliateId', 'referredFightId', 'referredByPlayer', 'campaignSource', 'testAccount', 'id'];
+      const lines = [headers.map(csvCell).join(','), ...report.registrations.map((r) => keys.map((k) => csvCell(r[k])).join(','))];
+      res.set('Content-Type', 'text/csv; charset=utf-8');
+      res.set('Content-Disposition', `attachment; filename="fmm-registrations-${report.date}-eastern.csv"`);
+      return res.send(`﻿${lines.join('\r\n')}\r\n`);
+    } catch (error) {
+      console.error('[player-recovery] registration report failed:', error && error.message);
+      return res.status(500).json({ message: 'Could not build the registration report.' });
+    }
+  });
+
   return { buildRecoveryEmail, CAMPAIGN_ID };
 };
 
