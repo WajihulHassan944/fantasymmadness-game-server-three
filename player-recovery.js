@@ -333,14 +333,15 @@ module.exports = function registerPlayerRecovery({ app, mongoose, verifyAdminTok
     return /[",\n\r]/.test(text) ? `"${text.replace(/"/g, '""')}"` : text;
   };
 
-  const buildDayReport = async (ymd) => {
-    const start = nyMidnight(ymd);
-    const end = nyMidnight(nextDay(ymd));
+  const buildDayReport = async (ymd, toYmd = ymd, scope = 'day') => {
+    const allPending = scope === 'all-pending';
+    const start = allPending ? new Date(0) : nyMidnight(ymd);
+    const end = allPending ? new Date(Date.now() + 60000) : nyMidnight(nextDay(toYmd));
     // Older records may lack createdAt; their id still carries the creation time.
     const idStart = mongoose.Types.ObjectId.createFromTime(Math.floor(start.getTime() / 1000));
     const idEnd = mongoose.Types.ObjectId.createFromTime(Math.floor(end.getTime() / 1000));
     const rows = await users().aggregate([
-      { $match: { $or: [{ createdAt: { $gte: start, $lt: end } }, { createdAt: { $exists: false }, _id: { $gte: idStart, $lt: idEnd } }] } },
+      { $match: allPending ? PENDING : { $or: [{ createdAt: { $gte: start, $lt: end } }, { createdAt: { $exists: false }, _id: { $gte: idStart, $lt: idEnd } }] } },
       { $project: {
         email: 1, firstName: 1, lastName: 1, playerName: 1, createdAt: 1, verified: 1, isTestAccount: 1,
         referredAffiliateId: 1, referredFightId: 1, campaignSource: '$campaignAttribution.source',
@@ -401,14 +402,22 @@ module.exports = function registerPlayerRecovery({ app, mongoose, verifyAdminTok
         .map((e) => ({ email: e.email || '', name: e.fullName || '', atET: formatET(e.createdAt) }));
     }
 
+    // Creators/affiliates sign up separately (not player accounts); list them too.
+    let affiliateSignups = [];
+    if (!allPending && mongoose.models.Affiliate) {
+      affiliateSignups = (await mongoose.models.Affiliate.collection.find({ createdAt: { $gte: start, $lt: end }, isTestAccount: { $ne: true } }, { projection: { email: 1, firstName: 1, lastName: 1, playerName: 1, verified: 1, createdAt: 1 } }).sort({ createdAt: 1 }).toArray())
+        .map((a) => ({ email: a.email || '', name: [a.firstName, a.lastName].filter(Boolean).join(' ') || a.playerName || '', registeredAtET: formatET(a.createdAt), status: a.verified ? 'Approved' : 'Waiting for approval' }));
+    }
     const real = list.filter((r) => r.testAccount === 'No');
     return {
-      date: ymd,
+      date: allPending ? 'all-pending' : (toYmd === ymd ? ymd : `${ymd}_to_${toYmd}`),
+      scope: allPending ? 'All players still pending verification (any sign-up date)' : (toYmd === ymd ? `Accounts created on ${ymd}` : `Accounts created ${ymd} through ${toYmd}`),
       timeZone: 'Eastern Time (America/New_York)',
-      windowET: `${formatET(start)} to ${formatET(new Date(end.getTime() - 1000))}`,
+      windowET: allPending ? 'Any sign-up date' : `${formatET(start)} to ${formatET(new Date(end.getTime() - 1000))}`,
       windowUTC: { start: start.toISOString(), end: end.toISOString() },
       totals: { accounts: list.length, realAccounts: real.length, verified: real.filter((r) => r.status === 'Verified').length, pending: real.filter((r) => r.status !== 'Verified').length, viaAffiliate: real.filter((r) => r.viaAffiliate === 'Yes').length, google: real.filter((r) => r.signupMethod === 'Google').length, testAccounts: list.length - real.length },
       registrations: list,
+      affiliateSignups,
       failedAttempts: {
         identifiableWithEmail: 0,
         signupPageVisitsFromFights: signupPageSends,
@@ -427,7 +436,12 @@ module.exports = function registerPlayerRecovery({ app, mongoose, verifyAdminTok
 
   app.get('/api/admin/player-recovery/registrations', verifyAdminToken, async (req, res) => {
     try {
-      const report = await buildDayReport(dayParam(req.query.date));
+      const from = dayParam(req.query.from || req.query.date);
+      let to = /^\d{4}-\d{2}-\d{2}$/.test(String(req.query.to || '')) ? String(req.query.to) : from;
+      if (to < from) to = from;
+      // Keep one report to at most 62 days so it stays fast.
+      if ((Date.parse(to) - Date.parse(from)) / 86400000 > 62) return res.status(400).json({ message: 'Choose a range of 62 days or less.' });
+      const report = await buildDayReport(from, to, req.query.scope === 'all-pending' ? 'all-pending' : 'day');
       res.set('Cache-Control', 'no-store');
       if (req.query.format !== 'csv') return res.json(report);
       const headers = ['Email', 'First name', 'Last name', 'Registered (Eastern Time)', 'Registered (UTC)', 'Status', 'Sign-up method', 'Verification email', 'Via affiliate', 'Affiliate name', 'Affiliate ID', 'Referred fight ID', 'Referred by a player', 'Campaign source', 'Test account', 'Account ID'];
