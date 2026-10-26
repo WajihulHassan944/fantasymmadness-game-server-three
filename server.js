@@ -20824,7 +20824,9 @@ app.get('/api/public/demo-card/pots', async (req, res) => {
 // matters: a demo path that fakes settlement would prove nothing about the code
 // that will actually pay people.
 // --------------------------------------------------------------------------
-const demoTagRegex = () => new RegExp('^\\' + DEMO_TAG.replace(/[[\]]/g, '\\$&'));
+// Matches names starting with "[DEMO]". The old pattern had an extra backslash and was
+// not a valid regular expression, so every demo tool using it failed.
+const demoTagRegex = () => new RegExp('^' + DEMO_TAG.replace(/[[\]]/g, '\\$&'));
 
 // Sets the feature flags on already-seeded demo fights. The first version of the
 // seed created fights but never flagged any, so a database seeded before this
