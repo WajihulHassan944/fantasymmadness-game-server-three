@@ -1,5 +1,7 @@
 'use strict';
 
+const crypto = require('crypto');
+
 // Player Recovery (admin only).
 //
 // Players who signed up while the verification link pointed at the wrong server
@@ -17,6 +19,11 @@
 // * A player can receive a campaign email at most once (unique index), even if
 //   two people press "send" at the same time.
 // * The FM COINS goodwill bonus is PREVIEW ONLY. There is no award route.
+// * The ONE exception to "read only" is the owner-approved Membership Plan Coin
+//   Restoration: it ADDS a confirmed loss to the player's current balance inside a
+//   database transaction (never sets a balance), writes a coin-history entry, keeps
+//   a copy of the account from just before the change, requires a fresh full backup
+//   download plus a typed confirmation, and can never restore the same loss twice.
 
 const CAMPAIGN_ID = 'verification-apology-2026-10';
 const CONFIRM_PHRASE = 'SEND RECOVERY EMAILS';
@@ -87,6 +94,35 @@ module.exports = function registerPlayerRecovery({ app, mongoose, verifyAdminTok
     schema.index({ campaignId: 1, userId: 1 }, { unique: true });
     return schema;
   })());
+
+  // One row per restored loss event. restorationId is derived from the coin-history
+  // record of the original loss, so the same loss can never be restored twice
+  // (double clicks, retries and repeated approvals all hit the unique index).
+  const Restoration = mongoose.models.CoinRestoration || mongoose.model('CoinRestoration', new mongoose.Schema({
+    restorationId: { type: String, required: true, unique: true },
+    userId: { type: mongoose.Schema.Types.ObjectId, required: true, index: true },
+    email: String,
+    sourceRecordId: { type: String, required: true, unique: true },
+    plan: String,
+    lossAt: Date,
+    originalBalance: Number,
+    originalLoss: Number,
+    amount: { type: Number, required: true },
+    balanceBefore: Number,
+    balanceAfter: Number,
+    reason: { type: String, default: 'Membership Plan Coin Restoration' },
+    status: { type: String, enum: ['complete'], default: 'complete' },
+    approvedBy: String,
+    approvalBatch: String,
+    accountBefore: mongoose.Schema.Types.Mixed, // copy of the account just before the change (no secrets)
+  }, { timestamps: true }));
+  // Record of each backup file the owner downloaded (no account data is stored here).
+  const BackupDownload = mongoose.models.PlayerBackupDownload || mongoose.model('PlayerBackupDownload', new mongoose.Schema({
+    part: Number, parts: Number, count: Number, totalAccounts: Number, by: String,
+  }, { timestamps: true }));
+  const RESTORE_BACKUP_WINDOW_MS = 12 * 60 * 60 * 1000;
+  const SECRET_FIELDS = { password: 0, verificationToken: 0, resetPasswordToken: 0, resetPasswordExpires: 0, preferredPaymentMethodValue: 0, profileDeleteUrl: 0, billing: 0 };
+  const adminName = (req) => String(req.admin?.email || req.admin?.username || req.admin?.id || req.admin?._id || 'administrator').slice(0, 120);
 
   // Real players only; test accounts are reported separately.
   const REAL = { isTestAccount: { $ne: true } };
@@ -190,7 +226,10 @@ module.exports = function registerPlayerRecovery({ app, mongoose, verifyAdminTok
       res.set('Cache-Control', 'no-store');
       res.set('Content-Type', 'application/json; charset=utf-8');
       res.set('Content-Disposition', `attachment; filename="fmm-players-backup-${stamp}-part${part}.json"`);
-      return res.send(JSON.stringify({ exportedAt: new Date().toISOString(), part, partSize: BACKUP_PART_SIZE, count: rows.length, note: 'Passwords and secret tokens are intentionally excluded.', players: rows }));
+      const totalAccounts = await users().countDocuments({});
+      const body = JSON.stringify({ exportedAt: new Date().toISOString(), part, partSize: BACKUP_PART_SIZE, count: rows.length, note: 'Passwords and secret tokens are intentionally excluded.', players: rows });
+      await BackupDownload.create({ part, parts: Math.max(1, Math.ceil(totalAccounts / BACKUP_PART_SIZE)), count: rows.length, totalAccounts, by: adminName(req) }).catch(() => {});
+      return res.send(body);
     } catch (error) {
       console.error('[player-recovery] backup failed:', error && error.message);
       return res.status(500).json({ message: 'Could not create the backup file.' });
@@ -508,7 +547,7 @@ module.exports = function registerPlayerRecovery({ app, mongoose, verifyAdminTok
     }
 
     const confirmed = [];
-    const possible = [];
+    const probableList = [];
     const noLoss = [];
     for (const p of players) {
       const id = String(p._id);
@@ -528,7 +567,7 @@ module.exports = function registerPlayerRecovery({ app, mongoose, verifyAdminTok
       if (recorded.length) {
         const losses = recorded.filter((r) => Number(r.amount) < 0);
         if (!losses.length) {
-          noLoss.push({ ...base, reason: `Plan change recorded ${recorded.length === 1 ? 'once' : `${recorded.length} times`}; balance was not reduced.` });
+          noLoss.push({ ...base, evidenceLevel: 'records', reason: `Plan change recorded ${recorded.length === 1 ? 'once' : `${recorded.length} times`}; balance was not reduced.` });
           continue;
         }
         const events = losses.map((r) => {
@@ -550,7 +589,9 @@ module.exports = function registerPlayerRecovery({ app, mongoose, verifyAdminTok
         continue;
       }
 
-      // No record written by the plan change: possible loss, amount never guessed.
+      // No record written by the plan change. Sort by the evidence that exists;
+      // an amount is shown only when records on both sides of the plan choice give it,
+      // and even then it stays "probable" (needs the owner's approval), never confirmed.
       const chose = [];
       if (p.hasAvailedFreePlan || p.freePlanExpiryDate || p.currentPlan === 'Free') chose.push('Free');
       if (p.currentPlan === 'Standard') chose.push('Standard');
@@ -567,56 +608,83 @@ module.exports = function registerPlayerRecovery({ app, mongoose, verifyAdminTok
         evidence.push(paid
           ? 'Current plan is Standard and a card payment credit is on record (the paid route adds coins and does not reduce them).'
           : 'Current plan is Standard with no card payment on record, so it may have been set through the plan screen; the date is not recorded.');
-        if (paid && !chose.includes('Free')) { noLoss.push({ ...base, reason: 'Standard plan came from a card payment, which only adds FM COINS.' }); continue; }
+        if (paid && !chose.includes('Free')) { noLoss.push({ ...base, evidenceLevel: 'records', reason: 'Standard plan came from a card payment, which only adds FM COINS.' }); continue; }
       }
       if (chosenAt && chosenAt.getTime() >= PLAN_FIX_AT && !chose.includes('Standard')) {
-        noLoss.push({ ...base, reason: `Free plan chosen ${formatET(chosenAt)}, after the fix went live, so the balance could not be reduced.` });
+        noLoss.push({ ...base, evidenceLevel: 'records', reason: `Free plan chosen ${formatET(chosenAt)}, after the fix went live, so the balance could not be reduced.` });
         continue;
       }
+      const planAmount = chose.includes('Free') ? PLAN_AMOUNT.Free : PLAN_AMOUNT.Standard;
       const before = chosenAt ? history.filter((h) => new Date(h.createdAt) < chosenAt) : [];
       const after = chosenAt ? history.filter((h) => new Date(h.createdAt) >= chosenAt) : [];
       const lastBefore = before.length ? before[before.length - 1] : null;
       const firstAfter = after.length ? after[0] : null;
-      if (lastBefore) evidence.push(`Last recorded balance before the plan choice: ${Number(lastBefore.balanceAfter).toLocaleString()} FM COINS (${formatET(lastBefore.createdAt)}).`);
-      else if (chosenAt) evidence.push('No coin history before the plan choice, so the balance at that moment is unknown.');
+      const knownBefore = lastBefore ? Number(lastBefore.balanceAfter) : null;
+      const noLaterRecords = chosenAt ? after.length === 0 : history.length === 0;
+      // The old bug always left the balance at exactly the plan amount.
+      const signature = firstAfter ? Number(firstAfter.balanceBefore) === planAmount : (noLaterRecords && base.currentBalance === planAmount);
+      if (lastBefore) evidence.push(`Last recorded balance before the plan choice: ${knownBefore.toLocaleString()} FM COINS (${formatET(lastBefore.createdAt)}).`);
+      else if (chosenAt) evidence.push('No coin history before the plan choice, so the balance at that moment is not recorded.');
       if (firstAfter) evidence.push(`First recorded balance after it: ${Number(firstAfter.balanceBefore).toLocaleString()} FM COINS (${formatET(firstAfter.createdAt)}).`);
+      else if (noLaterRecords && history.length) evidence.push('No coin activity was recorded after the plan choice.');
       if (!history.length) evidence.push('This player has no coin history at all.');
       evidence.push(`Current balance: ${base.currentBalance.toLocaleString()} FM COINS.`);
-      const planAmount = chose.includes('Free') ? PLAN_AMOUNT.Free : PLAN_AMOUNT.Standard;
-      let indication = 'Amount unknown: not enough records to calculate it.';
-      if (lastBefore && firstAfter && Number(firstAfter.balanceBefore) === planAmount && Number(lastBefore.balanceAfter) > planAmount) {
-        indication = `Records around the plan choice are consistent with a drop from ${Number(lastBefore.balanceAfter).toLocaleString()} to ${planAmount} (${(Number(lastBefore.balanceAfter) - planAmount).toLocaleString()} FM COINS), but changes in between may not have been recorded. Needs review.`;
-      } else if (lastBefore && firstAfter && Number(lastBefore.balanceAfter) <= planAmount && Number(firstAfter.balanceBefore) >= Number(lastBefore.balanceAfter)) {
-        noLoss.push({ ...base, reason: `Recorded balance before the plan choice (${Number(lastBefore.balanceAfter)}) was at or below the plan amount (${planAmount}) and did not go down afterwards.` });
-        continue;
+      const probable = (indicatedLoss, indication) => probableList.push({ ...base, plansChosen: chose.join(' and ') || 'Unknown', planChosenAtET: chosenAt ? formatET(chosenAt) : '', amountLost: null, indicatedLoss, indication, evidence });
+
+      if (knownBefore !== null && knownBefore <= planAmount) {
+        noLoss.push({ ...base, evidenceLevel: 'records', reason: `Recorded balance just before the plan choice was ${knownBefore}, at or below the plan amount (${planAmount}), so the plan could only raise it.` });
+      } else if (signature && knownBefore !== null) {
+        probable(knownBefore - planAmount, `Probable loss of ${(knownBefore - planAmount).toLocaleString()} FM COINS: the last record before the plan choice shows ${knownBefore.toLocaleString()} and the balance afterwards was exactly ${planAmount}, the old problem's signature. Changes in between could have gone unrecorded, so this needs your approval.`);
+      } else if (signature) {
+        probable(null, `Probable loss, amount not determinable: the balance right after the plan choice was exactly ${planAmount} (the old problem's signature), but the balance before it was never recorded. For reference only: players who sign up today start with 500 FM COINS, so if this player had exactly that, the loss would have been ${(500 - planAmount).toLocaleString()}. That is not proof of what they had.`);
+      } else if (firstAfter && Number(firstAfter.balanceBefore) > planAmount) {
+        noLoss.push({ ...base, evidenceLevel: 'records', reason: `No sign of a loss: the first record after the plan choice shows ${Number(firstAfter.balanceBefore).toLocaleString()} FM COINS, not the ${planAmount} the old problem always left.` + (knownBefore !== null ? ` Last record before it: ${knownBefore.toLocaleString()}.` : '') });
+      } else {
+        noLoss.push({ ...base, evidenceLevel: 'none', reason: `No loss can be identified: there are no coin records around the plan choice, and the current balance (${base.currentBalance.toLocaleString()}) is not the plan amount.` });
       }
-      possible.push({ ...base, plansChosen: chose.join(' and ') || 'Unknown', planChosenAtET: chosenAt ? formatET(chosenAt) : '', amountLost: null, indication, evidence });
+    }
+
+    // Restoration status for every confirmed loss event.
+    const restored = new Map((await Restoration.find({ userId: { $in: confirmed.map((c) => new mongoose.Types.ObjectId(c.id)) } }).lean()).map((r) => [r.sourceRecordId, r]));
+    for (const c of confirmed) {
+      for (const e of c.events) {
+        const r = restored.get(e.recordId);
+        e.restoration = r ? { restorationId: r.restorationId, amount: r.amount, atET: formatET(r.createdAt), status: r.status } : null;
+      }
+      c.restoredAmount = c.events.reduce((sum, e) => sum + (e.restoration ? e.restoration.amount : 0), 0);
+      c.restorationComplete = c.restoredAmount >= c.amountLost;
     }
 
     const byEmail = (a, b) => a.email.localeCompare(b.email);
-    confirmed.sort(byEmail); possible.sort(byEmail); noLoss.sort(byEmail);
+    confirmed.sort(byEmail); probableList.sort(byEmail); noLoss.sort(byEmail);
     const real = (list) => list.filter((r) => r.testAccount === 'No');
     return {
       generatedAt: new Date().toISOString(),
       readOnly: true,
       fixDeployedET: 'October 25, 2026, 5:41 PM ET',
       totals: {
-        playersWhoChoseAPlan: real(players.map((p) => ({ testAccount: p.isTestAccount ? 'Yes' : 'No' }))).length,
+        playersWhoChoseAPlan: players.filter((p) => !p.isTestAccount).length,
         confirmedPlayers: real(confirmed).length,
         confirmedCoinsLost: real(confirmed).reduce((s, r) => s + r.amountLost, 0),
-        possiblePlayers: real(possible).length,
+        confirmedRestoredPlayers: real(confirmed).filter((r) => r.restorationComplete).length,
+        confirmedCoinsRestored: real(confirmed).reduce((s, r) => s + r.restoredAmount, 0),
+        probablePlayers: real(probableList).length,
+        probableWithAmount: real(probableList).filter((r) => r.indicatedLoss !== null).length,
+        probableIndicatedCoins: real(probableList).reduce((s, r) => s + (r.indicatedLoss || 0), 0),
+        probableAmountUnknown: real(probableList).filter((r) => r.indicatedLoss === null).length,
         noLossPlayers: real(noLoss).length,
+        noLossNoRecords: real(noLoss).filter((r) => r.evidenceLevel === 'none').length,
         testAccountsListed: players.filter((p) => p.isTestAccount).length,
         planChangeRecordsFound: planRows.length,
       },
       confirmed,
-      possible,
+      probable: probableList,
       noLoss,
       notes: [
-        'Nothing on this report changes a balance. Restoring coins needs your separate approval.',
+        'Viewing this report never changes a balance. Restoring coins happens only in the restoration step, after your approval.',
         'Confirmed amounts come only from the coin-history record written at the moment of the plan change.',
-        'Possible losses show the surrounding records only; the amount is never estimated as fact.',
-        'Plan changes made before coin history was kept left no record, so those players can only appear as possible.',
+        'Probable losses show what the surrounding records indicate; no coins are given for them without your separate approval.',
+        'Plan changes made before coin history was kept left no record, so those players can be at most probable.',
       ],
     };
   };
@@ -628,15 +696,251 @@ module.exports = function registerPlayerRecovery({ app, mongoose, verifyAdminTok
       if (req.query.format !== 'csv') return res.json(report);
       const headers = ['Category', 'Email', 'Name', 'Original balance (FM COINS)', 'Amount lost (FM COINS)', 'Current balance (FM COINS)', 'Plan', 'When (Eastern Time)', 'Evidence', 'Account created (ET)', 'Via affiliate', 'Test account', 'Account ID'];
       const lines = [headers.map(csvCell).join(',')];
-      for (const r of report.confirmed) for (const e of r.events) lines.push(['Confirmed', r.email, r.name, e.balanceBefore, e.lost, r.currentBalance, e.plan, e.atET, e.evidence, r.accountCreatedET, r.viaAffiliate, r.testAccount, r.id].map(csvCell).join(','));
-      for (const r of report.possible) lines.push(['Possible - needs review', r.email, r.name, 'Unknown', 'Unknown', r.currentBalance, r.plansChosen, r.planChosenAtET, [r.indication, ...r.evidence].join(' '), r.accountCreatedET, r.viaAffiliate, r.testAccount, r.id].map(csvCell).join(','));
-      for (const r of report.noLoss) lines.push(['No loss found', r.email, r.name, '', 0, r.currentBalance, r.currentPlan, '', r.reason, r.accountCreatedET, r.viaAffiliate, r.testAccount, r.id].map(csvCell).join(','));
+      for (const r of report.confirmed) for (const e of r.events) lines.push([e.restoration ? `Confirmed - restored ${e.restoration.atET}` : 'Confirmed', r.email, r.name, e.balanceBefore, e.lost, r.currentBalance, e.plan, e.atET, e.evidence, r.accountCreatedET, r.viaAffiliate, r.testAccount, r.id].map(csvCell).join(','));
+      for (const r of report.probable) lines.push(['Probable - needs your approval', r.email, r.name, 'Not recorded', r.indicatedLoss === null ? 'Not determinable' : `Indicated ${r.indicatedLoss} (not confirmed)`, r.currentBalance, r.plansChosen, r.planChosenAtET, [r.indication, ...r.evidence].join(' '), r.accountCreatedET, r.viaAffiliate, r.testAccount, r.id].map(csvCell).join(','));
+      for (const r of report.noLoss) lines.push([r.evidenceLevel === 'none' ? 'No loss identified (no records)' : 'No loss identified', r.email, r.name, '', 0, r.currentBalance, r.currentPlan, '', r.reason, r.accountCreatedET, r.viaAffiliate, r.testAccount, r.id].map(csvCell).join(','));
       res.set('Content-Type', 'text/csv; charset=utf-8');
       res.set('Content-Disposition', `attachment; filename="fmm-plan-coin-losses-${new Date().toISOString().slice(0, 10)}.csv"`);
       return res.send(`﻿${lines.join('\r\n')}\r\n`);
     } catch (error) {
       console.error('[player-recovery] plan coin loss report failed:', error && error.message);
       return res.status(500).json({ message: 'Could not build the FM COINS loss report.' });
+    }
+  });
+
+  // ---------------------------------------------------------------------------
+  // Membership Plan Coin Restoration (owner-approved, confirmed losses only).
+  // ---------------------------------------------------------------------------
+  const ledgerCollection = () => (mongoose.models.FightEntryLedger ? mongoose.models.FightEntryLedger.collection : mongoose.connection.collection('fightentryledgers'));
+  const RESTORE_REASON = 'membership_plan_coin_restoration';
+  const RESTORE_LABEL = 'Membership Plan Coin Restoration';
+
+  const backupStatus = async () => {
+    const totalAccounts = await users().countDocuments({});
+    const parts = Math.max(1, Math.ceil(totalAccounts / BACKUP_PART_SIZE));
+    const since = new Date(Date.now() - RESTORE_BACKUP_WINDOW_MS);
+    const recent = await BackupDownload.find({ createdAt: { $gte: since } }).sort({ createdAt: -1 }).lean();
+    const have = new Set(recent.map((r) => r.part));
+    const missing = [];
+    for (let part = 1; part <= parts; part += 1) if (!have.has(part)) missing.push(part);
+    return { ok: missing.length === 0, parts, missingParts: missing, totalAccounts, lastDownloadET: recent[0] ? formatET(recent[0].createdAt) : '', windowHours: RESTORE_BACKUP_WINDOW_MS / 3600000 };
+  };
+
+  const batchHash = (items, acknowledged) => crypto.createHash('sha256')
+    .update(JSON.stringify({ items: items.map((i) => [i.restorationId, i.amount]).sort(), ack: [...acknowledged].sort() }))
+    .digest('hex').slice(0, 16);
+
+  const buildRestorationPreview = async () => {
+    const report = await buildPlanLossReport();
+    const ledger = ledgerCollection();
+    const items = [];
+    for (const c of report.confirmed) {
+      const oid = new mongoose.Types.ObjectId(c.id);
+      const account = await users().findOne({ _id: oid }, { projection: { tokens: 1 } });
+      const currentBalance = num(account?.tokens);
+      for (const e of c.events) {
+        const lossRecord = await ledger.findOne({ _id: new mongoose.Types.ObjectId(e.recordId) });
+        const lossAt = lossRecord?.createdAt ? new Date(lossRecord.createdAt) : null;
+        const checks = [];
+        const blocks = [];
+        const warnings = [];
+        if (c.testAccount === 'Yes') blocks.push('Test account: not included in restorations.');
+        if (e.restoration) blocks.push(`Already restored on ${e.restoration.atET} (${e.restoration.amount.toLocaleString()} FM COINS).`);
+        if (currentBalance === null) blocks.push('The current balance could not be read, so it is left untouched.');
+        const later = lossAt ? await ledger.find({ userId: { $in: [oid, c.id] }, createdAt: { $gt: lossAt } }).sort({ createdAt: 1 }).toArray() : [];
+        for (const r of later) {
+          if (Number(r.amount) <= 0) continue;
+          const reason = String(r.metadata?.reason || '');
+          const text = `${reason} ${r.metadata?.label || ''} ${r.matchId || ''}`;
+          const line = `+${Number(r.amount).toLocaleString()} FM COINS on ${formatET(r.createdAt)} (${reason || 'no reason recorded'})`;
+          if (reason === RESTORE_REASON) blocks.push(`A restoration is already in the coin history: ${line}.`);
+          else if (reason === 'admin_grant') warnings.push(`An administrator added coins after the loss: ${line}. Please confirm this was not a reimbursement.`);
+          else if (/restor|reimburs|goodwill|compensat/i.test(text)) warnings.push(`A credit that looks like compensation: ${line}. Please confirm.`);
+          else if (Number(r.amount) === e.lost) warnings.push(`A credit of exactly the lost amount: ${line}. Please confirm it was not a reimbursement.`);
+        }
+        checks.push(`Loss record ${e.recordId}: ${e.balanceBefore.toLocaleString()} → ${e.balanceAfter.toLocaleString()} FM COINS when choosing ${e.plan} on ${e.atET}.`);
+        checks.push(`Coin history since the loss: ${later.length} record${later.length === 1 ? '' : 's'} checked.`);
+        if (!warnings.length && !blocks.length) checks.push('No earlier reimbursement found (no administrator grants, restorations, compensation, or credits of the same amount since the loss).');
+        items.push({
+          restorationId: `plan-restore:${e.recordId}`,
+          sourceRecordId: e.recordId,
+          userId: c.id,
+          email: c.email,
+          name: c.name,
+          testAccount: c.testAccount,
+          plan: e.plan,
+          lossAtET: e.atET,
+          lossAt: lossAt ? lossAt.toISOString() : null,
+          originalBalance: e.balanceBefore,
+          amount: e.lost,
+          currentBalance,
+          newBalance: currentBalance === null ? null : currentBalance + e.lost,
+          checks,
+          warnings,
+          blocks,
+          eligible: blocks.length === 0 && warnings.length === 0,
+          needsAcknowledgement: blocks.length === 0 && warnings.length > 0,
+        });
+      }
+    }
+    const ready = items.filter((i) => i.eligible);
+    return {
+      generatedAt: new Date().toISOString(),
+      backup: await backupStatus(),
+      items,
+      readyCount: ready.length,
+      readyCoins: ready.reduce((s, i) => s + i.amount, 0),
+      rule: 'Each restoration ADDS the lost amount to the player\'s current balance. It never sets a balance.',
+    };
+  };
+
+  const confirmPhraseFor = (coins) => `RESTORE ${coins} FM COINS`;
+
+  app.get('/api/admin/player-recovery/plan-coin-restorations/preview', verifyAdminToken, async (req, res) => {
+    try {
+      const preview = await buildRestorationPreview();
+      const list = (value) => String(value || '').split(',').map((x) => x.trim()).filter(Boolean);
+      const ack = new Set(list(req.query.ack));
+      // Default selection: every player with no warnings. The owner may add players
+      // whose warnings she has checked (ack); blocked players can never be selected.
+      const chosen = req.query.select !== undefined ? new Set(list(req.query.select)) : null;
+      const selection = preview.items.filter((i) => (chosen ? chosen.has(i.restorationId) : i.eligible)
+        && !i.blocks.length && (i.eligible || ack.has(i.restorationId)));
+      const selectionAck = selection.filter((i) => i.needsAcknowledgement).map((i) => i.restorationId);
+      const coins = selection.reduce((s, i) => s + i.amount, 0);
+      res.set('Cache-Control', 'no-store');
+      return res.json({ ...preview, selection: selection.map((i) => i.restorationId), selectionAck, selectionCoins: coins, previewHash: batchHash(selection, selectionAck), confirmPhrase: confirmPhraseFor(coins) });
+    } catch (error) {
+      console.error('[player-recovery] restoration preview failed:', error && error.message);
+      return res.status(500).json({ message: 'Could not build the restoration preview.' });
+    }
+  });
+
+  const restoreOne = async (item, { approvedBy, approvalBatch, acknowledged }) => {
+    const oid = new mongoose.Types.ObjectId(item.userId);
+    for (let attempt = 1; attempt <= 5; attempt += 1) {
+      const session = await mongoose.startSession();
+      try {
+        let outcome = null;
+        await session.withTransaction(async () => {
+          outcome = null;
+          if (await Restoration.findOne({ restorationId: item.restorationId }).session(session).lean()) { outcome = { status: 'already_restored' }; return; }
+          const account = await users().findOne({ _id: oid }, { session, projection: SECRET_FIELDS });
+          if (!account) throw Object.assign(new Error('Player account not found.'), { permanent: true });
+          const before = num(account.tokens);
+          if (before === null) throw Object.assign(new Error('Current balance is not a number; left untouched.'), { permanent: true });
+          const after = before + item.amount;
+          // Compare-and-set: only applies if the balance is still exactly what was read.
+          const update = await users().updateOne({ _id: oid, tokens: account.tokens }, { $set: { tokens: String(after) } }, { session });
+          if (update.modifiedCount !== 1) throw Object.assign(new Error('BALANCE_CHANGED'), { busy: true });
+          const now = new Date();
+          await Restoration.create([{
+            restorationId: item.restorationId, userId: oid, email: account.email || item.email, sourceRecordId: item.sourceRecordId,
+            plan: item.plan, lossAt: item.lossAt ? new Date(item.lossAt) : null, originalBalance: item.originalBalance, originalLoss: item.amount,
+            amount: item.amount, balanceBefore: before, balanceAfter: after, approvedBy, approvalBatch,
+            accountBefore: { ...account, acknowledgedWarnings: acknowledged.includes(item.restorationId) ? item.warnings : [] },
+          }], { session });
+          await ledgerCollection().insertOne({
+            userId: oid, matchId: 'membership-plan-coin-restoration', sourceType: 'match', type: 'FIGHT_ENTRY_REFUND',
+            amount: item.amount, balanceBefore: before, balanceAfter: after, idempotencyKey: item.restorationId,
+            metadata: { reason: RESTORE_REASON, label: RESTORE_LABEL, restorationId: item.restorationId, sourceRecordId: item.sourceRecordId, approvalBatch },
+            createdAt: now, updatedAt: now,
+          }, { session });
+          outcome = { status: 'restored', balanceBefore: before, balanceAfter: after };
+        });
+        return outcome;
+      } catch (error) {
+        if (error && error.code === 11000) return { status: 'already_restored' };
+        if (error && error.busy && attempt < 5) { await new Promise((r) => setTimeout(r, 50 * attempt)); continue; }
+        return { status: 'failed', error: error && error.permanent ? error.message : 'The balance was changing at the same moment; nothing was changed. Please try again.' };
+      } finally {
+        await session.endSession();
+      }
+    }
+    return { status: 'failed', error: 'The balance kept changing; nothing was changed. Please try again.' };
+  };
+
+  app.post('/api/admin/player-recovery/plan-coin-restorations/apply', verifyAdminToken, async (req, res) => {
+    try {
+      const requested = Array.isArray(req.body?.restorationIds) ? [...new Set(req.body.restorationIds.map(String))] : [];
+      const acknowledged = Array.isArray(req.body?.acknowledged) ? [...new Set(req.body.acknowledged.map(String))] : [];
+      if (!requested.length) return res.status(400).json({ message: 'Choose at least one player to restore.' });
+      const preview = await buildRestorationPreview();
+      const byId = new Map(preview.items.map((i) => [i.restorationId, i]));
+      const selected = [];
+      for (const id of requested) {
+        const item = byId.get(id);
+        if (!item) return res.status(409).json({ message: 'One of the chosen players is no longer on the confirmed list. Please refresh the preview.', code: 'NOT_IN_PREVIEW' });
+        if (item.blocks.length) return res.status(409).json({ message: `${item.email}: ${item.blocks.join(' ')}`, code: 'BLOCKED' });
+        if (item.needsAcknowledgement && !acknowledged.includes(id)) return res.status(409).json({ message: `${item.email} needs your confirmation first: ${item.warnings.join(' ')}`, code: 'NEEDS_ACK' });
+        selected.push(item);
+      }
+      const coins = selected.reduce((s, i) => s + i.amount, 0);
+      if (String(req.body?.previewHash || '') !== batchHash(selected, acknowledged.filter((id) => requested.includes(id)))) {
+        return res.status(409).json({ message: 'The restoration list changed since you reviewed it. Please refresh the preview and check it again.', code: 'PREVIEW_CHANGED' });
+      }
+      if (String(req.body?.confirm || '').trim() !== confirmPhraseFor(coins)) {
+        return res.status(400).json({ message: `Type exactly: ${confirmPhraseFor(coins)}`, code: 'CONFIRM_REQUIRED' });
+      }
+      if (!preview.backup.ok) {
+        return res.status(409).json({ message: `Please download a full backup first (missing part${preview.backup.missingParts.length === 1 ? '' : 's'} ${preview.backup.missingParts.join(', ')} within the last ${preview.backup.windowHours} hours).`, code: 'BACKUP_REQUIRED' });
+      }
+      const approvalBatch = `batch-${new Date().toISOString()}-${crypto.randomBytes(4).toString('hex')}`;
+      const approvedBy = adminName(req);
+      const results = [];
+      for (const item of selected) {
+        const outcome = await restoreOne(item, { approvedBy, approvalBatch, acknowledged });
+        results.push({ restorationId: item.restorationId, email: item.email, amount: item.amount, ...outcome });
+      }
+      res.set('Cache-Control', 'no-store');
+      return res.json({
+        approvalBatch,
+        restored: results.filter((r) => r.status === 'restored').length,
+        coinsRestored: results.filter((r) => r.status === 'restored').reduce((s, r) => s + r.amount, 0),
+        alreadyRestored: results.filter((r) => r.status === 'already_restored').length,
+        failed: results.filter((r) => r.status === 'failed').length,
+        results,
+      });
+    } catch (error) {
+      console.error('[player-recovery] restoration failed:', error && error.message);
+      return res.status(500).json({ message: 'The restoration could not be completed. No duplicate coins can be created; refresh to see what was saved.' });
+    }
+  });
+
+  app.get('/api/admin/player-recovery/plan-coin-restorations', verifyAdminToken, async (_req, res) => {
+    try {
+      const rows = await Restoration.find({}).sort({ createdAt: -1 }).lean();
+      const ledger = ledgerCollection();
+      const out = [];
+      for (const r of rows) {
+        const account = await users().findOne({ _id: r.userId }, { projection: { tokens: 1, email: 1 } });
+        const later = await ledger.find({ userId: { $in: [r.userId, String(r.userId)] }, createdAt: { $gt: r.createdAt }, idempotencyKey: { $ne: r.restorationId } }, { projection: { amount: 1 } }).toArray();
+        const expected = Number(r.balanceAfter) + later.reduce((s, x) => s + Number(x.amount || 0), 0);
+        const current = num(account?.tokens);
+        out.push({
+          restorationId: r.restorationId,
+          email: r.email || account?.email || '',
+          plan: r.plan,
+          lossAtET: formatET(r.lossAt),
+          originalLoss: r.originalLoss,
+          amountRestored: r.amount,
+          balanceBefore: r.balanceBefore,
+          balanceAfter: r.balanceAfter,
+          restoredAtET: formatET(r.createdAt),
+          reason: r.reason,
+          status: r.status === 'complete' ? 'Complete' : r.status,
+          approvedBy: r.approvedBy,
+          currentBalance: current,
+          balanceCheck: current === expected
+            ? 'Current balance matches the coin history since the restoration.'
+            : `Current balance differs from the coin history by ${(current - expected).toLocaleString()} FM COINS (a change that was not recorded in the coin history). Please review.`,
+        });
+      }
+      res.set('Cache-Control', 'no-store');
+      return res.json({ rows: out, totalRestored: out.reduce((s, r) => s + r.amountRestored, 0) });
+    } catch (error) {
+      console.error('[player-recovery] restoration history failed:', error && error.message);
+      return res.status(500).json({ message: 'Could not load the restoration history.' });
     }
   });
 
