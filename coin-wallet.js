@@ -43,6 +43,14 @@ const balanceExpr = (field = `$${TOKEN_FIELD}`) => ({
   },
 });
 
+// Older MongoDB drivers (the one bundled with Mongoose 7) wrap findOneAndUpdate
+// results as { value, ok, lastErrorObject }; newer ones return the document itself.
+const unwrapDocument = (result) => {
+  if (result && typeof result === 'object' && 'lastErrorObject' in result && 'value' in result) return result.value;
+  if (result && typeof result === 'object' && 'ok' in result && 'value' in result && Object.keys(result).length <= 4) return result.value;
+  return result;
+};
+
 const readBalance = (value) => {
   const parsed = Number(typeof value === 'string' ? value.trim().replace(/,/g, '') : value);
   if (!Number.isFinite(parsed) || parsed < 0) return 0;
@@ -77,11 +85,11 @@ function createCoinWallet({ mongoose, getLedgerCollection, models }) {
     const collection = accountCollection(account);
     const filter = { _id, ...(extraFilter || {}) };
     if (delta < 0 && !allowNegative) filter.$expr = { $gte: [{ $add: [balanceExpr(), delta] }, 0] };
-    const updated = await collection.findOneAndUpdate(
+    const updated = unwrapDocument(await collection.findOneAndUpdate(
       filter,
       [{ $set: { [TOKEN_FIELD]: { $toString: { $add: [balanceExpr(), delta] } }, ...(extraSet || {}) } }],
       { session: s, returnDocument: 'after', projection: { [TOKEN_FIELD]: 1 } },
-    );
+    ));
     if (!updated) {
       const exists = await collection.findOne({ _id }, { session: s, projection: { [TOKEN_FIELD]: 1 } });
       if (!exists) throw new CoinError('ACCOUNT_NOT_FOUND', 'Account not found.');
@@ -173,11 +181,11 @@ function createCoinWallet({ mongoose, getLedgerCollection, models }) {
       const previous = await ledger.findOne({ idempotencyKey: transactionId }, { session: ds });
       if (previous) return { applied: false, duplicate: true, transactionId, balanceBefore: previous.balanceBefore, balanceAfter: previous.balanceAfter };
       const _id = toId(id);
-      const before = await accountCollection(account).findOneAndUpdate(
+      const before = unwrapDocument(await accountCollection(account).findOneAndUpdate(
         { _id, $expr: { $lt: [balanceExpr(), goal] } },
         [{ $set: { [TOKEN_FIELD]: String(goal) } }],
         { session: ds, returnDocument: 'before', projection: { [TOKEN_FIELD]: 1 } },
-      );
+      ));
       if (!before) return { applied: false, noChange: true, transactionId };
       const balanceBefore = readBalance(before[TOKEN_FIELD]);
       const now = new Date();
