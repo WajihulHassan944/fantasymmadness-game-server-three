@@ -1716,6 +1716,7 @@ function pickPublicFightFields(fight = {}, sourceType = 'match') {
     shadowLastUsedAt: item.shadowLastUsedAt || null,
     homepagePromoted: Boolean(item.homepagePromoted),
     homepageSlot: Math.max(0, Math.min(5, Number(item.homepageSlot) || 0)),
+    homepageSlotAssignedAt: item.homepageSlotAssignedAt || item.homepagePromotionUpdatedAt || null,
     featuredThisWeek: Boolean(item.featuredThisWeek),
     featuredFight: Boolean(item.featuredFight),
     featuredThisWeekImage: identityHidden ? '' : (item.featuredThisWeekImage || ''),
@@ -2029,6 +2030,7 @@ const shadowSchema = new mongoose.Schema({
   weightClass: String,
   homepagePromotionRank: { type: Number, default: 0 },
   homepageSlot: { type: Number, default: 0 },
+  homepageSlotAssignedAt: Date,
   homepagePromotionTitle: String,
   homepagePromotionSubtitle: String,
   homepagePromotionCtaLabel: String,
@@ -2653,6 +2655,7 @@ matchReward: { type: String, enum: ['Rewarded', 'NotRewarded'], default: 'NotRew
   weightClass: String,
   homepagePromotionRank: { type: Number, default: 0 },
   homepageSlot: { type: Number, default: 0 },
+  homepageSlotAssignedAt: Date,
   homepagePromotionTitle: String,
   homepagePromotionSubtitle: String,
   homepagePromotionCtaLabel: String,
@@ -12155,16 +12158,19 @@ async function getRealFightCalendarState(now = new Date()) {
 }
 
 async function ensureDeadWeekShadowFight(now = new Date()) {
+  // Fights the admin put in a homepage position (1-5) are hers: this automatic
+  // rotation never picks them, closes them or takes them off the homepage.
+  const notPlacedByAdmin = { homepageSlot: { $nin: [1, 2, 3, 4, 5] } };
   const calendar = await getRealFightCalendarState(now);
   await Shadow.updateMany(
-    { shadowAutoPublished: true, shadowExpiresAt: { $lte: now } },
+    { shadowAutoPublished: true, shadowExpiresAt: { $lte: now }, ...notPlacedByAdmin },
     { $set: { matchStatus: 'Closed', matchShadowOpenStatus: 'closed', homepagePromoted: false } },
   ).catch(() => null);
   // Dead-week mystery fights no longer claim a homepage slot on their own — that
   // locked admins out of putting a real fight in that position. Clear it off any
   // still-active one immediately; admins place fights there manually now.
   await Shadow.updateMany(
-    { shadowAutoPublished: true, homepagePromoted: true },
+    { shadowAutoPublished: true, homepagePromoted: true, ...notPlacedByAdmin },
     { $set: { homepagePromoted: false } },
   ).catch(() => null);
   if (!calendar.deadWeek) {
@@ -12174,7 +12180,7 @@ async function ensureDeadWeekShadowFight(now = new Date()) {
     // masking the real fight instead of stepping aside for it. Retire it
     // immediately once a real upcoming fight exists.
     await Shadow.updateMany(
-      { shadowAutoPublished: true, matchShadowOpenStatus: 'open' },
+      { shadowAutoPublished: true, matchShadowOpenStatus: 'open', ...notPlacedByAdmin },
       { $set: { matchStatus: 'Closed', matchShadowOpenStatus: 'closed', homepagePromoted: false } },
     ).catch(() => null);
     clearPublicResponseCache();
@@ -12191,6 +12197,7 @@ async function ensureDeadWeekShadowFight(now = new Date()) {
 
   const repeatCutoff = new Date(now.getTime() - 60 * 86400000);
   const baseFilter = {
+    ...notPlacedByAdmin,
     matchStatus: { $ne: 'Draft' },
     matchFighterA: { $exists: true, $ne: '' },
     matchFighterB: { $exists: true, $ne: '' },
@@ -15351,6 +15358,7 @@ const proWrestlingMatchSchema = new mongoose.Schema({
   fightPosterImageDeleteUrl: String,
   homepagePromoted: { type: Boolean, default: false },
   homepageSlot: { type: Number, min: 0, max: 5, default: 0 },
+  homepageSlotAssignedAt: Date,
   homepagePromotionRank: { type: Number, default: 0 },
   homepagePromotionUpdatedAt: Date,
   homepagePromotionUpdatedBy: String,
@@ -17846,6 +17854,26 @@ function compareHomepagePromotedFights(a = {}, b = {}) {
     - Math.max(toTime(a.homepagePromotionUpdatedAt), toTime(a.updatedAt), toTime(a.createdAt));
 }
 
+// Fights the admin put in a position (1-5) come first, in position order. If
+// two claim the same position, the most recent manual pick comes first.
+function compareHomepageSlotThenPromotion(a = {}, b = {}) {
+  const slotOf = (fight) => {
+    const slot = Number(fight.homepageSlot) || 0;
+    return fight.homepagePromoted && slot >= 1 && slot <= 5 ? slot : 99;
+  };
+  const slotDiff = slotOf(a) - slotOf(b);
+  if (slotDiff) return slotDiff;
+  if (slotOf(a) !== 99) {
+    const pickedAt = (fight) => {
+      const date = new Date(fight.homepageSlotAssignedAt || fight.homepagePromotionUpdatedAt || fight.homepagePromotion?.updatedAt || 0);
+      return Number.isNaN(date.getTime()) ? 0 : date.getTime();
+    };
+    const pickDiff = pickedAt(b) - pickedAt(a);
+    if (pickDiff) return pickDiff;
+  }
+  return compareHomepagePromotedFights(a, b);
+}
+
 async function resolveFightDocumentForAdminPromotion(id, requestedSourceType = '') {
   if (!mongoose.Types.ObjectId.isValid(id)) return null;
   const source = String(requestedSourceType || '').toLowerCase();
@@ -17890,6 +17918,10 @@ function getHomepagePromotionUpdate(req) {
   // homepage falls back to weight/date ordering for those fights.
   if (req.body?.homepageSlot !== undefined) {
     update.homepageSlot = Math.max(0, Math.min(5, Number(req.body.homepageSlot) || 0));
+    // When the admin picked this position. If two fights ever claim the same
+    // position, the most recent manual pick wins, never whichever fight
+    // happened to be updated last by something else.
+    update.homepageSlotAssignedAt = update.homepageSlot ? now : null;
   }
   if (req.body?.title !== undefined || req.body?.homepagePromotionTitle !== undefined) update.homepagePromotionTitle = String(req.body?.homepagePromotionTitle ?? req.body?.title ?? '').trim();
   if (req.body?.subtitle !== undefined || req.body?.homepagePromotionSubtitle !== undefined) update.homepagePromotionSubtitle = String(req.body?.homepagePromotionSubtitle ?? req.body?.subtitle ?? '').trim();
@@ -17903,6 +17935,22 @@ function getHomepagePromotionUpdate(req) {
   return update;
 }
 
+// A homepage position holds one fight. When the admin puts a fight in a
+// position, the fight that held it before gives it up (it stays on the
+// homepage list, just without a fixed position). Without this, two fights kept
+// the same position and the homepage flipped between them.
+async function releaseHomepageSlotFromOtherFights(doc, update) {
+  const slot = Number(update.homepageSlot) || 0;
+  if (!doc || !update.homepagePromoted || slot < 1 || slot > 5) return;
+  const filter = { _id: { $ne: doc._id }, homepageSlot: slot };
+  const release = { $set: { homepageSlot: 0, homepageSlotAssignedAt: null } };
+  await Promise.all([
+    Match.updateMany(filter, release),
+    Shadow.updateMany(filter, release),
+    ProWrestlingMatch.updateMany(filter, release),
+  ]);
+}
+
 app.patch('/api/admin/fights/:id/homepage-promotion', verifyAdminToken, async (req, res) => {
   try {
     const resolved = await resolveFightDocumentForAdminPromotion(req.params.id, req.body?.sourceType || req.query.sourceType);
@@ -17910,6 +17958,7 @@ app.patch('/api/admin/fights/:id/homepage-promotion', verifyAdminToken, async (r
     const update = getHomepagePromotionUpdate(req);
     Object.assign(resolved.doc, update);
     await resolved.doc.save();
+    await releaseHomepageSlotFromOtherFights(resolved.doc, update);
     clearPublicResponseCache();
     res.json({
       ok: true,
@@ -17930,6 +17979,7 @@ app.post('/api/admin/fights/:id/homepage-promotion', verifyAdminToken, async (re
     const update = getHomepagePromotionUpdate({ body: { ...(req.body || {}), homepagePromoted: req.body?.homepagePromoted ?? req.body?.promoted ?? true }, admin: req.admin });
     Object.assign(resolved.doc, update);
     await resolved.doc.save();
+    await releaseHomepageSlotFromOtherFights(resolved.doc, update);
     clearPublicResponseCache();
     res.status(201).json({
       ok: true,
@@ -18130,7 +18180,7 @@ app.get('/api/public/homepage/promoted-fights', async (req, res) => {
     [...shadows, ...pinnedShadows].forEach((fight) => byFight.set(`shadow:${fight._id}`, pickPublicFightFields(fight, 'shadow')));
     const items = [...byFight.values()]
       .filter((fight) => isHomepagePromotionVisible(fight, now) && isPublicHomeActiveFightRecord(fight, now))
-      .sort((a, b) => Number(Boolean(b.homepageSlot)) - Number(Boolean(a.homepageSlot)) || compareHomepagePromotedFights(a, b))
+      .sort(compareHomepageSlotThenPromotion)
       .slice(0, limit);
 
     res.setHeader('Cache-Control', 'private, no-store, no-cache, max-age=0, must-revalidate');

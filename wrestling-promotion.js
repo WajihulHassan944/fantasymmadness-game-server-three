@@ -17,7 +17,7 @@ function wrestlingPromotionFight(match) {
     fightPosterImage: match.fightPosterImage || match.bannerImage || '', promotionBackground: match.bannerImage || '',
     matchDescription: match.description || '',
     affiliateId: match.affiliateId,
-    ...Object.fromEntries(['homepagePromoted', 'homepageSlot', 'homepagePromotionRank', 'homepagePromotionTitle', 'homepagePromotionSubtitle', 'homepagePromotionUpdatedAt', 'homepagePromotionStartsAt', 'homepagePromotionEndsAt', 'featuredThisWeek', 'featuredFight', 'featuredThisWeekImage', 'featuredFightBackgroundImage', 'featuredFightFighterAImage', 'featuredFightFighterBImage'].map((key) => [key, match[key]])),
+    ...Object.fromEntries(['homepagePromoted', 'homepageSlot', 'homepageSlotAssignedAt', 'homepagePromotionRank', 'homepagePromotionTitle', 'homepagePromotionSubtitle', 'homepagePromotionUpdatedAt', 'homepagePromotionStartsAt', 'homepagePromotionEndsAt', 'featuredThisWeek', 'featuredFight', 'featuredThisWeekImage', 'featuredFightBackgroundImage', 'featuredFightFighterAImage', 'featuredFightFighterBImage'].map((key) => [key, match[key]])),
   };
 }
 
