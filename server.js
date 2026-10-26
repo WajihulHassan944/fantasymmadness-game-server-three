@@ -20607,7 +20607,7 @@ app.post('/api/admin/demo-card', verifyAdminToken, requireTestAccounts, async (r
         matchTime: '21:00',
         maxRounds: spec.rounds,
         matchTokens: spec.fee,
-        matchStatus: 'active',
+        matchStatus: 'Ongoing', // fight records accept Ongoing/Finished/..., not 'active'
         matchShadowStatus: 'active',
         // Default low enough that a handful of testers clears it, but the high
         // roller sets its own so the void-and-refund guard gets exercised.
@@ -20643,7 +20643,7 @@ app.post('/api/admin/demo-card', verifyAdminToken, requireTestAccounts, async (r
         matchDate: new Date(Date.now() - 2 * 86400000),
         maxRounds: 3,
         matchTokens: 0,
-        matchStatus: 'finished',
+        matchStatus: 'Finished',
         matchShadowStatus: 'active',
         minimumEntrants: 0,
         venue: 'Demo Arena',
