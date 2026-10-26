@@ -827,25 +827,24 @@ module.exports = function registerPlayerRecovery({ app, mongoose, verifyAdminTok
           if (await Restoration.findOne({ restorationId: item.restorationId }).session(session).lean()) { outcome = { status: 'already_restored' }; return; }
           const account = await users().findOne({ _id: oid }, { session, projection: SECRET_FIELDS });
           if (!account) throw Object.assign(new Error('Player account not found.'), { permanent: true });
-          const before = num(account.tokens);
-          if (before === null) throw Object.assign(new Error('Current balance is not a number; left untouched.'), { permanent: true });
-          const after = before + item.amount;
-          // Compare-and-set: only applies if the balance is still exactly what was read.
-          const update = await users().updateOne({ _id: oid, tokens: account.tokens }, { $set: { tokens: String(after) } }, { session });
-          if (update.modifiedCount !== 1) throw Object.assign(new Error('BALANCE_CHANGED'), { busy: true });
-          const now = new Date();
+          const wallet = app.locals.coinWallet;
+          if (!wallet) throw Object.assign(new Error('The coin wallet is not available.'), { permanent: true });
+          // ADDS the loss to the live balance through the shared coin wallet: atomic,
+          // recorded in the coin history with this restoration ID, and once only.
+          const moved = await wallet.applyCoinChange({
+            account: 'user', id: oid, delta: item.amount, reason: RESTORE_REASON, transactionId: item.restorationId,
+            reference: 'membership-plan-coin-restoration', session,
+            meta: { label: RESTORE_LABEL, restorationId: item.restorationId, sourceRecordId: item.sourceRecordId, approvalBatch },
+          });
+          if (moved.duplicate) { outcome = { status: 'already_restored' }; return; }
+          const before = moved.balanceBefore;
+          const after = moved.balanceAfter;
           await Restoration.create([{
             restorationId: item.restorationId, userId: oid, email: account.email || item.email, sourceRecordId: item.sourceRecordId,
             plan: item.plan, lossAt: item.lossAt ? new Date(item.lossAt) : null, originalBalance: item.originalBalance, originalLoss: item.amount,
             amount: item.amount, balanceBefore: before, balanceAfter: after, approvedBy, approvalBatch,
             accountBefore: { ...account, acknowledgedWarnings: acknowledged.includes(item.restorationId) ? item.warnings : [] },
           }], { session });
-          await ledgerCollection().insertOne({
-            userId: oid, matchId: 'membership-plan-coin-restoration', sourceType: 'match', type: 'FIGHT_ENTRY_REFUND',
-            amount: item.amount, balanceBefore: before, balanceAfter: after, idempotencyKey: item.restorationId,
-            metadata: { reason: RESTORE_REASON, label: RESTORE_LABEL, restorationId: item.restorationId, sourceRecordId: item.sourceRecordId, approvalBatch },
-            createdAt: now, updatedAt: now,
-          }, { session });
           outcome = { status: 'restored', balanceBefore: before, balanceAfter: after };
         });
         return outcome;

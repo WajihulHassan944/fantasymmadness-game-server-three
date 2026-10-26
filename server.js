@@ -1,5 +1,6 @@
 const { wrestlingPromotionFight, isWrestlingPromotionOpen } = require('./wrestling-promotion');
 const express = require('express');
+const { createCoinWallet, installCoinWriteGuards, CoinError } = require('./coin-wallet');
 const { isFightOpenForEntry } = require('./fight-entry-time');
 const { ownerReferralShare } = require('./owner-referral-share');
 const { registerAffiliateSocialRoutes } = require('./affiliate-social');
@@ -3342,20 +3343,15 @@ async function refundMatchScoresIfRequested(match, matchId, updateWallet) {
   let refundedUsers = 0;
 
   await Promise.all(scores.map(async (score) => {
-    const user = await User.findById(score.playerId);
+    const user = await User.findById(score.playerId).select('_id').lean();
     if (user) {
-      const balanceBefore = Number.parseInt(String(user.tokens || '0'), 10) || 0;
-      user.tokens = addWalletTokens(user.tokens, matchTokens);
-      await user.save();
-      await recordWalletMove({
-        userId: user._id,
-        amount: matchTokens,
-        balanceBefore,
-        balanceAfter: Number.parseInt(String(user.tokens || '0'), 10) || 0,
-        reason: 'fight_removed_refund',
-        reference: String(score.matchId || ''),
+      // One refund per player per fight, even if the removal is repeated.
+      const result = await applyCoinChange({
+        account: 'user', id: user._id, delta: normalizeWalletTokenNumber(matchTokens),
+        reason: 'fight_removed_refund', reference: String(score.matchId || ''),
+        transactionId: `fight_removed_refund:${String(score.matchId || matchId)}:${String(user._id)}`,
       });
-      refundedUsers += 1;
+      if (result.applied) refundedUsers += 1;
     }
   }));
 
@@ -4854,9 +4850,12 @@ const userSchema = new mongoose.Schema({
 userSchema.index({ playerName: 1 });
 userSchema.index({ createdAt: -1 });
 userSchema.pre('save', function normalizeUserWalletTokens(next) {
-  this.tokens = normalizeWalletTokenString(this.tokens);
+  // Only an opening balance is tidied here. Re-normalising on every save would
+  // write a stale balance back over coins changed elsewhere in the meantime.
+  if (this.isNew) this.tokens = normalizeWalletTokenString(this.tokens);
   next();
 });
+installCoinWriteGuards(userSchema, 'Player');
 attachSafeAccountJsonTransform(userSchema);
 
 const User = mongoose.models.User || mongoose.model('User', userSchema);
@@ -4920,9 +4919,12 @@ app.post('/admin/add-tokens-won', verifyToken, requireScope(TOKEN_SCOPES.PLAYER)
     const existingUser = await User.findOne({ email });
 
     if (existingUser) {
-      // User found, add 200 tokens
-      existingUser.tokens = addWalletTokens(existingUser.tokens, 200);
-      await existingUser.save();
+      // User found, add 200 tokens (once per device, even if the request is repeated)
+      const credit = await applyCoinChange({
+        account: 'user', id: existingUser._id, delta: 200, reason: 'device_welcome_bonus',
+        transactionId: `device_welcome_bonus:${String(deviceId)}`, reference: 'device-bonus',
+      });
+      const newCoinBalance = String(credit.balanceAfter ?? existingUser.tokens);
 
       // Notify User and Admin
       const emailPromises = [
@@ -4942,7 +4944,7 @@ app.post('/admin/add-tokens-won', verifyToken, requireScope(TOKEN_SCOPES.PLAYER)
                 <td style="padding: 10px 0;">
                   <p style="font-size: 16px; font-family: Arial, sans-serif; color: #333;">Dear User,</p>
                   <p style="font-size: 16px; font-family: Arial, sans-serif; color: #333;">
-                    You have received 200 tokens added to your account! Your new token balance is ${existingUser.tokens}.
+                    You have received 200 tokens added to your account! Your new token balance is ${newCoinBalance}.
                   </p>
                   <p style="font-size: 16px; font-family: Arial, sans-serif; color: #333;">
                     If you have any questions, feel free to reach out to us!
@@ -5145,9 +5147,12 @@ app.post('/admin/add-tokens-won-spin-wheel', verifyToken, requireScope(TOKEN_SCO
     const existingUser = await User.findOne({ email });
 
     if (existingUser) {
-      // User found, add 200 tokens
-      existingUser.tokens = addWalletTokens(existingUser.tokens, prize);
-      await existingUser.save();
+      // One welcome spin per account: the transaction ID makes a repeat a no-op.
+      const credit = await applyCoinChange({
+        account: 'user', id: existingUser._id, delta: prize, reason: 'spin_wheel_prize',
+        transactionId: `spin_wheel_prize:${String(existingUser._id)}`, reference: 'spin-wheel',
+      });
+      const newCoinBalance = String(credit.balanceAfter ?? existingUser.tokens);
 
       // Notify User and Admin
       const emailPromises = [
@@ -5167,7 +5172,7 @@ app.post('/admin/add-tokens-won-spin-wheel', verifyToken, requireScope(TOKEN_SCO
                 <td style="padding: 10px 0;">
                   <p style="font-size: 16px; font-family: Arial, sans-serif; color: #333;">Dear User,</p>
                   <p style="font-size: 16px; font-family: Arial, sans-serif; color: #333;">
-                    You have received ${prize} tokens added to your account! Your new token balance is ${existingUser.tokens}.
+                    You have received ${prize} tokens added to your account! Your new token balance is ${newCoinBalance}.
                   </p>
                   <p style="font-size: 16px; font-family: Arial, sans-serif; color: #333;">
                     If you have any questions, feel free to reach out to us!
@@ -5645,12 +5650,11 @@ app.post('/api/authorize-net/first-payment', submitLimiter, async (req, res) => 
           };
   
           // Add tokens to the user's account
-          const anetFirstBefore = Number.parseInt(String(user.tokens || '0'), 10) || 0;
-          user.tokens = addWalletTokens(user.tokens, amount);
-          await recordWalletMove({
-            userId: user._id, amount, balanceBefore: anetFirstBefore,
-            balanceAfter: Number.parseInt(String(user.tokens || '0'), 10) || 0,
-            reason: 'card_payment_credit', reference: String(Date.now()),
+          // Credited once per card charge (the processor's transaction ID).
+          const anetFirstTransId = String(transactionResponse.transId?.[0] || '');
+          await applyCoinChange({
+            account: 'user', id: user._id, delta: normalizeWalletTokenNumber(amount), reason: 'card_payment_credit',
+            transactionId: `card_payment_credit:${anetFirstTransId || `${String(user._id)}:${Date.now()}`}`, reference: anetFirstTransId || 'card-payment',
           });
           user.currentPlan = 'Standard';
           await user.save();
@@ -5754,13 +5758,11 @@ app.post('/api/authorize-net/transaction', submitLimiter, async (req, res) => {
 
       if (responseCode === '1') {
         // Transaction was successful
-        const anetTxnBefore = Number.parseInt(String(user.tokens || '0'), 10) || 0;
-        user.tokens = addWalletTokens(user.tokens, amount);
-        await user.save();
-        await recordWalletMove({
-          userId: user._id, amount, balanceBefore: anetTxnBefore,
-          balanceAfter: Number.parseInt(String(user.tokens || '0'), 10) || 0,
-          reason: 'card_payment_credit', reference: String(Date.now()),
+        // Credited once per card charge (the processor's transaction ID).
+        const anetTransId = String(transactionResponse.transId?.[0] || '');
+        await applyCoinChange({
+          account: 'user', id: user._id, delta: normalizeWalletTokenNumber(amount), reason: 'card_payment_credit',
+          transactionId: `card_payment_credit:${anetTransId || `${String(user._id)}:${Date.now()}`}`, reference: anetTransId || 'card-payment',
         });
 
         return res.status(200).json({
@@ -5864,6 +5866,7 @@ app.post('/google-login', loginLimiter, async (req, res) => {
       });
 
       await user.save();
+      await recordOpeningBalance('user', user._id, user.tokens, 'signup_bonus');
 
 // Handle referral if referrerId is present
 if (!user.referredAffiliateId && req.body.referrerId && req.body.referrerId !== user._id.toString()) {
@@ -5878,8 +5881,10 @@ if (!user.referredAffiliateId && req.body.referrerId && req.body.referrerId !== 
         rewarded: true,
       });
 
-      referrer.tokens = addWalletTokens(referrer.tokens, 3);
-      await referrer.save();
+      await applyCoinChange({
+        account: 'user', id: referrer._id, delta: 3, reason: 'player_referral_reward',
+        transactionId: `player_referral_reward:${String(user._id)}`, reference: String(user._id),
+      });
     }
   } catch (err) {
     console.error('Referral processing error (Google Login):', err);
@@ -6094,27 +6099,18 @@ app.post('/api/reward-tokens/:userId', verifyAdminToken, async (req, res) => {
     const { tokens, matchId } = req.body;
 
     // Find the user by ID
-    const user = await User.findById(userId);
+    const user = await User.findById(userId).select('_id').lean();
 
     if (!user) {
       return res.status(404).json({ message: 'User not found' });
     }
 
-    // Add tokens to the user's account
-    const grantBalanceBefore = Number.parseInt(String(user.tokens || '0'), 10) || 0;
-    user.tokens = addWalletTokens(user.tokens, tokens);
-    await recordWalletMove({
-      userId: user._id,
-      amount: tokens,
-      balanceBefore: grantBalanceBefore,
-      balanceAfter: Number.parseInt(String(user.tokens || '0'), 10) || 0,
-      reason: 'admin_grant',
-      reference: String(req.params.userId || req.body?.matchId || Date.now()),
-      meta: { grantedBy: req.admin?.id || null },
+    // A fight's prize is paid to a player once, however many times this is sent.
+    const grant = await applyCoinChange({
+      account: 'user', id: user._id, delta: normalizeWalletTokenNumber(tokens), reason: 'admin_grant',
+      transactionId: matchId ? `admin_match_reward:${String(matchId)}:${String(user._id)}` : requestTransactionId(req, `admin_grant:${String(user._id)}`),
+      reference: String(matchId || req.params.userId || ''), meta: { grantedBy: req.admin?.id || null },
     });
-
-    // Save the updated user
-    await user.save();
 
     // Update the match's reward status to "Rewarded"
     const match = await Match.findById(matchId);
@@ -6128,7 +6124,7 @@ app.post('/api/reward-tokens/:userId', verifyAdminToken, async (req, res) => {
     // Save the updated match
     await match.save();
 
-    res.status(200).json({ success: true, message: 'Tokens rewarded and match updated successfully', user, match });
+    res.status(200).json({ success: true, message: grant.duplicate ? 'Already rewarded for this fight; nothing was added again.' : 'Tokens rewarded and match updated successfully', user: await User.findById(userId), match, alreadyRewarded: Boolean(grant.duplicate) });
   } catch (error) {
     console.error('Request failed:', error);
     res.status(500).json({ success: false, message: 'Server error' });
@@ -6142,30 +6138,22 @@ app.post('/api/reward-tokens-only-forcibly/:userId', verifyAdminToken, async (re
     const { userId } = req.params;
     const { tokens } = req.body;
 
-    // Find the user by ID
-    const user = await User.findById(userId);
+    const target = await User.findById(userId).select('_id').lean();
 
-    if (!user) {
+    if (!target) {
       return res.status(404).json({ message: 'User not found' });
     }
 
-    // Add tokens to the user's account
-    const grantBalanceBefore = Number.parseInt(String(user.tokens || '0'), 10) || 0;
-    user.tokens = addWalletTokens(user.tokens, tokens);
-    await recordWalletMove({
-      userId: user._id,
-      amount: tokens,
-      balanceBefore: grantBalanceBefore,
-      balanceAfter: Number.parseInt(String(user.tokens || '0'), 10) || 0,
-      reason: 'admin_grant',
-      reference: String(req.params.userId || req.body?.matchId || Date.now()),
-      meta: { grantedBy: req.admin?.id || null },
+    // The admin screen sends a request key with each grant, so a double click or
+    // retried request adds the coins only once.
+    const grant = await applyCoinChange({
+      account: 'user', id: target._id, delta: normalizeWalletTokenNumber(tokens), reason: 'admin_grant',
+      transactionId: requestTransactionId(req, `admin_grant:${String(target._id)}`),
+      reference: String(req.params.userId || ''), meta: { grantedBy: req.admin?.id || null },
     });
+    const user = await User.findById(userId);
 
-    // Save the updated user
-    await user.save();
-
-    res.status(200).json({ success: true, message: 'Tokens rewarded successfully', user});
+    res.status(200).json({ success: true, message: grant.duplicate ? 'This grant was already applied; nothing was added again.' : 'Tokens rewarded successfully', user, alreadyApplied: Boolean(grant.duplicate) });
   } catch (error) {
     console.error('Request failed:', error);
     res.status(500).json({ success: false, message: 'Server error' });
@@ -6180,26 +6168,21 @@ app.post('/api/deduct-tokens', verifyToken, requireScope(TOKEN_SCOPES.PLAYER), a
     const { matchTokens } = req.body;
     const userId = String(req.user?.id || req.user?._id || '').trim();
 
-    // Find the user by ID
-    const user = await User.findById(userId);
+    const deduction = normalizeWalletTokenNumber(matchTokens);
+    // Atomic: the balance check and the deduction are one step, so two requests at
+    // once can never overdraw or overwrite each other. A repeated request with the
+    // same key deducts only once.
+    const result = await applyCoinChange({
+      account: 'user', id: userId, delta: -deduction, reason: 'coin_deduction',
+      transactionId: requestTransactionId(req, `coin_deduction:${userId}`), reference: `deduct-tokens:${String(req.body?.matchId || '')}`,
+    });
 
-    if (!user) {
-      return res.status(404).json({ message: 'User not found' });
-    }
-
-    const { balance, deduction, nextBalance } = subtractWalletTokens(user.tokens, matchTokens);
-
-    // Check if the user has enough tokens
-    if (balance < deduction) {
-      return res.status(402).json({ code: 'INSUFFICIENT_FM', message: 'Insufficient tokens', tokensRemaining: String(balance) });
-    }
-
-    // Deduct the tokens
-    user.tokens = String(nextBalance);
-    await user.save();
-
-    return res.status(200).json({ message: 'Tokens deducted successfully', tokensRemaining: user.tokens });
+    return res.status(200).json({ message: result.duplicate ? 'Already deducted; nothing was taken again.' : 'Tokens deducted successfully', tokensRemaining: String(result.balanceAfter ?? '') });
   } catch (error) {
+    if (error instanceof CoinError) {
+      if (error.code === 'INSUFFICIENT_FM_COINS') return res.status(402).json({ code: 'INSUFFICIENT_FM', message: 'Insufficient tokens', tokensRemaining: String(error.balance ?? 0) });
+      if (error.code === 'ACCOUNT_NOT_FOUND') return res.status(404).json({ message: 'User not found' });
+    }
     console.error('Error deducting tokens:', error);
     return res.status(500).json({ message: 'Server error' });
   }
@@ -7415,6 +7398,7 @@ app.post('/register', submitLimiter, async (req, res) => {
     });
 
     await newUser.save();
+    await recordOpeningBalance('user', newUser._id, newUser.tokens, 'signup_bonus');
     console.log(`✅ User created successfully: ${email}`);
 
     // The account is pending until the email link is opened. Notify the owner
@@ -7431,8 +7415,10 @@ app.post('/register', submitLimiter, async (req, res) => {
             referredUser: newUser._id,
             rewarded: true,
           });
-          referrer.tokens = addWalletTokens(referrer.tokens, 3);
-          await referrer.save();
+          await applyCoinChange({
+            account: 'user', id: referrer._id, delta: 3, reason: 'player_referral_reward',
+            transactionId: `player_referral_reward:${String(newUser._id)}`, reference: String(newUser._id),
+          });
           console.log(`🎁 3 tokens awarded to referrer: ${referrer.email}`);
         }
       } catch (err) {
@@ -7803,45 +7789,28 @@ app.post('/user/:email/subscribe', verifyToken, async (req, res) => {
     }
 
     // Check if the user has already availed the free plan
-    let freePlanBefore = NaN;
-    let stdPlanBefore = NaN;
     if (plan === 'Free') {
       if (user.hasAvailedFreePlan) {
         return res.status(400).json({ message: 'User has already availed the free plan' });
       }
 
-      // Set the current plan to "Free", set the expiry date to one month from now, and allot 20 free tokens
-      user.currentPlan = 'Free';
-      user.freePlanExpiryDate = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000); // 1 month from now
-      user.hasAvailedFreePlan = true;
-      freePlanBefore = Number.parseInt(String(user.tokens || '0'), 10) || 0;
+      // Claim the one-time Free plan atomically: two simultaneous requests cannot both claim it.
+      const claimed = await User.findOneAndUpdate(
+        { _id: user._id, hasAvailedFreePlan: { $ne: true } },
+        { $set: { currentPlan: 'Free', freePlanExpiryDate: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000), hasAvailedFreePlan: true } },
+        { new: true },
+      );
+      if (!claimed) return res.status(400).json({ message: 'User has already availed the free plan' });
       // The plan's 20 coins are a minimum, never a replacement: a player who already
       // has more (e.g. the 500 sign-up coins) keeps every coin.
-      if (planAllotmentBalance(freePlanBefore, 20) > freePlanBefore) user.tokens = String(planAllotmentBalance(freePlanBefore, 20));
+      await topUpCoins({ account: 'user', id: user._id, target: 20, reason: 'plan_allotment', transactionId: `plan_allotment:Free:${String(user._id)}`, reference: 'plan:Free', meta: { plan: 'Free' } });
 
     } else if (plan === 'Standard') {
-      user.currentPlan = 'Standard';
-      stdPlanBefore = Number.parseInt(String(user.tokens || '0'), 10) || 0;
+      await User.updateOne({ _id: user._id }, { $set: { currentPlan: 'Standard' } });
       // Same rule: top up to 100 if lower, never reduce an existing balance.
-      if (planAllotmentBalance(stdPlanBefore, 100) > stdPlanBefore) user.tokens = String(planAllotmentBalance(stdPlanBefore, 100));
+      await topUpCoins({ account: 'user', id: user._id, target: 100, reason: 'plan_allotment', transactionId: requestTransactionId(req, `plan_allotment:Standard:${String(user._id)}`), reference: 'plan:Standard', meta: { plan: 'Standard' } });
     }
 
-    await user.save();
-    // Plan allotments SET a balance rather than adjust it, so the movement was
-    // previously invisible in any history.
-    const planAfter = Number.parseInt(String(user.tokens || '0'), 10) || 0;
-    const planBefore = plan === 'Standard' ? stdPlanBefore : freePlanBefore;
-    if (Number.isFinite(planBefore) && planAfter !== planBefore) {
-      await recordWalletMove({
-        userId: user._id,
-        amount: planAfter - planBefore,
-        balanceBefore: planBefore,
-        balanceAfter: planAfter,
-        reason: 'plan_allotment',
-        reference: String(plan || '') + ':' + Date.now(),
-        meta: { plan },
-      });
-    }
     res.status(200).json({ message: 'Subscription updated successfully' });
 
   } catch (error) {
@@ -8662,6 +8631,7 @@ async function settlePaidCoinOrder(orderNumber, providerEventId = '') {
         isAgreed: true,
       }], { session });
       user = documents[0];
+      await recordOpeningBalance('user', user._id, user.tokens, 'signup_bonus', session);
       createdAccountEmail = user.email;
       createdAccountResetToken = resetToken;
     }
@@ -8669,17 +8639,10 @@ async function settlePaidCoinOrder(orderNumber, providerEventId = '') {
     const firstPurchase = !user.hasReceivedFirstPurchaseBonus;
     const bonusCoins = firstPurchase ? order.baseCoins : 0;
     const creditedCoins = order.baseCoins + bonusCoins;
-    const coinBalanceBefore = Number.parseInt(String(user.tokens || '0'), 10) || 0;
-    user.tokens = addWalletTokens(user.tokens, creditedCoins);
-    await recordWalletMove({
-      userId: user._id,
-      amount: creditedCoins,
-      balanceBefore: coinBalanceBefore,
-      balanceAfter: Number.parseInt(String(user.tokens || '0'), 10) || 0,
-      reason: 'coin_purchase',
-      reference: String(order.orderNumber || ''),
-      meta: { baseCoins: order.baseCoins, bonusCoins },
-      session,
+    await applyCoinChange({
+      account: 'user', id: user._id, delta: normalizeWalletTokenNumber(creditedCoins), reason: 'coin_purchase',
+      transactionId: `coin_purchase:${String(order.orderNumber)}`, reference: String(order.orderNumber || ''),
+      meta: { baseCoins: order.baseCoins, bonusCoins }, session,
     });
     user.hasReceivedFirstPurchaseBonus = true;
     await user.save({ session });
@@ -8757,6 +8720,7 @@ async function settlePaidFmPlusOrder(orderNumber, providerEventId = '') {
         isAgreed: true,
       }], { session });
       user = documents[0];
+      await recordOpeningBalance('user', user._id, user.tokens, 'signup_bonus', session);
       createdAccountResetToken = resetToken;
     }
 
@@ -8765,16 +8729,9 @@ async function settlePaidFmPlusOrder(orderNumber, providerEventId = '') {
       ? new Date(user.fmPlusExpiresAt)
       : now;
     const expiry = new Date(currentExpiry.getTime() + Number(order.durationDays || 30) * 24 * 60 * 60 * 1000);
-    const fmPlusBalanceBefore = Number.parseInt(String(user.tokens || '0'), 10) || 0;
-    user.tokens = addWalletTokens(user.tokens, order.bonusCoins);
-    await recordWalletMove({
-      userId: user._id,
-      amount: order.bonusCoins,
-      balanceBefore: fmPlusBalanceBefore,
-      balanceAfter: Number.parseInt(String(user.tokens || '0'), 10) || 0,
-      reason: 'fm_plus_bonus',
-      reference: String(order.orderNumber || ''),
-      session,
+    await applyCoinChange({
+      account: 'user', id: user._id, delta: normalizeWalletTokenNumber(order.bonusCoins), reason: 'fm_plus_bonus',
+      transactionId: `fm_plus_bonus:${String(order.orderNumber)}`, reference: String(order.orderNumber || ''), session,
     });
     user.isSubscribed = true;
     user.currentPlan = 'FM+';
@@ -8829,19 +8786,16 @@ async function settleRecurringFmPlusRenewal(order, transactionId, providerEventI
     const now = new Date();
     const startsAt = user.fmPlusExpiresAt && new Date(user.fmPlusExpiresAt) > now ? new Date(user.fmPlusExpiresAt) : now;
     const expiresAt = new Date(startsAt.getTime() + Number(order.durationDays || 30) * 86400000);
-    const balanceBefore = Number.parseInt(String(user.tokens || '0'), 10) || 0;
-    user.tokens = addWalletTokens(user.tokens, order.bonusCoins);
+    await applyCoinChange({
+      account: 'user', id: user._id, delta: normalizeWalletTokenNumber(order.bonusCoins), reason: 'fm_plus_monthly_renewal_bonus',
+      transactionId: `fm_plus_monthly_renewal_bonus:${eventId}`, reference: `renewal:${transactionId}`, session,
+    });
     user.isSubscribed = true;
     user.currentPlan = 'FM+';
     user.fmPlusPlan = 'monthly';
     user.fmPlusExpiresAt = expiresAt;
     user.fmPlusLastCoinCreditAt = now;
     await user.save({ session });
-    await recordWalletMove({
-      userId: user._id, amount: order.bonusCoins, balanceBefore,
-      balanceAfter: Number.parseInt(String(user.tokens || '0'), 10) || 0,
-      reason: 'fm_plus_monthly_renewal_bonus', reference: `renewal:${transactionId}`, session,
-    });
     const [renewal] = await FmPlusRenewal.create([{
       subscriptionId: order.subscriptionId, providerEventId: eventId, transactionId,
       orderNumber: order.orderNumber, userId: user._id, amountCents: order.subtotalCents,
@@ -9302,10 +9256,8 @@ app.get('/profile', verifyToken, async (req, res) => {
       return res.status(404).json({ message: 'User not found' });
     }
 
-    if (isWalletTokenValueInvalid(user.tokens)) {
-      user.tokens = normalizeWalletTokenString(user.tokens);
-      await user.save();
-    }
+    // A badly formatted balance is shown tidied (sanitizeAccountObject) but never
+    // rewritten here: viewing a profile must not change a stored balance.
 
     if (
       String(user.currentPlan || '').toUpperCase() === 'FM+' &&
@@ -9375,13 +9327,23 @@ app.post('/api/users/me/streak/claim', verifyToken, async (req, res) => {
 
     const yesterday = new Date(now.getTime() - 86400000);
     const consecutive = lastClaim && (utcDayKey(lastClaim) === utcDayKey(yesterday) || claimedToday);
-    user.loginStreak = consecutive ? Math.min(3650, Number(user.loginStreak || 0) + 1) : 1;
-    user.dailyRewardClaimedAt = now;
-    user.streakExpiresAt = new Date(now.getTime() + 24 * 60 * 60 * 1000);
-    user.tokens = normalizeWalletTokenString(Number(normalizeWalletTokenString(user.tokens)) + 250);
-    await user.save();
+    const loginStreak = consecutive ? Math.min(3650, Number(user.loginStreak || 0) + 1) : 1;
+    // One atomic step: only applies while the claim dates are still what we read,
+    // so two taps at once cannot both claim.
+    try {
+      await applyCoinChange({
+        account: 'user', id: user._id, delta: 250, reason: 'streak_daily_reward',
+        transactionId: `streak_daily_reward:${String(user._id)}:${utcDayKey(now)}:${hasUnusedSkip ? skipUnlocked.getTime() : 'first'}`,
+        reference: 'streak',
+        extraFilter: { dailyRewardClaimedAt: lastClaim || null, streakSkipUnlockedAt: skipUnlocked || null },
+        extraSet: { loginStreak, dailyRewardClaimedAt: now, streakExpiresAt: new Date(now.getTime() + 24 * 60 * 60 * 1000) },
+      });
+    } catch (claimError) {
+      if (claimError instanceof CoinError && claimError.code === 'CONDITION_NOT_MET') return res.status(409).json({ ok: false, message: 'Today’s reward has already been claimed.' });
+      throw claimError;
+    }
     clearPublicResponseCache();
-    return res.json({ ok: true, creditedCoins: 250, user: sanitizeAccountObject(user) });
+    return res.json({ ok: true, creditedCoins: 250, user: sanitizeAccountObject(await User.findById(user._id).select(USER_SAFE_SELECT)) });
   } catch (error) {
     console.error('[streak] Reward claim failed:', error);
     return res.status(500).json({ ok: false, message: 'Unable to claim the reward.' });
@@ -9394,17 +9356,18 @@ app.post('/api/users/me/streak/save', verifyToken, async (req, res) => {
     if (!user) return;
     const now = new Date();
     const cost = hasActiveFmPlusBenefits(user, now) ? 25 : 50;
-    const balance = Number(normalizeWalletTokenString(user.tokens));
-    if (balance < cost) return res.status(409).json({ ok: false, message: `You need ${cost} FM to save this streak.` });
-    user.tokens = normalizeWalletTokenString(balance - cost);
-    await recordWalletMove({
-      userId: user._id, amount: -cost, balanceBefore: balance, balanceAfter: balance - cost,
-      reason: 'streak_save_legacy', reference: String(Date.now()),
-    });
-    user.streakExpiresAt = new Date(now.getTime() + 24 * 60 * 60 * 1000);
-    await user.save();
+    try {
+      await applyCoinChange({
+        account: 'user', id: user._id, delta: -cost, reason: 'streak_save',
+        transactionId: requestTransactionId(req, `streak_save:${String(user._id)}`), reference: 'streak',
+        extraSet: { streakExpiresAt: new Date(now.getTime() + 24 * 60 * 60 * 1000) },
+      });
+    } catch (spendError) {
+      if (spendError instanceof CoinError && spendError.code === 'INSUFFICIENT_FM_COINS') return res.status(409).json({ ok: false, message: `You need ${cost} FM to save this streak.` });
+      throw spendError;
+    }
     clearPublicResponseCache();
-    return res.json({ ok: true, debitedCoins: cost, user: sanitizeAccountObject(user) });
+    return res.json({ ok: true, debitedCoins: cost, user: sanitizeAccountObject(await User.findById(user._id).select(USER_SAFE_SELECT)) });
   } catch (error) {
     console.error('[streak] Streak save failed:', error);
     return res.status(500).json({ ok: false, message: 'Unable to save the streak.' });
@@ -9415,13 +9378,18 @@ app.post('/api/users/me/streak/skip-wait', verifyToken, async (req, res) => {
   try {
     const user = await loadStreakUser(req, res);
     if (!user) return;
-    const balance = Number(normalizeWalletTokenString(user.tokens));
-    if (balance < 75) return res.status(409).json({ ok: false, message: 'You need 75 FM to skip the wait.' });
-    user.tokens = normalizeWalletTokenString(balance - 75);
-    user.streakSkipUnlockedAt = new Date();
-    await user.save();
+    try {
+      await applyCoinChange({
+        account: 'user', id: user._id, delta: -75, reason: 'streak_skip_wait',
+        transactionId: requestTransactionId(req, `streak_skip_wait:${String(user._id)}`), reference: 'streak',
+        extraSet: { streakSkipUnlockedAt: new Date() },
+      });
+    } catch (spendError) {
+      if (spendError instanceof CoinError && spendError.code === 'INSUFFICIENT_FM_COINS') return res.status(409).json({ ok: false, message: 'You need 75 FM to skip the wait.' });
+      throw spendError;
+    }
     clearPublicResponseCache();
-    return res.json({ ok: true, debitedCoins: 75, user: sanitizeAccountObject(user) });
+    return res.json({ ok: true, debitedCoins: 75, user: sanitizeAccountObject(await User.findById(user._id).select(USER_SAFE_SELECT)) });
   } catch (error) {
     console.error('[streak] Skip-wait failed:', error);
     return res.status(500).json({ ok: false, message: 'Unable to skip the wait.' });
@@ -9461,6 +9429,7 @@ const adminTokensSchema = new mongoose.Schema({
   totalTokens: { type: String, default: '0' }, // New field to track total tokens
 }, { timestamps: true });
 
+installCoinWriteGuards(adminTokensSchema, 'House');
 const Admintokens = mongoose.models.Admintokens || mongoose.model('Admintokens', adminTokensSchema);
 
 // POST API to reward tokens to the admin and update matchReward status
@@ -9469,19 +9438,23 @@ app.post('/api/reward-tokens-to-admin', verifyAdminToken, async (req, res) => {
   try {
     const { tokens, matchId, matchName, affiliateRewarded } = req.body;
 
-    // Fetch or create an admin token document
-    let adminToken = await Admintokens.findOne({ matchId });
+    // Fetch or create the house account for this fight (creation only; no coins yet).
+    // allowCoinWrite: only a new account's default opening balance of 0 can be set here.
+    await Admintokens.updateOne({ matchId }, { $setOnInsert: { matchId, matchName } }, { upsert: true, allowCoinWrite: true });
+    const house = await Admintokens.findOne({ matchId }).select('_id').lean();
 
-    if (!adminToken) {
-      adminToken = new Admintokens({ matchId, matchName });
-    }
-
-    // Add tokens to the admin's account and update totalTokens
-    adminToken.tokens = addWalletTokens(adminToken.tokens, tokens);
-    adminToken.affiliateRewarded = (parseInt(adminToken.affiliateRewarded, 10) + parseInt(affiliateRewarded, 10)).toString();
-    adminToken.totalTokens = addWalletTokens(adminToken.totalTokens, tokens);
-
-    await adminToken.save();
+    // Atomic add with history; the affiliate-rewarded and total counters change in the same step.
+    const houseAmount = normalizeWalletTokenNumber(tokens);
+    const affiliateShare = Number.parseInt(affiliateRewarded, 10) || 0;
+    await applyCoinChange({
+      account: 'house', id: house._id, delta: houseAmount, reason: 'house_fight_share',
+      transactionId: requestTransactionId(req, `house_fight_share:${String(matchId)}`), reference: String(matchId || ''),
+      extraSet: {
+        affiliateRewarded: { $toString: { $add: [{ $convert: { input: '$affiliateRewarded', to: 'long', onError: 0, onNull: 0 } }, affiliateShare] } },
+        totalTokens: { $toString: { $add: [{ $convert: { input: '$totalTokens', to: 'long', onError: 0, onNull: 0 } }, houseAmount] } },
+      },
+    });
+    const adminToken = await Admintokens.findOne({ matchId });
 
     res.status(200).json({ success: true, message: 'Tokens added to Admin wallet successfully', adminToken });
   } catch (error) {
@@ -9599,6 +9572,7 @@ affiliateSchema.index({ createdAt: -1 });
 affiliateSchema.index({ totalViews: -1, createdAt: -1 });
 attachSafeAccountJsonTransform(affiliateSchema);
 
+installCoinWriteGuards(affiliateSchema, 'Affiliate');
 const Affiliate = mongoose.models.Affiliate || mongoose.model('Affiliate', affiliateSchema);
 
 // Instant-approval affiliate invites — the admin generates a link for a known
@@ -10228,34 +10202,25 @@ app.post('/affiliate/:id/payout', verifyToken, requireScope(TOKEN_SCOPES.AFFILIA
 
     // Debit now so the same balance cannot be requested again before the admin
     // processes it. A rejected payout must credit this back.
-    // Atomic: only applies while tokens still equals what we read, so a second
-    // simultaneous request cannot claim the same balance.
-    const debited = await Affiliate.findOneAndUpdate(
-      { _id: affiliateId, tokens: String(balance) },
-      { tokens: String(balance - requested) },
-      { new: true }
-    );
-    if (!debited) {
-      return res.status(409).json({
-        message: 'Your balance just changed. Please review and request again.',
-        code: 'BALANCE_CHANGED',
+    // One atomic step: the debit, the "no other payout pending" check and adding the
+    // payout request happen together, so two simultaneous requests cannot both pass.
+    const payout = { _id: new mongoose.Types.ObjectId(), amount: requested, status: 'pending', createdAt: new Date() };
+    try {
+      await applyCoinChange({
+        account: 'affiliate', id: affiliate._id, delta: -requested, reason: 'payout_requested',
+        transactionId: requestTransactionId(req, `payout_requested:${String(affiliate._id)}`), reference: String(payout._id),
+        extraFilter: { $nor: [{ payouts: { $elemMatch: { $or: [{ status: { $in: ['pending', 'Pending', 'PENDING', '', null] } }, { status: { $exists: false } }] } } }] },
+        extraSet: { payouts: { $concatArrays: [{ $ifNull: ['$payouts', []] }, [{ $literal: payout }]] } },
       });
+    } catch (debitError) {
+      if (debitError instanceof CoinError && debitError.code === 'INSUFFICIENT_FM_COINS') {
+        return res.status(400).json({ message: 'Payout amount is more than your available balance.', code: 'INSUFFICIENT_BALANCE', balance: debitError.balance, requested });
+      }
+      if (debitError instanceof CoinError && debitError.code === 'CONDITION_NOT_MET') {
+        return res.status(409).json({ message: 'You already have a payout request awaiting review.', code: 'PAYOUT_ALREADY_PENDING' });
+      }
+      throw debitError;
     }
-    affiliate.tokens = String(balance - requested);
-    await recordWalletMove({
-      userId: affiliate._id,
-      amount: -requested,
-      balanceBefore: balance,
-      balanceAfter: balance - requested,
-      reason: 'payout_requested',
-      reference: String(Date.now()),
-    });
-
-    const payout = { amount: requested, status: 'pending', createdAt: new Date() };
-    affiliate.payouts.push(payout);
-
-    // Save the updated affiliate
-    await affiliate.save();
 
     const amount = requested;
 
@@ -10295,47 +10260,66 @@ app.post('/affiliate/:id/payout', verifyToken, requireScope(TOKEN_SCOPES.AFFILIA
 
 
 // Endpoint to confirm payment
+// Payout requests have taken the coins at request time since 2026-08-24 (commit
+// 7f97d2258). Confirming such a payout must NOT take them again; only an older
+// request that was never charged is charged here.
+const PAYOUT_DEBIT_AT_REQUEST_SINCE = Date.parse('2026-08-24T12:45:00Z');
+const PAYOUT_COMPLETED_STATUSES = ['completed', 'Completed', 'COMPLETED', 'paid', 'Paid', 'PAID'];
+
 app.post('/confirm-payment-affiliate', verifyAdminToken, async (req, res) => {
-    const { affiliateId, amount, payoutId } = req.body;
+    const { affiliateId, payoutId } = req.body;
 
     try {
-        // Find the affiliate by ID
+        if (!mongoose.isValidObjectId(affiliateId) || !mongoose.isValidObjectId(payoutId)) {
+            return res.status(400).json({ message: 'Affiliate and payout are required.' });
+        }
         const affiliate = await Affiliate.findById(affiliateId);
-
         if (!affiliate) {
             return res.status(404).json({ message: 'Affiliate not found' });
         }
-
-        // Convert tokens to a number for comparison and deduction
-        const currentTokens = Number(affiliate.tokens); // Convert string to number
-
-        // Check if the affiliate has enough tokens
-        if (currentTokens < amount) {
-            return res.status(400).json({ message: 'Insufficient tokens' });
-        }
-
-        // Deduct the amount from tokens
-        await recordWalletMove({
-          userId: affiliate._id, amount: -amount, balanceBefore: currentTokens,
-          balanceAfter: currentTokens - amount,
-          reason: 'affiliate_payout_legacy', reference: String(Date.now()),
-        });
-        affiliate.tokens = (currentTokens - amount).toString(); // Convert back to string
-
-        // Update the payout status to completed
         const payout = affiliate.payouts.id(payoutId);
-        if (payout) {
-            payout.status = 'completed';
-        } else {
+        if (!payout) {
             return res.status(404).json({ message: 'Payout not found' });
         }
+        if (PAYOUT_COMPLETED_STATUSES.includes(String(payout.status || ''))) {
+            return res.status(200).json({ message: 'This payout was already completed; nothing was charged again.', affiliate, alreadyCompleted: true });
+        }
+        const amount = Math.max(0, Math.floor(Number(payout.amount) || 0));
+        const createdAt = payout.createdAt ? new Date(payout.createdAt).getTime() : 0;
+        const requestDebit = await FightEntryLedger.findOne({
+          userId: affiliate._id,
+          'metadata.reason': 'payout_requested',
+          $or: [
+            { matchId: String(payout._id) },
+            { amount: -amount, createdAt: { $gte: new Date(createdAt - 120000), $lte: new Date(createdAt + 120000) } },
+          ],
+        }).select('_id').lean();
+        const alreadyCharged = Boolean(requestDebit) || createdAt >= PAYOUT_DEBIT_AT_REQUEST_SINCE;
 
-        // Save the changes
-        await affiliate.save();
+        const outcome = await runCoinTransaction(async (session) => {
+          // Mark completed only if it is still not completed: a double click or retry stops here.
+          const marked = await Affiliate.collection.updateOne(
+            { _id: affiliate._id, payouts: { $elemMatch: { _id: payout._id, status: { $nin: PAYOUT_COMPLETED_STATUSES } } } },
+            { $set: { 'payouts.$.status': 'completed', 'payouts.$.resolvedAt': new Date(), 'payouts.$.resolvedBy': String(req.admin?.id || '') } },
+            { session: session.session || session },
+          );
+          if (!marked.modifiedCount) return { alreadyCompleted: true };
+          if (!alreadyCharged && amount > 0) {
+            await applyCoinChange({
+              account: 'affiliate', id: affiliate._id, delta: -amount, reason: 'affiliate_payout_legacy',
+              transactionId: `affiliate_payout:${String(payout._id)}`, reference: String(payout._id), session,
+            });
+          }
+          return { alreadyCompleted: false, charged: !alreadyCharged && amount > 0 };
+        });
 
-        // Return a success response
-        res.status(200).json({ message: 'Payment processed successfully', affiliate });
+        const fresh = await Affiliate.findById(affiliate._id);
+        return res.status(200).json({
+          message: outcome.alreadyCompleted ? 'This payout was already completed; nothing was charged again.' : 'Payment processed successfully',
+          affiliate: fresh, alreadyCompleted: outcome.alreadyCompleted, chargedAtConfirmation: Boolean(outcome.charged),
+        });
     } catch (error) {
+        if (error instanceof CoinError && error.code === 'INSUFFICIENT_FM_COINS') return res.status(400).json({ message: 'Insufficient tokens' });
         console.error('Error processing payment:', error);
         res.status(500).json({ message: 'Server error' });
     }
@@ -10471,30 +10455,21 @@ app.post('/api/reward-tokens-to-affiliate/:affiliateId', verifyAdminToken, async
     const { affiliateId } = req.params;
     const { tokens } = req.body;
 
-    // Find the user by ID
-    const user = await Affiliate.findById(affiliateId);
+    const target = await Affiliate.findById(affiliateId).select('_id').lean();
 
-    if (!user) {
+    if (!target) {
       return res.status(404).json({ message: 'User not found' });
     }
 
-    // Add tokens to the user's account
-    const grantBalanceBefore = Number.parseInt(String(user.tokens || '0'), 10) || 0;
-    user.tokens = addWalletTokens(user.tokens, tokens);
-    await recordWalletMove({
-      userId: user._id,
-      amount: tokens,
-      balanceBefore: grantBalanceBefore,
-      balanceAfter: Number.parseInt(String(user.tokens || '0'), 10) || 0,
-      reason: 'admin_grant',
-      reference: String(req.params.userId || req.body?.matchId || Date.now()),
-      meta: { grantedBy: req.admin?.id || null },
+    const matchId = req.body?.matchId ? String(req.body.matchId) : '';
+    const grant = await applyCoinChange({
+      account: 'affiliate', id: target._id, delta: normalizeWalletTokenNumber(tokens), reason: 'admin_grant',
+      transactionId: matchId ? `admin_affiliate_match_reward:${matchId}:${String(target._id)}` : requestTransactionId(req, `admin_affiliate_grant:${String(target._id)}`),
+      reference: matchId || String(affiliateId), meta: { grantedBy: req.admin?.id || null },
     });
+    const user = await Affiliate.findById(affiliateId);
 
-    // Save the updated user
-    await user.save();
-
-    res.status(200).json({ success: true, message: 'Tokens rewarded to affiliate successfully', user });
+    res.status(200).json({ success: true, message: grant.duplicate ? 'Already rewarded; nothing was added again.' : 'Tokens rewarded to affiliate successfully', user, alreadyApplied: Boolean(grant.duplicate) });
   } catch (error) {
     console.error('Request failed:', error);
     res.status(500).json({ success: false, message: 'Server error' });
@@ -16019,30 +15994,36 @@ const autoLockWrestlingMatches = async () => {
   return locked;
 };
 
-const adjustWrestlingUserTokens = async ({ userId, delta, session }) => {
-  const user = await applyWrestlingSession(User.findById(userId), session);
-  if (!user) throw wrestlingHttpError(404, 'User not found.', 'USER_NOT_FOUND');
-  const balanceBefore = wrestlingTokenBalance(user.tokens);
-  const balanceAfter = balanceBefore + Number(delta);
-  if (balanceAfter < 0) throw wrestlingHttpError(400, 'Insufficient fight-wallet tokens.', 'INSUFFICIENT_TOKENS', { balance: balanceBefore });
-  user.tokens = String(balanceAfter);
-  await recordWalletMove({
-    userId: user._id, amount: balanceAfter - balanceBefore, balanceBefore, balanceAfter,
-    reason: 'wrestling_wallet_adjustment', reference: String(Date.now()),
-  });
-  await user.save(session ? { session } : undefined);
-  return { user, balanceBefore, balanceAfter };
+// Wrestling wallet changes go through the shared coin wallet: atomic, never below
+// zero, recorded in the coin history, and once per transactionId (the same key the
+// wrestling ledger already uses).
+const adjustWrestlingUserTokens = async ({ userId, delta, session, transactionId }) => {
+  try {
+    const result = await applyCoinChange({
+      account: 'user', id: userId, delta: Math.trunc(Number(delta)), reason: 'wrestling_wallet_adjustment',
+      transactionId: transactionId || `wrestling:user:${String(userId)}:${crypto.randomUUID()}`, reference: 'wrestling', session,
+    });
+    const user = await applyWrestlingSession(User.findById(userId), session);
+    return { user, balanceBefore: result.balanceBefore, balanceAfter: result.balanceAfter };
+  } catch (error) {
+    if (error instanceof CoinError && error.code === 'INSUFFICIENT_FM_COINS') throw wrestlingHttpError(400, 'Insufficient fight-wallet tokens.', 'INSUFFICIENT_TOKENS', { balance: error.balance });
+    if (error instanceof CoinError && error.code === 'ACCOUNT_NOT_FOUND') throw wrestlingHttpError(404, 'User not found.', 'USER_NOT_FOUND');
+    throw error;
+  }
 };
 
-const adjustWrestlingAffiliateTokens = async ({ affiliateId, delta, session }) => {
-  const affiliate = await applyWrestlingSession(Affiliate.findById(affiliateId), session);
-  if (!affiliate) throw wrestlingHttpError(404, 'Affiliate not found.', 'AFFILIATE_NOT_FOUND');
-  const balanceBefore = wrestlingTokenBalance(affiliate.tokens);
-  const balanceAfter = balanceBefore + Number(delta);
-  if (balanceAfter < 0) throw wrestlingHttpError(400, 'Affiliate token adjustment would produce a negative balance.', 'INVALID_AFFILIATE_BALANCE');
-  affiliate.tokens = String(balanceAfter);
-  await affiliate.save(session ? { session } : undefined);
-  return { affiliate, balanceBefore, balanceAfter };
+const adjustWrestlingAffiliateTokens = async ({ affiliateId, delta, session, transactionId }) => {
+  try {
+    const result = await applyCoinChange({
+      account: 'affiliate', id: affiliateId, delta: Math.trunc(Number(delta)), reason: 'wrestling_affiliate_commission',
+      transactionId: transactionId || `wrestling:affiliate:${String(affiliateId)}:${crypto.randomUUID()}`, reference: 'wrestling', session,
+    });
+    return { balanceBefore: result.balanceBefore, balanceAfter: result.balanceAfter };
+  } catch (error) {
+    if (error instanceof CoinError && error.code === 'INSUFFICIENT_FM_COINS') throw wrestlingHttpError(400, 'Affiliate token adjustment would produce a negative balance.', 'INVALID_AFFILIATE_BALANCE');
+    if (error instanceof CoinError && error.code === 'ACCOUNT_NOT_FOUND') throw wrestlingHttpError(404, 'Affiliate not found.', 'AFFILIATE_NOT_FOUND');
+    throw error;
+  }
 };
 
 const recalculateWrestlingScores = async (match, session) => {
@@ -16135,7 +16116,7 @@ const refundWrestlingMatch = async ({ matchId, status, reason, req, adminId }) =
     const idempotencyKey = `wrestling:refund:${match._id}:${entry.userId}`;
     const existingLedger = await applyWrestlingSession(ProWrestlingWalletLedger.findOne({ idempotencyKey }), session).lean();
     if (!existingLedger && entry.entryFeeTokens > 0) {
-      const balance = await adjustWrestlingUserTokens({ userId: entry.userId, delta: entry.entryFeeTokens, session });
+      const balance = await adjustWrestlingUserTokens({ userId: entry.userId, delta: entry.entryFeeTokens, session, transactionId: idempotencyKey });
       await ProWrestlingWalletLedger.create([{
         accountType: 'USER',
         userId: entry.userId,
@@ -16365,7 +16346,7 @@ const joinWrestlingMatch = async (req, res) => {
       const duplicate = await applyWrestlingSession(ProWrestlingEntry.findOne({ matchId, userId }), session).lean();
       if (duplicate) return { entry: duplicate, idempotent: true };
 
-      const balance = await adjustWrestlingUserTokens({ userId, delta: -match.entryFeeTokens, session });
+      const balance = await adjustWrestlingUserTokens({ userId, delta: -match.entryFeeTokens, session, transactionId: `wrestling:entry:${String(match._id)}:${String(userId)}` });
       const affiliateId = match.affiliateId || (mongoose.isValidObjectId(req.body?.affiliateId) ? req.body.affiliateId : null);
       const entryDocuments = await ProWrestlingEntry.create([{
         matchId: match._id,
@@ -17180,7 +17161,7 @@ app.post('/api/admin/wrestling/matches/:id/finalize', requireProWrestlingEnabled
           const idempotencyKey = `wrestling:payout:${match._id}:${prediction.userId}`;
           const existingLedger = await applyWrestlingSession(ProWrestlingWalletLedger.findOne({ idempotencyKey }), session).lean();
           if (!existingLedger) {
-            const balance = await adjustWrestlingUserTokens({ userId: prediction.userId, delta: payoutAmount, session });
+            const balance = await adjustWrestlingUserTokens({ userId: prediction.userId, delta: payoutAmount, session, transactionId: idempotencyKey });
             await ProWrestlingWalletLedger.create([{
               accountType: 'USER',
               userId: prediction.userId,
@@ -17220,7 +17201,7 @@ app.post('/api/admin/wrestling/matches/:id/finalize', requireProWrestlingEnabled
         const idempotencyKey = `wrestling:affiliate:${match._id}:${match.affiliateId}`;
         const existingLedger = await applyWrestlingSession(ProWrestlingWalletLedger.findOne({ idempotencyKey }), session).lean();
         if (!existingLedger) {
-          const balance = await adjustWrestlingAffiliateTokens({ affiliateId: match.affiliateId, delta: affiliateCommissionTokens, session });
+          const balance = await adjustWrestlingAffiliateTokens({ affiliateId: match.affiliateId, delta: affiliateCommissionTokens, session, transactionId: idempotencyKey });
           await ProWrestlingWalletLedger.create([{
             accountType: 'AFFILIATE',
             affiliateId: match.affiliateId,
@@ -17596,7 +17577,7 @@ app.post('/api/admin/wrestling/wallet-adjustment', verifyAdminToken, requireProW
       const match = await applyWrestlingSession(ProWrestlingMatch.findById(matchId), session);
       if (!match) throw wrestlingHttpError(404, 'Wrestling match not found.', 'MATCH_NOT_FOUND');
       const delta = direction === 'CREDIT' ? amount : -amount;
-      const balance = await adjustWrestlingUserTokens({ userId, delta, session });
+      const balance = await adjustWrestlingUserTokens({ userId, delta, session, transactionId: key });
       const documents = await ProWrestlingWalletLedger.create([{
         accountType: 'USER',
         userId,
@@ -18353,6 +18334,78 @@ const fightEntryLedgerSchema = new mongoose.Schema({
 const FightEntryLedger = mongoose.models.FightEntryLedger
   || mongoose.model('FightEntryLedger', fightEntryLedgerSchema);
 
+// The one way FM COINS balances change (see coin-wallet.js).
+const coinWallet = createCoinWallet({
+  mongoose,
+  getLedgerCollection: () => FightEntryLedger.collection,
+  models: { user: 'User', affiliate: 'Affiliate', house: 'Admintokens' },
+});
+const { applyCoinChange, runCoinTransaction, topUpCoins } = coinWallet;
+// Shared with add-on modules (e.g. Player Recovery restorations).
+app.locals.coinWallet = coinWallet;
+// Turns a wallet refusal into the response the site already uses.
+const coinErrorResponse = (res, error, fallbackMessage = 'Could not update FM COINS.') => {
+  if (error instanceof CoinError) {
+    if (error.code === 'INSUFFICIENT_FM_COINS') return res.status(402).json({ code: 'INSUFFICIENT_FM', message: 'Not enough FM COINS.', tokensRemaining: String(error.balance ?? 0), balance: error.balance ?? 0 });
+    if (error.code === 'ACCOUNT_NOT_FOUND') return res.status(404).json({ code: error.code, message: 'Account not found.' });
+    if (error.code === 'INVALID_AMOUNT') return res.status(400).json({ code: error.code, message: error.message });
+    if (error.code === 'DATABASE_NOT_TRANSACTIONAL') return res.status(503).json({ code: error.code, message: error.message });
+  }
+  console.error('FM COINS change failed:', error && error.message);
+  return res.status(500).json({ message: fallbackMessage });
+};
+// A request's own idempotency key (sent by the site with each click) makes a
+// repeated request a no-op. Without one, the change still happens exactly once.
+const coinRequestKey = (req) => {
+  const raw = String(req.get?.('idempotency-key') || req.body?.idempotencyKey || req.body?.requestId || '').trim();
+  return /^[A-Za-z0-9_.:-]{8,120}$/.test(raw) ? raw : '';
+};
+const requestTransactionId = (req, prefix) => {
+  const key = coinRequestKey(req);
+  return key ? `${prefix}:req:${key}` : `${prefix}:${crypto.randomUUID()}`;
+};
+// Test accounts only: set a tester's balance to a fixed amount for a fresh test run.
+// Recorded like every other change, and the isTestAccount check is part of the same
+// atomic step, so a real player's balance can never be touched by this.
+const resetTestAccountCoins = async (userId, coins, reason = 'test_account_reset') => {
+  const target = Math.max(0, Math.round(Number(coins) || 0));
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    const account = await User.collection.findOne({ _id: new mongoose.Types.ObjectId(String(userId)), isTestAccount: true }, { projection: { tokens: 1 } });
+    if (!account) return false;
+    const delta = target - normalizeWalletTokenNumber(account.tokens);
+    if (delta === 0) return true;
+    try {
+      await applyCoinChange({
+        account: 'user', id: account._id, delta, reason, reference: 'test-accounts',
+        transactionId: `${reason}:${String(account._id)}:${crypto.randomUUID()}`,
+        extraFilter: { isTestAccount: true, tokens: account.tokens },
+      });
+      return true;
+    } catch (error) {
+      if (!(error instanceof CoinError && error.code === 'CONDITION_NOT_MET')) throw error;
+    }
+  }
+  return false;
+};
+const resetAllTestAccountCoins = async (coins) => {
+  const testers = await User.collection.find({ isTestAccount: true }, { projection: { _id: 1 } }).toArray();
+  let changed = 0;
+  for (const tester of testers) if (await resetTestAccountCoins(tester._id, coins)) changed += 1;
+  return changed;
+};
+// New accounts are created with their opening balance in one step; this adds the
+// matching coin-history record (once per account) so every balance has a source.
+const recordOpeningBalance = async (account, accountId, amount, reason, session = null) => {
+  const opening = normalizeWalletTokenNumber(amount);
+  if (!accountId || !opening) return;
+  const now = new Date();
+  await FightEntryLedger.collection.insertOne({
+    userId: new mongoose.Types.ObjectId(String(accountId)), matchId: reason, sourceType: 'match', type: 'FIGHT_ENTRY_REFUND',
+    amount: opening, balanceBefore: 0, balanceAfter: opening, idempotencyKey: `opening_balance:${account}:${String(accountId)}`,
+    metadata: { reason, account, transactionId: `opening_balance:${account}:${String(accountId)}`, openingBalance: true }, createdAt: now, updatedAt: now,
+  }, session ? { session: session.session || session } : undefined).catch((error) => { if (error?.code !== 11000) console.warn('Opening balance record failed:', error.message); });
+};
+
 const fightTokenBalance = (value) => {
   const parsed = Number.parseInt(String(value ?? '0'), 10);
   return Number.isFinite(parsed) ? Math.max(0, parsed) : 0;
@@ -18517,39 +18570,30 @@ async function createFightEntry({ userId, fightId, predictions, idempotencyKey, 
     let balanceAfter = 0;
 
     if (entryFee > 0) {
-      const user = await withFightSession(User.findById(userId), session);
-      if (!user) throw fightEntryError(404, 'User not found.', 'USER_NOT_FOUND');
-
-      balanceBefore = fightTokenBalance(user.tokens);
-      balanceAfter = balanceBefore - entryFee;
-      if (balanceAfter < 0) {
-        throw fightEntryError(402, 'Not enough FM coins to enter this fight.', 'INSUFFICIENT_FUNDS', {
-          balance: balanceBefore,
-          entryFee,
-          shortfall: entryFee - balanceBefore,
+      // The fee and its coin-history record are one atomic step that cannot overdraw.
+      let charge;
+      try {
+        charge = await applyCoinChange({
+          account: 'user', id: userId, delta: -entryFee, reason: 'fight_entry', sourceType,
+          transactionId: `fight:ledger:${key}`, reference: String(fightId), session,
+          meta: { category: fight.matchCategory || null, ...(creditedAffiliateId ? { referralAffiliateId: creditedAffiliateId } : {}) },
         });
+      } catch (chargeError) {
+        if (chargeError instanceof CoinError && chargeError.code === 'INSUFFICIENT_FM_COINS') {
+          throw fightEntryError(402, 'Not enough FM coins to enter this fight.', 'INSUFFICIENT_FUNDS', {
+            balance: chargeError.balance, entryFee, shortfall: entryFee - chargeError.balance,
+          });
+        }
+        if (chargeError instanceof CoinError && chargeError.code === 'ACCOUNT_NOT_FOUND') throw fightEntryError(404, 'User not found.', 'USER_NOT_FOUND');
+        throw chargeError;
       }
-
-      user.tokens = String(balanceAfter);
-      await user.save(session ? { session } : undefined);
+      balanceBefore = charge.balanceBefore;
+      balanceAfter = charge.balanceAfter;
 
       // Recorded per fight so settlement can show declared prize vs fees taken —
       // the number that grows with entrants.
       fight.collectedFees = Math.max(0, Number(fight.collectedFees) || 0) + entryFee;
       await fight.save(session ? { session } : undefined);
-
-      await FightEntryLedger.create([{
-        userId,
-        matchId: fightId,
-        sourceType,
-        type: 'FIGHT_ENTRY',
-        amount: -entryFee,
-        balanceBefore,
-        balanceAfter,
-        idempotencyKey: `fight:ledger:${key}`,
-        metadata: { category: fight.matchCategory || null,
-          ...(creditedAffiliateId ? { referralAffiliateId: creditedAffiliateId } : {}) },
-      }], session ? { session } : undefined);
     } else {
       const user = await withFightSession(User.findById(userId).select('tokens'), session).lean();
       balanceBefore = fightTokenBalance(user?.tokens);
@@ -18708,24 +18752,15 @@ async function refundFightEntries({ fightId, userId = null, reason = 'Fight canc
         const refundAmount = Math.max(0, Math.round(Math.abs(Number(originalDebit?.amount) || 0)));
 
         if (refundAmount > 0) {
-          const user = await withFightSession(User.findById(entry.playerId), session);
+          const user = await withFightSession(User.findById(entry.playerId).select('_id email'), session).lean();
           if (user) {
-            const balanceBefore = fightTokenBalance(user.tokens);
-            const balanceAfter = balanceBefore + refundAmount;
-            user.tokens = String(balanceAfter);
-            await user.save(session ? { session } : undefined);
-
-            await FightEntryLedger.create([{
-              userId: entry.playerId,
-              matchId: String(fightId),
-              sourceType,
-              type: 'FIGHT_ENTRY_REFUND',
-              amount: refundAmount,
-              balanceBefore,
-              balanceAfter,
-              idempotencyKey,
-              metadata: { reason, adminId, originalLedgerId: originalDebit?._id || null },
-            }], session ? { session } : undefined);
+            // Atomic credit + its record, once per player per fight (idempotencyKey).
+            const credit = await applyCoinChange({
+              account: 'user', id: entry.playerId, delta: refundAmount, reason: 'fight_entry_refund', sourceType,
+              transactionId: idempotencyKey, reference: String(fightId), session,
+              meta: { refundReason: reason, adminId, originalLedgerId: originalDebit?._id || null },
+            });
+            const balanceAfter = credit.balanceAfter;
 
             totalRefunded += refundAmount;
             refunds.push({ userId: entry.playerId, amount: refundAmount, balanceAfter, email: user.email });
@@ -18939,26 +18974,32 @@ const resolveAffiliatePayout = async ({ affiliateId, payoutIndex, nextStatus, re
   }
 
   const amount = Math.max(0, Math.floor(Number(payout.amount) || 0));
+  const resolvedAt = new Date();
 
-  if (creditBack && amount > 0) {
-    const balance = Number.parseInt(String(affiliate.tokens || '0'), 10) || 0;
-    affiliate.tokens = String(balance + amount);
-    await recordWalletMove({
-      userId: affiliate._id,
-      amount,
-      balanceBefore: balance,
-      balanceAfter: balance + amount,
-      reason: 'payout_rejected_credit_back',
-      reference: String(payoutIndex),
-    });
-  }
-
+  // One atomic step: the payout leaves "pending" exactly once, and only that step
+  // returns the coins, so a double click or retry can never credit twice.
+  const moved = await runCoinTransaction(async (session) => {
+    const statusPath = `payouts.${payoutIndex}.status`;
+    const marked = await Affiliate.collection.updateOne(
+      { _id: affiliate._id, $or: [{ [statusPath]: { $in: ['pending', 'Pending', 'PENDING', '', null] } }, { [statusPath]: { $exists: false } }] },
+      { $set: { [statusPath]: nextStatus, [`payouts.${payoutIndex}.resolvedAt`]: resolvedAt,
+        ...(reason ? { [`payouts.${payoutIndex}.reason`]: reason } : {}), ...(adminId ? { [`payouts.${payoutIndex}.resolvedBy`]: String(adminId) } : {}) } },
+      { session: session.session || session },
+    );
+    if (!marked.modifiedCount) return false;
+    if (creditBack && amount > 0) {
+      await applyCoinChange({
+        account: 'affiliate', id: affiliate._id, delta: amount, reason: 'payout_rejected_credit_back',
+        transactionId: `payout_rejected_credit_back:${String(payout._id || `${affiliate._id}:${payoutIndex}`)}`, reference: String(payout._id || payoutIndex), session,
+      });
+    }
+    return true;
+  });
+  if (!moved) return { affiliate: await Affiliate.findById(affiliate._id), payout, alreadyResolved: true, status: String(payout.status || '').toLowerCase() };
   payout.status = nextStatus;
-  payout.resolvedAt = new Date();
+  payout.resolvedAt = resolvedAt;
   if (reason) payout.reason = reason;
   if (adminId) payout.resolvedBy = String(adminId);
-
-  await affiliate.save();
 
   const paid = nextStatus === 'paid';
   await sendMoneyNotice({
@@ -18977,7 +19018,7 @@ const resolveAffiliatePayout = async ({ affiliateId, payoutIndex, nextStatus, re
         ],
   });
 
-  return { affiliate, payout, alreadyResolved: false, creditedBack: Boolean(creditBack) && amount > 0, amount };
+  return { affiliate: await Affiliate.findById(affiliate._id), payout, alreadyResolved: false, creditedBack: Boolean(creditBack) && amount > 0, amount };
 };
 
 // Approve — the money was actually sent. Balance stays debited.
@@ -19249,20 +19290,12 @@ app.post('/api/admin/fm-plus/:userId/cancel', verifyAdminToken, async (req, res)
 
     let balanceAfter = Number.parseInt(String(user.tokens || '0'), 10) || 0;
     if (refundCoins > 0) {
-      const balanceBefore = balanceAfter;
-      balanceAfter = balanceBefore + refundCoins;
-      user.tokens = String(balanceAfter);
-      await FightEntryLedger.create([{
-        userId,
-        matchId: 'fm-plus',
-        sourceType: 'match',
-        type: 'FIGHT_ENTRY_REFUND',
-        amount: refundCoins,
-        balanceBefore,
-        balanceAfter,
-        idempotencyKey: `fmplus:refund:${userId}:${Date.now()}`,
-        metadata: { reason, product: 'fm-plus' },
-      }]);
+      const refund = await applyCoinChange({
+        account: 'user', id: user._id, delta: refundCoins, reason: 'fm_plus_cancel_refund',
+        transactionId: requestTransactionId(req, `fmplus:refund:${userId}`), reference: 'fm-plus',
+        meta: { refundReason: reason, product: 'fm-plus' },
+      });
+      balanceAfter = refund.balanceAfter;
     }
 
     await user.save();
@@ -19326,31 +19359,27 @@ app.post('/api/checkout/claim-guest-orders', verifyToken, async (req, res) => {
       if (alreadyClaimed) continue;
 
       const coins = Math.max(0, Math.floor(Number(order.creditedCoins || order.coins || 0)));
-      const balanceBefore = Number.parseInt(String(user.tokens || '0'), 10) || 0;
-      const balanceAfter = balanceBefore + coins;
 
-      if (coins > 0) {
-        user.tokens = String(balanceAfter);
-        await FightEntryLedger.create([{
-          userId,
-          matchId: 'guest-claim',
-          sourceType: 'match',
-          type: 'FIGHT_ENTRY_REFUND',
-          amount: coins,
-          balanceBefore,
-          balanceAfter,
-          idempotencyKey: `guestclaim:${order._id}`,
-          metadata: { orderNumber: order.orderNumber || null, product: 'guest-coin-claim' },
-        }]);
-        totalCoins += coins;
-      }
-
-      order.userId = userId;
-      await order.save();
+      // Claiming the order and crediting it are one atomic step, once per order.
+      const claimedCoins = await runCoinTransaction(async (session) => {
+        const ds = session.session || session;
+        const claim = await order.constructor.collection.updateOne(
+          { _id: order._id, $or: [{ userId: { $exists: false } }, { userId: null }] },
+          { $set: { userId: new mongoose.Types.ObjectId(String(userId)) } },
+          { session: ds },
+        );
+        if (!claim.modifiedCount) return 0;
+        if (coins <= 0) return 0;
+        const credit = await applyCoinChange({
+          account: 'user', id: userId, delta: coins, reason: 'guest_order_claim', transactionId: `guestclaim:${order._id}`,
+          reference: 'guest-claim', session, meta: { orderNumber: order.orderNumber || null, product: 'guest-coin-claim' },
+        });
+        return credit.applied ? coins : 0;
+      });
+      totalCoins += claimedCoins;
     }
 
     if (totalCoins > 0) {
-      await user.save();
       await sendMoneyNotice({
         to: user.email,
         subject: 'Your earlier purchase has been added',
@@ -20357,43 +20386,27 @@ app.post('/api/wallet/spend', verifyToken, requireScope(TOKEN_SCOPES.PLAYER), as
     const isSubscribed = Boolean(user.isSubscribed);
     const cost = isSubscribed ? price.fmPlus : price.base;
 
-    const balanceBefore = Number.parseInt(String(user.tokens || '0'), 10) || 0;
-    if (balanceBefore < cost) {
-      return res.status(402).json({
-        message: `Not enough FM coins for ${price.label.toLowerCase()}.`,
-        code: 'INSUFFICIENT_FUNDS',
-        balance: balanceBefore,
-        cost,
-        shortfall: cost - balanceBefore,
+    // Atomic spend that cannot overdraw; a repeated request with the same key spends once.
+    let spend;
+    try {
+      spend = await applyCoinChange({
+        account: 'user', id: userId, delta: -cost, reason: `wallet_spend_${purpose}`, reference: purpose,
+        transactionId: requestTransactionId(req, `spend:${purpose}:${userId}`),
+        meta: { purpose, label: price.label, fmPlus: isSubscribed },
       });
+    } catch (spendError) {
+      if (spendError instanceof CoinError && spendError.code === 'INSUFFICIENT_FM_COINS') {
+        return res.status(402).json({
+          message: `Not enough FM coins for ${price.label.toLowerCase()}.`,
+          code: 'INSUFFICIENT_FUNDS',
+          balance: spendError.balance,
+          cost,
+          shortfall: cost - spendError.balance,
+        });
+      }
+      throw spendError;
     }
-
-    const balanceAfter = balanceBefore - cost;
-    // Atomic: only applies if tokens still equals what we read. A concurrent
-    // request that already spent changes the value, so this matches nothing.
-    const applied = await User.findOneAndUpdate(
-      { _id: userId, tokens: String(balanceBefore) },
-      { tokens: String(balanceAfter) },
-      { new: true }
-    );
-    if (!applied) {
-      return res.status(409).json({
-        message: 'Your balance just changed. Please try again.',
-        code: 'BALANCE_CHANGED',
-      });
-    }
-
-    await FightEntryLedger.create([{
-      userId,
-      matchId: purpose,
-      sourceType: 'match',
-      type: 'FIGHT_ENTRY',
-      amount: -cost,
-      balanceBefore,
-      balanceAfter,
-      idempotencyKey: `spend:${purpose}:${userId}:${Date.now()}`,
-      metadata: { purpose, label: price.label, fmPlus: isSubscribed },
-    }]);
+    const balanceAfter = spend.balanceAfter;
 
     return res.status(200).json({
       ok: true,
@@ -20443,33 +20456,25 @@ app.post('/api/rewards/claim-daily', verifyToken, requireScope(TOKEN_SCOPES.PLAY
     // Small streak bonus, capped so it cannot run away.
     const coins = DAILY_REWARD_COINS + Math.min(75, (streak - 1) * 5);
 
-    const balanceBefore = Number.parseInt(String(user.tokens || '0'), 10) || 0;
-    const balanceAfter = balanceBefore + coins;
-    // Atomic claim: matches only while lastDailyRewardAt is still the value we
-    // read, so a second simultaneous tap finds nothing and cannot double-credit.
-    const claimed = await User.findOneAndUpdate(
-      { _id: userId, lastDailyRewardAt: last || { $in: [null, undefined] } },
-      { tokens: String(balanceAfter), lastDailyRewardAt: now, dailyRewardStreak: user.dailyRewardStreak },
-      { new: true }
-    );
-    if (!claimed) {
-      return res.status(409).json({
-        message: 'You have already claimed today.',
-        code: 'ALREADY_CLAIMED',
+    // Atomic claim AND credit: matches only while lastDailyRewardAt is still the
+    // value we read (a second tap finds nothing), and the coins are ADDED to the
+    // live balance rather than a balance read earlier.
+    let reward;
+    try {
+      reward = await applyCoinChange({
+        account: 'user', id: userId, delta: coins, reason: 'daily_reward', reference: 'daily-reward',
+        transactionId: `daily:${userId}:${now.toISOString().slice(0, 10)}`, meta: { streak },
+        extraFilter: { lastDailyRewardAt: last || null },
+        extraSet: { lastDailyRewardAt: now, dailyRewardStreak: user.dailyRewardStreak },
       });
+    } catch (claimError) {
+      if (claimError instanceof CoinError && claimError.code === 'CONDITION_NOT_MET') {
+        return res.status(409).json({ message: 'You have already claimed today.', code: 'ALREADY_CLAIMED' });
+      }
+      throw claimError;
     }
-
-    await FightEntryLedger.create([{
-      userId,
-      matchId: 'daily-reward',
-      sourceType: 'match',
-      type: 'FIGHT_ENTRY_REFUND',
-      amount: coins,
-      balanceBefore,
-      balanceAfter,
-      idempotencyKey: `daily:${userId}:${now.toISOString().slice(0, 10)}`,
-      metadata: { streak },
-    }]);
+    if (reward.duplicate) return res.status(409).json({ message: 'You have already claimed today.', code: 'ALREADY_CLAIMED' });
+    const balanceAfter = reward.balanceAfter;
 
     return res.status(200).json({ ok: true, coins: balanceAfter, awarded: coins, streak });
   } catch (error) {
@@ -21005,7 +21010,7 @@ app.post('/api/admin/demo-card/replay', verifyAdminToken, requireTestAccounts, a
     }
 
     // 4. Top the testers back up. Only isTestAccount rows.
-    const refilled = await User.updateMany({ isTestAccount: true }, { $set: { tokens: String(coins) } });
+    const refilled = { modifiedCount: await resetAllTestAccountCoins(coins) };
 
     // 5. Clear their notification read marks so the bell lights up again.
     await User.updateMany({ isTestAccount: true }, { $set: { notificationsReadAt: null } });
@@ -21158,10 +21163,10 @@ app.post('/api/admin/test-accounts', verifyAdminToken, requireTestAccounts, asyn
           $set: {
             password: await bcrypt.hash(password, 10),
             verified: true,
-            tokens: String(coins),
             isTestAccount: true,
           },
         });
+        await resetTestAccountCoins(existing._id, coins);
         created.players.push({ email, password, reset: true });
         continue;
       }
@@ -21397,8 +21402,8 @@ app.get('/api/admin/test-accounts/reconcile', verifyAdminToken, async (req, res)
 app.post('/api/admin/test-accounts/refill', verifyAdminToken, requireTestAccounts, async (req, res) => {
   try {
     const coins = Math.max(0, Math.round(Number(req.body?.coins ?? TEST_ACCOUNT_START_COINS)));
-    const result = await User.updateMany({ isTestAccount: true }, { $set: { tokens: String(coins) } });
-    return res.json({ ok: true, refilled: result?.modifiedCount || 0, coins });
+    const refilled = await resetAllTestAccountCoins(coins);
+    return res.json({ ok: true, refilled, coins });
   } catch (error) {
     return res.status(500).json({ ok: false, message: 'Could not refill test accounts.' });
   }
@@ -22752,24 +22757,14 @@ const ownerReferralShares = async ({ fightId, pot, collectedFees, platformCut, e
 };
 
 const creditOwnerReferralShare = async (fightId, award) => {
-  const key = `move:owner_referral_share:${award.affiliateId}:${fightId}`;
-  const session = await mongoose.startSession();
-  try {
-    await session.withTransaction(async () => {
-      if (await FightEntryLedger.exists({ idempotencyKey: key }).session(session)) return;
-      const affiliate = await Affiliate.findById(award.affiliateId).session(session);
-      if (!affiliate) return;
-      const before = Number.parseInt(String(affiliate.tokens || '0'), 10) || 0;
-      affiliate.tokens = String(before + award.share);
-      await affiliate.save({ session });
-      await FightEntryLedger.create([{ userId: affiliate._id, matchId: fightId, sourceType: 'match',
-        type: 'FIGHT_ENTRY_REFUND', amount: award.share, balanceBefore: before, balanceAfter: before + award.share,
-        idempotencyKey: key, metadata: { reason: 'owner_referral_share', entrants: award.paidEntries,
-          collectedFees: award.referredFees, sharePct: AFFILIATE_SPLIT_PCT, potTotal: award.potTotal } }], { session });
-    });
-  } catch (error) {
-    if (error?.code !== 11000) throw error;
-  } finally { await session.endSession(); }
+  // Once per affiliate per fight (same key as before), atomic, with its record.
+  const exists = await Affiliate.exists({ _id: award.affiliateId });
+  if (!exists) return;
+  await applyCoinChange({
+    account: 'affiliate', id: award.affiliateId, delta: Math.max(0, Math.floor(Number(award.share) || 0)), reason: 'owner_referral_share',
+    transactionId: `move:owner_referral_share:${award.affiliateId}:${fightId}`, reference: String(fightId),
+    meta: { entrants: award.paidEntries, collectedFees: award.referredFees, sharePct: AFFILIATE_SPLIT_PCT, potTotal: award.potTotal },
+  });
 };
 
 const settleOwnerReferralShares = async (fightId, fight, scored) => {
@@ -22952,22 +22947,15 @@ app.post('/api/admin/fights/:fightId/settle', verifyAdminToken, async (req, res)
     // Promoter's half of the house cut on an affiliate fight.
     let promoterPaid = 0;
     if (promoterId && houseCut > 0) {
-      const promoter = await Affiliate.findById(promoterId);
+      const promoter = await Affiliate.findById(promoterId).select('_id').lean();
       if (promoter) {
-        const pBefore = Number.parseInt(String(promoter.tokens || '0'), 10) || 0;
         // Fixed cut of the declared pot, plus their share of everything the
         // contest took above it. This is how promoter earnings grow with entrants
         // while the prize stays exactly as advertised.
         promoterPaid = houseCut + promoterSurplusShare;
-        promoter.tokens = String(pBefore + promoterPaid);
-        await promoter.save();
-        await recordWalletMove({
-          userId: promoter._id,
-          amount: promoterPaid,
-          balanceBefore: pBefore,
-          balanceAfter: pBefore + promoterPaid,
-          reason: 'affiliate_pot_share',
-          reference: fightId,
+        await applyCoinChange({
+          account: 'affiliate', id: promoter._id, delta: Math.max(0, Math.floor(promoterPaid)), reason: 'affiliate_pot_share',
+          transactionId: `affiliate_pot_share:${String(fightId)}:${String(promoter._id)}`, reference: String(fightId),
           meta: {
             potTotal: pot, sharePct: housePct,
             fixedCut: houseCut, surplusShare: promoterSurplusShare,
@@ -22988,21 +22976,14 @@ app.post('/api/admin/fights/:fightId/settle', verifyAdminToken, async (req, res)
     // Credit each winner.
     let totalPaid = 0;
     for (const award of awards) {
-      const winner = await User.findById(award.userId);
+      const winner = await User.findById(award.userId).select('_id email').lean();
       if (!winner) continue;
-      const wBefore = Number.parseInt(String(winner.tokens || '0'), 10) || 0;
-      winner.tokens = String(wBefore + award.amount);
-      await winner.save();
-      totalPaid += award.amount;
-      await recordWalletMove({
-        userId: winner._id,
-        amount: award.amount,
-        balanceBefore: wBefore,
-        balanceAfter: wBefore + award.amount,
-        reason: 'prize_award',
-        reference: fightId + ':' + award.place,
+      await applyCoinChange({
+        account: 'user', id: winner._id, delta: Math.max(0, Math.floor(Number(award.amount) || 0)), reason: 'prize_award',
+        transactionId: `prize_award:${String(fightId)}:${String(winner._id)}:${award.place}`, reference: fightId + ':' + award.place,
         meta: { place: award.place, tied: award.tied, potTotal: pot },
       });
+      totalPaid += award.amount;
       sendMoneyNotice({
         to: winner.email,
         subject: award.place === 1 ? 'You won!' : `You finished #${award.place}`,
@@ -23344,31 +23325,22 @@ const requireEntryForChallenge = async (userId, fightId, session = null) => {
 
 // Moves stake out of a wallet and into escrow, or back again. Same ledger the
 // rest of the money paths write to, so a challenge is auditable alongside entries.
-const moveChallengeStake = async ({ userId, delta, reason, reference, session, meta = {} }) => {
-  const user = await withFightSession(User.findById(userId), session);
-  if (!user) throw h2hError(404, 'Account not found.', 'USER_NOT_FOUND');
-  const before = fightTokenBalance(user.tokens);
-  const after = before + delta;
-  if (after < 0) {
-    throw h2hError(402, 'Not enough FM coins for that stake.', 'INSUFFICIENT_FUNDS', {
-      balance: before,
-      stake: Math.abs(delta),
-      shortfall: Math.abs(delta) - before,
+const moveChallengeStake = async ({ userId, delta, reason, reference, session, meta = {}, transactionId = null }) => {
+  try {
+    const moved = await applyCoinChange({
+      account: 'user', id: userId, delta: Math.trunc(Number(delta)), reason, reference, session, meta,
+      transactionId: transactionId || `move:${reason}:${userId}:${reference}`,
     });
+    return { before: moved.balanceBefore, after: moved.balanceAfter };
+  } catch (error) {
+    if (error instanceof CoinError && error.code === 'INSUFFICIENT_FM_COINS') {
+      throw h2hError(402, 'Not enough FM coins for that stake.', 'INSUFFICIENT_FUNDS', {
+        balance: error.balance, stake: Math.abs(delta), shortfall: Math.abs(delta) - error.balance,
+      });
+    }
+    if (error instanceof CoinError && error.code === 'ACCOUNT_NOT_FOUND') throw h2hError(404, 'Account not found.', 'USER_NOT_FOUND');
+    throw error;
   }
-  user.tokens = String(after);
-  await user.save(session ? { session } : undefined);
-  await recordWalletMove({
-    userId,
-    amount: delta,
-    balanceBefore: before,
-    balanceAfter: after,
-    reason,
-    reference,
-    meta,
-    session,
-  });
-  return { before, after };
 };
 
 // --------------------------------------------------------------------------
@@ -23449,6 +23421,8 @@ app.post('/api/challenges', requireHeadToHead, submitLimiter, verifyToken, requi
         delta: -stake,
         reason: 'h2h_stake_escrow',
         reference: `h2h:${fightId}:${challengerId}`,
+        // A player may challenge several opponents on one fight, so each escrow is its own transaction.
+        transactionId: `h2h_stake_escrow:create:${fightId}:${challengerId}:${String(opponent._id)}:${crypto.randomUUID()}`,
         session,
         meta: { opponentId: String(opponent._id), stake },
       });
@@ -23558,6 +23532,7 @@ app.post('/api/challenges/:id/accept', requireHeadToHead, verifyToken, requireSc
         delta: -challenge.stake,
         reason: 'h2h_stake_escrow',
         reference: `h2h:${challenge.fightId}:${userId}`,
+        transactionId: `h2h_stake_escrow:accept:${String(challenge._id)}:${userId}`,
         session,
         meta: { challengeId: String(challenge._id), stake: challenge.stake },
       });
@@ -24468,19 +24443,19 @@ app.post('/api/seasons/:seasonId/draft', requireSeasonCards, submitLimiter, veri
       if (existing) throw seasonError(409, 'You already have a card in this season.', 'ALREADY_DRAFTED');
 
       if (fee > 0) {
-        const before = fightTokenBalance(user.tokens);
-        if (before < fee) {
-          throw seasonError(402, 'Not enough FM coins for this season.', 'INSUFFICIENT_FUNDS', {
-            balance: before, entryFee: fee, shortfall: fee - before,
+        try {
+          await applyCoinChange({
+            account: 'user', id: userId, delta: -fee, reason: 'season_entry', reference: `season:${seasonId}:${userId}`,
+            transactionId: `move:season_entry:${userId}:season:${seasonId}:${userId}`, meta: { seasonId, seasonName: season.name }, session,
           });
+        } catch (feeError) {
+          if (feeError instanceof CoinError && feeError.code === 'INSUFFICIENT_FM_COINS') {
+            throw seasonError(402, 'Not enough FM coins for this season.', 'INSUFFICIENT_FUNDS', {
+              balance: feeError.balance, entryFee: fee, shortfall: fee - feeError.balance,
+            });
+          }
+          throw feeError;
         }
-        user.tokens = String(before - fee);
-        await user.save({ session });
-        await recordWalletMove({
-          userId, amount: -fee, balanceBefore: before, balanceAfter: before - fee,
-          reason: 'season_entry', reference: `season:${seasonId}:${userId}`,
-          meta: { seasonId, seasonName: season.name }, session,
-        });
         await Season.updateOne({ _id: seasonId }, { $inc: { prizePool: fee } }, session ? { session } : undefined);
       }
 
@@ -24555,15 +24530,11 @@ const settleSeason = async (seasonId) => {
     refundedNoField = true;
     const solo = paidEntrants[0];
     try {
-      const user = await User.findById(solo.userId).select('tokens email');
+      const user = await User.findById(solo.userId).select('email').lean();
       if (user) {
-        const before = fightTokenBalance(user.tokens);
-        user.tokens = String(before + solo.entryFeePaid);
-        await user.save();
-        await recordWalletMove({
-          userId: solo.userId, amount: solo.entryFeePaid, balanceBefore: before,
-          balanceAfter: before + solo.entryFeePaid, reason: 'season_refund_no_field',
-          reference: `season:solo-refund:${seasonId}:${solo.userId}`,
+        await applyCoinChange({
+          account: 'user', id: solo.userId, delta: Math.floor(Number(solo.entryFeePaid) || 0), reason: 'season_refund_no_field',
+          reference: `season:solo-refund:${seasonId}:${solo.userId}`, transactionId: `move:season_refund_no_field:${solo.userId}:season:solo-refund:${seasonId}:${solo.userId}`,
           meta: { seasonId: String(seasonId) },
         });
         if (user.email) {
@@ -24633,15 +24604,11 @@ const settleSeason = async (seasonId) => {
     let paid = 0;
     for (const award of awards) {
       if (!award?.amount || award.amount <= 0) continue;
-      const winner = await User.findById(award.userId).select('email playerName tokens');
+      const winner = await User.findById(award.userId).select('email playerName').lean();
       if (!winner) continue;
-      const before = fightTokenBalance(winner.tokens);
-      winner.tokens = String(before + award.amount);
-      await winner.save();
-      await recordWalletMove({
-        userId: award.userId, amount: award.amount, balanceBefore: before,
-        balanceAfter: before + award.amount, reason: 'season_prize',
-        reference: `season:prize:${seasonId}:${award.userId}`,
+      await applyCoinChange({
+        account: 'user', id: award.userId, delta: Math.floor(Number(award.amount) || 0), reason: 'season_prize',
+        reference: `season:prize:${seasonId}:${award.userId}`, transactionId: `move:season_prize:${award.userId}:season:prize:${seasonId}:${award.userId}`,
         meta: { seasonId, place: award.place },
       });
       paid += award.amount;
@@ -24760,15 +24727,11 @@ app.post('/api/admin/seasons/:seasonId/status', verifyAdminToken, async (req, re
       const rosters = await SeasonRoster.find({ seasonId: String(season._id), entryFeePaid: { $gt: 0 } }).lean();
       for (const roster of rosters) {
         try {
-          const user = await User.findById(roster.userId).select('tokens email');
+          const user = await User.findById(roster.userId).select('email').lean();
           if (!user) continue;
-          const before = fightTokenBalance(user.tokens);
-          user.tokens = String(before + roster.entryFeePaid);
-          await user.save();
-          await recordWalletMove({
-            userId: roster.userId, amount: roster.entryFeePaid, balanceBefore: before,
-            balanceAfter: before + roster.entryFeePaid, reason: 'season_refund',
-            reference: `season:refund:${season._id}:${roster.userId}`,
+          await applyCoinChange({
+            account: 'user', id: roster.userId, delta: Math.floor(Number(roster.entryFeePaid) || 0), reason: 'season_refund',
+            reference: `season:refund:${season._id}:${roster.userId}`, transactionId: `move:season_refund:${roster.userId}:season:refund:${season._id}:${roster.userId}`,
             meta: { seasonId: String(season._id) },
           });
           if (user.email) {
@@ -25131,19 +25094,19 @@ app.post('/api/team-contests/:contestId/enter', requireTeamCards, submitLimiter,
       if (existing) throw teamError(409, 'You already have a team in this contest.', 'ALREADY_ENTERED');
 
       if (fee > 0) {
-        const before = fightTokenBalance(user.tokens);
-        if (before < fee) {
-          throw teamError(402, 'Not enough FM coins for this contest.', 'INSUFFICIENT_FUNDS', {
-            balance: before, entryFee: fee, shortfall: fee - before,
+        try {
+          await applyCoinChange({
+            account: 'user', id: userId, delta: -fee, reason: 'team_entry', reference: `team:${contestId}:${userId}`,
+            transactionId: `move:team_entry:${userId}:team:${contestId}:${userId}`, meta: { contestId, contestName: contest.name }, session,
           });
+        } catch (feeError) {
+          if (feeError instanceof CoinError && feeError.code === 'INSUFFICIENT_FM_COINS') {
+            throw teamError(402, 'Not enough FM coins for this contest.', 'INSUFFICIENT_FUNDS', {
+              balance: feeError.balance, entryFee: fee, shortfall: fee - feeError.balance,
+            });
+          }
+          throw feeError;
         }
-        user.tokens = String(before - fee);
-        await user.save({ session });
-        await recordWalletMove({
-          userId, amount: -fee, balanceBefore: before, balanceAfter: before - fee,
-          reason: 'team_entry', reference: `team:${contestId}:${userId}`,
-          meta: { contestId, contestName: contest.name }, session,
-        });
         await TeamContest.updateOne({ _id: contestId }, { $inc: { prizePool: fee } }, session ? { session } : undefined);
       }
 
@@ -25234,15 +25197,11 @@ const settleTeamContest = async (contestId) => {
     refundedNoField = true;
     const solo = paid[0];
     try {
-      const user = await User.findById(solo.userId).select('tokens email');
+      const user = await User.findById(solo.userId).select('email').lean();
       if (user) {
-        const before = fightTokenBalance(user.tokens);
-        user.tokens = String(before + solo.entryFeePaid);
-        await user.save();
-        await recordWalletMove({
-          userId: solo.userId, amount: solo.entryFeePaid, balanceBefore: before,
-          balanceAfter: before + solo.entryFeePaid, reason: 'team_refund_no_field',
-          reference: `team:solo-refund:${contestId}:${solo.userId}`,
+        await applyCoinChange({
+          account: 'user', id: solo.userId, delta: Math.floor(Number(solo.entryFeePaid) || 0), reason: 'team_refund_no_field',
+          reference: `team:solo-refund:${contestId}:${solo.userId}`, transactionId: `move:team_refund_no_field:${solo.userId}:team:solo-refund:${contestId}:${solo.userId}`,
           meta: { contestId: String(contestId) },
         });
         if (user.email) {
@@ -25270,15 +25229,11 @@ const settleTeamContest = async (contestId) => {
     let totalPaid = 0;
     for (const award of awards) {
       if (!award?.amount || award.amount <= 0) continue;
-      const winner = await User.findById(award.userId).select('email tokens');
+      const winner = await User.findById(award.userId).select('email').lean();
       if (!winner) continue;
-      const before = fightTokenBalance(winner.tokens);
-      winner.tokens = String(before + award.amount);
-      await winner.save();
-      await recordWalletMove({
-        userId: award.userId, amount: award.amount, balanceBefore: before,
-        balanceAfter: before + award.amount, reason: 'team_prize',
-        reference: `team:prize:${contestId}:${award.userId}`,
+      await applyCoinChange({
+        account: 'user', id: award.userId, delta: Math.floor(Number(award.amount) || 0), reason: 'team_prize',
+        reference: `team:prize:${contestId}:${award.userId}`, transactionId: `move:team_prize:${award.userId}:team:prize:${contestId}:${award.userId}`,
         meta: { contestId, place: award.place },
       });
       totalPaid += award.amount;
@@ -25391,15 +25346,11 @@ app.post('/api/admin/team-contests/:contestId/void', verifyAdminToken, async (re
     const entries = await TeamEntry.find({ contestId: String(contest._id), entryFeePaid: { $gt: 0 } }).lean();
     for (const entry of entries) {
       try {
-        const user = await User.findById(entry.userId).select('tokens email');
+        const user = await User.findById(entry.userId).select('email').lean();
         if (!user) continue;
-        const before = fightTokenBalance(user.tokens);
-        user.tokens = String(before + entry.entryFeePaid);
-        await user.save();
-        await recordWalletMove({
-          userId: entry.userId, amount: entry.entryFeePaid, balanceBefore: before,
-          balanceAfter: before + entry.entryFeePaid, reason: 'team_refund',
-          reference: `team:refund:${contest._id}:${entry.userId}`,
+        await applyCoinChange({
+          account: 'user', id: entry.userId, delta: Math.floor(Number(entry.entryFeePaid) || 0), reason: 'team_refund',
+          reference: `team:refund:${contest._id}:${entry.userId}`, transactionId: `move:team_refund:${entry.userId}:team:refund:${contest._id}:${entry.userId}`,
           meta: { contestId: String(contest._id) },
         });
         if (user.email) {
