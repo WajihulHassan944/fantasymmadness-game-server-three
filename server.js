@@ -2346,8 +2346,11 @@ app.post(
       existingMatch.matchFighterB = matchFighterB || existingMatch.matchFighterB;
       assignIfProvided(existingMatch, 'matchCategory', matchCategory);
       assignIfProvided(existingMatch, 'matchName', matchName);
-      assignIfProvided(existingMatch, 'matchFighterA', selectedFighterPatch.matchFighterA || matchFighterA);
-      assignIfProvided(existingMatch, 'matchFighterB', selectedFighterPatch.matchFighterB || matchFighterB);
+      // Shadow fights take the fighter names as sent (the edit screen already fills in a
+      // library fighter's name). This used to refer to an undefined value, so every
+      // Edit Shadow save that reached it failed.
+      assignIfProvided(existingMatch, 'matchFighterA', matchFighterA);
+      assignIfProvided(existingMatch, 'matchFighterB', matchFighterB);
       assignIfProvided(existingMatch, 'matchDescription', matchDescription);
       assignIfProvided(existingMatch, 'maxRounds', maxRounds);
       assignIfProvided(existingMatch, 'matchCategoryTwo', matchCategoryTwo);
@@ -2590,7 +2593,7 @@ const matchSchema = new mongoose.Schema({
   matchCategoryTwo: String,
   affiliateId: String,
   shadowFightId: String,
-  sourceShadowId: { type: mongoose.Schema.Types.ObjectId, ref: 'Shadow' },
+  // sourceShadowId is declared once, further down (with its index), as before.
   sourceLiveMatchId: { type: mongoose.Schema.Types.ObjectId, ref: 'Match', index: true },
   promotedShadowFightId: { type: mongoose.Schema.Types.ObjectId, ref: 'Shadow' },
   matchName: String,
@@ -5262,7 +5265,7 @@ app.post('/admin/add-tokens-won-spin-wheel', verifyToken, requireScope(TOKEN_SCO
                 <td style="padding: 10px 0;">
                   <p style="font-size: 16px; font-family: Arial, sans-serif; color: #333;">Dear ${firstName},</p>
                   <p style="font-size: 16px; font-family: Arial, sans-serif; color: #333;">
-                    You have been successfully added to Fantasy Madness with ${results} tokens. Below are your login credentials:
+                    You have been successfully added to Fantasy Madness with ${prize} tokens. Below are your login credentials:
                   </p>
                   <ul style="font-size: 16px; font-family: Arial, sans-serif; color: #333;">
                     <li><strong>Email:</strong> ${email}</li>
@@ -5298,7 +5301,7 @@ app.post('/admin/add-tokens-won-spin-wheel', verifyToken, requireScope(TOKEN_SCO
               <tr>
                 <td style="padding: 10px 0;">
                   <p style="font-size: 16px; font-family: Arial, sans-serif; color: #333;">
-                    A new user has been created with the email: ${email} and ${results} tokens have been added.
+                    A new user has been created with the email: ${email} and ${prize} tokens have been added.
                   </p>
                 </td>
               </tr>
@@ -9125,6 +9128,7 @@ app.post('/api/checkout/fm-plus-orders', optionalVerifyToken, async (req, res) =
   }
 });
 
+const reportedFailedOrders = new Set();
 app.get('/api/checkout/orders/:orderNumber/status', async (req, res) => {
   try {
     const orderNumber = String(req.params.orderNumber || '').trim();
@@ -9137,6 +9141,14 @@ app.get('/api/checkout/orders/:orderNumber/status', async (req, res) => {
       .select('orderNumber status creditedCoins bonusCoins creditedAt benefitExpiresAt failureReason')
       .lean();
     if (!order) return res.status(404).json({ ok: false, message: 'Checkout order not found.' });
+    // Count each failed order once (the checkout page re-checks status repeatedly), so
+    // the payment-failure alert reflects real failures. This used to sit after the
+    // response and never ran.
+    if (order.status === 'FAILED' && !reportedFailedOrders.has(orderNumber)) {
+      if (reportedFailedOrders.size > 5000) reportedFailedOrders.clear();
+      reportedFailedOrders.add(orderNumber);
+      recordPaymentFailure({ orderNumber, reason: 'Order settled as FAILED' });
+    }
     return res.json({
       ok: true,
       orderNumber,
@@ -9146,9 +9158,6 @@ app.get('/api/checkout/orders/:orderNumber/status', async (req, res) => {
       benefitExpiresAt: isFmPlus ? order.benefitExpiresAt : undefined,
       message: order.status === 'FAILED' ? 'Payment confirmation could not be completed. Please contact support with the order reference.' : undefined,
     });
-    if (order.status === 'FAILED') {
-      recordPaymentFailure({ orderNumber, reason: 'Order settled as FAILED' });
-    }
   } catch (error) {
     return res.status(500).json({ ok: false, message: 'Checkout status is temporarily unavailable.' });
   }
@@ -20710,7 +20719,7 @@ app.post('/api/admin/demo-card', verifyAdminToken, requireTestAccounts, async (r
           picksRequired: 5,
           // Free, so nobody is blocked by a state rule while testing.
           entryFee: 0,
-          affiliateId: leagueOwner ? String(leagueOwner._id) : '',
+          affiliateId: leagueOwners[0] ? String(leagueOwners[0]._id) : '',
         });
       }
       created.teamContest = { id: contest._id, name };

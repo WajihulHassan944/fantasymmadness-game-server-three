@@ -943,6 +943,68 @@ module.exports = function registerPlayerRecovery({ app, mongoose, verifyAdminTok
     }
   });
 
+  // ---------------------------------------------------------------------------
+  // Affiliate payout check (READ-ONLY). Answers: have any affiliates requested or
+  // received payouts, and was any payout deducted twice (once at request, again at
+  // confirmation, the old double-charge path)? Changes nothing.
+  // ---------------------------------------------------------------------------
+  app.get('/api/admin/player-recovery/payout-check', verifyAdminToken, async (_req, res) => {
+    try {
+      const Affiliate = mongoose.models.Affiliate;
+      if (!Affiliate) return res.status(500).json({ message: 'Affiliate records are not available.' });
+      const ledger = ledgerCollection();
+      const affiliates = await Affiliate.collection.find({}, { projection: { email: 1, firstName: 1, lastName: 1, isTestAccount: 1, payouts: 1 } }).toArray();
+      const statusCounts = {};
+      const payoutRows = [];
+      for (const a of affiliates) {
+        for (const p of (Array.isArray(a.payouts) ? a.payouts : [])) {
+          const status = String(p?.status || 'pending').toLowerCase();
+          statusCounts[status] = (statusCounts[status] || 0) + 1;
+          payoutRows.push({ affiliateId: a._id, email: a.email || '', testAccount: Boolean(a.isTestAccount), payoutId: p?._id ? String(p._id) : '', amount: Number(p?.amount) || 0, status, createdAt: p?.createdAt || null });
+        }
+      }
+      const reasons = ['payout_requested', 'affiliate_payout_legacy', 'payout_rejected_credit_back'];
+      const ledgerCounts = {};
+      for (const reason of reasons) ledgerCounts[reason] = await ledger.countDocuments({ 'metadata.reason': reason });
+      // A payout deducted twice: a request debit AND a confirmation debit for the same payout.
+      const doubleDeductions = [];
+      for (const row of payoutRows) {
+        if (!row.amount) continue;
+        const created = row.createdAt ? new Date(row.createdAt).getTime() : null;
+        const requestDebit = await ledger.findOne({ userId: row.affiliateId, 'metadata.reason': 'payout_requested', $or: [
+          { matchId: row.payoutId },
+          ...(created ? [{ amount: -row.amount, createdAt: { $gte: new Date(created - 120000), $lte: new Date(created + 120000) } }] : []),
+        ] });
+        if (!requestDebit) continue;
+        const confirmDebit = await ledger.findOne({ userId: row.affiliateId, 'metadata.reason': 'affiliate_payout_legacy', amount: -row.amount, createdAt: { $gte: requestDebit.createdAt } });
+        if (confirmDebit) doubleDeductions.push({ email: row.email, testAccount: row.testAccount, amount: row.amount, requestedET: formatET(requestDebit.createdAt), confirmedET: formatET(confirmDebit.createdAt), payoutId: row.payoutId });
+      }
+      const realPayouts = payoutRows.filter((r) => !r.testAccount);
+      const anyActivity = realPayouts.length > 0 || Object.values(ledgerCounts).some((n) => n > 0);
+      res.set('Cache-Control', 'no-store');
+      return res.json({
+        generatedAt: new Date().toISOString(),
+        readOnly: true,
+        affiliates: affiliates.filter((a) => !a.isTestAccount).length,
+        testAffiliates: affiliates.filter((a) => a.isTestAccount).length,
+        payoutRequests: realPayouts.length,
+        testAccountPayoutRequests: payoutRows.length - realPayouts.length,
+        payoutsByStatus: statusCounts,
+        payoutHistoryRecords: ledgerCounts,
+        doubleDeductions,
+        verdict: doubleDeductions.length
+          ? `${doubleDeductions.length} payout${doubleDeductions.length === 1 ? ' was' : 's were'} deducted twice. Review needed.`
+          : anyActivity
+            ? 'Payouts exist, but none was deducted twice.'
+            : 'No affiliate payout requests, confirmations or payout deductions exist. The double-charge fix was preventive only; no money was lost.',
+        payouts: payoutRows.map((r) => ({ ...r, affiliateId: String(r.affiliateId), createdET: formatET(r.createdAt) })),
+      });
+    } catch (error) {
+      console.error('[player-recovery] payout check failed:', error && error.message);
+      return res.status(500).json({ message: 'Could not run the payout check.' });
+    }
+  });
+
   return { buildRecoveryEmail, CAMPAIGN_ID };
 };
 
