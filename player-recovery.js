@@ -456,6 +456,190 @@ module.exports = function registerPlayerRecovery({ app, mongoose, verifyAdminTok
     }
   });
 
+  // ---------------------------------------------------------------------------
+  // FM COINS lost to the old membership-plan bug (READ-ONLY).
+  // Before the fix (production 2026-10-25), choosing Free SET the balance to 20 and
+  // Standard SET it to 100. This report never changes a balance; it only lists
+  // evidence so the owner can decide on any restoration.
+  //  - Confirmed: a coin-history record written by the plan change itself shows the
+  //    exact balance before and after.
+  //  - Possible: the player chose a plan but no such record exists; the amount is
+  //    never guessed, only the surrounding evidence is shown.
+  //  - No loss: the plan change was recorded and did not reduce the balance.
+  // ---------------------------------------------------------------------------
+  const PLAN_AMOUNT = { Free: 20, Standard: 100 };
+  const FREE_PLAN_DAYS = 30;
+  // Production deploy of the fix (dpl_5WBDvjoqjarBpzgZhBAEx8HefpSb), 2026-10-25 5:41 PM ET.
+  const PLAN_FIX_AT = Date.parse('2026-10-25T21:41:15Z');
+  const num = (value) => { const n = Number.parseInt(String(value ?? ''), 10); return Number.isFinite(n) ? n : null; };
+
+  const buildPlanLossReport = async () => {
+    const Ledger = mongoose.models.FightEntryLedger;
+    const ledger = Ledger ? Ledger.collection : mongoose.connection.collection('fightentryledgers');
+    const planRows = await ledger.find({ 'metadata.reason': 'plan_allotment' }).sort({ createdAt: 1 }).toArray();
+    const planRowsByUser = new Map();
+    for (const row of planRows) {
+      const key = String(row.userId);
+      if (!planRowsByUser.has(key)) planRowsByUser.set(key, []);
+      planRowsByUser.get(key).push(row);
+    }
+
+    // Everyone who ever chose a plan, plus anyone named in a plan-change record.
+    const recordedIds = [...planRowsByUser.keys()].filter((id) => mongoose.Types.ObjectId.isValid(id)).map((id) => new mongoose.Types.ObjectId(id));
+    const players = await users().find(
+      { $or: [{ hasAvailedFreePlan: true }, { currentPlan: { $in: ['Free', 'Standard'] } }, { freePlanExpiryDate: { $exists: true, $ne: null } }, ...(recordedIds.length ? [{ _id: { $in: recordedIds } }] : [])] },
+      { projection: { email: 1, firstName: 1, lastName: 1, tokens: 1, currentPlan: 1, hasAvailedFreePlan: 1, freePlanExpiryDate: 1, createdAt: 1, isTestAccount: 1, referredAffiliateId: 1 } },
+    ).toArray();
+
+    // Full coin history for these players only (used as evidence around the plan date).
+    const historyByUser = new Map();
+    const ids = players.map((p) => p._id);
+    for (let i = 0; i < ids.length; i += 500) {
+      const chunk = ids.slice(i, i + 500);
+      const rows = await ledger.find(
+        { userId: { $in: [...chunk, ...chunk.map(String)] } },
+        { projection: { userId: 1, amount: 1, balanceBefore: 1, balanceAfter: 1, createdAt: 1, matchId: 1, 'metadata.reason': 1 } },
+      ).sort({ createdAt: 1 }).toArray();
+      for (const row of rows) {
+        const key = String(row.userId);
+        if (!historyByUser.has(key)) historyByUser.set(key, []);
+        historyByUser.get(key).push(row);
+      }
+    }
+
+    const confirmed = [];
+    const possible = [];
+    const noLoss = [];
+    for (const p of players) {
+      const id = String(p._id);
+      const base = {
+        id,
+        email: p.email || '',
+        name: [p.firstName, p.lastName].filter(Boolean).join(' '),
+        currentBalance: num(p.tokens) ?? 0,
+        currentPlan: p.currentPlan || 'None',
+        accountCreatedET: formatET(createdOf(p)),
+        viaAffiliate: p.referredAffiliateId ? 'Yes' : 'No',
+        testAccount: p.isTestAccount ? 'Yes' : 'No',
+      };
+      const history = historyByUser.get(id) || [];
+      const recorded = planRowsByUser.get(id) || [];
+
+      if (recorded.length) {
+        const losses = recorded.filter((r) => Number(r.amount) < 0);
+        if (!losses.length) {
+          noLoss.push({ ...base, reason: `Plan change recorded ${recorded.length === 1 ? 'once' : `${recorded.length} times`}; balance was not reduced.` });
+          continue;
+        }
+        const events = losses.map((r) => {
+          const idx = history.findIndex((h) => String(h._id) === String(r._id));
+          const prior = idx > 0 ? history[idx - 1] : null;
+          const priorMatches = prior && Number(prior.balanceAfter) === Number(r.balanceBefore);
+          return {
+            plan: r.metadata?.plan || String(r.matchId || '').split(':')[0] || 'Unknown',
+            atET: formatET(r.createdAt),
+            balanceBefore: Number(r.balanceBefore),
+            balanceAfter: Number(r.balanceAfter),
+            lost: -Number(r.amount),
+            recordId: String(r._id),
+            evidence: `Coin-history record ${String(r._id)} written by the plan change on ${formatET(r.createdAt)}: balance ${Number(r.balanceBefore).toLocaleString()} → ${Number(r.balanceAfter).toLocaleString()} FM COINS.`
+              + (prior ? (priorMatches ? ` The previous record (${formatET(prior.createdAt)}) also ends at ${Number(prior.balanceAfter).toLocaleString()}, which agrees.` : ` The previous record (${formatET(prior.createdAt)}) ends at ${Number(prior.balanceAfter).toLocaleString()}; the difference came from a change that was not recorded.`) : ''),
+          };
+        });
+        confirmed.push({ ...base, originalBalance: events[0].balanceBefore, amountLost: events.reduce((s, e) => s + e.lost, 0), events });
+        continue;
+      }
+
+      // No record written by the plan change: possible loss, amount never guessed.
+      const chose = [];
+      if (p.hasAvailedFreePlan || p.freePlanExpiryDate || p.currentPlan === 'Free') chose.push('Free');
+      if (p.currentPlan === 'Standard') chose.push('Standard');
+      const evidence = [];
+      let chosenAt = null;
+      if (chose.includes('Free')) {
+        if (p.freePlanExpiryDate) {
+          chosenAt = new Date(new Date(p.freePlanExpiryDate).getTime() - FREE_PLAN_DAYS * 86400000);
+          evidence.push(`Free plan chosen around ${formatET(chosenAt)} (its 30-day expiry is ${formatET(new Date(p.freePlanExpiryDate))}).`);
+        } else evidence.push('Free plan was chosen; the date is not recorded.');
+      }
+      if (chose.includes('Standard')) {
+        const paid = history.some((h) => h.metadata?.reason === 'card_payment_credit');
+        evidence.push(paid
+          ? 'Current plan is Standard and a card payment credit is on record (the paid route adds coins and does not reduce them).'
+          : 'Current plan is Standard with no card payment on record, so it may have been set through the plan screen; the date is not recorded.');
+        if (paid && !chose.includes('Free')) { noLoss.push({ ...base, reason: 'Standard plan came from a card payment, which only adds FM COINS.' }); continue; }
+      }
+      if (chosenAt && chosenAt.getTime() >= PLAN_FIX_AT && !chose.includes('Standard')) {
+        noLoss.push({ ...base, reason: `Free plan chosen ${formatET(chosenAt)}, after the fix went live, so the balance could not be reduced.` });
+        continue;
+      }
+      const before = chosenAt ? history.filter((h) => new Date(h.createdAt) < chosenAt) : [];
+      const after = chosenAt ? history.filter((h) => new Date(h.createdAt) >= chosenAt) : [];
+      const lastBefore = before.length ? before[before.length - 1] : null;
+      const firstAfter = after.length ? after[0] : null;
+      if (lastBefore) evidence.push(`Last recorded balance before the plan choice: ${Number(lastBefore.balanceAfter).toLocaleString()} FM COINS (${formatET(lastBefore.createdAt)}).`);
+      else if (chosenAt) evidence.push('No coin history before the plan choice, so the balance at that moment is unknown.');
+      if (firstAfter) evidence.push(`First recorded balance after it: ${Number(firstAfter.balanceBefore).toLocaleString()} FM COINS (${formatET(firstAfter.createdAt)}).`);
+      if (!history.length) evidence.push('This player has no coin history at all.');
+      evidence.push(`Current balance: ${base.currentBalance.toLocaleString()} FM COINS.`);
+      const planAmount = chose.includes('Free') ? PLAN_AMOUNT.Free : PLAN_AMOUNT.Standard;
+      let indication = 'Amount unknown: not enough records to calculate it.';
+      if (lastBefore && firstAfter && Number(firstAfter.balanceBefore) === planAmount && Number(lastBefore.balanceAfter) > planAmount) {
+        indication = `Records around the plan choice are consistent with a drop from ${Number(lastBefore.balanceAfter).toLocaleString()} to ${planAmount} (${(Number(lastBefore.balanceAfter) - planAmount).toLocaleString()} FM COINS), but changes in between may not have been recorded. Needs review.`;
+      } else if (lastBefore && firstAfter && Number(lastBefore.balanceAfter) <= planAmount && Number(firstAfter.balanceBefore) >= Number(lastBefore.balanceAfter)) {
+        noLoss.push({ ...base, reason: `Recorded balance before the plan choice (${Number(lastBefore.balanceAfter)}) was at or below the plan amount (${planAmount}) and did not go down afterwards.` });
+        continue;
+      }
+      possible.push({ ...base, plansChosen: chose.join(' and ') || 'Unknown', planChosenAtET: chosenAt ? formatET(chosenAt) : '', amountLost: null, indication, evidence });
+    }
+
+    const byEmail = (a, b) => a.email.localeCompare(b.email);
+    confirmed.sort(byEmail); possible.sort(byEmail); noLoss.sort(byEmail);
+    const real = (list) => list.filter((r) => r.testAccount === 'No');
+    return {
+      generatedAt: new Date().toISOString(),
+      readOnly: true,
+      fixDeployedET: 'October 25, 2026, 5:41 PM ET',
+      totals: {
+        playersWhoChoseAPlan: real(players.map((p) => ({ testAccount: p.isTestAccount ? 'Yes' : 'No' }))).length,
+        confirmedPlayers: real(confirmed).length,
+        confirmedCoinsLost: real(confirmed).reduce((s, r) => s + r.amountLost, 0),
+        possiblePlayers: real(possible).length,
+        noLossPlayers: real(noLoss).length,
+        testAccountsListed: players.filter((p) => p.isTestAccount).length,
+        planChangeRecordsFound: planRows.length,
+      },
+      confirmed,
+      possible,
+      noLoss,
+      notes: [
+        'Nothing on this report changes a balance. Restoring coins needs your separate approval.',
+        'Confirmed amounts come only from the coin-history record written at the moment of the plan change.',
+        'Possible losses show the surrounding records only; the amount is never estimated as fact.',
+        'Plan changes made before coin history was kept left no record, so those players can only appear as possible.',
+      ],
+    };
+  };
+
+  app.get('/api/admin/player-recovery/plan-coin-losses', verifyAdminToken, async (req, res) => {
+    try {
+      const report = await buildPlanLossReport();
+      res.set('Cache-Control', 'no-store');
+      if (req.query.format !== 'csv') return res.json(report);
+      const headers = ['Category', 'Email', 'Name', 'Original balance (FM COINS)', 'Amount lost (FM COINS)', 'Current balance (FM COINS)', 'Plan', 'When (Eastern Time)', 'Evidence', 'Account created (ET)', 'Via affiliate', 'Test account', 'Account ID'];
+      const lines = [headers.map(csvCell).join(',')];
+      for (const r of report.confirmed) for (const e of r.events) lines.push(['Confirmed', r.email, r.name, e.balanceBefore, e.lost, r.currentBalance, e.plan, e.atET, e.evidence, r.accountCreatedET, r.viaAffiliate, r.testAccount, r.id].map(csvCell).join(','));
+      for (const r of report.possible) lines.push(['Possible - needs review', r.email, r.name, 'Unknown', 'Unknown', r.currentBalance, r.plansChosen, r.planChosenAtET, [r.indication, ...r.evidence].join(' '), r.accountCreatedET, r.viaAffiliate, r.testAccount, r.id].map(csvCell).join(','));
+      for (const r of report.noLoss) lines.push(['No loss found', r.email, r.name, '', 0, r.currentBalance, r.currentPlan, '', r.reason, r.accountCreatedET, r.viaAffiliate, r.testAccount, r.id].map(csvCell).join(','));
+      res.set('Content-Type', 'text/csv; charset=utf-8');
+      res.set('Content-Disposition', `attachment; filename="fmm-plan-coin-losses-${new Date().toISOString().slice(0, 10)}.csv"`);
+      return res.send(`﻿${lines.join('\r\n')}\r\n`);
+    } catch (error) {
+      console.error('[player-recovery] plan coin loss report failed:', error && error.message);
+      return res.status(500).json({ message: 'Could not build the FM COINS loss report.' });
+    }
+  });
+
   return { buildRecoveryEmail, CAMPAIGN_ID };
 };
 
