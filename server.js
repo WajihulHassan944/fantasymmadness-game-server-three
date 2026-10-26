@@ -9331,13 +9331,14 @@ app.post('/api/users/me/streak/claim', verifyToken, async (req, res) => {
     // One atomic step: only applies while the claim dates are still what we read,
     // so two taps at once cannot both claim.
     try {
-      await applyCoinChange({
+      const streakReward = await applyCoinChange({
         account: 'user', id: user._id, delta: 250, reason: 'streak_daily_reward',
         transactionId: `streak_daily_reward:${String(user._id)}:${utcDayKey(now)}:${hasUnusedSkip ? skipUnlocked.getTime() : 'first'}`,
         reference: 'streak',
         extraFilter: { dailyRewardClaimedAt: lastClaim || null, streakSkipUnlockedAt: skipUnlocked || null },
         extraSet: { loginStreak, dailyRewardClaimedAt: now, streakExpiresAt: new Date(now.getTime() + 24 * 60 * 60 * 1000) },
       });
+      if (streakReward.duplicate) return res.status(409).json({ ok: false, message: 'Today’s reward has already been claimed.' });
     } catch (claimError) {
       if (claimError instanceof CoinError && claimError.code === 'CONDITION_NOT_MET') return res.status(409).json({ ok: false, message: 'Today’s reward has already been claimed.' });
       throw claimError;
