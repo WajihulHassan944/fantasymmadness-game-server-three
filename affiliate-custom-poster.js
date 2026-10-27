@@ -65,7 +65,7 @@ function imageBytes(value) {
   return Buffer.from(value || []);
 }
 
-module.exports = function registerAffiliateCustomPosters({ app, mongoose, verifyAdminToken, cloudinary, sharp, QRCode, fetchImpl = fetch }) {
+module.exports = function registerAffiliateCustomPosters({ app, mongoose, verifyAdminToken, cloudinary, sharp, QRCode, upload, fetchImpl = fetch }) {
   const Match = mongoose.models.Match;
   const Shadow = mongoose.models.Shadow;
   const ProWrestlingMatch = mongoose.models.ProWrestlingMatch;
@@ -92,8 +92,29 @@ module.exports = function registerAffiliateCustomPosters({ app, mongoose, verify
     approvedBy: { type: String, default: '' },
     createdBy: { type: String, default: '' },
     sends: [{ email: String, sentAt: Date }],
+    // 'one' = made for one affiliate; 'all' = an approved design that every
+    // affiliate receives with their OWN QR (built per affiliate when sent).
+    audience: { type: String, enum: ['one', 'all'], default: 'one', index: true },
+    // 'fight' = the general poster saved on the fight; 'custom' = a poster
+    // uploaded only for this campaign (never replaces the fight's poster).
+    sourceKind: { type: String, enum: ['fight', 'custom'], default: 'fight' },
+    sourceId: { type: String, default: '' },
+    promo: { title: String, event: String, affiliateName: String, message: String },
   }, { timestamps: true, collection: 'affiliatecustomposters' });
   const AffiliateCustomPoster = mongoose.models.AffiliateCustomPoster || mongoose.model('AffiliateCustomPoster', posterSchema);
+
+  // A poster uploaded for one campaign only. Stored in its own folder and
+  // never written to the fight, so it cannot replace the general poster or
+  // another affiliate's poster.
+  const sourceSchema = new mongoose.Schema({
+    fightId: { type: String, required: true, index: true },
+    url: { type: String, required: true },
+    publicId: { type: String, default: '' },
+    bytes: Number,
+    createdBy: { type: String, default: '' },
+  }, { timestamps: true, collection: 'affiliatepostersources' });
+  const AffiliatePosterSource = mongoose.models.AffiliatePosterSource || mongoose.model('AffiliatePosterSource', sourceSchema);
+  const SOURCE_FOLDER = 'affiliate_poster_sources';
 
   const adminName = (req) => String(req.admin?.email || req.admin?.id || req.admin?._id || 'admin');
 
@@ -182,7 +203,111 @@ module.exports = function registerAffiliateCustomPosters({ app, mongoose, verify
     sourcePosterUrl: doc.sourcePosterUrl,
     approvedAt: doc.approvedAt || null,
     createdAt: doc.createdAt,
+    audience: doc.audience || 'one',
+    sourceKind: doc.sourceKind || 'fight',
+    sourceId: doc.sourceId || '',
+    promo: {
+      title: doc.promo?.title || '',
+      event: doc.promo?.event || '',
+      affiliateName: doc.promo?.affiliateName || '',
+      message: doc.promo?.message || '',
+    },
   });
+
+  const cleanText = (value, max) => String(value ?? '').replace(/\r\n/g, '\n').trim().slice(0, max);
+  const cleanPromo = (promo = {}) => ({
+    title: cleanText(promo.title, 140),
+    event: cleanText(promo.event, 200),
+    affiliateName: cleanText(promo.affiliateName, 80),
+    message: cleanText(promo.message, 2000),
+  });
+
+  // Which artwork a campaign uses, and proof it is still the same artwork.
+  async function resolveSource({ fightId, found, sourceId }) {
+    if (sourceId) {
+      if (!OBJECT_ID.test(String(sourceId))) throw httpError(400, 'The uploaded poster reference is not valid.');
+      const source = await AffiliatePosterSource.findById(sourceId).lean();
+      if (!source) throw httpError(404, 'The uploaded poster could not be found. Upload it again.');
+      if (source.fightId !== String(fightId)) throw httpError(409, 'That uploaded poster belongs to a different fight. Upload it again for this fight.');
+      return { kind: 'custom', url: source.url, id: String(source._id) };
+    }
+    const saved = savedPosterFor(found.fight);
+    if (!saved) throw httpError(409, 'Upload your finished poster for this fight first.');
+    return { kind: 'fight', url: saved, id: '' };
+  }
+  async function sourceStillValid(doc) {
+    if (doc.sourceKind === 'custom') {
+      const source = doc.sourceId && await AffiliatePosterSource.findById(doc.sourceId).lean();
+      return Boolean(source && source.fightId === doc.fightId && source.url === doc.sourcePosterUrl);
+    }
+    const found = await findFight(doc.fightId);
+    return Boolean(found && savedPosterFor(found.fight) === doc.sourcePosterUrl);
+  }
+
+  // ---- Automatic QR placement --------------------------------------------
+  // 1. An empty QR box drawn on the artwork: a flat square whose edge clearly
+  //    differs from its inside. The QR goes inside it.
+  // 2. Otherwise the calmest open area, preferably in the lower-right corner.
+  // Placement is always inside the original artwork; nothing is added.
+  async function suggestPlacement(source) {
+    const W = 240;
+    const { data, info } = await sharp(source, { failOn: 'error' }).rotate().resize({ width: W }).greyscale().raw().toBuffer({ resolveWithObject: true });
+    const w = info.width; const h = info.height;
+    const sum = new Float64Array((w + 1) * (h + 1));
+    const sq = new Float64Array((w + 1) * (h + 1));
+    for (let y = 0; y < h; y++) {
+      let row = 0; let rowSq = 0;
+      for (let x = 0; x < w; x++) {
+        const v = data[y * w + x]; row += v; rowSq += v * v;
+        sum[(y + 1) * (w + 1) + x + 1] = sum[y * (w + 1) + x + 1] + row;
+        sq[(y + 1) * (w + 1) + x + 1] = sq[y * (w + 1) + x + 1] + rowSq;
+      }
+    }
+    const rect = (x, y, rw, rh) => {
+      const a = y * (w + 1) + x; const b = a + rw; const c = (y + rh) * (w + 1) + x; const d = c + rw;
+      const n = rw * rh; const s1 = sum[d] - sum[b] - sum[c] + sum[a]; const s2 = sq[d] - sq[b] - sq[c] + sq[a];
+      const mean = s1 / n; return { mean, std: Math.sqrt(Math.max(0, s2 / n - mean * mean)), s1, s2, n };
+    };
+    let box = null;
+    const minSide = Math.round(Math.min(w, h) * 0.12); const maxSide = Math.round(Math.min(w, h) * 0.5);
+    for (let side = maxSide; side >= minSide; side -= 2) {
+      const inset = Math.max(2, Math.round(side * 0.08));
+      const ring = Math.max(2, Math.round(side * 0.05));
+      for (let y = ring; y + side + ring <= h; y += 2) {
+        for (let x = ring; x + side + ring <= w; x += 2) {
+          const inner = rect(x + inset, y + inset, side - inset * 2, side - inset * 2);
+          if (inner.std > 6) continue;
+          // Each edge of a drawn box stands out from its flat inside; a flat
+          // area that merely touches one dark edge is not a box.
+          const edges = [
+            rect(x - ring, y - ring, side + ring * 2, ring),
+            rect(x - ring, y + side, side + ring * 2, ring),
+            rect(x - ring, y, ring, side),
+            rect(x + side, y, ring, side),
+          ];
+          if (edges.filter((edge) => Math.abs(edge.mean - inner.mean) >= 30).length < 3) continue;
+          const score = side * 1000 + (x + y);
+          if (!box || score > box.score) box = { x, y, side, inset, score };
+        }
+      }
+      if (box) break;
+    }
+    if (box) {
+      const pad = Math.round(box.side * 0.1);
+      return { reason: 'empty-box', x: (box.x + pad) / w, y: (box.y + pad) / h, scale: (box.side - pad * 2) / w };
+    }
+    const side = Math.round(w * 0.22); const margin = Math.round(w * 0.03);
+    let best = null;
+    for (let y = Math.round(h / 2); y + side + margin <= h; y += 2) {
+      for (let x = Math.round(w / 2); x + side + margin <= w; x += 2) {
+        const r = rect(x, y, side, side);
+        const score = r.std - (x + y) * 0.01;
+        if (!best || score < best.score) best = { x, y, std: r.std, score };
+      }
+    }
+    if (best && best.std < 18) return { reason: 'open-area', x: best.x / w, y: best.y / h, scale: side / w };
+    return { reason: 'lower-right', x: (w - side - margin) / w, y: (h - side - margin) / h, scale: side / w };
+  }
 
   const fail = (res, error, fallback) => {
     if (error?.status) return res.status(error.status).json({ ok: false, message: error.message });
@@ -190,24 +315,107 @@ module.exports = function registerAffiliateCustomPosters({ app, mongoose, verify
     return res.status(500).json({ ok: false, message: fallback });
   };
 
-  // Build a finished poster for one affiliate (not sent, not approved).
+  const SOURCE_TYPES = /^image\/(png|jpeg|webp)$/;
+
+  async function saveSource({ fightId, url, publicId, bytes, req }) {
+    const doc = await AffiliatePosterSource.create({ fightId, url, publicId, bytes: Number(bytes) || undefined, createdBy: adminName(req) });
+    return { id: String(doc._id), url: doc.url, fightId };
+  }
+
+  // Upload a poster for one campaign only (small files through the server).
+  // The fight's own poster is not touched.
+  const single = upload?.single ? upload.single('poster') : (_req, _res, next) => next();
+  app.post('/api/admin/affiliate-posters/sources', verifyAdminToken, single, async (req, res) => {
+    try {
+      const fightId = String(req.body?.fightId || '').trim();
+      if (!OBJECT_ID.test(fightId)) return res.status(400).json({ ok: false, message: 'Choose a fight first.' });
+      if (!await findFight(fightId)) return res.status(404).json({ ok: false, message: 'Fight not found.' });
+      if (!req.file?.buffer || !SOURCE_TYPES.test(req.file.mimetype)) return res.status(400).json({ ok: false, message: 'Choose a PNG, JPEG, or WebP poster.' });
+      const uploaded = await new Promise((resolve, reject) => {
+        cloudinary.uploader.upload_stream({ folder: SOURCE_FOLDER, resource_type: 'image' }, (error, result) => (error ? reject(error) : resolve(result))).end(req.file.buffer);
+      });
+      const source = await saveSource({ fightId, url: uploaded.secure_url, publicId: uploaded.public_id, bytes: req.file.size, req });
+      return res.status(201).json({ ok: true, source });
+    } catch (error) { return fail(res, error, 'Could not save the poster.'); }
+  });
+
+  // Large posters: signed direct upload so the exact file is kept.
+  app.post('/api/admin/affiliate-posters/sources/direct-upload', verifyAdminToken, async (req, res) => {
+    try {
+      const fightId = String(req.body?.fightId || '').trim();
+      if (!OBJECT_ID.test(fightId)) return res.status(400).json({ ok: false, message: 'Choose a fight first.' });
+      if (!await findFight(fightId)) return res.status(404).json({ ok: false, message: 'Fight not found.' });
+      const config = cloudinary.config();
+      if (!config.cloud_name || !config.api_key || !config.api_secret) return res.status(503).json({ ok: false, message: 'Direct poster upload is not configured.' });
+      const timestamp = Math.floor(Date.now() / 1000);
+      const signature = cloudinary.utils.api_sign_request({ folder: SOURCE_FOLDER, timestamp }, config.api_secret);
+      const prefix = String(config.upload_prefix || 'https://api.cloudinary.com').replace(/\/$/, '');
+      return res.json({ ok: true, uploadUrl: `${prefix}/v1_1/${encodeURIComponent(config.cloud_name)}/image/upload`, fields: { api_key: config.api_key, timestamp, folder: SOURCE_FOLDER, signature } });
+    } catch (error) { return fail(res, error, 'Could not prepare the poster upload.'); }
+  });
+
+  app.post('/api/admin/affiliate-posters/sources/confirm', verifyAdminToken, async (req, res) => {
+    try {
+      const fightId = String(req.body?.fightId || '').trim();
+      if (!OBJECT_ID.test(fightId)) return res.status(400).json({ ok: false, message: 'Choose a fight first.' });
+      if (!await findFight(fightId)) return res.status(404).json({ ok: false, message: 'Fight not found.' });
+      const secureUrl = String(req.body?.secure_url || '').trim();
+      const publicId = String(req.body?.public_id || '').trim();
+      const version = String(req.body?.version || '').trim();
+      const signature = String(req.body?.signature || '').trim();
+      const config = cloudinary.config();
+      if (!publicId.startsWith(`${SOURCE_FOLDER}/`) || !version || !signature) return res.status(400).json({ ok: false, message: 'The poster upload was incomplete. Please upload it again.' });
+      if (cloudinary.utils.api_sign_request({ public_id: publicId, version }, config.api_secret) !== signature) return res.status(400).json({ ok: false, message: 'The poster upload could not be verified. Please upload it again.' });
+      let parsed;
+      try { parsed = new URL(secureUrl); } catch { return res.status(400).json({ ok: false, message: 'The poster address is not valid.' }); }
+      const host = parsed.port ? `${parsed.hostname}:${parsed.port}` : parsed.hostname;
+      const ownLibrary = parsed.protocol === 'https:' && parsed.hostname === 'res.cloudinary.com' && parsed.pathname.startsWith(`/${config.cloud_name}/image/upload/`);
+      if (!ownLibrary && !allowedSourceHosts().has(host.toLowerCase())) return res.status(400).json({ ok: false, message: 'The poster was not stored in the FANTASY MMADNESS image library.' });
+      if (!decodeURIComponent(parsed.pathname).includes(publicId)) return res.status(400).json({ ok: false, message: 'The poster upload did not match. Please upload it again.' });
+      const source = await saveSource({ fightId, url: secureUrl, publicId, bytes: req.body?.bytes, req });
+      return res.status(201).json({ ok: true, source, exact: true });
+    } catch (error) { return fail(res, error, 'Could not save the poster.'); }
+  });
+
+  // Where the QR should go on this artwork.
+  app.post('/api/admin/affiliate-posters/suggest-placement', verifyAdminToken, async (req, res) => {
+    try {
+      const fightId = String(req.body?.fightId || '').trim();
+      const found = await findFight(fightId);
+      if (!found) return res.status(404).json({ ok: false, message: 'Fight not found.' });
+      const chosen = await resolveSource({ fightId, found, sourceId: String(req.body?.sourceId || '').trim() });
+      const expected = String(req.body?.sourcePosterUrl || '').trim();
+      if (expected && expected !== chosen.url) return res.status(409).json({ ok: false, code: 'POSTER_CHANGED', message: 'A different poster is saved than the one on your screen. Reload and try again.' });
+      const placement = await suggestPlacement(await loadSourceImage(chosen.url));
+      return res.json({ ok: true, placement, sourcePosterUrl: chosen.url });
+    } catch (error) { return fail(res, error, 'Could not find a place for the QR code.'); }
+  });
+
+  // Build a finished poster (not sent, not approved). For "all affiliates" the
+  // preview shows one sample affiliate's QR; each affiliate gets their own.
   app.post('/api/admin/affiliate-posters/preview', verifyAdminToken, async (req, res) => {
     try {
       const fightId = String(req.body?.fightId || '').trim();
-      const affiliateId = String(req.body?.affiliateId || '').trim();
-      if (!OBJECT_ID.test(fightId) || !OBJECT_ID.test(affiliateId)) return res.status(400).json({ ok: false, message: 'Choose a fight and an affiliate first.' });
+      const audience = req.body?.audience === 'all' ? 'all' : 'one';
+      let affiliateId = String(req.body?.affiliateId || '').trim();
+      if (!OBJECT_ID.test(fightId)) return res.status(400).json({ ok: false, message: 'Choose a fight first.' });
+      if (audience === 'one' && !OBJECT_ID.test(affiliateId)) return res.status(400).json({ ok: false, message: 'Choose a fight and an affiliate first.' });
       const found = await findFight(fightId);
       if (!found) return res.status(404).json({ ok: false, message: 'Fight not found.' });
-      const saved = savedPosterFor(found.fight);
-      if (!saved) return res.status(409).json({ ok: false, message: 'Upload your finished poster for this fight first.' });
+      const chosen = await resolveSource({ fightId, found, sourceId: String(req.body?.sourceId || '').trim() });
       const expected = String(req.body?.sourcePosterUrl || '').trim();
-      if (expected && expected !== saved) {
-        return res.status(409).json({ ok: false, code: 'POSTER_CHANGED', message: 'A different poster is saved for this fight than the one on your screen. Reload the page and place the QR again.', savedPosterUrl: saved });
+      if (expected && expected !== chosen.url) {
+        return res.status(409).json({ ok: false, code: 'POSTER_CHANGED', message: 'A different poster is saved for this fight than the one on your screen. Reload the page and place the QR again.', savedPosterUrl: chosen.url });
       }
-      const affiliate = await Affiliate.findById(affiliateId).select('_id email firstName lastName verified').lean();
-      if (!affiliate) return res.status(404).json({ ok: false, message: 'Affiliate not found.' });
+      let affiliate = OBJECT_ID.test(affiliateId) ? await Affiliate.findById(affiliateId).select('_id email firstName lastName verified').lean() : null;
+      if (audience === 'one' && !affiliate) return res.status(404).json({ ok: false, message: 'Affiliate not found.' });
+      if (audience === 'all' && !affiliate) {
+        affiliate = await Affiliate.findOne({ verified: true, email: { $regex: /@/ } }).sort({ firstName: 1, lastName: 1, _id: 1 }).select('_id email firstName lastName verified').lean();
+        if (!affiliate) return res.status(409).json({ ok: false, message: 'There are no approved affiliates to send to yet.' });
+      }
+      affiliateId = String(affiliate._id);
       const qrLink = affiliateLeagueFightLink(affiliate._id, fightId);
-      const source = await loadSourceImage(saved);
+      const source = await loadSourceImage(chosen.url);
       const built = await compose({ source, qrLink, qr: req.body?.qr || {} });
       const sha256 = crypto.createHash('sha256').update(built.output).digest('hex');
       const imageUrl = await storeImage(built.output, built.contentType).catch((error) => {
@@ -215,16 +423,27 @@ module.exports = function registerAffiliateCustomPosters({ app, mongoose, verify
         return '';
       });
       const doc = await AffiliateCustomPoster.create({
-        fightId, fightSource: found.source, affiliateId: String(affiliate._id), affiliateEmail: String(affiliate.email || '').toLowerCase(),
-        sourcePosterUrl: saved, sourceSha256: crypto.createHash('sha256').update(source).digest('hex'),
+        fightId, fightSource: found.source, affiliateId, affiliateEmail: String(affiliate.email || '').toLowerCase(),
+        sourcePosterUrl: chosen.url, sourceSha256: crypto.createHash('sha256').update(source).digest('hex'),
+        sourceKind: chosen.kind, sourceId: chosen.id, audience, promo: cleanPromo(req.body?.promo),
         qrLink, qr: built.qr, width: built.width, height: built.height, contentType: built.contentType,
         image: built.output, sha256, bytes: built.output.length, imageUrl, status: 'preview', createdBy: adminName(req),
       });
-      return res.status(201).json({ ok: true, poster: publicPoster(doc) });
+      return res.status(201).json({ ok: true, poster: { ...publicPoster(doc), affiliateName: [affiliate.firstName, affiliate.lastName].filter(Boolean).join(' ') } });
     } catch (error) { return fail(res, error, 'Could not build the finished poster.'); }
   });
 
-  // Exact bytes of a finished poster, for the owner's preview.
+  // One finished poster (for the announcement window).
+  app.get('/api/admin/affiliate-posters/:id', verifyAdminToken, async (req, res, next) => {
+    try {
+      if (!OBJECT_ID.test(String(req.params.id || ''))) return next();
+      const doc = await AffiliateCustomPoster.findById(req.params.id).select('-image').lean();
+      if (!doc) return res.status(404).json({ ok: false, message: 'Finished poster not found.' });
+      return res.json({ ok: true, poster: publicPoster(doc) });
+    } catch (error) { return fail(res, error, 'Could not load the finished poster.'); }
+  });
+
+  // Exact bytes of a finished poster, for the owner's preview and download.
   app.get('/api/admin/affiliate-posters/:id/image', verifyAdminToken, async (req, res) => {
     try {
       if (!OBJECT_ID.test(String(req.params.id || ''))) return res.status(400).end();
@@ -237,19 +456,21 @@ module.exports = function registerAffiliateCustomPosters({ app, mongoose, verify
     } catch (error) { return fail(res, error, 'Could not load the finished poster.'); }
   });
 
-  // The owner approves exactly this finished poster.
+  // The owner approves exactly this finished poster (and its promotional text).
   app.post('/api/admin/affiliate-posters/:id/approve', verifyAdminToken, async (req, res) => {
     try {
       if (!OBJECT_ID.test(String(req.params.id || ''))) return res.status(400).json({ ok: false, message: 'Invalid poster.' });
       const doc = await AffiliateCustomPoster.findById(req.params.id);
       if (!doc) return res.status(404).json({ ok: false, message: 'Finished poster not found.' });
       if (doc.status === 'superseded') return res.status(409).json({ ok: false, message: 'A newer finished poster replaced this one. Approve the newest version.' });
-      const found = await findFight(doc.fightId);
-      if (!found || savedPosterFor(found.fight) !== doc.sourcePosterUrl) {
-        return res.status(409).json({ ok: false, code: 'POSTER_CHANGED', message: 'The fight poster was replaced after this preview was made. Place the QR again and approve the new preview.' });
+      if (!await sourceStillValid(doc)) {
+        return res.status(409).json({ ok: false, code: 'POSTER_CHANGED', message: 'The poster was replaced after this preview was made. Place the QR again and approve the new preview.' });
       }
+      const audience = doc.audience || 'one';
       await AffiliateCustomPoster.updateMany(
-        { _id: { $ne: doc._id }, fightId: doc.fightId, affiliateId: doc.affiliateId, status: 'approved' },
+        audience === 'all'
+          ? { _id: { $ne: doc._id }, fightId: doc.fightId, audience: 'all', status: 'approved' }
+          : { _id: { $ne: doc._id }, fightId: doc.fightId, affiliateId: doc.affiliateId, audience: { $ne: 'all' }, status: 'approved' },
         { $set: { status: 'superseded' } },
       );
       doc.status = 'approved';
@@ -260,8 +481,8 @@ module.exports = function registerAffiliateCustomPosters({ app, mongoose, verify
     } catch (error) { return fail(res, error, 'Could not approve the finished poster.'); }
   });
 
-  // Used by /send-email-affiliate: returns the approved image for this exact
-  // fight + recipient, or explains why it cannot be sent.
+  // Used by /send-email-affiliate: the approved image for this exact fight and
+  // recipient, or the reason it cannot be sent.
   async function forEmail({ posterId, fightId, email }) {
     if (!OBJECT_ID.test(String(posterId || ''))) throw httpError(400, 'The approved poster reference is not valid.');
     const doc = await AffiliateCustomPoster.findById(posterId);
@@ -269,17 +490,30 @@ module.exports = function registerAffiliateCustomPosters({ app, mongoose, verify
     if (doc.status !== 'approved') throw httpError(409, 'This finished poster has not been approved (or a newer one replaced it). Approve it before sending.');
     if (String(fightId || '') !== doc.fightId) throw httpError(409, 'The approved poster belongs to a different fight.');
     const recipient = String(email || '').trim().toLowerCase();
+    if (!await sourceStillValid(doc)) {
+      throw httpError(409, 'The poster was replaced after you approved this finished poster. Make and approve a new one before sending.');
+    }
+    const ext = doc.contentType === 'image/jpeg' ? 'jpg' : doc.contentType.replace('image/', '');
+    if ((doc.audience || 'one') === 'all') {
+      // Every affiliate gets the approved design with THEIR OWN QR code.
+      const exact = new RegExp(`^${recipient.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`, 'i');
+      const affiliate = await Affiliate.findOne({ email: exact, verified: true }).select('_id email').lean();
+      if (!affiliate) throw httpError(409, 'Only approved affiliates can receive this poster. It was not sent.');
+      const qrLink = affiliateLeagueFightLink(affiliate._id, doc.fightId);
+      const built = await compose({ source: await loadSourceImage(doc.sourcePosterUrl), qrLink, qr: { x: doc.qr?.x, y: doc.qr?.y, scale: doc.qr?.scale } });
+      return {
+        id: String(doc._id), image: built.output, contentType: built.contentType,
+        sha256: crypto.createHash('sha256').update(built.output).digest('hex'), qrLink,
+        filename: `fantasy-mmadness-fight-poster-${doc.fightId}.${ext}`,
+        cid: `fight-poster-${doc._id}-${affiliate._id}@fantasymmadness.com`,
+      };
+    }
     const affiliate = await Affiliate.findById(doc.affiliateId).select('_id email firstName').lean();
     if (!affiliate || String(affiliate.email || '').trim().toLowerCase() !== recipient) {
       throw httpError(409, 'This finished poster was made for a different affiliate. It was not sent.');
     }
-    const found = await findFight(doc.fightId);
-    if (!found || savedPosterFor(found.fight) !== doc.sourcePosterUrl) {
-      throw httpError(409, 'The fight poster was replaced after you approved this finished poster. Make and approve a new one before sending.');
-    }
     const image = imageBytes(doc.image);
     if (crypto.createHash('sha256').update(image).digest('hex') !== doc.sha256) throw httpError(500, 'The approved poster failed its integrity check. It was not sent.');
-    const ext = doc.contentType === 'image/jpeg' ? 'jpg' : doc.contentType.replace('image/', '');
     return {
       id: String(doc._id),
       image,
@@ -296,7 +530,7 @@ module.exports = function registerAffiliateCustomPosters({ app, mongoose, verify
   }
 
   app.locals.affiliateCustomPoster = { forEmail, markSent, affiliateLeagueFightLink };
-  return { AffiliateCustomPoster, forEmail, markSent, compose, affiliateLeagueFightLink };
+  return { AffiliateCustomPoster, AffiliatePosterSource, forEmail, markSent, compose, suggestPlacement, affiliateLeagueFightLink };
 };
 
 module.exports.affiliateLeagueFightLink = affiliateLeagueFightLink;

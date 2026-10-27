@@ -244,7 +244,7 @@ try {
 // cannot load, every other back-office function keeps working.
 try {
   require('./affiliate-custom-poster')({
-    app: capturedApp, mongoose, verifyAdminToken, cloudinary,
+    app: capturedApp, mongoose, verifyAdminToken, cloudinary, upload,
     sharp: require('sharp'), QRCode: require('qrcode'),
   });
 } catch (error) {
