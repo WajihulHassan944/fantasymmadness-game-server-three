@@ -232,6 +232,18 @@ try {
   console.error('[affiliate-social] Optional routes unavailable:', error?.message);
 }
 
+// Custom fight posters for one affiliate (QR placed by the owner, approved
+// image attached to that affiliate's email). Optional: if the image library
+// cannot load, every other back-office function keeps working.
+try {
+  require('./affiliate-custom-poster')({
+    app: capturedApp, mongoose, verifyAdminToken, cloudinary,
+    sharp: require('sharp'), QRCode: require('qrcode'),
+  });
+} catch (error) {
+  console.error('[affiliate-custom-poster] Optional routes unavailable:', error?.message);
+}
+
 require('./affiliate-league-roster')({
   app: capturedApp, mongoose, Affiliate, User, verifyToken, requireScope,
   affiliateScope: 'affiliate',

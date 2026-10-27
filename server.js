@@ -6290,7 +6290,10 @@ const transactionalMailProvider = () => {
   return 'smtp';
 };
 
-const sendTransactionalMail = async ({ to, subject, html, text, fromOverride }) => {
+// attachments: [{ filename, content (Buffer), contentType, cid? }]. A cid makes
+// the image show inside the email body as well as being attached.
+const sendTransactionalMail = async ({ to, subject, html, text, fromOverride, attachments = [] }) => {
+  const files = (Array.isArray(attachments) ? attachments : []).filter((file) => file && Buffer.isBuffer(file.content) && file.filename);
   const recipient = String(to || '').trim().toLowerCase();
   const from = String(
     fromOverride
@@ -6311,6 +6314,7 @@ const sendTransactionalMail = async ({ to, subject, html, text, fromOverride }) 
       subject,
       ...(html ? { html } : {}),
       ...(text ? { text } : {}),
+      ...(files.length ? { attachments: files.map((file) => ({ filename: file.filename, content: file.content, contentType: file.contentType, ...(file.cid ? { cid: file.cid } : {}) })) } : {}),
     });
   }
 
@@ -6320,7 +6324,8 @@ const sendTransactionalMail = async ({ to, subject, html, text, fromOverride }) 
   if (provider === 'resend') {
     url = 'https://api.resend.com/emails';
     headers.Authorization = `Bearer ${process.env.RESEND_API_KEY}`;
-    payload = { from, to: [recipient], subject, ...(html ? { html } : {}), ...(text ? { text } : {}) };
+    payload = { from, to: [recipient], subject, ...(html ? { html } : {}), ...(text ? { text } : {}),
+      ...(files.length ? { attachments: files.map((file) => ({ filename: file.filename, content: file.content.toString('base64'), content_type: file.contentType, ...(file.cid ? { content_id: file.cid } : {}) })) } : {}) };
   } else if (provider === 'sendgrid') {
     url = 'https://api.sendgrid.com/v3/mail/send';
     headers.Authorization = `Bearer ${process.env.SENDGRID_API_KEY}`;
@@ -6332,6 +6337,7 @@ const sendTransactionalMail = async ({ to, subject, html, text, fromOverride }) 
         ...(text ? [{ type: 'text/plain', value: text }] : []),
         ...(html ? [{ type: 'text/html', value: html }] : []),
       ],
+      ...(files.length ? { attachments: files.map((file) => ({ content: file.content.toString('base64'), filename: file.filename, type: file.contentType, disposition: file.cid ? 'inline' : 'attachment', ...(file.cid ? { content_id: file.cid } : {}) })) } : {}),
     };
   } else if (provider === 'brevo') {
     url = 'https://api.brevo.com/v3/smtp/email';
@@ -6342,6 +6348,7 @@ const sendTransactionalMail = async ({ to, subject, html, text, fromOverride }) 
       subject,
       ...(html ? { htmlContent: html } : {}),
       ...(text ? { textContent: text } : {}),
+      ...(files.length ? { attachment: files.map((file) => ({ content: file.content.toString('base64'), name: file.filename })) } : {}),
     };
   } else {
     url = 'https://api.postmarkapp.com/email';
@@ -6352,6 +6359,7 @@ const sendTransactionalMail = async ({ to, subject, html, text, fromOverride }) 
       Subject: subject,
       ...(html ? { HtmlBody: html } : {}),
       ...(text ? { TextBody: text } : {}),
+      ...(files.length ? { Attachments: files.map((file) => ({ Name: file.filename, Content: file.content.toString('base64'), ContentType: file.contentType, ...(file.cid ? { ContentID: `cid:${file.cid}` } : {}) })) } : {}),
       MessageStream: 'outbound',
     };
   }
@@ -11040,6 +11048,21 @@ app.post('/send-email-affiliate', verifyAdminToken, async (req, res) => {
           kitUrl = `https://www.fantasymmadness.com/affiliate/fight-launch?fightId=${encodeURIComponent(launchFightId)}${recipient?._id ? `&affiliateId=${encodeURIComponent(String(recipient._id))}` : ''}`;
         }
       }
+      // A finished poster the owner approved for THIS affiliate and fight is
+      // attached as the actual image (and shown in the email). It is loaded by
+      // its approval record, never by looking up "the fight's poster" again,
+      // and it is refused if it belongs to anyone or anything else.
+      let customPoster = null;
+      const customPosterId = String(req.body?.customPosterId || '').trim();
+      if (customPosterId) {
+        const posters = app.locals.affiliateCustomPoster;
+        if (!posters) return res.status(503).json({ message: 'Custom posters are unavailable right now. Nothing was sent.', code: 'CUSTOM_POSTER_UNAVAILABLE' });
+        try {
+          customPoster = await posters.forEmail({ posterId: customPosterId, fightId: launchFightId, email });
+        } catch (posterError) {
+          return res.status(posterError.status || 500).json({ message: posterError.message || 'The approved poster could not be attached. Nothing was sent.', code: 'CUSTOM_POSTER_REJECTED' });
+        }
+      }
       // The HTML email has one clear action. The full URL remains in the
       // plain-text alternative for mail clients that do not render HTML.
       const displayMessage = kitUrl ? message.replace(kitLine, '').replace(/\n{3,}/g, '\n\n') : message;
@@ -11055,6 +11078,7 @@ app.post('/send-email-affiliate', verifyAdminToken, async (req, res) => {
           <img src="https://www.fantasymmadness.com/images/brand/fantasy-mmadness-main-logo-v23.jpg" width="72" height="72" alt="Fantasy MMAdness" style="width:72px;height:72px;object-fit:contain;vertical-align:middle" />
           <strong style="margin-left:12px;vertical-align:middle">FANTASY MMADNESS · Owner Office</strong>
         </header>
+        ${customPoster ? `<div style="padding:18px 0 4px"><img src="cid:${escapeHtml(customPoster.cid)}" alt="Your fight poster with your personal QR code" style="display:block;width:100%;max-width:700px;height:auto;border-radius:6px" /><p style="font-size:13px;color:#555;margin:8px 0 0">Your finished fight poster with your personal QR code is attached to this email.</p></div>` : ''}
         ${button ? `<div style="padding:18px 0">${button}</div>` : ''}
         <div style="white-space:pre-wrap;line-height:1.5;padding:18px 0">${linkedMessage}</div>
       </div>`;
@@ -11062,13 +11086,16 @@ app.post('/send-email-affiliate', verifyAdminToken, async (req, res) => {
       // The Resend DKIM signature and send subdomain can then align with the
       // visible From address instead of falling back to a personal Gmail box.
       // Plain-text copy: the kit line points to the same place as the button.
-      const textMessage = kitUrl ? message.replace(kitLine, (line, url) => line.replace(url, kitUrl)) : message;
+      const baseText = kitUrl ? message.replace(kitLine, (line, url) => line.replace(url, kitUrl)) : message;
+      const textMessage = customPoster ? `${baseText}\n\nYour finished fight poster with your personal QR code is attached to this email.` : baseText;
       await sendTransactionalMail({
         to: email, subject, text: textMessage, html,
         ...(transactionalMailProvider() === 'resend'
           ? { fromOverride: 'FANTASY MMADNESS <updates@fantasymmadness.com>' }
           : {}),
+        ...(customPoster ? { attachments: [{ filename: customPoster.filename, content: customPoster.image, contentType: customPoster.contentType, cid: customPoster.cid }] } : {}),
       });
+      if (customPoster) await app.locals.affiliateCustomPoster.markSent(customPoster.id, email).catch(() => {});
 
       res.status(200).json({ message: 'Email sent successfully' });
   } catch (error) {
@@ -22423,6 +22450,9 @@ app.post('/api/admin/fights/:fightId/social-poster', verifyAdminToken, upload.si
     fight.fightPosterImage = result.secure_url;
     fight.fightPosterImageDeleteUrl = result.public_id;
     await fight.save();
+    // Pages that list fights must show the new poster on the next load, not a
+    // cached copy of the fight with the previous image.
+    clearPublicResponseCache();
     if (previous) cloudinary.uploader.destroy(previous).catch((error) => console.error('Old social poster cleanup failed:', error));
     return res.json({ poster: result.secure_url });
   } catch (error) {
