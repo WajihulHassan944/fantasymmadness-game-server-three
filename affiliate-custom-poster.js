@@ -300,3 +300,72 @@ module.exports = function registerAffiliateCustomPosters({ app, mongoose, verify
 };
 
 module.exports.affiliateLeagueFightLink = affiliateLeagueFightLink;
+
+// Large posters (over the hosting request limit) go straight from the owner's
+// browser to the image library, so the exact file is kept instead of a
+// shrunken copy. The server signs the upload and then verifies the library's
+// signature before saving the result as the fight's poster.
+module.exports.registerPosterDirectUpload = function registerPosterDirectUpload({ app, mongoose, verifyAdminToken, cloudinary }) {
+  const FOLDER = 'fight_social_posters';
+  const models = () => [mongoose.models.Match, mongoose.models.Shadow, mongoose.models.ProWrestlingMatch].filter(Boolean);
+  const findFightDoc = async (fightId) => {
+    for (const Model of models()) {
+      const doc = await Model.findById(fightId);
+      if (doc) return doc;
+    }
+    return null;
+  };
+
+  app.post('/api/admin/fights/:fightId/social-poster/direct-upload', verifyAdminToken, async (req, res) => {
+    try {
+      const fightId = String(req.params.fightId || '');
+      if (!OBJECT_ID.test(fightId)) return res.status(400).json({ ok: false, message: 'Invalid fight ID.' });
+      if (!await findFightDoc(fightId)) return res.status(404).json({ ok: false, message: 'Fight not found.' });
+      const config = cloudinary.config();
+      if (!config.cloud_name || !config.api_key || !config.api_secret) return res.status(503).json({ ok: false, message: 'Direct poster upload is not configured.' });
+      const timestamp = Math.floor(Date.now() / 1000);
+      const params = { folder: FOLDER, timestamp };
+      const signature = cloudinary.utils.api_sign_request(params, config.api_secret);
+      const prefix = String(config.upload_prefix || 'https://api.cloudinary.com').replace(/\/$/, '');
+      return res.json({ ok: true, uploadUrl: `${prefix}/v1_1/${encodeURIComponent(config.cloud_name)}/image/upload`, fields: { api_key: config.api_key, timestamp, folder: FOLDER, signature } });
+    } catch (error) {
+      console.error('[poster-direct-upload] signature failed:', error);
+      return res.status(500).json({ ok: false, message: 'Could not prepare the poster upload.' });
+    }
+  });
+
+  app.post('/api/admin/fights/:fightId/social-poster/confirm', verifyAdminToken, async (req, res) => {
+    try {
+      const fightId = String(req.params.fightId || '');
+      if (!OBJECT_ID.test(fightId)) return res.status(400).json({ ok: false, message: 'Invalid fight ID.' });
+      const secureUrl = String(req.body?.secure_url || '').trim();
+      const publicId = String(req.body?.public_id || '').trim();
+      const version = String(req.body?.version || '').trim();
+      const signature = String(req.body?.signature || '').trim();
+      const config = cloudinary.config();
+      if (!publicId.startsWith(`${FOLDER}/`) || !version || !signature) return res.status(400).json({ ok: false, message: 'The poster upload was incomplete. Please upload it again.' });
+      // The library signs (public_id, version) with our secret: proof that
+      // this exact upload really happened in our own account.
+      const expected = cloudinary.utils.api_sign_request({ public_id: publicId, version }, config.api_secret);
+      if (expected !== signature) return res.status(400).json({ ok: false, message: 'The poster upload could not be verified. Please upload it again.' });
+      let parsed;
+      try { parsed = new URL(secureUrl); } catch { return res.status(400).json({ ok: false, message: 'The poster address is not valid.' }); }
+      const host = parsed.port ? `${parsed.hostname}:${parsed.port}` : parsed.hostname;
+      const ownLibrary = parsed.protocol === 'https:' && parsed.hostname === 'res.cloudinary.com' && parsed.pathname.startsWith(`/${config.cloud_name}/image/upload/`);
+      if (!ownLibrary && !allowedSourceHosts().has(host.toLowerCase())) return res.status(400).json({ ok: false, message: 'The poster was not stored in the FANTASY MMADNESS image library.' });
+      if (!decodeURIComponent(parsed.pathname).includes(publicId)) return res.status(400).json({ ok: false, message: 'The poster upload did not match. Please upload it again.' });
+      const fight = await findFightDoc(fightId);
+      if (!fight) return res.status(404).json({ ok: false, message: 'Fight not found.' });
+      const previous = fight.fightPosterImageDeleteUrl;
+      fight.fightPosterImage = secureUrl;
+      fight.fightPosterImageDeleteUrl = publicId;
+      await fight.save();
+      if (typeof app.locals.clearPublicResponseCache === 'function') app.locals.clearPublicResponseCache();
+      if (previous && previous !== publicId) cloudinary.uploader.destroy(previous).catch((error) => console.error('Old social poster cleanup failed:', error));
+      return res.json({ poster: secureUrl, exact: true });
+    } catch (error) {
+      console.error('[poster-direct-upload] confirm failed:', error);
+      return res.status(500).json({ ok: false, message: 'Could not save the fight poster.' });
+    }
+  });
+};

@@ -232,6 +232,13 @@ try {
   console.error('[affiliate-social] Optional routes unavailable:', error?.message);
 }
 
+// Exact-file upload path for large fight posters.
+try {
+  require('./affiliate-custom-poster').registerPosterDirectUpload({ app: capturedApp, mongoose, verifyAdminToken, cloudinary });
+} catch (error) {
+  console.error('[poster-direct-upload] Optional routes unavailable:', error?.message);
+}
+
 // Custom fight posters for one affiliate (QR placed by the owner, approved
 // image attached to that affiliate's email). Optional: if the image library
 // cannot load, every other back-office function keeps working.

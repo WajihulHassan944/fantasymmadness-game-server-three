@@ -7522,6 +7522,7 @@ app.post('/resend-verification', submitLimiter, async (req, res) => {
 
 // Shared with the admin Player Recovery module (player-recovery.js).
 app.locals.sendTransactionalMail = sendTransactionalMail;
+app.locals.clearPublicResponseCache = () => clearPublicResponseCache();
 app.locals.transactionalMailProvider = transactionalMailProvider;
 app.locals.backendPublicUrl = BACKEND_PUBLIC_URL;
 
