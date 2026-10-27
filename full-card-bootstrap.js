@@ -250,6 +250,12 @@ try {
 } catch (error) {
   console.error('[affiliate-custom-poster] Optional routes unavailable:', error?.message);
 }
+// Owner-approved one-time repair of one misplaced poster reference (see poster-cleanup.js).
+try {
+  require('./poster-cleanup').schedulePosterCleanup({ mongoose, clearCache: capturedApp.locals.clearPublicResponseCache });
+} catch (error) {
+  console.error('[poster-cleanup] skipped:', error?.message);
+}
 
 require('./affiliate-league-roster')({
   app: capturedApp, mongoose, Affiliate, User, verifyToken, requireScope,
