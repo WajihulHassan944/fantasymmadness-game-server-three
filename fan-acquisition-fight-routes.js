@@ -130,6 +130,12 @@ module.exports = function registerFanAcquisitionFightRoutes({ app, mongoose, ver
   // a changed fight produces a new draft and marks older unpublished ones as
   // superseded (with the reason shown to the owner).
   async function generate({ fightIds = null, affiliateId = '', now = new Date(), maxFights = MANUAL_MAX_FIGHTS, budgetMs = MANUAL_BUDGET_MS } = {}) {
+    // A preview may inherit production MONGODB_URI. Never write campaign drafts,
+    // create indexes, or run cron generation from a Vercel preview until a
+    // separate test database has been independently verified and enabled.
+    if (process.env.VERCEL_ENV === 'preview') {
+      return { error: 'Preview campaign generation is disabled until database isolation is verified.', status: 503, isolationRequired: true };
+    }
     const deadline = Date.now() + budgetMs;
     await ensureIndexes();
     let affiliate = null;
