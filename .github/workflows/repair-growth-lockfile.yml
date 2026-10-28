@@ -1,0 +1,40 @@
+name: Repair Growth Engine lockfile (draft branch only)
+
+on:
+  push:
+    branches:
+      - fix/growth-engine-fight-campaigns
+    paths:
+      - .github/workflows/repair-growth-lockfile.yml
+
+permissions:
+  contents: write
+
+jobs:
+  regenerate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: true
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      - name: Regenerate dependency lockfile only
+        run: npm install --package-lock-only --ignore-scripts --no-audit --no-fund
+      - name: Verify clean install
+        run: npm ci --ignore-scripts --no-audit --no-fund
+      - name: Run backend tests
+        run: npm test
+      - name: Commit lockfile on repair branch only
+        run: |
+          test "$GITHUB_REF_NAME" = "fix/growth-engine-fight-campaigns"
+          git diff --exit-code -- package.json
+          if ! git diff --quiet -- package-lock.json; then
+            git config user.name "github-actions[bot]"
+            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+            git add package-lock.json
+            git commit -m "Repair backend npm lockfile for existing sharp and qrcode dependencies"
+            git push origin HEAD:fix/growth-engine-fight-campaigns
+          fi
