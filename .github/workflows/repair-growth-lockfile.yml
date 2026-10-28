@@ -47,4 +47,3 @@ jobs:
           fi
       - name: Report remaining dependency vulnerabilities
         run: npm audit --omit=dev --audit-level=high
-          fi
