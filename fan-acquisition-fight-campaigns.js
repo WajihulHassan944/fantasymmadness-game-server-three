@@ -256,6 +256,25 @@ function choosePoster({ fight, fightId, affiliateId = '', affiliatePosters = [] 
   return null;
 }
 
+// Channel crop rules (width / height). Instagram's publishing API accepts
+// feed images only between 4:5 and 1.91:1; outside that the post fails or is
+// cropped. X and Facebook show the full image on tap but may trim tall or
+// very wide posters in the feed. The artwork itself is never changed.
+const CROP_RULES = {
+  instagram: { min: 0.8, max: 1.91, severity: 'blocking', text: 'Instagram only accepts images between 4:5 (portrait) and 1.91:1 (landscape). This poster is outside that range, so Instagram would crop or reject it.' },
+  facebook: { min: 0.8, max: 1.91, severity: 'warning', text: 'Facebook may trim this poster in the feed preview; the full poster shows when opened.' },
+  x: { min: 0.75, max: 2, severity: 'warning', text: 'X may show a cropped preview of this poster in the timeline; the full poster shows when opened.' },
+  affiliate_email: null,
+};
+function cropCheck(channel, width, height) {
+  const w = Number(width); const h = Number(height);
+  const rule = CROP_RULES[channel];
+  if (!rule || !(w > 0) || !(h > 0)) return null;
+  const ratio = w / h;
+  if (ratio >= rule.min - 0.005 && ratio <= rule.max + 0.005) return null;
+  return { severity: rule.severity, message: `${rule.text} (poster is ${w}×${h}, ratio ${ratio.toFixed(2)}).`, ratio };
+}
+
 // ---------------------------------------------------------------- copy ----
 
 const DISCLOSURE = 'I’m a FANTASY MMADNESS affiliate and may earn from eligible entries through my link.';
@@ -401,6 +420,8 @@ function buildFightCampaign({
     } else if (affiliate && !poster.hasQr) {
       chWarnings.push('No approved personal QR poster for this affiliate yet; preview shows the general fight poster without a QR code. Create one in the Fight Launch Desk.');
     }
+    const crop = poster ? cropCheck(channel, poster.width, poster.height) : null;
+    if (crop) (crop.severity === 'blocking' ? chBlocking : chWarnings).push(crop.message);
     if (poster?.hasQr && poster.qrLink && poster.qrLink !== link) chBlocking.push('The poster QR code opens a different page than this link. Re-approve the poster before using it.');
     const body = channel === 'affiliate_email' ? copy.email.text : copy[channel];
     if (!body.includes(link)) chBlocking.push('Message is missing the fight link.');
@@ -413,7 +434,8 @@ function buildFightCampaign({
       subject: channel === 'affiliate_email' ? copy.email.subject : undefined,
       html: channel === 'affiliate_email' ? copy.email.html : undefined,
       characterCount: channel === 'x' ? xLength(body) : body.length,
-      image: poster ? { url: poster.url, kind: poster.kind, hasQr: poster.hasQr } : null,
+      image: poster ? { url: poster.url, kind: poster.kind, hasQr: poster.hasQr, width: poster.width, height: poster.height } : null,
+      cropRule: CROP_RULES[channel] ? { min: CROP_RULES[channel].min, max: CROP_RULES[channel].max, severity: CROP_RULES[channel].severity, text: CROP_RULES[channel].text } : null,
       blocking: chBlocking, warnings: chWarnings,
       checks: Object.fromEntries(REVIEW_CHECKS.map((check) => [check, { status: 'pending' }])),
     };
@@ -452,6 +474,7 @@ function buildFightCampaign({
 // Applies one owner review check. Returns { error } or { campaign } (a copy).
 function applyReviewCheck(campaign, { channel, check, result, note = '', reviewer = 'admin', now = Date.now() }) {
   if (!campaign) return { error: 'Campaign not found.' };
+  if (campaign.rejected) return { error: 'This draft was rejected; its checks are closed.' };
   if (!['draft', 'needs_review'].includes(campaign.state)) return { error: 'Checks can only be changed before approval. Move the campaign back to review first.' };
   const ch = campaign.channels?.[channel];
   if (!ch || !ch.enabled) return { error: 'Unknown or unavailable channel.' };
@@ -477,6 +500,7 @@ function transition(campaign, { to, current = null, reviewer = 'admin', note = '
   next.history = [...(next.history || []), { from: campaign.state, to, by: cleanText(reviewer, 120), note: cleanText(note, 300), at: new Date(now).toISOString() }].slice(-50);
   if (to === 'approved') {
     const problems = [];
+    if (campaign.rejected) problems.push('This draft was rejected. Rejected drafts cannot be approved; a fresh draft is prepared when the fight details or poster change.');
     if (!current || current.skipped) problems.push(...(current?.reasons || ['This fight can no longer be promoted.']));
     else if (current.campaign.fingerprint !== campaign.fingerprint) problems.push('The fight record or poster changed after this draft was made. Generate a fresh draft and review it.');
     if (campaign.validation?.blocking?.length) problems.push(...campaign.validation.blocking);
@@ -492,6 +516,7 @@ function transition(campaign, { to, current = null, reviewer = 'admin', note = '
     next.approvedBy = cleanText(reviewer, 120);
     return { campaign: next };
   }
+  if (to === 'draft' && campaign.rejected) return { error: 'This draft was rejected and stays out of the approval queue.' };
   if (to === 'draft' && (campaign.validation?.blocking?.length || campaign.validation?.reviewFailures?.length)) {
     return { error: 'Resolve the listed problems before returning this campaign to draft.' };
   }
@@ -500,9 +525,24 @@ function transition(campaign, { to, current = null, reviewer = 'admin', note = '
   return { campaign: next };
 }
 
+// Owner rejects a draft. Kept for the record (who, when, why) in needs_review
+// and permanently excluded from approval; never sent anywhere.
+function reject(campaign, { reason = '', reviewer = 'admin', now = Date.now() } = {}) {
+  if (!campaign) return { error: 'Campaign not found.' };
+  if (DISTRIBUTION_STATES.includes(campaign.state)) return { error: 'This campaign is already in distribution and cannot be changed here.' };
+  const why = cleanText(reason, 300);
+  if (!why) return { error: 'Give a short reason for rejecting this draft.' };
+  const next = JSON.parse(JSON.stringify(campaign));
+  next.history = [...(next.history || []), { from: campaign.state, to: 'needs_review', action: 'rejected', by: cleanText(reviewer, 120), note: why, at: new Date(now).toISOString() }].slice(-50);
+  next.state = 'needs_review';
+  next.rejected = true; next.rejectedAt = new Date(now).toISOString(); next.rejectedBy = cleanText(reviewer, 120); next.rejectionReason = why;
+  next.approvedAt = null; next.approvedBy = null;
+  return { campaign: next };
+}
+
 module.exports = {
-  STATES, DISTRIBUTION_STATES, CHANNELS, CHANNEL_LABELS, REVIEW_CHECKS, REVIEW_CHECK_LABELS, X_LIMIT,
+  STATES, DISTRIBUTION_STATES, CHANNELS, CROP_RULES, cropCheck, CHANNEL_LABELS, REVIEW_CHECKS, REVIEW_CHECK_LABELS, X_LIMIT,
   cleanText, escapeHtml, isPlaceholderName, sportFor, describeSchedule, ownerFightLink,
   validateCampaignUrl, xLength, isPublicFight, fightEligibility, choosePoster, buildFightCampaign,
-  applyReviewCheck, transition,
+  applyReviewCheck, transition, reject,
 };

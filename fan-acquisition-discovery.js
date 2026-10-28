@@ -158,13 +158,13 @@ module.exports=({app,verifyAdminToken,mongoose})=>{
   // Connect this research to real upcoming fights: owner drafts only, never sent.
   // A failure here must not lose the research run that was already saved.
   try{
-   const fightResult=await fightCampaigns.generate({});
-   record.fightCampaigns=fightResult.error?{status:'failed',error:fightResult.error}:{status:'drafts_prepared',created:fightResult.created.length,duplicates:fightResult.duplicates.length,skipped:fightResult.skipped.length,inspected:fightResult.inspected};
+   const fightResult=await (fightCampaigns.generateForCron||fightCampaigns.generate)({});
+   record.fightCampaigns=fightResult.error?{status:'failed',error:fightResult.error}:{status:fightResult.partial?'drafts_prepared_partial':'drafts_prepared',created:fightResult.created.length,duplicates:fightResult.duplicates.length,skipped:fightResult.skipped.length,inspected:fightResult.inspected,remaining:fightResult.remaining||0};
   }catch(err){record.fightCampaigns={status:'failed',error:String(err?.message||'Fight campaign drafts unavailable').slice(0,180)};}
   await Collection().updateOne({_id:record._id},{$set:{fightCampaigns:record.fightCampaigns}}).catch(()=>{});
   return record;
  };
- let fightCampaigns={generate:async()=>({error:'Fight campaign module unavailable'})};
+ let fightCampaigns={generate:async()=>({error:'Fight campaign module unavailable'}),generateForCron:async()=>({error:'Fight campaign module unavailable'})};
  try{fightCampaigns=require('./fan-acquisition-fight-routes')({app,mongoose,verifyAdminToken,getLatestResearch:()=>Collection().findOne({},{sort:{createdAt:-1}})});}
  catch(err){console.error('[fan-acquisition] Fight campaign drafts disabled:',err?.message);}
  // Standard affiliate invitations follow published signup terms and need no owner approval.

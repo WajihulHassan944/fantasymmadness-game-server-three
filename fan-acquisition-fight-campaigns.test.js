@@ -61,7 +61,7 @@ test('owner campaign has correct matchup, verified date, venue, links and four c
     assert.ok(ch.text.includes('FANTASYMMADNESS.COM'));
     assert.ok(ch.link.startsWith(`https://www.fantasymmadness.com/fight/${FIGHT_ID}?play=1&utm_source=fan_acquisition&utm_medium=partner_outreach&utm_campaign=combat_fans_mma`));
     assert.strictEqual(core.validateCampaignUrl(ch.link, { fightId: FIGHT_ID }), '');
-    assert.deepStrictEqual(ch.image, { url: POSTER, kind: 'fight_poster', hasQr: false });
+    assert.deepStrictEqual(ch.image, { url: POSTER, kind: 'fight_poster', hasQr: false, width: null, height: null });
     assert.deepStrictEqual(ch.blocking, []);
   }
   assert.ok(campaign.channels.x.characterCount <= 280);
@@ -127,6 +127,18 @@ test('missing poster: Instagram blocked, others warn, campaign needs review', ()
   assert.ok(campaign.channels.instagram.blocking.some((x) => /needs an image/.test(x)));
   assert.ok(campaign.channels.facebook.warnings.length);
   assert.strictEqual(campaign.poster, null);
+});
+test('crop rules: in-range poster has no warnings; tall poster blocks Instagram and warns X/Facebook', () => {
+  assert.strictEqual(core.cropCheck('instagram', 1080, 1350), null);
+  assert.strictEqual(core.cropCheck('instagram', 1080, 1080), null);
+  assert.strictEqual(core.cropCheck('affiliate_email', 500, 2000), null);
+  const tall = approvedPoster({ width: 1080, height: 1920 });
+  const { campaign } = build({ affiliate: affiliate(), affiliatePosters: [tall] });
+  assert.ok(campaign.channels.instagram.blocking.some((x) => /4:5/.test(x)));
+  assert.ok(campaign.channels.x.warnings.some((x) => /cropped preview/.test(x)));
+  assert.ok(campaign.channels.facebook.warnings.some((x) => /trim/.test(x)));
+  assert.deepStrictEqual(campaign.channels.affiliate_email.blocking, []);
+  assert.strictEqual(campaign.channels.instagram.image.width, 1080);
 });
 test('posters outside the FANTASY MMADNESS image library are never used', () => {
   const { campaign } = build({ fight: fight({ fightPosterImage: 'http://evil.example.com/x.png' }) });
@@ -246,6 +258,20 @@ test('approval is refused when the fight changed or locked since the draft', () 
   assert.match(core.transition(checked, { to: 'approved', current: build({ fight: fight({ matchTime: '20:00' }) }), now: NOW }).problems.join(' '), /changed/);
   assert.match(core.transition(checked, { to: 'approved', current: build({ fight: fight({ entryClosedAt: new Date() }) }), now: NOW }).problems.join(' '), /no longer open/);
 });
+test('rejection: reason required, recorded, and a rejected draft can never be approved', () => {
+  const c = passAll(build().campaign);
+  assert.ok(core.reject(c, { reason: '' }).error);
+  const r = core.reject(c, { reason: 'Wrong tone for this event', reviewer: 'owner', now: NOW }).campaign;
+  assert.strictEqual(r.state, 'needs_review');
+  assert.strictEqual(r.rejected, true);
+  assert.strictEqual(r.rejectionReason, 'Wrong tone for this event');
+  assert.strictEqual(r.history.at(-1).action, 'rejected');
+  assert.match(core.transition(r, { to: 'approved', current: build(), now: NOW }).problems.join(' '), /rejected/);
+  assert.ok(core.transition(r, { to: 'draft', now: NOW }).error);
+  const approved = core.transition(c, { to: 'approved', current: build(), now: NOW }).campaign;
+  const rejectedAfter = core.reject(approved, { reason: 'Changed my mind', now: NOW }).campaign;
+  assert.strictEqual(rejectedAfter.approvedAt, null, 'rejecting an approved draft removes the approval');
+});
 test('blocked campaigns cannot be approved even with all checks passed', () => {
   const blocked = passAll(build({ fight: fight({ fightPosterImage: '' }) }).campaign);
   assert.ok(core.transition(blocked, { to: 'approved', current: build({ fight: fight({ fightPosterImage: '' }) }), now: NOW }).error);
@@ -260,7 +286,7 @@ const routeTest = async () => {
   const collection = (name) => ({
     createIndex: async () => writes.push({ name, op: 'createIndex' }),
     find: () => ({ sort: () => ({ limit: () => ({ toArray: async () => (name === 'fan_acquisition_fight_campaigns' ? [...docs.values()] : []) }) }), limit: () => ({ toArray: async () => [] }) }),
-    findOne: async (q) => [...docs.values()].find((d) => String(d._id) === String(q._id)) || null,
+    findOne: async (q) => [...docs.values()].find((d) => (q.dedupeKey ? d.dedupeKey === q.dedupeKey : String(d._id) === String(q._id))) || null,
     updateOne: async (filter, update, opts) => {
       writes.push({ name, op: 'updateOne' });
       if (name !== 'fan_acquisition_fight_campaigns') return { matchedCount: 0 };
@@ -315,4 +341,42 @@ test('new growth-engine files never touch payments, email delivery, social APIs 
   assert.ok(targets.length && targets.every((t) => t === 'store'), `writes must target the campaign store only: ${targets}`);
 });
 
-routeTest().then(() => console.log(`\n${passed} fan-acquisition fight campaign tests passed`)).catch((e) => { console.error(e); process.exit(1); });
+
+// ------------------------------------------- cron load and record growth --
+const loadTest = async () => {
+  const LATENCY = 15; // ms per database call (slow shared cluster)
+  const wait = () => new Promise((r) => setTimeout(r, LATENCY));
+  const docs = new Map(); const indexes = []; let dbCalls = 0;
+  const collection = (name) => ({
+    createIndex: async (spec, opts) => { await wait(); indexes.push({ name, spec, opts }); },
+    find: () => ({ sort: () => ({ limit: () => ({ toArray: async () => { dbCalls += 1; await wait(); return []; } }) }), limit: () => ({ toArray: async () => { dbCalls += 1; await wait(); return []; } }) }),
+    findOne: async (q) => { dbCalls += 1; await wait(); return [...docs.values()].find((d) => d.dedupeKey === q.dedupeKey) || null; },
+    updateOne: async (filter, update) => { dbCalls += 1; await wait(); if (docs.has(filter.dedupeKey)) return { upsertedCount: 0 }; docs.set(filter.dedupeKey, { _id: 'd' + docs.size, ...update.$setOnInsert }); return { upsertedCount: 1 }; },
+    updateMany: async () => { dbCalls += 1; await wait(); return {}; },
+  });
+  const soon = (i) => { const k = new Date(Date.now() + (2 + (i % 50)) * 86400000).toISOString().slice(0, 10); return { matchDateKey: k, matchDate: new Date(`${k}T00:00:00Z`) }; };
+  const many = Array.from({ length: 450 }, (_, i) => fight({ ...soon(i), _id: (0x6a1b2c3d4e5f6a7b8c9d0000 + 0).toString(16).slice(0, 18) + i.toString(16).padStart(6, '0'), matchFighterA: `Fighter A${i}`, matchFighterB: `Fighter B${i}` }));
+  const chain = (rows) => ({ sort: () => ({ limit: (n) => ({ lean: () => ({ then: (f) => wait().then(() => rows.slice(0, n)).then(f) }) }) }) });
+  const model = (rows) => ({ find: () => chain(rows) });
+  const mongoose = { connection: { db: { collection } }, Types: { ObjectId: function ObjectId(id) { return id; } },
+    models: { Match: model(many.slice(0, 150)), Shadow: model(many.slice(150, 300)), ProWrestlingMatch: model([]), Affiliate: model([]) } };
+  const app = { locals: {}, get() {}, post() {} };
+  delete require.cache[require.resolve('./fan-acquisition-fight-routes')];
+  const engine = require('./fan-acquisition-fight-routes')({ app, mongoose, verifyAdminToken: () => {}, getLatestResearch: async () => null });
+  const t0 = Date.now();
+  const day1 = await engine.generateForCron();
+  const elapsed = Date.now() - t0;
+  assert.strictEqual(day1.inspected, engine.limits.CRON_MAX_FIGHTS, 'cron handles at most 40 fights per run');
+  assert.ok(day1.partial && day1.remaining === 300 - 40, 'reports remaining fights instead of running long');
+  assert.ok(elapsed < engine.limits.CRON_BUDGET_MS + 1500, `cron step took ${elapsed}ms`);
+  assert.ok([...docs.values()].every((d) => d.purgeAfter instanceof Date && d.purgeAfter > new Date()), 'every draft has a delete date');
+  assert.ok(indexes.some((i) => i.spec.purgeAfter === 1 && i.opts?.expireAfterSeconds === 0), 'TTL index created');
+  const afterDay1 = docs.size;
+  const day2 = await engine.generateForCron();
+  assert.strictEqual(docs.size, afterDay1, 'unchanged fights create no new records on the next run');
+  assert.strictEqual(day2.duplicates.length, 40);
+  console.log(`ok - cron load: 300 eligible fights, slow DB (${LATENCY}ms/call): ${day1.inspected} handled in ${elapsed}ms, ${day1.created.length} drafts, rerun added 0 records`);
+  passed += 1;
+};
+
+routeTest().then(loadTest).then(() => console.log(`\n${passed} fan-acquisition fight campaign tests passed`)).catch((e) => { console.error(e); process.exit(1); });

@@ -18,6 +18,18 @@ const { affiliateLeagueFightLink, affiliatePaidFightLink } = require('./affiliat
 
 const OBJECT_ID = /^[a-f\d]{24}$/i;
 const WINDOW_DAYS = 60;
+// Bounded work so the shared daily research cron cannot run long.
+const CRON_MAX_FIGHTS = 40;
+const CRON_BUDGET_MS = 5000;
+const MANUAL_MAX_FIGHTS = 60;
+const MANUAL_BUDGET_MS = 20000;
+// Drafts remove themselves 30 days after the fight; replaced drafts after 14.
+const KEEP_AFTER_FIGHT_MS = 30 * 86400 * 1000;
+const KEEP_SUPERSEDED_MS = 14 * 86400 * 1000;
+const purgeAfterFor = (campaign, now) => {
+  const start = Date.parse(campaign.schedule?.startsAt || '') || Date.parse(`${campaign.schedule?.dateKey || ''}T23:59:59Z`) || now.getTime();
+  return new Date(Math.max(start, now.getTime()) + KEEP_AFTER_FIGHT_MS);
+};
 
 module.exports = function registerFanAcquisitionFightRoutes({ app, mongoose, verifyAdminToken, getLatestResearch }) {
   const db = () => mongoose.connection.db;
@@ -32,6 +44,8 @@ module.exports = function registerFanAcquisitionFightRoutes({ app, mongoose, ver
     if (indexed) return;
     await store().createIndex({ dedupeKey: 1 }, { unique: true });
     await store().createIndex({ fightId: 1, affiliateId: 1, createdAt: -1 });
+    // MongoDB deletes each draft once its purgeAfter date passes.
+    await store().createIndex({ purgeAfter: 1 }, { expireAfterSeconds: 0 });
     indexed = true;
   };
   const reviewer = (req) => String(req.admin?.email || req.admin?.id || req.admin?._id || 'admin');
@@ -58,7 +72,9 @@ module.exports = function registerFanAcquisitionFightRoutes({ app, mongoose, ver
     if (ProWrestlingMatch) reads.push(ProWrestlingMatch.find({ ...dated, publicVisible: true, status: { $nin: ['DRAFT', 'FINALIZED', 'CANCELLED', 'NO_CONTEST'] } }).sort({ matchDate: 1 }).limit(150).lean().then((rows) => rows.map((f) => ({ fight: normalizeWrestling(f), source: 'pro_wrestling' }))).catch(() => []));
     const rows = (await Promise.all(reads)).flat().filter((r) => r.fight);
     const seen = new Set();
-    return rows.filter((r) => { const id = String(r.fight._id); if (seen.has(id)) return false; seen.add(id); return true; });
+    const when = (r) => Date.parse(r.fight.matchDate || '') || Number.MAX_SAFE_INTEGER;
+    return rows.filter((r) => { const id = String(r.fight._id); if (seen.has(id)) return false; seen.add(id); return true; })
+      .sort((x, y) => when(x) - when(y));
   }
 
   async function findAffiliate(affiliateId) {
@@ -89,15 +105,18 @@ module.exports = function registerFanAcquisitionFightRoutes({ app, mongoose, ver
   // the saved audience candidates for the same sport. Research only; nothing
   // is contacted.
   const loadLatestResearch = async () => (typeof getLatestResearch === 'function' ? getLatestResearch().catch(() => null) : null);
-  async function researchContext(campaign, latest) {
+  async function researchContext(campaign, latest, audienceCache = new Map()) {
     const lastName = (name) => String(name || '').trim().split(/\s+/).pop().toLowerCase();
     const names = [lastName(campaign.fighterA), lastName(campaign.fighterB)].filter((n) => n.length >= 3);
     const agent = (latest?.agents || []).find((a) => a.id === campaign.sport);
     const news = (latest?.agents || []).flatMap((a) => a.opportunities || [])
       .filter((o) => names.some((n) => String(o.title || '').toLowerCase().includes(n)))
       .slice(0, 5).map((o) => ({ title: core.cleanText(o.title, 220), url: o.url, publishedAt: o.publishedAt || null }));
-    const audiences = await audienceStore().find({ sport: campaign.sport }, { projection: { name: 1, url: 1, type: 1, outreachStatus: 1 } })
-      .sort({ updatedAt: -1 }).limit(8).toArray().catch(() => []);
+    if (!audienceCache.has(campaign.sport)) {
+      audienceCache.set(campaign.sport, await audienceStore().find({ sport: campaign.sport }, { projection: { name: 1, url: 1, type: 1, outreachStatus: 1 } })
+        .sort({ updatedAt: -1 }).limit(8).toArray().catch(() => []));
+    }
+    const audiences = audienceCache.get(campaign.sport);
     return {
       researchRunAt: latest?.createdAt || null,
       matchingNews: news,
@@ -110,7 +129,8 @@ module.exports = function registerFanAcquisitionFightRoutes({ app, mongoose, ver
   // Saves drafts. The same fight + affiliate + facts is never stored twice;
   // a changed fight produces a new draft and marks older unpublished ones as
   // superseded (with the reason shown to the owner).
-  async function generate({ fightIds = null, affiliateId = '', now = new Date() } = {}) {
+  async function generate({ fightIds = null, affiliateId = '', now = new Date(), maxFights = MANUAL_MAX_FIGHTS, budgetMs = MANUAL_BUDGET_MS } = {}) {
+    const deadline = Date.now() + budgetMs;
     await ensureIndexes();
     let affiliate = null;
     if (affiliateId) {
@@ -120,24 +140,32 @@ module.exports = function registerFanAcquisitionFightRoutes({ app, mongoose, ver
     const fights = await upcomingFights({ fightIds, now });
     const latest = await loadLatestResearch();
     const created = []; const duplicates = []; const skipped = [];
+    const audienceCache = new Map();
+    let processed = 0;
     for (const row of fights) {
+      if (processed >= maxFights || Date.now() > deadline) break;
+      processed += 1;
       const result = await build(row, affiliate, now.getTime());
       if (result.skipped) {
         skipped.push({ fightId: String(row.fight._id), matchup: [row.fight.matchFighterA, row.fight.matchFighterB].filter(Boolean).join(' vs ') || String(row.fight.matchName || ''), reasons: result.reasons });
         continue;
       }
-      const doc = { ...result.campaign, research: await researchContext(result.campaign, latest), createdAt: now, updatedAt: now, superseded: false, history: [{ from: null, to: result.campaign.state, by: 'growth-engine', at: now.toISOString(), note: 'Draft generated. Nothing was sent.' }] };
+      // Unchanged fight: one cheap lookup, no research work, no new record.
+      if (await store().findOne({ dedupeKey: result.campaign.dedupeKey }, { projection: { _id: 1 } })) { duplicates.push({ fightId: result.campaign.fightId, matchup: result.campaign.matchup }); continue; }
+      const doc = { ...result.campaign, research: await researchContext(result.campaign, latest, audienceCache), createdAt: now, updatedAt: now, purgeAfter: purgeAfterFor(result.campaign, now), superseded: false, history: [{ from: null, to: result.campaign.state, by: 'growth-engine', at: now.toISOString(), note: 'Draft generated. Nothing was sent.' }] };
       const write = await store().updateOne({ dedupeKey: doc.dedupeKey }, { $setOnInsert: doc }, { upsert: true });
       if (!write.upsertedCount) { duplicates.push({ fightId: doc.fightId, matchup: doc.matchup }); continue; }
       await store().updateMany(
         { fightId: doc.fightId, affiliateId: doc.affiliateId, dedupeKey: { $ne: doc.dedupeKey }, superseded: { $ne: true }, state: { $in: ['draft', 'needs_review', 'approved'] } },
-        { $set: { superseded: true, supersededBy: doc.dedupeKey, state: 'needs_review', updatedAt: now, 'validation.supersededReason': 'Fight details or poster changed. A newer draft replaces this one.' } },
+        { $set: { superseded: true, supersededBy: doc.dedupeKey, state: 'needs_review', updatedAt: now, purgeAfter: new Date(now.getTime() + KEEP_SUPERSEDED_MS), 'validation.supersededReason': 'Fight details or poster changed. A newer draft replaces this one.' } },
       );
       created.push({ fightId: doc.fightId, matchup: doc.matchup, state: doc.state });
     }
-    return { created, duplicates, skipped, inspected: fights.length };
+    const remaining = fights.length - processed;
+    return { created, duplicates, skipped, inspected: processed, eligibleInWindow: fights.length, partial: remaining > 0, remaining };
   }
-  app.locals.fanAcquisitionFightCampaigns = { generate };
+  const generateForCron = () => generate({ maxFights: CRON_MAX_FIGHTS, budgetMs: CRON_BUDGET_MS });
+  app.locals.fanAcquisitionFightCampaigns = { generate, generateForCron };
 
   const loadCampaign = async (id) => (OBJECT_ID.test(String(id || '')) ? store().findOne({ _id: new mongoose.Types.ObjectId(id) }) : null);
   const rebuildCurrent = async (campaign) => {
@@ -241,5 +269,20 @@ module.exports = function registerFanAcquisitionFightRoutes({ app, mongoose, ver
     }
   });
 
-  return { generate };
+  app.post('/api/admin/fan-acquisition/fight-campaigns/:id/reject', verifyAdminToken, async (req, res) => {
+    try {
+      const campaign = await loadCampaign(req.params.id);
+      if (!campaign) return fail(res, 404, 'Campaign not found.');
+      const result = core.reject(campaign, { reason: req.body?.reason, reviewer: reviewer(req) });
+      if (result.error) return fail(res, 400, result.error);
+      const n = result.campaign;
+      const write = await store().updateOne({ _id: campaign._id, state: campaign.state }, { $set: { state: n.state, history: n.history, rejected: true, rejectedAt: n.rejectedAt, rejectedBy: n.rejectedBy, rejectionReason: n.rejectionReason, approvedAt: null, approvedBy: null, updatedAt: new Date() } });
+      if (!write.matchedCount) return fail(res, 409, 'This campaign changed while you were reviewing it. Refresh and try again.');
+      return res.json({ ok: true, state: n.state, rejected: true, publishingEnabled: false });
+    } catch (error) {
+      return fail(res, 503, 'Rejection could not be saved.');
+    }
+  });
+
+  return { generate, generateForCron, limits: { CRON_MAX_FIGHTS, CRON_BUDGET_MS, MANUAL_MAX_FIGHTS, MANUAL_BUDGET_MS, KEEP_AFTER_FIGHT_MS, KEEP_SUPERSEDED_MS } };
 };
