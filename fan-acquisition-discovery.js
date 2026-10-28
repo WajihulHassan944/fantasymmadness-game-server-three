@@ -155,8 +155,18 @@ module.exports=({app,verifyAdminToken,mongoose})=>{
    }catch(err){record.swarmHandoff={status:'failed',jobsCreated:0,error:String(err?.message||'Swarm handoff unavailable').slice(0,180)};}
   }else if(typeof triggerCampaign==='function')record.swarmHandoff={status:'no_verified_opportunities',jobsCreated:0};
   await Collection().updateOne({_id:record._id},{$set:{swarmHandoff:record.swarmHandoff}});
+  // Connect this research to real upcoming fights: owner drafts only, never sent.
+  // A failure here must not lose the research run that was already saved.
+  try{
+   const fightResult=await fightCampaigns.generate({});
+   record.fightCampaigns=fightResult.error?{status:'failed',error:fightResult.error}:{status:'drafts_prepared',created:fightResult.created.length,duplicates:fightResult.duplicates.length,skipped:fightResult.skipped.length,inspected:fightResult.inspected};
+  }catch(err){record.fightCampaigns={status:'failed',error:String(err?.message||'Fight campaign drafts unavailable').slice(0,180)};}
+  await Collection().updateOne({_id:record._id},{$set:{fightCampaigns:record.fightCampaigns}}).catch(()=>{});
   return record;
  };
+ let fightCampaigns={generate:async()=>({error:'Fight campaign module unavailable'})};
+ try{fightCampaigns=require('./fan-acquisition-fight-routes')({app,mongoose,verifyAdminToken,getLatestResearch:()=>Collection().findOne({},{sort:{createdAt:-1}})});}
+ catch(err){console.error('[fan-acquisition] Fight campaign drafts disabled:',err?.message);}
  // Standard affiliate invitations follow published signup terms and need no owner approval.
  // Custom revenue shares, promoter deals, sponsorships and commercial commitments require owner approval.
  // No outbound sending is configured here; review states do not imply messages were sent.
@@ -165,7 +175,7 @@ module.exports=({app,verifyAdminToken,mongoose})=>{
   try{const record=await run();return res.json({ok:true,createdAt:record.createdAt,agents:record.agents.map(a=>({id:a.id,status:a.status,discovered:a.discovered,audiencesIdentified:a.audiencesIdentified}))});}catch(e){return res.status(503).json({ok:false,message:'Research run could not be saved'});}
  });
  app.post('/api/admin/fan-acquisition/run',verifyAdminToken,async(req,res)=>{
-  try{const record=await run();return res.json({ok:true,createdAt:record.createdAt,agents:record.agents,swarmHandoff:record.swarmHandoff});}catch(e){return res.status(503).json({ok:false,message:'Research run could not be saved'});}
+  try{const record=await run();return res.json({ok:true,createdAt:record.createdAt,agents:record.agents,swarmHandoff:record.swarmHandoff,fightCampaigns:record.fightCampaigns});}catch(e){return res.status(503).json({ok:false,message:'Research run could not be saved'});}
  });
  app.post('/api/admin/fan-acquisition/campaigns/generate',verifyAdminToken,async(req,res)=>{
   try{
@@ -204,6 +214,6 @@ module.exports=({app,verifyAdminToken,mongoose})=>{
   }catch(e){return res.status(503).json({ok:false,message:'Opportunity radar unavailable'});}
  });
  app.get('/api/admin/fan-acquisition/discover',verifyAdminToken,async(req,res)=>{
-  try{const last=await Collection().findOne({},{sort:{createdAt:-1}});const agents=last?.agents||await discover();res.set('Cache-Control','private, no-store');return res.json({ok:true,mode:'research_only',lastRunAt:last?.createdAt||null,agents,swarmHandoff:last?.swarmHandoff||{status:'not_started',jobsCreated:0},acquisitionMetrics:{fansReached:null,visitors:null,signups:null,players:null},publishingEnabled:false,note:'Research is not fan acquisition. No automatic social posting is configured.'});}catch(e){return res.status(503).json({ok:false,message:'Fan acquisition data unavailable'});}
+  try{const last=await Collection().findOne({},{sort:{createdAt:-1}});const agents=last?.agents||await discover();res.set('Cache-Control','private, no-store');return res.json({ok:true,mode:'research_only',lastRunAt:last?.createdAt||null,agents,swarmHandoff:last?.swarmHandoff||{status:'not_started',jobsCreated:0},fightCampaigns:last?.fightCampaigns||{status:'not_started'},acquisitionMetrics:{fansReached:null,visitors:null,signups:null,players:null},publishingEnabled:false,note:'Research is not fan acquisition. No automatic social posting is configured.'});}catch(e){return res.status(503).json({ok:false,message:'Fan acquisition data unavailable'});}
  });
 };
