@@ -30,6 +30,8 @@ jobs:
           npm audit fix --package-lock-only --ignore-scripts --no-fund || echo 'Some vulnerabilities require separate review; the final audit will still fail if they remain.'
       - name: Verify patched dependency installation
         run: npm ci --ignore-scripts --no-audit --no-fund
+      - name: Run isolated campaign generation and approval safety tests
+        run: node fan-acquisition-fight-campaigns.test.js
       - name: Run backend tests
         run: npm test
       - name: Verify campaign safety and registry regression
