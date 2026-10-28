@@ -27,6 +27,8 @@ jobs:
         run: npm ci --ignore-scripts --no-audit --no-fund
       - name: Run backend tests
         run: npm test
+      - name: Verify campaign safety and registry regression
+        run: node fight-registry-regression.test.js
       - name: Commit lockfile on repair branch only
         run: |
           test "$GITHUB_REF_NAME" = "fix/growth-engine-fight-campaigns"
