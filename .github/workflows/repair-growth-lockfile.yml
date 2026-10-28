@@ -25,8 +25,12 @@ jobs:
         run: npm install --package-lock-only --ignore-scripts --no-audit --no-fund
       - name: Verify clean install
         run: npm ci --ignore-scripts --no-audit --no-fund
+      - name: Apply nonbreaking dependency security fixes in test runner
+        run: npm audit fix --ignore-scripts --no-fund
       - name: Run backend tests
         run: npm test
+      - name: Report remaining dependency vulnerabilities
+        run: npm audit --omit=dev --audit-level=high
       - name: Verify campaign safety and registry regression
         run: node fight-registry-regression.test.js
       - name: Commit lockfile on repair branch only
