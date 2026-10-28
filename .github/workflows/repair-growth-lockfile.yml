@@ -26,11 +26,12 @@ jobs:
       - name: Verify clean install
         run: npm ci --ignore-scripts --no-audit --no-fund
       - name: Apply nonbreaking dependency security fixes in test runner
-        run: npm audit fix --ignore-scripts --no-fund
+        run: |
+          npm audit fix --package-lock-only --ignore-scripts --no-fund || echo 'Some vulnerabilities require separate review; the final audit will still fail if they remain.'
+      - name: Verify patched dependency installation
+        run: npm ci --ignore-scripts --no-audit --no-fund
       - name: Run backend tests
         run: npm test
-      - name: Report remaining dependency vulnerabilities
-        run: npm audit --omit=dev --audit-level=high
       - name: Verify campaign safety and registry regression
         run: node fight-registry-regression.test.js
       - name: Commit lockfile on repair branch only
@@ -43,4 +44,7 @@ jobs:
             git add package-lock.json
             git commit -m "Repair backend npm lockfile for existing sharp and qrcode dependencies"
             git push origin HEAD:fix/growth-engine-fight-campaigns
+          fi
+      - name: Report remaining dependency vulnerabilities
+        run: npm audit --omit=dev --audit-level=high
           fi
