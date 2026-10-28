@@ -328,6 +328,36 @@ const routeTest = async () => {
   passed += 1; console.log('ok - route layer writes only the growth-engine collection, dedupes reruns, refuses publishing, sends nothing');
 };
 
+// Preview deployments can inherit the production database connection. Even a
+// manual Generate click or scheduled cron must fail before creating indexes.
+test('Vercel preview refuses all campaign generation before any database write', async () => {
+  const previous = process.env.VERCEL_ENV;
+  const writes = [];
+  const mongoose = {
+    connection: { db: { collection: (name) => ({
+      createIndex: async () => { writes.push('index:' + name); },
+      updateOne: async () => { writes.push('update:' + name); },
+      updateMany: async () => { writes.push('updateMany:' + name); },
+    }) } },
+    models: {},
+  };
+  const app = { locals: {}, get() {}, post() {} };
+  const routes = require('./fan-acquisition-fight-routes');
+  try {
+    process.env.VERCEL_ENV = 'preview';
+    const engine = routes({ app, mongoose, verifyAdminToken: () => {} });
+    const manual = await engine.generate();
+    const cron = await engine.generateForCron();
+    assert.strictEqual(manual.status, 503);
+    assert.strictEqual(cron.status, 503);
+    assert.strictEqual(manual.isolationRequired, true);
+    assert.deepStrictEqual(writes, [], 'preview must not create indexes or write drafts');
+  } finally {
+    if (previous === undefined) delete process.env.VERCEL_ENV;
+    else process.env.VERCEL_ENV = previous;
+  }
+});
+
 // ------------------------------------- guardrail: no out-of-scope code --
 test('new growth-engine files never touch payments, email delivery, social APIs or fight writes', () => {
   for (const file of ['fan-acquisition-fight-campaigns.js', 'fan-acquisition-fight-routes.js']) {
