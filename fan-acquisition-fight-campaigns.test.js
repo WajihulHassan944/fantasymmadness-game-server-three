@@ -330,7 +330,7 @@ const routeTest = async () => {
 
 // Preview deployments can inherit the production database connection. Even a
 // manual Generate click or scheduled cron must fail before creating indexes.
-test('Vercel preview refuses all campaign generation before any database write', async () => {
+const previewGuardTest = async () => {
   const previous = process.env.VERCEL_ENV;
   const writes = [];
   const mongoose = {
@@ -352,11 +352,12 @@ test('Vercel preview refuses all campaign generation before any database write',
     assert.strictEqual(cron.status, 503);
     assert.strictEqual(manual.isolationRequired, true);
     assert.deepStrictEqual(writes, [], 'preview must not create indexes or write drafts');
+    passed += 1; console.log('ok - Vercel preview refuses generation before database writes');
   } finally {
     if (previous === undefined) delete process.env.VERCEL_ENV;
     else process.env.VERCEL_ENV = previous;
   }
-});
+};
 
 // ------------------------------------- guardrail: no out-of-scope code --
 test('new growth-engine files never touch payments, email delivery, social APIs or fight writes', () => {
@@ -409,4 +410,4 @@ const loadTest = async () => {
   passed += 1;
 };
 
-routeTest().then(loadTest).then(() => console.log(`\n${passed} fan-acquisition fight campaign tests passed`)).catch((e) => { console.error(e); process.exit(1); });
+previewGuardTest().then(routeTest).then(loadTest).then(() => console.log(`\n${passed} fan-acquisition fight campaign tests passed`)).catch((e) => { console.error(e); process.exit(1); });
