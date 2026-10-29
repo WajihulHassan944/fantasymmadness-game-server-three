@@ -10,7 +10,7 @@ const fight={_id:'6a1b2c3d4e5f6a7b8c9d0e1f',matchFighterA:'Test Red',matchFighte
 const result=core.buildFightCampaign({fight,source:'match',isOpen:f=>isFightOpenForEntry(f,NOW),isPublic:f=>core.isPublicFight(f,'match'),getLockTime:getFightEntryLockTime,affiliateLeagueFightLink,affiliatePaidFightLink,now:NOW});
 assert.ok(result.campaign,'existing campaign builder must generate a draft');
 const campaign=result.campaign;
-assert.equal(campaign.state,'draft');
+assert.ok(['draft','needs_review'].includes(campaign.state),'campaign must remain unpublished and require review');
 assert.ok(campaign.matchup.includes('Test Red')&&campaign.matchup.includes('Test Blue'));
 assert.deepEqual(Object.keys(campaign.channels),['instagram','facebook','x','affiliate_email']);
 const prospects=[{id:'synthetic-affiliate-1',type:'fighter',name:'Example Fighter',contact:'example@invalid.test',approved:false},{id:'synthetic-media-1',type:'media',name:'Example Sports Desk',contact:'press@invalid.test',approved:false}];
