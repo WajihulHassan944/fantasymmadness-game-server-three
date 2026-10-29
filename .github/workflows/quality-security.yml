@@ -23,6 +23,8 @@ jobs:
         run: node fight-registry-regression.test.js
       - run: npm ci --ignore-scripts
       - run: npm test
+      - name: Verify unattended Growth Engine controller offline scenarios
+        run: node growth-unattended-controller.test.js
       - run: npm audit --omit=dev --audit-level=high
       - uses: gitleaks/gitleaks-action@v2
         if: ${{ always() && !cancelled() }}
