@@ -4,6 +4,9 @@
 // no live database, no email/social sending, no production server registration.
 const assert=require('node:assert/strict');
 const express=require('express');
+const Parser=require('rss-parser');
+const originalParseURL=Parser.prototype.parseURL;
+Parser.prototype.parseURL=async()=>({items:[{title:'Synthetic fight announcement',link:'https://example.invalid/news',isoDate:'2026-11-01T10:00:00Z'}]});
 const register=require('./fan-acquisition-discovery');
 (async()=>{
  const realFetch=global.fetch;
@@ -46,5 +49,5 @@ const register=require('./fan-acquisition-discovery');
   assert.equal(body.agents.length,5);
   assert.ok(body.agents.every(x=>x.audiences.every(a=>a.outreachSent===false)));
   console.log('PASS real discovery HTTP routes: auth gate, cron gate, five genres, podcast research fallback, no publishing, no claimed acquisitions');
- }finally{await new Promise(resolve=>server.close(resolve));global.fetch=realFetch;}
+ }finally{await new Promise(resolve=>server.close(resolve));global.fetch=realFetch;Parser.prototype.parseURL=originalParseURL;}
 })().catch(e=>{console.error(e);process.exitCode=1;});
