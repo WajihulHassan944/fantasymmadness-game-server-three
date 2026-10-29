@@ -29,7 +29,7 @@ jobs:
       - run: npm ci --ignore-scripts
       - run: npm test
       - name: Verify unattended Growth Engine controller offline scenarios
-        run: node growth-unattended-controller.test.js && node growth-unattended-store.test.js
+        run: node growth-unattended-controller.test.js && node growth-unattended-store.test.js && node growth-affiliate-attribution.test.js
       - name: Verify real isolated MongoDB job recovery
         env:
           GROWTH_TEST_MONGO_URI: mongodb://127.0.0.1:27017
