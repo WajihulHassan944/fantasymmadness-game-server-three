@@ -30,6 +30,8 @@ jobs:
       - run: npm test
       - name: Verify unattended Growth Engine controller offline scenarios
         run: node growth-unattended-controller.test.js && node growth-unattended-store.test.js && node growth-affiliate-attribution.test.js && node growth-isolated-http.integration.test.js && node growth-existing-revenue-contract.test.js && node growth-payment-reconciliation.test.js && node growth-production-readiness.audit.test.js && node growth-marketing-campaign.simulation.test.js && node growth-expanded-operations.simulation.test.js && node growth-real-discovery-http.integration.test.js
+      - name: Verify read-only external research provider connectivity
+        run: node growth-live-provider-connectivity.smoke.test.js
       - name: Verify real isolated MongoDB job recovery
         env:
           GROWTH_TEST_MONGO_URI: mongodb://127.0.0.1:27017
