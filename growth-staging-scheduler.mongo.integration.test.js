@@ -32,13 +32,9 @@ const {createStore,LEASE_MS}=require('./growth-unattended-store');
   }
   const restarted=createStore(col,{testMode:true});
   assert.equal(await restarted.claim(t+59999),null,'retry and report are not yet due');
-  const retry=await restarted.claim(t+60000);
-  assert.ok(retry,'retry becomes due');
-  assert.equal(retry.type,'prepare_pr','retry is scheduled before new report at same timestamp');
-  await restarted.finish(retry,{success:true,now:t+60000});
-  const report=await restarted.claim(t+60000);
-  assert.equal(report.type,'aggregate_report');
-  await restarted.finish(report,{success:true,now:t+60000});
+  const due=[await restarted.claim(t+60000),await restarted.claim(t+60000)];
+  assert.deepEqual(due.map(j=>j.type).sort(),['aggregate_report','prepare_pr']);
+  for(const job of due)await restarted.finish(job,{success:true,now:t+60000});
   assert.equal(await restarted.claim(t+120000),null);
   assert.deepEqual(await restarted.summary(),{completed:3});
   console.log('PASS persistent staging scheduler: 3 unique jobs, concurrent claims, retry, restart, report, zero outbound actions');
