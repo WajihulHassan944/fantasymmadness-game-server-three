@@ -1,0 +1,35 @@
+name: Issue 185 temporary lockfile sync
+
+# TEMPORARY (removed in the next commit). package-lock.json is missing
+# packages that package.json already lists, so `npm ci` fails in CI. This adds
+# only the missing entries (existing locked versions are kept) and commits the
+# result to the repair branch.
+on:
+  pull_request:
+    paths: ['.github/workflows/issue-185-lockfile-sync.yml']
+
+permissions:
+  contents: write
+
+jobs:
+  sync:
+    if: github.head_ref == 'repair/185-affiliate-personalized-poster'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.head_ref }}
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: npm install --package-lock-only --ignore-scripts --no-audit --no-fund
+      - run: npm ci --ignore-scripts --dry-run
+      - name: Commit synced lockfile
+        run: |
+          if git diff --quiet package-lock.json; then echo "::notice title=lockfile::already in sync"; exit 0; fi
+          git diff --stat package-lock.json
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git commit -m "Sync package-lock.json with package.json so npm ci works in CI (#185)" package-lock.json
+          git push origin HEAD:${{ github.head_ref }}
+          echo "::notice title=lockfile::committed $(git rev-parse --short HEAD)"
