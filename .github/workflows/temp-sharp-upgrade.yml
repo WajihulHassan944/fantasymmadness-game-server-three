@@ -1,0 +1,31 @@
+name: TEMP sharp 0.35 experiment lockfile
+
+# TEMPORARY (removed before review): installs sharp ^0.35.5 (patched) and
+# commits package.json + lockfile to this experimental branch.
+on:
+  pull_request:
+    paths: ['.github/workflows/temp-sharp-upgrade.yml']
+permissions:
+  contents: write
+jobs:
+  sharp:
+    if: github.head_ref == 'exp/sharp-0.35'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.head_ref }}
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: npm install --package-lock-only --ignore-scripts --no-audit --no-fund "sharp@^0.35.5"
+      - run: npm ci --ignore-scripts
+      - run: |
+          node -e "const s=require('sharp'); console.log('::notice title=sharp::' + JSON.stringify(s.versions))"
+          echo "::notice title=sharp engines::$(npm view sharp@0.35.5 engines --json | tr -d '\n ')"
+          npm audit --json > /tmp/a.json || true
+          node -e 'const a=require("/tmp/a.json");console.log("::notice title=Audit with sharp 0.35::"+JSON.stringify(a.metadata.vulnerabilities)+"%0A"+Object.values(a.vulnerabilities||{}).map(x=>x.severity+" "+x.name).join("%0A"))'
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git commit -am "EXPERIMENT: sharp ^0.35.5 (patched libvips/libheif/librsvg)"
+          git push origin HEAD:${{ github.head_ref }}
