@@ -42,7 +42,7 @@ async function main() {
   const stamp = Date.now();
 
   // ---- Login --------------------------------------------------------------
-  const player = { _id: new ObjectId(), firstName: 'Reg', lastName: 'Player', playerName: `regplayer${stamp}`, email: `reg.player.${stamp}@fmm-staging.test`, password: hash, verified: true, tokens: '500', dateOfBirth: new Date('1990-05-05'), residenceState: 'NV', createdAt: new Date() };
+  const player = { _id: new ObjectId(), firstName: 'Reg', lastName: 'Player', playerName: `regplayer${stamp}`, email: `reg.player.${stamp}@fmm-staging.test`, password: hash, verified: true, tokens: '500', dateOfBirth: new Date('1990-05-05'), residenceState: 'TX', createdAt: new Date() }; // TX: a paid-contest state
   const broke = { ...player, _id: new ObjectId(), playerName: `regbroke${stamp}`, email: `reg.broke.${stamp}@fmm-staging.test`, tokens: '0' };
   const unverified = { ...player, _id: new ObjectId(), playerName: `regunver${stamp}`, email: `reg.unverified.${stamp}@fmm-staging.test`, verified: false };
   await db.collection('users').insertMany([player, broke, unverified]);
@@ -95,6 +95,13 @@ async function main() {
   }
   check('Coin ledger records the entry fee', ledgerRow && ledgerRow.amount === -100 && ledgerRow.balanceAfter === 400, ledgerRow ? `${ledgerRow.amount} -> ${ledgerRow.balanceAfter}` : 'no ledger row');
   check('Paid entry is credited to Kelise (affiliate attribution)', String(ledgerRow?.metadata?.referralAffiliateId || '') === ctx.kelise, String(ledgerRow?.metadata?.referralAffiliateId));
+  // Free-play-only state (NV): the paid entry must be refused without charging.
+  const nevada = { ...player, _id: new ObjectId(), playerName: `regnv${stamp}`, email: `reg.nv.${stamp}@fmm-staging.test`, residenceState: 'NV' };
+  await db.collection('users').insertOne(nevada);
+  const nvToken = jwt.sign({ id: String(nevada._id), scope: 'player' }, process.env.JWT_SECRET, { expiresIn: '1h' });
+  const nvEntry = await api('POST', `/api/fights/${ctx.fightId}/entries`, { token: nvToken, json: { predictions } });
+  const nvAfter = await db.collection('users').findOne({ _id: nevada._id });
+  check('Paid entry refused in a free-play-only state (NV), no charge', nvEntry.status === 403 && Number(nvAfter.tokens) === 500, `HTTP ${nvEntry.status} ${nvEntry.body?.code || ''} balance ${nvAfter.tokens}`);
   const brokeToken = jwt.sign({ id: String(broke._id), scope: 'player' }, process.env.JWT_SECRET, { expiresIn: '1h' });
   const brokeEntry = await api('POST', `/api/fights/${ctx.fightId}/entries`, { token: brokeToken, json: { predictions } });
   const brokeAfter = await db.collection('users').findOne({ _id: broke._id });

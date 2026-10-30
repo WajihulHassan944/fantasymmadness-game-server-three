@@ -21,7 +21,7 @@ async function main() {
   const browser = await chromium.launch();
   const page = await browser.newPage();
   const pageErrors = [];
-  page.on('pageerror', (error) => pageErrors.push(error.message));
+  page.on('pageerror', (error) => pageErrors.push(`${new URL(page.url()).pathname}: ${error.message}`));
   try {
     // Fight listing + fighter photos (UpcomingFights, the component fixed in #187).
     const listing = await page.goto(`${SITE}/upcomingfights`, { waitUntil: 'networkidle' });
@@ -75,7 +75,7 @@ async function main() {
     check('No request reached a live payment gateway', gatewayCalls.length === 0, gatewayCalls.join(' | '));
 
     const fatal = pageErrors.filter((message) => !/Failed to fetch|NetworkError|Load failed|ChunkLoadError/i.test(message));
-    check('No uncaught page errors on tested pages', fatal.length === 0, fatal.slice(0, 3).join(' | '));
+    check('No uncaught page errors on tested pages', fatal.length === 0, fatal.slice(0, 5).map((m) => m.slice(0, 220)).join(' | '));
   } finally {
     await browser.close();
   }
