@@ -102,7 +102,7 @@ async function main() {
 
   // ---- Image processing outside the personalized poster --------------------
   const otherFight = new ObjectId();
-  await db.collection('matches').insertOne({ _id: otherFight, matchFighterA: 'Other A', matchFighterB: 'Other B', matchType: 'LIVE', matchStatus: 'Upcoming', matchDate: new Date(Date.now() + 864e6), matchTime: '20:00', matchTokens: 0, pot: 0, createdAt: new Date() });
+  await db.collection('matches').insertOne({ _id: otherFight, matchFighterA: 'Other A', matchFighterB: 'Other B', matchType: 'LIVE', matchStatus: 'Scheduled', matchDate: new Date(Date.now() + 864e6), matchTime: '20:00', matchTokens: 0, pot: 0, createdAt: new Date() });
   const general = await sharp({ create: { width: 900, height: 1200, channels: 3, background: '#224488' } }).jpeg().toBuffer();
   const form = new FormData(); form.append('poster', new Blob([general], { type: 'image/jpeg' }), 'general.jpg');
   const upload = await api('POST', `/api/admin/fights/${otherFight}/social-poster`, { token: adminLogin.body?.token, form });

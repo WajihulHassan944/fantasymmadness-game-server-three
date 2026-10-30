@@ -90,7 +90,7 @@ async function main() {
   const future = new Date(Date.now() + 14 * 86400000);
   await db.collection('matches').insertOne({
     _id: ids.fight, matchFighterA: 'Elif Nur Turhan', matchFighterB: 'Alycia Baumgardner', matchName: 'Turhan vs Baumgardner (staging)',
-    matchCategory: 'Boxing', matchCategoryTwo: 'Boxing', matchType: 'LIVE', matchStatus: 'Upcoming', matchDate: future,
+    matchCategory: 'Boxing', matchCategoryTwo: 'Boxing', matchType: 'LIVE', matchStatus: 'Scheduled', matchDate: future,
     matchDateKey: future.toISOString().slice(0, 10), matchTime: '20:00', eventTimeZone: 'America/New_York', matchTokens: 100, pot: 1000,
     fightPosterImage: generalUrl, promotionBackground: generalUrl, createdAt: new Date(),
   });
