@@ -48,6 +48,8 @@ jobs:
         run: node growth-failure-recovery.e2e.test.js
       - name: Verify opt-out and follow-up suppression
         run: node growth-suppression-safety.test.js
+      - name: Verify synthetic paid-entry attribution and campaign reporting
+        run: node growth-attribution-reporting.acceptance.test.js
       - run: npm audit --omit=dev --audit-level=high
       - uses: gitleaks/gitleaks-action@v2
         if: ${{ always() && !cancelled() }}
