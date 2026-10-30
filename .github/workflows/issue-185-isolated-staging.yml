@@ -103,12 +103,20 @@ jobs:
           NEXT_PUBLIC_API_BASE: http://127.0.0.1:5055
         run: |
           npm ci --ignore-scripts
-          npx eslint --max-warnings=0 src/pages/affiliate/fight-launch.jsx src/pages/api/fight-share-image.jsx src/Utils/fightShareCopy.js 'src/pages/league/[affiliateId].jsx' \
-            && echo "::notice title=Website lint (files changed by 185)::fight-launch.jsx, fight-share-image.jsx, fightShareCopy.js, league page: 0 errors, 0 warnings" \
-            || echo "::error title=Website lint (files changed by 185)::lint problems in changed files"
-          npx eslint src/Components/Admin/FightLaunchDesk.jsx src/Components/Auth/AuthPortal.jsx src/Components/Fights/PublicFightDetailExperience.jsx \
-            && echo "::notice title=Website lint (large files touched by 185)::FightLaunchDesk, AuthPortal, PublicFightDetailExperience: 0 errors" \
-            || echo "::error title=Website lint (large files touched by 185)::errors in touched files"
+          # Lint the website files changed for #185. Errors fail the check; the
+          # warnings listed are compared with the same files before the repair.
+          FILES="src/pages/affiliate/fight-launch.jsx src/pages/api/fight-share-image.jsx src/Utils/fightShareCopy.js src/pages/league/[affiliateId].jsx src/Components/Admin/FightLaunchDesk.jsx src/Components/Auth/AuthPortal.jsx src/Components/Fights/PublicFightDetailExperience.jsx"
+          npx eslint -f json $FILES > /tmp/lint-after.json || true
+          git fetch -q --depth=50 origin fix/affiliate-custom-posters && git checkout -q FETCH_HEAD -- $FILES && (npx eslint -f json $FILES > /tmp/lint-before.json || true) && git checkout -q HEAD -- $FILES
+          node -e '
+            const read = (f) => require(f).flatMap((r) => r.messages.map((m) => ({ file: r.filePath.split("/website/")[1], sev: m.severity, rule: m.ruleId, msg: m.message })));
+            const before = read("/tmp/lint-before.json"), after = read("/tmp/lint-after.json");
+            const key = (m) => m.file + "|" + m.rule + "|" + m.msg;
+            const fresh = after.filter((m) => !before.some((b) => key(b) === key(m)));
+            const errors = after.filter((m) => m.sev === 2);
+            console.log("::notice title=Website lint, files changed by 185::" + errors.length + " errors; " + after.length + " findings after vs " + before.length + " before the repair; new findings: " + (fresh.map((m) => m.file + " " + m.rule).join(", ") || "none"));
+            if (errors.length || fresh.length) { console.log("::error title=Website lint regression::" + [...errors, ...fresh].map((m) => m.file + " " + m.rule + " " + m.msg).join(" | ")); process.exit(1); }
+          '
           npm run build && echo "::notice title=Website build::next build succeeded on repair branch"
           nohup npx next start -p 3000 > ../staging/issue-185/out/website.log 2>&1 &
           for i in $(seq 1 60); do curl -s -o /dev/null http://localhost:3000/ && break; sleep 1; done
