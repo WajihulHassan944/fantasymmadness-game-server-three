@@ -68,7 +68,16 @@ jobs:
           echo "JWT_SECRET=$(openssl rand -hex 32)" >> "$GITHUB_ENV"
           echo "JWT_SECRET_ADMIN=$(openssl rand -hex 32)" >> "$GITHUB_ENV"
       - name: Install backend
-        run: npm ci --ignore-scripts && npm rebuild sharp
+        run: npm ci --ignore-scripts && npm rebuild bcrypt sharp
+      - name: Regression context — dependency audit details (report only)
+        continue-on-error: true
+        run: |
+          npm audit --omit=dev --json > /tmp/audit.json || true
+          node -e '
+            const a = require("/tmp/audit.json"); const v = a.vulnerabilities || {};
+            const rows = Object.values(v).filter((x) => ["high","critical"].includes(x.severity)).map((x) => x.name + " (" + x.severity + ", " + (x.isDirect ? "direct" : "via " + [].concat(x.via).map((y) => typeof y === "string" ? y : y.name).join("/")) + ", range " + x.range + ", fix: " + (x.fixAvailable ? (x.fixAvailable.name ? x.fixAvailable.name + "@" + x.fixAvailable.version + (x.fixAvailable.isSemVerMajor ? " MAJOR" : "") : "yes") : "none") + ")");
+            console.log("::notice title=npm audit high/critical (backend)::" + (rows.join("%0A") || "none"));
+          '
       - name: Backend unit tests (Issue 185)
         run: node affiliate-personalized-poster.test.js
       - name: Start isolated staging backend
