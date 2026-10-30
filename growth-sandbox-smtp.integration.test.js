@@ -32,9 +32,9 @@ async function run(){
  });
  await new Promise((resolve,reject)=>{server.once('error',reject);server.listen(0,'127.0.0.1',resolve);});
  try{
-  const {html,plain,subject}=renderBusinessEmail({type:'affiliate',recipientName:'Sandbox Tester',personalization:'Test-only campaign.'});
+  const {html,text,subject}=renderBusinessEmail({type:'affiliate',recipientName:'Sandbox Tester',personalization:'Test-only campaign.'});
   const transport=nodemailer.createTransport({host:'127.0.0.1',port:server.address().port,secure:false,ignoreTLS:true});
-  await transport.sendMail({from:'contact@fantasymmadnesscom.com',to:'sandbox-recipient@localhost',subject,text:plain,html});
+  await transport.sendMail({from:'contact@fantasymmadnesscom.com',to:'sandbox-recipient@localhost',subject,text,html});
   assert.equal(recipients,1);
   assert.match(received,/FANTASY MMADNESS/);
   assert.match(received,/sandbox-recipient@localhost/);
