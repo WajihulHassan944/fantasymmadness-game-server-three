@@ -231,7 +231,7 @@ async function main() {
   const fightAtEnd = await db.collection('matches').findOne({ _id: ids.fight });
   check('General fight poster still the original at the end', fightAtEnd.fightPosterImage === generalUrl);
 
-  fs.writeFileSync(path.join(OUT, 'e2e-context.json'), JSON.stringify({ fightId: String(ids.fight), kelise: String(ids.kelise), control: String(ids.control), keliseToken, controlToken, approvedPosterId: poster.id, approvedSha256: previewSha, generalUrl, keliseKitLink: (keliseMail[0]?.html.match(/https:\/\/www\.fantasymmadness\.com\/affiliate\/fight-launch\?[^"\s<]+/) || [''])[0].replace(/&amp;/g, '&'), keliseLeagueLink: leagueLink(ids.kelise) }, null, 2));
+  fs.writeFileSync(path.join(OUT, 'e2e-context.json'), JSON.stringify({ fightId: String(ids.fight), kelise: String(ids.kelise), control: String(ids.control), keliseToken, controlToken, approvedPosterId: poster.id, approvedSha256: previewSha, generalUrl, generalSha256: sha(generalBytes), keliseKitLink: (keliseMail[0]?.html.match(/https:\/\/www\.fantasymmadness\.com\/affiliate\/fight-launch\?[^"\s<]+/) || [''])[0].replace(/&amp;/g, '&'), keliseLeagueLink: leagueLink(ids.kelise) }, null, 2));
   await client.close();
 }
 

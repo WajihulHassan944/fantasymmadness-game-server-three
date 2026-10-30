@@ -60,6 +60,8 @@ const types = { png: 'image/png', jpg: 'image/jpeg', jpeg: 'image/jpeg', webp: '
 http.createServer((req, res) => {
   const file = path.join(mediaDir, path.normalize(decodeURIComponent(String(req.url || '').split('?')[0])).replace(/^([/\\])+/, ''));
   if (!file.startsWith(mediaDir) || !fs.existsSync(file) || fs.statSync(file).isDirectory()) { res.statusCode = 404; return res.end(); }
+  // Like the real image library, images can be loaded by the website in a browser.
+  res.setHeader('Access-Control-Allow-Origin', '*');
   res.setHeader('Content-Type', types[path.extname(file).slice(1).toLowerCase()] || 'application/octet-stream');
   return fs.createReadStream(file).pipe(res);
 }).listen(MEDIA_PORT, '127.0.0.1');

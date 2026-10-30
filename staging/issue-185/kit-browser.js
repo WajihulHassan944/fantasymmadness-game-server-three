@@ -23,7 +23,7 @@ async function openKit(browser, token, link) {
   const page = await browser.newPage({ acceptDownloads: true });
   await page.context().grantPermissions(['clipboard-read', 'clipboard-write'], { origin: SITE });
   const posterRequests = [];
-  page.on('request', (request) => { const url = request.url(); if (/custom-poster\/image|fight-poster-image/.test(url)) posterRequests.push(url); });
+  page.on('request', (request) => { const url = request.url(); if (/custom-poster\/image|fight-poster-image|\/seed\/general\.png/.test(url)) posterRequests.push(url); });
   await page.goto(`${SITE}/`, { waitUntil: 'domcontentloaded' });
   await page.evaluate((value) => { localStorage.setItem('affiliateAuthToken', value); }, token);
   await page.goto(link.replace('https://www.fantasymmadness.com', SITE), { waitUntil: 'networkidle' });
@@ -86,7 +86,15 @@ async function main() {
     const control = await openKit(browser, context.controlToken, controlLink);
     await control.page.waitForTimeout(2500);
     await control.page.screenshot({ path: path.join(OUT, 'kit-control.png'), fullPage: true });
-    check('Other affiliate\'s kit requests the general fight poster', control.posterRequests.some((url) => url.includes('fight-poster-image') && url.includes(encodeURIComponent(context.generalUrl))), control.posterRequests.join(' | '));
+    check('Other affiliate\'s kit requests the general fight poster', control.posterRequests.some((url) => url.includes(context.generalUrl) || url.includes(encodeURIComponent(context.generalUrl))), control.posterRequests.join(' | '));
+    const controlShown = Buffer.from(await control.page.evaluate(async () => {
+      const element = document.querySelector('img[alt$="fight poster"]');
+      if (!element) return [];
+      const blob = await (await fetch(element.src)).blob();
+      return Array.from(new Uint8Array(await blob.arrayBuffer()));
+    }).catch(() => []));
+    check('Other affiliate\'s kit displays the general fight poster (byte-identical)', controlShown.length > 0 && sha(controlShown) === context.generalSha256, controlShown.length ? sha(controlShown) : 'no poster shown');
+    check('Other affiliate\'s kit did not load any personalized poster', !control.posterRequests.some((url) => url.includes('custom-poster/image')), control.posterRequests.join(' | '));
     check('Other affiliate\'s kit shows no personalized poster', await control.page.locator('[data-personalized-poster="true"]').count() === 0);
     const controlPreview = await control.page.request.get(`${SITE}/api/fight-share-image?fightId=${context.fightId}&affiliateId=${context.control}&format=facebook&v=14`);
     check('Other affiliate\'s social preview uses the general poster', controlPreview.headers()['x-poster-source'] === 'general', `${controlPreview.status()} ${controlPreview.headers()['x-poster-source']}`);
