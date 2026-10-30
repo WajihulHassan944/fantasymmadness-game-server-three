@@ -103,7 +103,13 @@ jobs:
           NEXT_PUBLIC_API_BASE: http://127.0.0.1:5055
         run: |
           npm ci --ignore-scripts
-          npm run build
+          npx eslint --max-warnings=0 src/pages/affiliate/fight-launch.jsx src/pages/api/fight-share-image.jsx src/Utils/fightShareCopy.js 'src/pages/league/[affiliateId].jsx' \
+            && echo "::notice title=Website lint (files changed by 185)::fight-launch.jsx, fight-share-image.jsx, fightShareCopy.js, league page: 0 errors, 0 warnings" \
+            || echo "::error title=Website lint (files changed by 185)::lint problems in changed files"
+          npx eslint src/Components/Admin/FightLaunchDesk.jsx src/Components/Auth/AuthPortal.jsx src/Components/Fights/PublicFightDetailExperience.jsx \
+            && echo "::notice title=Website lint (large files touched by 185)::FightLaunchDesk, AuthPortal, PublicFightDetailExperience: 0 errors" \
+            || echo "::error title=Website lint (large files touched by 185)::errors in touched files"
+          npm run build && echo "::notice title=Website build::next build succeeded on repair branch"
           nohup npx next start -p 3000 > ../staging/issue-185/out/website.log 2>&1 &
           for i in $(seq 1 60); do curl -s -o /dev/null http://localhost:3000/ && break; sleep 1; done
       - name: Browser — kit from received email, Copy, Download, Share, link preview
