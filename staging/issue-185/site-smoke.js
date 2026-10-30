@@ -14,7 +14,8 @@ const SITE = process.env.STAGING_SITE || 'http://localhost:3000';
 const OUT = path.resolve(process.env.STAGING_OUT_DIR || path.join(__dirname, 'out'));
 const ctx = JSON.parse(fs.readFileSync(path.join(OUT, 'e2e-context.json'), 'utf8'));
 const results = [];
-const check = (name, ok, detail = '') => { results.push({ name: `[website] ${name}`, ok: Boolean(ok), detail: String(detail) }); console.log(`${ok ? 'PASS' : 'FAIL'}  ${name}${detail ? ` — ${detail}` : ''}`); };
+const LABEL = process.env.SITE_LABEL || 'website';
+const check = (name, ok, detail = '') => { results.push({ name: `[${LABEL}] ${name}`, ok: Boolean(ok), detail: String(detail) }); console.log(`${ok ? 'PASS' : 'FAIL'}  ${name}${detail ? ` — ${detail}` : ''}`); };
 
 async function main() {
   const { chromium } = require('playwright');
@@ -22,12 +23,27 @@ async function main() {
   const page = await browser.newPage();
   const pageErrors = [];
   page.on('pageerror', (error) => pageErrors.push(`${new URL(page.url()).pathname}: ${error.message}`));
+  const consoleErrors = [];
+  page.on('console', (message) => { if (message.type() === 'error') consoleErrors.push(`${new URL(page.url()).pathname}: ${message.text().slice(0, 200)}`); });
+  const listingResponses = [];
+  page.on('response', async (response) => {
+    if (!/\/api\/public\/fights(\?|$)/.test(response.url())) return;
+    try {
+      const body = await response.json();
+      const rows = body.items || body.data || [];
+      const seeded = rows.find((row) => String(row._id || row.id) === ctx.fightId);
+      listingResponses.push({ status: response.status(), count: rows.length, seeded: seeded ? { matchType: seeded.matchType, matchDate: seeded.matchDate, matchTime: seeded.matchTime, matchStatus: seeded.matchStatus, hasUserPredictions: Array.isArray(seeded.userPredictions) } : null });
+    } catch { listingResponses.push({ status: response.status(), unreadable: true }); }
+  });
   try {
     // Fight listing + fighter photos (UpcomingFights, the component fixed in #187).
     const listing = await page.goto(`${SITE}/upcomingfights`, { waitUntil: 'networkidle' });
     await page.waitForTimeout(2500);
     const listed = await page.locator('.fightItem').count();
     check('Upcoming fights page loads', listing.status() === 200, `HTTP ${listing.status()}`);
+    console.log('listing API responses:', JSON.stringify(listingResponses));
+    console.log('console errors on listing:', JSON.stringify(consoleErrors.filter((m) => m.startsWith('/upcomingfights')).slice(0, 8)));
+    check('Fight listing API returns the seeded fight', listingResponses.some((r) => r.seeded), JSON.stringify(listingResponses).slice(0, 400));
     check('Fight listing shows the seeded fights', listed > 0 && await page.getByText('Elif Nur Turhan', { exact: false }).count() > 0, `${listed} fight cards`);
     const photos = await page.locator('.fightItem .fightersImages img').evaluateAll((images) => images.map((img) => ({ src: img.currentSrc || img.src, ok: img.complete && img.naturalWidth > 0, fallback: img.dataset.fallbackApplied === 'true' })));
     check('Fighter photos render (or fall back) on every card', photos.length > 0 && photos.every((p) => p.ok), JSON.stringify(photos.slice(0, 4)));
@@ -83,7 +99,7 @@ async function main() {
 
 main().catch((error) => check('Website smoke script completed', false, error.stack || error.message))
   .finally(() => {
-    fs.writeFileSync(path.join(OUT, 'site-results.json'), JSON.stringify(results, null, 2));
+    fs.writeFileSync(path.join(OUT, LABEL === 'website' ? 'site-results.json' : `site-results-${LABEL}.json`), JSON.stringify(results, null, 2));
     const failed = results.filter((r) => !r.ok);
     console.log(`\n${results.length - failed.length}/${results.length} website checks passed`);
     process.exitCode = failed.length ? 1 : 0;

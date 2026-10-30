@@ -147,7 +147,25 @@ jobs:
         run: STAGING_OUT_DIR="$PWD/staging/issue-185/out" node staging/issue-185/regression.js
       - name: Website smoke — listings, fighter photos, fight page, league page, QR, login, checkout
         if: always()
-        run: STAGING_OUT_DIR="$PWD/staging/issue-185/out" NODE_PATH=/tmp/pw/node_modules node staging/issue-185/site-smoke.js 2>&1 | tee staging/issue-185/out/site.log
+        run: |
+          set -o pipefail
+          STAGING_OUT_DIR="$PWD/staging/issue-185/out" NODE_PATH=/tmp/pw/node_modules node staging/issue-185/site-smoke.js 2>&1 | tee staging/issue-185/out/site.log
+      - name: Baseline comparison — same website checks on the CURRENT live-branch website (no repairs)
+        if: always()
+        env:
+          NEXT_PUBLIC_API_BASE_URL: http://127.0.0.1:5055
+          NEXT_PUBLIC_API_BASE: http://127.0.0.1:5055
+        run: |
+          git clone -q --depth 1 --branch fix/affiliate-custom-posters https://github.com/WajihulHassan944/fmm-ver2 website-base
+          cd website-base
+          npm install --package-lock-only --ignore-scripts --no-audit --no-fund && npm ci --ignore-scripts && npm run build > ../staging/issue-185/out/website-base-build.log 2>&1
+          echo "::notice title=Baseline website::live branch $(git rev-parse --short HEAD), next $(node -p "require('next/package.json').version")"
+          nohup npx next start -p 3001 > ../staging/issue-185/out/website-base.log 2>&1 &
+          for i in $(seq 1 60); do curl -s -o /dev/null http://localhost:3001/ && break; sleep 1; done
+          cd ..
+          STAGING_SITE=http://localhost:3001 SITE_LABEL=baseline STAGING_OUT_DIR="$PWD/staging/issue-185/out" NODE_PATH=/tmp/pw/node_modules node staging/issue-185/site-smoke.js 2>&1 | tee staging/issue-185/out/site-baseline.log || true
+          node -e 'const r=require("./staging/issue-185/out/site-results-baseline.json");console.log("::notice title=Baseline (live-branch website, no repairs)::"+r.map(x=>(x.ok?"PASS ":"FAIL ")+x.name+(x.detail?" — "+x.detail.slice(0,200):"")).join("%0A"))'
+          echo "::notice title=Listing diagnostics::$(grep -h 'listing API responses\|console errors on listing' staging/issue-185/out/site.log staging/issue-185/out/site-baseline.log | sed 's/%/%25/g' | tr '\n' '\r' | sed 's/\r/%0A/g' | head -c 4000)"
       - name: Report browser log on failure
         if: failure()
         run: |
