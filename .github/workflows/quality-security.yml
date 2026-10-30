@@ -50,6 +50,8 @@ jobs:
         run: node growth-suppression-safety.test.js
       - name: Verify synthetic paid-entry attribution and campaign reporting
         run: node growth-attribution-reporting.acceptance.test.js
+      - name: Verify evidence-aware staging launch gates
+        run: node growth-launch-evidence.acceptance.test.js
       - run: npm audit --omit=dev --audit-level=high
       - uses: gitleaks/gitleaks-action@v2
         if: ${{ always() && !cancelled() }}
