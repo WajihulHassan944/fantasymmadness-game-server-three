@@ -1,0 +1,137 @@
+name: Issue 185 isolated staging E2E
+
+# Isolated staging for Issue #185 (personalized affiliate poster delivery).
+# Everything runs inside this throwaway CI machine: a local MongoDB staging
+# database, a local Mailpit test mailbox, and the backend with loopback-only
+# networking (staging/issue-185/isolation-preload.js). No repository secrets
+# are used, so the live database, payment processing, email providers and real
+# affiliates are unreachable.
+
+on:
+  pull_request:
+    paths:
+      - 'affiliate-custom-poster.js'
+      - 'affiliate-personalized-poster.test.js'
+      - 'server.js'
+      - 'full-card-bootstrap.js'
+      - 'staging/issue-185/**'
+      - '.github/workflows/issue-185-isolated-staging.yml'
+  workflow_dispatch:
+    inputs:
+      website_ref:
+        description: fmm-ver2 branch to test
+        default: repair/185-affiliate-personalized-poster
+
+permissions:
+  contents: read
+
+jobs:
+  e2e:
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    services:
+      mongo:
+        image: mongo:7
+        ports: ['27017:27017']
+      mailpit:
+        image: axllent/mailpit:latest
+        ports: ['1025:1025', '8025:8025']
+        env:
+          MP_SMTP_AUTH_ACCEPT_ANY: '1'
+          MP_SMTP_AUTH_ALLOW_INSECURE: '1'
+    env:
+      STAGING_ISOLATED: '1'
+      NODE_ENV: staging
+      PORT: '5055'
+      MONGODB_URI: mongodb://127.0.0.1:27017/fmm_issue185_staging
+      SMTP_HOST: 127.0.0.1
+      SMTP_PORT: '1025'
+      SMTP_SECURE: 'false'
+      SMTP_USER: staging-sender@fmm-staging.test
+      SMTP_PASS: staging-only
+      TRANSACTIONAL_MAIL_FROM: FANTASY MMADNESS STAGING <staging-sender@fmm-staging.test>
+      OWNER_EMAIL: owner@fmm-staging.test
+      AFFILIATE_POSTER_SOURCE_HOSTS: 127.0.0.1:9187
+      STAGING_MEDIA_PORT: '9187'
+      STAGING_API: http://127.0.0.1:5055
+      STAGING_MAILPIT: http://127.0.0.1:8025
+      STAGING_SITE: http://localhost:3000
+      NEXT_TELEMETRY_DISABLED: '1'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - name: Generate throwaway staging secrets
+        run: |
+          echo "JWT_SECRET=$(openssl rand -hex 32)" >> "$GITHUB_ENV"
+          echo "JWT_SECRET_ADMIN=$(openssl rand -hex 32)" >> "$GITHUB_ENV"
+      - name: Install backend
+        run: npm ci --ignore-scripts && npm rebuild sharp
+      - name: Backend unit tests (Issue 185)
+        run: node affiliate-personalized-poster.test.js
+      - name: Start isolated staging backend
+        run: |
+          mkdir -p staging/issue-185/out
+          export STAGING_OUT_DIR="$PWD/staging/issue-185/out"
+          nohup node -r ./staging/issue-185/isolation-preload.js full-card-bootstrap.js > staging/issue-185/out/backend.log 2>&1 &
+          for i in $(seq 1 60); do curl -s -o /dev/null http://127.0.0.1:5055/ && break; sleep 1; done
+          curl -s -o /dev/null -w "backend HTTP %{http_code}\n" http://127.0.0.1:5055/
+          grep -m1 "isolation active" staging/issue-185/out/backend.log
+      - name: E2E — upload, preview, approve, send, receive, QR, attribution
+        run: STAGING_OUT_DIR="$PWD/staging/issue-185/out" node staging/issue-185/e2e.js
+      - name: Check out website repair branch
+        uses: actions/checkout@v4
+        with:
+          repository: WajihulHassan944/fmm-ver2
+          ref: ${{ inputs.website_ref || 'repair/185-affiliate-personalized-poster' }}
+          path: website
+      - name: Build website against isolated staging
+        working-directory: website
+        env:
+          NEXT_PUBLIC_API_BASE_URL: http://127.0.0.1:5055
+          NEXT_PUBLIC_API_BASE: http://127.0.0.1:5055
+        run: |
+          npm ci --ignore-scripts
+          npm run build
+          nohup npx next start -p 3000 > ../staging/issue-185/out/website.log 2>&1 &
+          for i in $(seq 1 60); do curl -s -o /dev/null http://localhost:3000/ && break; sleep 1; done
+      - name: Browser — kit from received email, Copy, Download, Share, link preview
+        run: |
+          npm install --no-save --ignore-scripts playwright@1.56.1
+          npx playwright install --with-deps chromium
+          STAGING_OUT_DIR="$PWD/staging/issue-185/out" node staging/issue-185/kit-browser.js
+      - name: Report results
+        if: always()
+        run: |
+          cd staging/issue-185/out
+          node -e '
+            const fs = require("fs");
+            const rows = ["e2e-results.json", "browser-results.json"].flatMap((f) => fs.existsSync(f) ? JSON.parse(fs.readFileSync(f, "utf8")).map((r) => ({ ...r, file: f })) : [{ name: f + " missing", ok: false, detail: "" }]);
+            const failed = rows.filter((r) => !r.ok);
+            const line = (r) => (r.ok ? "PASS " : "FAIL ") + r.name + (r.detail ? " — " + r.detail.slice(0, 160) : "");
+            const blocked = fs.existsSync("blocked-outbound.log") ? [...new Set(fs.readFileSync("blocked-outbound.log", "utf8").trim().split("\n").map((l) => l.split(" ")[1]).filter(Boolean))] : [];
+            const esc = (s) => s.replace(/%/g, "%25").replace(/\r/g, "").replace(/\n/g, "%0A");
+            console.log("::notice title=Issue 185 staging summary::" + esc((rows.length - failed.length) + "/" + rows.length + " checks passed. Outbound connections blocked by isolation: " + (blocked.join(", ") || "none")));
+            const chunks = []; for (let i = 0; i < rows.length; i += 12) chunks.push(rows.slice(i, i + 12));
+            chunks.slice(0, 8).forEach((chunk, i) => console.log("::notice title=Issue 185 checks part " + (i + 1) + "::" + esc(chunk.map(line).join("\n"))));
+            if (failed.length) console.log("::error title=Issue 185 failures::" + esc(failed.map(line).join("\n")));
+          '
+          echo "--- backend log (tail) ---"; tail -n 60 backend.log || true
+      - name: Report backend errors
+        if: failure()
+        run: |
+          node -e 'const fs=require("fs");const log=fs.existsSync("staging/issue-185/out/backend.log")?fs.readFileSync("staging/issue-185/out/backend.log","utf8"):"";const lines=log.split("\n").filter(l=>/error|fail|refus|cannot|unavailable/i.test(l)).slice(-25).join("%0A");console.log("::warning title=Backend log errors::"+lines.replace(/\r/g,""))'
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: issue-185-staging-evidence
+          path: |
+            staging/issue-185/out/*.json
+            staging/issue-185/out/*.eml
+            staging/issue-185/out/*.png
+            staging/issue-185/out/*.jpg
+            staging/issue-185/out/*.webp
+            staging/issue-185/out/*.log
+          retention-days: 30

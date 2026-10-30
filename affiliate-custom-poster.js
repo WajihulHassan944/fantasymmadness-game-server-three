@@ -20,6 +20,17 @@
 
 const crypto = require('crypto');
 
+// QR reader (Issue #185). Vendored jsQR (Apache-2.0, vendor/jsqr/LICENSE) so the
+// lockfile and deployed dependencies stay unchanged. If it cannot load, QR
+// verification is reported as unavailable instead of silently passing.
+let jsQR = null;
+try {
+  const loaded = require('./vendor/jsqr/jsQR.js');
+  jsQR = loaded.default || loaded;
+} catch (error) {
+  console.error('[affiliate-custom-poster] QR reader unavailable:', error?.message);
+}
+
 const SITE_URL = 'https://www.fantasymmadness.com';
 const OBJECT_ID = /^[a-f\d]{24}$/i;
 const MIN_QR_PIXELS = 96;
@@ -70,6 +81,57 @@ function httpError(status, message) {
 
 const clamp = (value, min, max) => Math.min(max, Math.max(min, value));
 
+// Which affiliate and fight a FANTASY MMADNESS share link credits, or null for
+// any other address. Handles the league link (/league/<id>?fightId=), the named
+// league link (?ref=<id>) and the paid-fight link (/fight/<id>?ref=<id>).
+function affiliateFromLink(link) {
+  let url;
+  try { url = new URL(String(link || '')); } catch { return null; }
+  if (!/(^|\.)fantasymmadness\.com$/i.test(url.hostname)) return null;
+  const parts = url.pathname.split('/').filter(Boolean).map((part) => { try { return decodeURIComponent(part); } catch { return part; } });
+  const pathId = (name) => (parts[0] === name && OBJECT_ID.test(parts[1] || '') ? parts[1] : '');
+  const query = (name) => (OBJECT_ID.test(url.searchParams.get(name) || '') ? url.searchParams.get(name) : '');
+  const affiliateId = (query('ref') || query('affiliateId') || pathId('league')).toLowerCase();
+  const fightId = (query('fightId') || pathId('fight') || (parts[0] === 'pro-wrestling' && parts[1] === 'matches' && OBJECT_ID.test(parts[2] || '') ? parts[2] : '')).toLowerCase();
+  if (!affiliateId && !fightId) return null;
+  return { affiliateId, fightId };
+}
+
+// Reads one QR code from an image (or from one square of it). Returns
+// { data, box } with box as fractions of the upright image, or null.
+async function readQr(sharp, buffer, region = null) {
+  if (!jsQR) return null;
+  const upright = await sharp(buffer, { failOn: 'error' }).rotate().png().toBuffer({ resolveWithObject: true });
+  const fullWidth = upright.info.width; const fullHeight = upright.info.height;
+  let left = 0; let top = 0; let width = fullWidth; let height = fullHeight;
+  if (region) {
+    left = clamp(Math.round(region.left), 0, fullWidth - 1);
+    top = clamp(Math.round(region.top), 0, fullHeight - 1);
+    width = clamp(Math.round(region.size), 1, fullWidth - left);
+    height = clamp(Math.round(region.size), 1, fullHeight - top);
+  }
+  // A few working sizes: large posters are scaled down (faster and steadier),
+  // small QR squares are scaled up so every module is several pixels wide.
+  const longest = Math.max(width, height);
+  const targets = [...new Set([Math.min(1400, longest), 900, Math.max(600, Math.min(1200, longest * 3))])];
+  for (const target of targets) {
+    const scale = target / longest;
+    let pipeline = sharp(upright.data);
+    if (region) pipeline = pipeline.extract({ left, top, width, height });
+    const { data, info } = await pipeline
+      .resize({ width: Math.max(1, Math.round(width * scale)), height: Math.max(1, Math.round(height * scale)), kernel: scale > 1 ? 'nearest' : 'lanczos3', fit: 'fill' })
+      .ensureAlpha().raw().toBuffer({ resolveWithObject: true });
+    const found = jsQR(new Uint8ClampedArray(data.buffer, data.byteOffset, data.length), info.width, info.height, { inversionAttempts: 'attemptBoth' });
+    if (!found?.data) continue;
+    const corners = [found.location.topLeftCorner, found.location.topRightCorner, found.location.bottomLeftCorner, found.location.bottomRightCorner];
+    const xs = corners.map((point) => left + point.x / scale); const ys = corners.map((point) => top + point.y / scale);
+    const minX = Math.min(...xs); const minY = Math.min(...ys);
+    const side = Math.max(Math.max(...xs) - minX, Math.max(...ys) - minY);
+    return { data: found.data, box: { x: minX / fullWidth, y: minY / fullHeight, scale: side / fullWidth }, width: fullWidth, height: fullHeight };
+  }
+  return null;
+}
+
 // Stored image bytes come back as a Buffer (document) or a BSON Binary (lean).
 function imageBytes(value) {
   if (Buffer.isBuffer(value)) return Buffer.from(value);
@@ -77,7 +139,7 @@ function imageBytes(value) {
   return Buffer.from(value || []);
 }
 
-module.exports = function registerAffiliateCustomPosters({ app, mongoose, verifyAdminToken, cloudinary, sharp, QRCode, upload, fetchImpl = fetch }) {
+module.exports = function registerAffiliateCustomPosters({ app, mongoose, verifyAdminToken, verifyToken, requireScope, affiliateScope = 'affiliate', cloudinary, sharp, QRCode, upload, fetchImpl = fetch }) {
   const Match = mongoose.models.Match;
   const Shadow = mongoose.models.Shadow;
   const ProWrestlingMatch = mongoose.models.ProWrestlingMatch;
@@ -117,6 +179,8 @@ module.exports = function registerAffiliateCustomPosters({ app, mongoose, verify
     // promotion section). A 'paid' poster is made from an approved poster.
     qrTarget: { type: String, enum: ['league', 'paid'], default: 'league' },
     derivedFrom: { type: String, default: '' },
+    // Issue #185: the finished image was read back and its QR opens qrLink.
+    qrVerified: { type: Boolean, default: undefined },
   }, { timestamps: true, collection: 'affiliatecustomposters' });
   const AffiliateCustomPoster = mongoose.models.AffiliateCustomPoster || mongoose.model('AffiliateCustomPoster', posterSchema);
 
@@ -195,6 +259,32 @@ module.exports = function registerAffiliateCustomPosters({ app, mongoose, verify
       width, height,
       qr: { left, top, size, x: left / width, y: top / height, scale: size / width },
     };
+  }
+
+  // Read the QR square back out of the finished image. A poster whose QR does
+  // not open the affiliate's own link is never stored, approved or sent.
+  async function verifyComposedQr(built, qrLink) {
+    if (!jsQR) throw httpError(503, 'The QR checker is unavailable, so the poster could not be verified. Nothing was saved.');
+    const margin = Math.round(built.qr.size * 0.15);
+    const found = await readQr(sharp, built.output, { left: built.qr.left - margin, top: built.qr.top - margin, size: built.qr.size + margin * 2 });
+    if (!found || found.data !== qrLink) {
+      throw httpError(422, 'The QR code on the finished poster could not be read back correctly. Make the QR code larger or move it to a plainer area, then try again.');
+    }
+    return true;
+  }
+
+  // A poster the owner made herself may already carry a QR code. If it does,
+  // it must credit this affiliate and this fight; another affiliate's QR on
+  // this affiliate's poster would send her fans (and her referrals) elsewhere.
+  async function checkEmbeddedQr(source, { affiliateId, fightId }) {
+    const found = await readQr(sharp, source).catch(() => null);
+    if (!found) return null;
+    const credited = affiliateFromLink(found.data);
+    if (!credited) return { ...found, matches: false, foreign: false };
+    if ((credited.affiliateId && credited.affiliateId !== String(affiliateId).toLowerCase()) || (credited.fightId && credited.fightId !== String(fightId).toLowerCase())) {
+      throw httpError(409, 'The QR code already printed on this poster belongs to a different affiliate or fight. Upload the poster made for this affiliate and this fight.');
+    }
+    return { ...found, matches: Boolean(credited.affiliateId), foreign: false };
   }
 
   async function storeImage(buffer, contentType) {
@@ -405,7 +495,20 @@ module.exports = function registerAffiliateCustomPosters({ app, mongoose, verify
       const chosen = await resolveSource({ fightId, found, sourceId: String(req.body?.sourceId || '').trim() });
       const expected = String(req.body?.sourcePosterUrl || '').trim();
       if (expected && expected !== chosen.url) return res.status(409).json({ ok: false, code: 'POSTER_CHANGED', message: 'A different poster is saved than the one on your screen. Reload and try again.' });
-      const placement = await suggestPlacement(await loadSourceImage(chosen.url));
+      const source = await loadSourceImage(chosen.url);
+      // The affiliate's own QR is already printed on her poster: cover exactly
+      // that spot (same link, so nothing visible changes for her fans).
+      const affiliateId = String(req.body?.affiliateId || '').trim();
+      if (chosen.kind === 'custom' && OBJECT_ID.test(affiliateId)) {
+        const embedded = await checkEmbeddedQr(source, { affiliateId, fightId });
+        if (embedded?.matches) {
+          const scale = clamp(embedded.box.scale * 1.16, 0.03, 0.9);
+          const shift = (scale - embedded.box.scale) / 2;
+          const aspect = embedded.width / embedded.height;
+          return res.json({ ok: true, placement: { reason: 'existing-qr', x: clamp(embedded.box.x - shift, 0, 1 - scale), y: clamp(embedded.box.y - shift * aspect, 0, 1), scale }, sourcePosterUrl: chosen.url });
+        }
+      }
+      const placement = await suggestPlacement(source);
       return res.json({ ok: true, placement, sourcePosterUrl: chosen.url });
     } catch (error) { return fail(res, error, 'Could not find a place for the QR code.'); }
   });
@@ -435,7 +538,9 @@ module.exports = function registerAffiliateCustomPosters({ app, mongoose, verify
       affiliateId = String(affiliate._id);
       const qrLink = affiliateLeagueFightLink(affiliate._id, fightId);
       const source = await loadSourceImage(chosen.url);
+      if (chosen.kind === 'custom' && audience === 'one') await checkEmbeddedQr(source, { affiliateId, fightId });
       const built = await compose({ source, qrLink, qr: req.body?.qr || {} });
+      await verifyComposedQr(built, qrLink);
       const sha256 = crypto.createHash('sha256').update(built.output).digest('hex');
       const imageUrl = await storeImage(built.output, built.contentType).catch((error) => {
         console.error('[affiliate-custom-poster] image copy upload failed:', error?.message);
@@ -446,7 +551,7 @@ module.exports = function registerAffiliateCustomPosters({ app, mongoose, verify
         sourcePosterUrl: chosen.url, sourceSha256: crypto.createHash('sha256').update(source).digest('hex'),
         sourceKind: chosen.kind, sourceId: chosen.id, audience, promo: cleanPromo(req.body?.promo),
         qrLink, qr: built.qr, width: built.width, height: built.height, contentType: built.contentType,
-        image: built.output, sha256, bytes: built.output.length, imageUrl, status: 'preview', createdBy: adminName(req),
+        image: built.output, sha256, bytes: built.output.length, imageUrl, status: 'preview', createdBy: adminName(req), qrVerified: true,
       });
       return res.status(201).json({ ok: true, poster: { ...publicPoster(doc), affiliateName: [affiliate.firstName, affiliate.lastName].filter(Boolean).join(' ') } });
     } catch (error) { return fail(res, error, 'Could not build the finished poster.'); }
@@ -486,6 +591,7 @@ module.exports = function registerAffiliateCustomPosters({ app, mongoose, verify
       const doc = await AffiliateCustomPoster.findById(req.params.id);
       if (!doc) return res.status(404).json({ ok: false, message: 'Finished poster not found.' });
       if (doc.status === 'superseded') return res.status(409).json({ ok: false, message: 'A newer finished poster replaced this one. Approve the newest version.' });
+      if (doc.qrVerified === false) return res.status(409).json({ ok: false, message: 'The QR code on this poster could not be verified. Make a new preview.' });
       if (!await sourceStillValid(doc)) {
         return res.status(409).json({ ok: false, code: 'POSTER_CHANGED', message: 'The poster was replaced after this preview was made. Place the QR again and approve the new preview.' });
       }
@@ -526,6 +632,7 @@ module.exports = function registerAffiliateCustomPosters({ app, mongoose, verify
       const qrLink = affiliatePaidFightLink(affiliate._id, base.fightId, found.source);
       const source = await loadSourceImage(base.sourcePosterUrl);
       const built = await compose({ source, qrLink, qr: { x: base.qr?.x, y: base.qr?.y, scale: base.qr?.scale } });
+      await verifyComposedQr(built, qrLink);
       const sha256 = crypto.createHash('sha256').update(built.output).digest('hex');
       const imageUrl = await storeImage(built.output, built.contentType).catch((error) => {
         console.error('[affiliate-custom-poster] image copy upload failed:', error?.message);
@@ -540,7 +647,7 @@ module.exports = function registerAffiliateCustomPosters({ app, mongoose, verify
         sourcePosterUrl: base.sourcePosterUrl, sourceSha256: base.sourceSha256, sourceKind: base.sourceKind, sourceId: base.sourceId,
         audience: base.audience || 'one', promo: base.promo, qrTarget: 'paid', derivedFrom: String(base._id),
         qrLink, qr: built.qr, width: built.width, height: built.height, contentType: built.contentType,
-        image: built.output, sha256, bytes: built.output.length, imageUrl,
+        image: built.output, sha256, bytes: built.output.length, imageUrl, qrVerified: true,
         status: 'approved', approvedAt: new Date(), approvedBy: adminName(req), createdBy: adminName(req),
       });
       return res.status(201).json({ ok: true, poster: { ...publicPoster(doc), affiliateName: [affiliate.firstName, affiliate.lastName].filter(Boolean).join(' ') } });
@@ -567,6 +674,7 @@ module.exports = function registerAffiliateCustomPosters({ app, mongoose, verify
       if (!affiliate) throw httpError(409, 'Only approved affiliates can receive this poster. It was not sent.');
       const qrLink = qrLinkFor(doc.qrTarget, affiliate._id, doc.fightId, doc.fightSource);
       const built = await compose({ source: await loadSourceImage(doc.sourcePosterUrl), qrLink, qr: { x: doc.qr?.x, y: doc.qr?.y, scale: doc.qr?.scale } });
+      await verifyComposedQr(built, qrLink);
       return {
         id: String(doc._id), image: built.output, contentType: built.contentType,
         sha256: crypto.createHash('sha256').update(built.output).digest('hex'), qrLink,
@@ -595,8 +703,115 @@ module.exports = function registerAffiliateCustomPosters({ app, mongoose, verify
     await AffiliateCustomPoster.updateOne({ _id: posterId }, { $push: { sends: { email: String(email || '').toLowerCase(), sentAt: new Date() } } });
   }
 
-  app.locals.affiliateCustomPoster = { forEmail, markSent, affiliateLeagueFightLink, affiliatePaidFightLink };
-  return { AffiliateCustomPoster, AffiliatePosterSource, forEmail, markSent, compose, suggestPlacement, affiliateLeagueFightLink, affiliatePaidFightLink };
+  // ---- Issue #185: the personalized poster everywhere the affiliate sees it --
+  // The ONE approved poster made for this affiliate and this fight (still
+  // built from the artwork it was approved on), or null. Precedence when
+  // several exist: the one most recently emailed to her, then the league-QR
+  // version (it matches the tracked link in her kit), then the newest approval.
+  async function approvedForAffiliate({ fightId, affiliateId }) {
+    if (!OBJECT_ID.test(String(fightId || '')) || !OBJECT_ID.test(String(affiliateId || ''))) return null;
+    const docs = await AffiliateCustomPoster.find({ fightId: String(fightId), affiliateId: String(affiliateId), audience: { $ne: 'all' }, status: 'approved' })
+      .select('-image').lean();
+    const lastSent = (doc) => Math.max(0, ...(doc.sends || []).map((send) => new Date(send.sentAt).getTime() || 0));
+    docs.sort((a, b) => (lastSent(b) - lastSent(a))
+      || ((a.qrTarget === 'paid') - (b.qrTarget === 'paid'))
+      || (new Date(b.approvedAt || b.createdAt).getTime() - new Date(a.approvedAt || a.createdAt).getTime()));
+    for (const doc of docs) {
+      if (doc.qrVerified === false) continue;
+      if (await sourceStillValid(doc)) return doc;
+    }
+    return null;
+  }
+
+  // Email without an explicit poster reference (for example the general
+  // "Prepare affiliate alerts" window): attach the affiliate's approved
+  // personalized poster when one exists; otherwise null, and the regular
+  // general-poster email goes out unchanged.
+  async function posterForAffiliateEmail({ fightId, email }) {
+    const recipient = String(email || '').trim().toLowerCase();
+    if (!OBJECT_ID.test(String(fightId || '')) || !recipient) return null;
+    const exact = new RegExp(`^${recipient.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`, 'i');
+    const affiliate = await Affiliate.findOne({ email: exact }).select('_id').lean();
+    if (!affiliate) return null;
+    const doc = await approvedForAffiliate({ fightId, affiliateId: String(affiliate._id) });
+    return doc ? forEmail({ posterId: String(doc._id), fightId, email: recipient }) : null;
+  }
+
+  // What the affiliate's kit needs to show, copy, download and share it.
+  const kitPoster = (doc) => (doc ? {
+    id: String(doc._id),
+    fightId: doc.fightId,
+    affiliateId: doc.affiliateId,
+    sha256: doc.sha256,
+    contentType: doc.contentType,
+    width: doc.width,
+    height: doc.height,
+    qrLink: doc.qrLink,
+    qrTarget: doc.qrTarget || 'league',
+    approvedAt: doc.approvedAt || null,
+    imagePath: `/api/affiliates/me/promotions/${encodeURIComponent(doc.fightId)}/custom-poster/image?v=${doc.sha256.slice(0, 16)}`,
+    publicImagePath: `/api/public/affiliate-posters/${encodeURIComponent(doc.fightId)}/${encodeURIComponent(doc.affiliateId)}/image?v=${doc.sha256.slice(0, 16)}`,
+  } : null);
+
+  async function sendPosterBytes(res, doc, cacheControl) {
+    const full = await AffiliateCustomPoster.findById(doc._id).select('image contentType sha256').lean();
+    if (!full) return res.status(404).end();
+    const image = imageBytes(full.image);
+    if (crypto.createHash('sha256').update(image).digest('hex') !== full.sha256) return res.status(500).json({ ok: false, message: 'The poster failed its integrity check.' });
+    res.setHeader('Content-Type', full.contentType);
+    res.setHeader('Cache-Control', cacheControl);
+    res.setHeader('X-Poster-Sha256', full.sha256);
+    return res.status(200).send(image);
+  }
+
+  if (typeof verifyToken === 'function' && typeof requireScope === 'function') {
+    const affiliateAuth = [verifyToken, requireScope(affiliateScope)];
+    const selfId = (req) => String(req.user?.id || req.user?._id || '').trim();
+    app.get('/api/affiliates/me/promotions/:fightId/custom-poster', ...affiliateAuth, async (req, res) => {
+      try {
+        const doc = await approvedForAffiliate({ fightId: String(req.params.fightId || ''), affiliateId: selfId(req) });
+        res.setHeader('Cache-Control', 'private, no-store');
+        return res.json({ ok: true, poster: kitPoster(doc) });
+      } catch (error) { return fail(res, error, 'Could not load your personalized poster.'); }
+    });
+    app.get('/api/affiliates/me/promotions/:fightId/custom-poster/image', ...affiliateAuth, async (req, res) => {
+      try {
+        const doc = await approvedForAffiliate({ fightId: String(req.params.fightId || ''), affiliateId: selfId(req) });
+        if (!doc) return res.status(404).json({ ok: false, message: 'No personalized poster for this fight.' });
+        return sendPosterBytes(res, doc, 'private, no-store');
+      } catch (error) { return fail(res, error, 'Could not load your personalized poster.'); }
+    });
+  }
+
+  // Public image for social link previews (the affiliate's league page). The
+  // poster exists to be shared publicly; only an approved, still-valid poster
+  // for a verified affiliate is served.
+  app.get('/api/public/affiliate-posters/:fightId/:affiliateId/image', async (req, res) => {
+    try {
+      const affiliateId = String(req.params.affiliateId || '');
+      if (!OBJECT_ID.test(affiliateId) || !OBJECT_ID.test(String(req.params.fightId || ''))) return res.status(400).end();
+      const affiliate = await Affiliate.findById(affiliateId).select('_id verified').lean();
+      if (!affiliate?.verified) return res.status(404).end();
+      const doc = await approvedForAffiliate({ fightId: String(req.params.fightId), affiliateId });
+      if (!doc) return res.status(404).end();
+      // Link-preview renderers cannot always read WebP: ?format=jpeg returns a
+      // JPEG copy of the same approved poster (the kit always uses the exact file).
+      if (req.query.format === 'jpeg') {
+        const full = await AffiliateCustomPoster.findById(doc._id).select('image sha256').lean();
+        const image = imageBytes(full?.image);
+        if (!full || crypto.createHash('sha256').update(image).digest('hex') !== full.sha256) return res.status(500).end();
+        const jpeg = await sharp(image, { failOn: 'error' }).rotate().flatten({ background: '#ffffff' }).jpeg({ quality: 88 }).toBuffer();
+        res.setHeader('Content-Type', 'image/jpeg');
+        res.setHeader('Cache-Control', 'public, max-age=300, s-maxage=300');
+        res.setHeader('X-Poster-Sha256', full.sha256);
+        return res.status(200).send(jpeg);
+      }
+      return sendPosterBytes(res, doc, 'public, max-age=300, s-maxage=300');
+    } catch (error) { return fail(res, error, 'Could not load the poster.'); }
+  });
+
+  app.locals.affiliateCustomPoster = { forEmail, markSent, approvedForAffiliate, posterForAffiliateEmail, kitPoster, affiliateLeagueFightLink, affiliatePaidFightLink };
+  return { AffiliateCustomPoster, AffiliatePosterSource, forEmail, markSent, approvedForAffiliate, posterForAffiliateEmail, kitPoster, compose, suggestPlacement, affiliateLeagueFightLink, affiliatePaidFightLink };
 };
 
 module.exports.affiliateLeagueFightLink = affiliateLeagueFightLink;
@@ -670,3 +885,6 @@ module.exports.registerPosterDirectUpload = function registerPosterDirectUpload(
     }
   });
 };
+
+module.exports.affiliateFromLink = affiliateFromLink;
+module.exports.readQr = readQr;
