@@ -30,9 +30,6 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 40
     services:
-      mongo:
-        image: mongo:7
-        ports: ['27017:27017']
       mailpit:
         image: axllent/mailpit:latest
         ports: ['1025:1025', '8025:8025']
@@ -43,7 +40,7 @@ jobs:
       STAGING_ISOLATED: '1'
       NODE_ENV: staging
       PORT: '5055'
-      MONGODB_URI: mongodb://127.0.0.1:27017/fmm_issue185_staging
+      MONGODB_URI: mongodb://127.0.0.1:27017/fmm_issue185_staging?directConnection=true
       SMTP_HOST: 127.0.0.1
       SMTP_PORT: '1025'
       SMTP_SECURE: 'false'
@@ -67,6 +64,13 @@ jobs:
         run: |
           echo "JWT_SECRET=$(openssl rand -hex 32)" >> "$GITHUB_ENV"
           echo "JWT_SECRET_ADMIN=$(openssl rand -hex 32)" >> "$GITHUB_ENV"
+      - name: Start staging database (single-node replica set, so paid entries use real transactions)
+        run: |
+          docker run -d --name staging-mongo -p 27017:27017 mongo:7 --replSet rs0 --bind_ip_all
+          for i in $(seq 1 40); do docker exec staging-mongo mongosh --quiet --eval 'db.runCommand({ping:1}).ok' >/dev/null 2>&1 && break; sleep 1; done
+          docker exec staging-mongo mongosh --quiet --eval 'rs.initiate({_id:"rs0",members:[{_id:0,host:"127.0.0.1:27017"}]})'
+          for i in $(seq 1 30); do [ "$(docker exec staging-mongo mongosh --quiet --eval 'rs.status().myState')" = "1" ] && break; sleep 1; done
+          docker exec staging-mongo mongosh --quiet --eval 'printjson({primary: rs.status().myState === 1})'
       - name: Install backend
         run: npm ci --ignore-scripts && npm rebuild bcrypt sharp
       - name: Regression context — dependency audit details (report only)
@@ -80,6 +84,11 @@ jobs:
           '
       - name: Backend unit tests (Issue 185)
         run: node affiliate-personalized-poster.test.js
+      - name: Backend full test suite (npm test)
+        run: npm test && echo "::notice title=Backend npm test::all suites passed"
+      - name: Backend security audit (prod deps, high+)
+        continue-on-error: true
+        run: npm audit --omit=dev --audit-level=high && echo "::notice title=Backend npm audit::no high or critical findings" || { echo "::warning title=Backend npm audit::$(npm audit --omit=dev 2>&1 | tail -n 25 | sed 's/%/%25/g' | tr '\n' '\r' | sed 's/\r/%0A/g')"; exit 1; }
       - name: Start isolated staging backend
         run: |
           mkdir -p staging/issue-185/out
@@ -94,7 +103,7 @@ jobs:
         uses: actions/checkout@v4
         with:
           repository: WajihulHassan944/fmm-ver2
-          ref: ${{ inputs.website_ref || 'repair/185-affiliate-personalized-poster' }}
+          ref: ${{ inputs.website_ref || 'test/combined-185-ci' }}
           path: website
       - name: Build website against isolated staging
         working-directory: website
@@ -102,7 +111,14 @@ jobs:
           NEXT_PUBLIC_API_BASE_URL: http://127.0.0.1:5055
           NEXT_PUBLIC_API_BASE: http://127.0.0.1:5055
         run: |
+          # Combined test branch: the lockfile is regenerated from the merged
+          # package.json, then the same targeted updates as the security branch.
+          npm install --package-lock-only --ignore-scripts --no-audit --no-fund
+          npm update dompurify source-map-js deepmerge zod --package-lock-only --ignore-scripts --no-audit --no-fund
           npm ci --ignore-scripts
+          echo "::notice title=Website versions::next $(node -p "require('next/package.json').version"), dompurify $(node -p "require('dompurify/package.json').version"), zod $(node -p "require('zod/package.json').version")"
+          npm audit --omit=dev --audit-level=high && echo "::notice title=Website npm audit::no high or critical findings" || echo "::warning title=Website npm audit::$(npm audit --omit=dev 2>&1 | tail -n 25 | sed 's/%/%25/g' | tr '\n' '\r' | sed 's/\r/%0A/g')"
+          npm run lint > /tmp/lint.txt 2>&1 && echo "::notice title=Website full lint::0 errors" || echo "::error title=Website full lint::$(grep -E 'error' /tmp/lint.txt | head -n 15 | sed 's/%/%25/g' | tr '\n' '\r' | sed 's/\r/%0A/g')"
           # Lint the website files changed for #185. Errors fail the check; the
           # warnings listed are compared with the same files before the repair.
           FILES="src/pages/affiliate/fight-launch.jsx src/pages/api/fight-share-image.jsx src/Utils/fightShareCopy.js src/pages/league/[affiliateId].jsx src/Components/Admin/FightLaunchDesk.jsx src/Components/Auth/AuthPortal.jsx src/Components/Fights/PublicFightDetailExperience.jsx"
@@ -126,6 +142,12 @@ jobs:
           OUTDIR="$PWD/staging/issue-185/out"
           ( mkdir -p /tmp/pw && cd /tmp/pw && npm init -y >/dev/null && npm install --no-audit --no-fund playwright && npx playwright install --with-deps chromium ) > "$OUTDIR/playwright-install.log" 2>&1 || { echo "::error title=Playwright install failed::$(tail -n 15 "$OUTDIR/playwright-install.log" | tr '\n' ' ')"; exit 1; }
           STAGING_OUT_DIR="$OUTDIR" NODE_PATH=/tmp/pw/node_modules node staging/issue-185/kit-browser.js 2>&1 | tee "$OUTDIR/browser.log"
+      - name: Regression — login, payments (isolated), FM COIN entry + attribution, image formats
+        if: always()
+        run: STAGING_OUT_DIR="$PWD/staging/issue-185/out" node staging/issue-185/regression.js
+      - name: Website smoke — listings, fighter photos, fight page, league page, QR, login, checkout
+        if: always()
+        run: STAGING_OUT_DIR="$PWD/staging/issue-185/out" NODE_PATH=/tmp/pw/node_modules node staging/issue-185/site-smoke.js 2>&1 | tee staging/issue-185/out/site.log
       - name: Report browser log on failure
         if: failure()
         run: |
@@ -137,14 +159,14 @@ jobs:
           cd staging/issue-185/out
           node -e '
             const fs = require("fs");
-            const rows = ["e2e-results.json", "browser-results.json"].flatMap((f) => fs.existsSync(f) ? JSON.parse(fs.readFileSync(f, "utf8")).map((r) => ({ ...r, file: f })) : [{ name: f + " missing", ok: false, detail: "" }]);
+            const rows = ["e2e-results.json", "browser-results.json", "site-results.json"].flatMap((f) => fs.existsSync(f) ? JSON.parse(fs.readFileSync(f, "utf8")).map((r) => ({ ...r, file: f })) : [{ name: f + " missing", ok: false, detail: "" }]);
             const failed = rows.filter((r) => !r.ok);
             const line = (r) => (r.ok ? "PASS " : "FAIL ") + r.name + (r.detail ? " — " + r.detail.slice(0, 160) : "");
             const blocked = fs.existsSync("blocked-outbound.log") ? [...new Set(fs.readFileSync("blocked-outbound.log", "utf8").trim().split("\n").map((l) => l.split(" ")[1]).filter(Boolean))] : [];
             const esc = (s) => s.replace(/%/g, "%25").replace(/\r/g, "").replace(/\n/g, "%0A");
             console.log("::notice title=Issue 185 staging summary::" + esc((rows.length - failed.length) + "/" + rows.length + " checks passed. Outbound connections blocked by isolation: " + (blocked.join(", ") || "none")));
             const chunks = []; for (let i = 0; i < rows.length; i += 12) chunks.push(rows.slice(i, i + 12));
-            chunks.slice(0, 8).forEach((chunk, i) => console.log("::notice title=Issue 185 checks part " + (i + 1) + "::" + esc(chunk.map(line).join("\n"))));
+            chunks.slice(0, 9).forEach((chunk, i) => console.log("::notice title=Issue 185 checks part " + (i + 1) + "::" + esc(chunk.map(line).join("\n"))));
             if (failed.length) console.log("::error title=Issue 185 failures::" + esc(failed.map(line).join("\n")));
           '
           echo "--- backend log (tail) ---"; tail -n 60 backend.log || true
