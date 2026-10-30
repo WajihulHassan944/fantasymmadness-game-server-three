@@ -21,6 +21,9 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 22
+      # The zod override in package.json is newer than the lockfile, so the
+      # lockfile is regenerated first (npm ci refuses a mismatched lockfile).
+      - run: npm install --package-lock-only --ignore-scripts --no-audit --no-fund
       - run: npm ci --ignore-scripts
       - name: Report audit before
         run: |
@@ -41,8 +44,6 @@ jobs:
           echo "::notice title=Registry metadata::$(sed 's/%/%25/g' /tmp/meta.txt | tr '\n' '\r' | sed 's/\r/%0A/g')"
       - name: Apply compatible fixes only (no --force)
         run: |
-          npm install --package-lock-only --ignore-scripts --no-audit --no-fund
-          npm ci --ignore-scripts
           node -e "require('@vercel/functions').waitUntil; require('@vercel/oidc').getVercelOidcToken; console.log('vercel helpers load')"
           echo "::notice title=zod versions::$(npm ls zod --all | sed 's/%/%25/g' | tr '\n' '\r' | sed 's/\r/%0A/g')"
           npm audit --json > /tmp/after.json || true
