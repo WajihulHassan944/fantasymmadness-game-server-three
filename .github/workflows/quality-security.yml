@@ -38,6 +38,10 @@ jobs:
         env:
           GROWTH_TEST_MONGO_URI: mongodb://127.0.0.1:27017
         run: node growth-unattended-mongo.integration.test.js && node growth-staging-scheduler.mongo.integration.test.js
+      - name: Verify scheduled campaign to local sandbox end-to-end
+        env:
+          GROWTH_TEST_MONGO_URI: mongodb://127.0.0.1:27017
+        run: node growth-scheduled-sandbox.e2e.test.js
       - run: npm audit --omit=dev --audit-level=high
       - uses: gitleaks/gitleaks-action@v2
         if: ${{ always() && !cancelled() }}
