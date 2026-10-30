@@ -1,0 +1,206 @@
+name: Issue 185 isolated staging E2E
+
+# Isolated staging for Issue #185 (personalized affiliate poster delivery).
+# Everything runs inside this throwaway CI machine: a local MongoDB staging
+# database, a local Mailpit test mailbox, and the backend with loopback-only
+# networking (staging/issue-185/isolation-preload.js). No repository secrets
+# are used, so the live database, payment processing, email providers and real
+# affiliates are unreachable.
+
+on:
+  pull_request:
+    paths:
+      - 'affiliate-custom-poster.js'
+      - 'affiliate-personalized-poster.test.js'
+      - 'server.js'
+      - 'full-card-bootstrap.js'
+      - 'staging/issue-185/**'
+      - '.github/workflows/issue-185-isolated-staging.yml'
+  workflow_dispatch:
+    inputs:
+      website_ref:
+        description: fmm-ver2 branch to test
+        default: repair/185-affiliate-personalized-poster
+
+permissions:
+  contents: read
+
+jobs:
+  e2e:
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    services:
+      mailpit:
+        image: axllent/mailpit:latest
+        ports: ['1025:1025', '8025:8025']
+        env:
+          MP_SMTP_AUTH_ACCEPT_ANY: '1'
+          MP_SMTP_AUTH_ALLOW_INSECURE: '1'
+    env:
+      STAGING_ISOLATED: '1'
+      NODE_ENV: staging
+      PORT: '5055'
+      MONGODB_URI: mongodb://127.0.0.1:27017/fmm_issue185_staging?directConnection=true
+      SMTP_HOST: 127.0.0.1
+      SMTP_PORT: '1025'
+      SMTP_SECURE: 'false'
+      SMTP_USER: staging-sender@fmm-staging.test
+      SMTP_PASS: staging-only
+      TRANSACTIONAL_MAIL_FROM: FANTASY MMADNESS STAGING <staging-sender@fmm-staging.test>
+      OWNER_EMAIL: owner@fmm-staging.test
+      AFFILIATE_POSTER_SOURCE_HOSTS: 127.0.0.1:9187
+      STAGING_MEDIA_PORT: '9187'
+      STAGING_API: http://127.0.0.1:5055
+      STAGING_MAILPIT: http://127.0.0.1:8025
+      STAGING_SITE: http://localhost:3000
+      NEXT_TELEMETRY_DISABLED: '1'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - name: Generate throwaway staging secrets
+        run: |
+          echo "JWT_SECRET=$(openssl rand -hex 32)" >> "$GITHUB_ENV"
+          echo "JWT_SECRET_ADMIN=$(openssl rand -hex 32)" >> "$GITHUB_ENV"
+      - name: Start staging database (single-node replica set, so paid entries use real transactions)
+        run: |
+          docker run -d --name staging-mongo -p 27017:27017 mongo:7 --replSet rs0 --bind_ip_all
+          for i in $(seq 1 40); do docker exec staging-mongo mongosh --quiet --eval 'db.runCommand({ping:1}).ok' >/dev/null 2>&1 && break; sleep 1; done
+          docker exec staging-mongo mongosh --quiet --eval 'rs.initiate({_id:"rs0",members:[{_id:0,host:"127.0.0.1:27017"}]})'
+          for i in $(seq 1 30); do [ "$(docker exec staging-mongo mongosh --quiet --eval 'rs.status().myState')" = "1" ] && break; sleep 1; done
+          docker exec staging-mongo mongosh --quiet --eval 'printjson({primary: rs.status().myState === 1})'
+      - name: Install backend
+        run: npm ci --ignore-scripts && npm rebuild bcrypt sharp
+      - name: Regression context — dependency audit details (report only)
+        continue-on-error: true
+        run: |
+          npm audit --omit=dev --json > /tmp/audit.json || true
+          node -e '
+            const a = require("/tmp/audit.json"); const v = a.vulnerabilities || {};
+            const rows = Object.values(v).filter((x) => ["high","critical"].includes(x.severity)).map((x) => x.name + " (" + x.severity + ", " + (x.isDirect ? "direct" : "via " + [].concat(x.via).map((y) => typeof y === "string" ? y : y.name).join("/")) + ", range " + x.range + ", fix: " + (x.fixAvailable ? (x.fixAvailable.name ? x.fixAvailable.name + "@" + x.fixAvailable.version + (x.fixAvailable.isSemVerMajor ? " MAJOR" : "") : "yes") : "none") + ")");
+            console.log("::notice title=npm audit high/critical (backend)::" + (rows.join("%0A") || "none"));
+          '
+      - name: Backend unit tests (Issue 185)
+        run: node affiliate-personalized-poster.test.js
+      - name: Backend full test suite (npm test)
+        run: npm test && echo "::notice title=Backend npm test::all suites passed"
+      - name: Backend security audit (prod deps, high+)
+        continue-on-error: true
+        run: npm audit --omit=dev --audit-level=high && echo "::notice title=Backend npm audit::no high or critical findings" || { echo "::warning title=Backend npm audit::$(npm audit --omit=dev 2>&1 | tail -n 25 | sed 's/%/%25/g' | tr '\n' '\r' | sed 's/\r/%0A/g')"; exit 1; }
+      - name: Start isolated staging backend
+        run: |
+          mkdir -p staging/issue-185/out
+          export STAGING_OUT_DIR="$PWD/staging/issue-185/out"
+          nohup node -r ./staging/issue-185/isolation-preload.js full-card-bootstrap.js > staging/issue-185/out/backend.log 2>&1 &
+          for i in $(seq 1 60); do curl -s -o /dev/null http://127.0.0.1:5055/ && break; sleep 1; done
+          curl -s -o /dev/null -w "backend HTTP %{http_code}\n" http://127.0.0.1:5055/
+          grep -m1 "isolation active" staging/issue-185/out/backend.log
+      - name: E2E — upload, preview, approve, send, receive, QR, attribution
+        run: STAGING_OUT_DIR="$PWD/staging/issue-185/out" node staging/issue-185/e2e.js
+      - name: Check out website repair branch
+        uses: actions/checkout@v4
+        with:
+          repository: WajihulHassan944/fmm-ver2
+          ref: ${{ inputs.website_ref || 'test/combined-185-ci' }}
+          path: website
+      - name: Build website against isolated staging
+        working-directory: website
+        env:
+          NEXT_PUBLIC_API_BASE_URL: http://127.0.0.1:5055
+          NEXT_PUBLIC_API_BASE: http://127.0.0.1:5055
+        run: |
+          # Combined test branch: the lockfile is regenerated from the merged
+          # package.json, then the same targeted updates as the security branch.
+          npm install --package-lock-only --ignore-scripts --no-audit --no-fund
+          npm update dompurify source-map-js deepmerge zod --package-lock-only --ignore-scripts --no-audit --no-fund
+          npm ci --ignore-scripts
+          echo "::notice title=Website versions::next $(node -p "require('next/package.json').version"), dompurify $(node -p "require('dompurify/package.json').version"), zod $(node -p "require('zod/package.json').version")"
+          npm audit --omit=dev --audit-level=high && echo "::notice title=Website npm audit::no high or critical findings" || echo "::warning title=Website npm audit::$(npm audit --omit=dev 2>&1 | tail -n 25 | sed 's/%/%25/g' | tr '\n' '\r' | sed 's/\r/%0A/g')"
+          npm run lint > /tmp/lint.txt 2>&1 && echo "::notice title=Website full lint::0 errors" || echo "::error title=Website full lint::$(grep -E 'error' /tmp/lint.txt | head -n 15 | sed 's/%/%25/g' | tr '\n' '\r' | sed 's/\r/%0A/g')"
+          # Lint the website files changed for #185. Errors fail the check; the
+          # warnings listed are compared with the same files before the repair.
+          FILES="src/pages/affiliate/fight-launch.jsx src/pages/api/fight-share-image.jsx src/Utils/fightShareCopy.js src/pages/league/[affiliateId].jsx src/Components/Admin/FightLaunchDesk.jsx src/Components/Auth/AuthPortal.jsx src/Components/Fights/PublicFightDetailExperience.jsx"
+          npx eslint -f json $FILES > /tmp/lint-after.json || true
+          git fetch -q --depth=50 origin fix/affiliate-custom-posters && git checkout -q FETCH_HEAD -- $FILES && (npx eslint -f json $FILES > /tmp/lint-before.json || true) && git checkout -q HEAD -- $FILES
+          node -e '
+            const read = (f) => require(f).flatMap((r) => r.messages.map((m) => ({ file: r.filePath.split("/website/")[1], sev: m.severity, rule: m.ruleId, msg: m.message })));
+            const before = read("/tmp/lint-before.json"), after = read("/tmp/lint-after.json");
+            const key = (m) => m.file + "|" + m.rule + "|" + m.msg;
+            const fresh = after.filter((m) => !before.some((b) => key(b) === key(m)));
+            const errors = after.filter((m) => m.sev === 2);
+            console.log("::notice title=Website lint, files changed by 185::" + errors.length + " errors; " + after.length + " findings after vs " + before.length + " before the repair; new findings: " + (fresh.map((m) => m.file + " " + m.rule).join(", ") || "none"));
+            if (errors.length || fresh.length) { console.log("::error title=Website lint regression::" + [...errors, ...fresh].map((m) => m.file + " " + m.rule + " " + m.msg).join(" | ")); process.exit(1); }
+          '
+          npm run build && echo "::notice title=Website build::next build succeeded on repair branch"
+          nohup npx next start -p 3000 > ../staging/issue-185/out/website.log 2>&1 &
+          for i in $(seq 1 60); do curl -s -o /dev/null http://localhost:3000/ && break; sleep 1; done
+      - name: Browser — kit from received email, Copy, Download, Share, link preview
+        run: |
+          set -o pipefail
+          OUTDIR="$PWD/staging/issue-185/out"
+          ( mkdir -p /tmp/pw && cd /tmp/pw && npm init -y >/dev/null && npm install --no-audit --no-fund playwright && npx playwright install --with-deps chromium ) > "$OUTDIR/playwright-install.log" 2>&1 || { echo "::error title=Playwright install failed::$(tail -n 15 "$OUTDIR/playwright-install.log" | tr '\n' ' ')"; exit 1; }
+          STAGING_OUT_DIR="$OUTDIR" NODE_PATH=/tmp/pw/node_modules node staging/issue-185/kit-browser.js 2>&1 | tee "$OUTDIR/browser.log"
+      - name: Regression — login, payments (isolated), FM COIN entry + attribution, image formats
+        if: always()
+        run: STAGING_OUT_DIR="$PWD/staging/issue-185/out" node staging/issue-185/regression.js
+      - name: Website smoke — listings, fighter photos, fight page, league page, QR, login, checkout
+        if: always()
+        run: |
+          set -o pipefail
+          STAGING_OUT_DIR="$PWD/staging/issue-185/out" NODE_PATH=/tmp/pw/node_modules node staging/issue-185/site-smoke.js 2>&1 | tee staging/issue-185/out/site.log
+      - name: Baseline comparison — same website checks on the CURRENT live-branch website (no repairs)
+        if: always()
+        env:
+          NEXT_PUBLIC_API_BASE_URL: http://127.0.0.1:5055
+          NEXT_PUBLIC_API_BASE: http://127.0.0.1:5055
+        run: |
+          git clone -q --depth 1 --branch fix/affiliate-custom-posters https://github.com/WajihulHassan944/fmm-ver2 website-base
+          cd website-base
+          npm install --package-lock-only --ignore-scripts --no-audit --no-fund && npm ci --ignore-scripts && npm run build > ../staging/issue-185/out/website-base-build.log 2>&1
+          echo "::notice title=Baseline website::live branch $(git rev-parse --short HEAD), next $(node -p "require('next/package.json').version")"
+          nohup npx next start -p 3001 > ../staging/issue-185/out/website-base.log 2>&1 &
+          for i in $(seq 1 60); do curl -s -o /dev/null http://localhost:3001/ && break; sleep 1; done
+          cd ..
+          STAGING_SITE=http://localhost:3001 SITE_LABEL=baseline STAGING_OUT_DIR="$PWD/staging/issue-185/out" NODE_PATH=/tmp/pw/node_modules node staging/issue-185/site-smoke.js 2>&1 | tee staging/issue-185/out/site-baseline.log || true
+          node -e 'const r=require("./staging/issue-185/out/site-results-baseline.json");console.log("::notice title=Baseline (live-branch website, no repairs)::"+r.map(x=>(x.ok?"PASS ":"FAIL ")+x.name+(x.detail?" — "+x.detail.slice(0,200):"")).join("%0A"))'
+          echo "::notice title=Listing diagnostics::$(grep -h 'listing API responses\|console errors on listing' staging/issue-185/out/site.log staging/issue-185/out/site-baseline.log | sed 's/%/%25/g' | tr '\n' '\r' | sed 's/\r/%0A/g' | head -c 4000)"
+      - name: Report browser log on failure
+        if: failure()
+        run: |
+          f=staging/issue-185/out/browser.log; [ -f "$f" ] && echo "::warning title=Browser log tail::$(tail -n 25 "$f" | sed 's/%/%25/g' | tr '\n' '\r' | sed 's/\r/%0A/g')" || true
+          f=staging/issue-185/out/website.log; [ -f "$f" ] && echo "::warning title=Website log tail::$(tail -n 20 "$f" | sed 's/%/%25/g' | tr '\n' '\r' | sed 's/\r/%0A/g')" || true
+      - name: Report results
+        if: always()
+        run: |
+          cd staging/issue-185/out
+          node -e '
+            const fs = require("fs");
+            const rows = ["e2e-results.json", "browser-results.json", "site-results.json"].flatMap((f) => fs.existsSync(f) ? JSON.parse(fs.readFileSync(f, "utf8")).map((r) => ({ ...r, file: f })) : [{ name: f + " missing", ok: false, detail: "" }]);
+            const failed = rows.filter((r) => !r.ok);
+            const line = (r) => (r.ok ? "PASS " : "FAIL ") + r.name + (r.detail ? " — " + r.detail.slice(0, 160) : "");
+            const blocked = fs.existsSync("blocked-outbound.log") ? [...new Set(fs.readFileSync("blocked-outbound.log", "utf8").trim().split("\n").map((l) => l.split(" ")[1]).filter(Boolean))] : [];
+            const esc = (s) => s.replace(/%/g, "%25").replace(/\r/g, "").replace(/\n/g, "%0A");
+            console.log("::notice title=Issue 185 staging summary::" + esc((rows.length - failed.length) + "/" + rows.length + " checks passed. Outbound connections blocked by isolation: " + (blocked.join(", ") || "none")));
+            const chunks = []; for (let i = 0; i < rows.length; i += 12) chunks.push(rows.slice(i, i + 12));
+            chunks.slice(0, 9).forEach((chunk, i) => console.log("::notice title=Issue 185 checks part " + (i + 1) + "::" + esc(chunk.map(line).join("\n"))));
+            if (failed.length) console.log("::error title=Issue 185 failures::" + esc(failed.map(line).join("\n")));
+          '
+          echo "--- backend log (tail) ---"; tail -n 60 backend.log || true
+      - name: Report backend errors
+        if: failure()
+        run: |
+          node -e 'const fs=require("fs");const log=fs.existsSync("staging/issue-185/out/backend.log")?fs.readFileSync("staging/issue-185/out/backend.log","utf8"):"";const lines=log.split("\n").filter(l=>/error|fail|refus|cannot|unavailable/i.test(l)).slice(-25).join("%0A");console.log("::warning title=Backend log errors::"+lines.replace(/\r/g,""))'
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: issue-185-staging-evidence
+          path: |
+            staging/issue-185/out/*.json
+            staging/issue-185/out/*.eml
+            staging/issue-185/out/*.png
+            staging/issue-185/out/*.jpg
+            staging/issue-185/out/*.webp
+            staging/issue-185/out/*.log
+          retention-days: 30

@@ -7,7 +7,7 @@
     "node": ">=14.20.1"
   },
   "scripts": {
-    "test": "node publish-integrity.test.js && node client-feedback-core.test.js && node pro-wrestling-core.test.js && node pro-wrestling-routes.test.js && node swarm-phase2.test.js && node seo-performance-phase2.test.js && node fight-data-quality.test.js && node ufc-event-discovery.test.js && node full-card-promoter.test.js",
+    "test": "node publish-integrity.test.js && node client-feedback-core.test.js && node pro-wrestling-core.test.js && node pro-wrestling-routes.test.js && node swarm-phase2.test.js && node seo-performance-phase2.test.js && node fight-data-quality.test.js && node ufc-event-discovery.test.js && node full-card-promoter.test.js && node affiliate-personalized-poster.test.js",
     "start": "node full-card-bootstrap.js",
     "test:pro-wrestling": "node pro-wrestling-core.test.js && node pro-wrestling-routes.test.js",
     "test:swarm-phase2": "node swarm-phase2.test.js",
@@ -40,7 +40,7 @@
     "pusher": "^5.2.0",
     "qrcode": "^1.5.4",
     "rss-parser": "^3.13.0",
-    "sharp": "^0.33.5",
+    "sharp": "^0.35.5",
     "stripe": "^16.8.0",
     "util": "^0.12.5",
     "uuid": "^11.1.1",
@@ -55,6 +55,9 @@
     "tar": "7.5.22",
     "gaxios": {
       "uuid": "11.1.1"
+    },
+    "@vercel/cli-config": {
+      "zod": "4.6.7"
     }
   }
 }

@@ -11063,6 +11063,16 @@ app.post('/send-email-affiliate', verifyAdminToken, async (req, res) => {
         } catch (posterError) {
           return res.status(posterError.status || 500).json({ message: posterError.message || 'The approved poster could not be attached. Nothing was sent.', code: 'CUSTOM_POSTER_REJECTED' });
         }
+      } else if (!kitIsOwner && mongoose.isValidObjectId(launchFightId) && app.locals.affiliateCustomPoster?.posterForAffiliateEmail) {
+        // Issue #185: a fight alert sent without an explicit poster reference
+        // (e.g. "Prepare affiliate alerts") still carries the personalized
+        // poster the owner approved for THIS affiliate and fight. Affiliates
+        // without one get the regular email and the general fight poster.
+        try {
+          customPoster = await app.locals.affiliateCustomPoster.posterForAffiliateEmail({ fightId: launchFightId, email });
+        } catch (posterError) {
+          return res.status(posterError.status || 500).json({ message: posterError.message || 'The personalized poster could not be attached. Nothing was sent.', code: 'CUSTOM_POSTER_REJECTED' });
+        }
       }
       // The HTML email has one clear action. The full URL remains in the
       // plain-text alternative for mail clients that do not render HTML.
@@ -22482,12 +22492,27 @@ app.get('/api/affiliates/me/promotions/:fightId/share', verifyToken, requireScop
     const fee = fight ? Math.max(0, Math.round(Number(fight.matchTokens) || 0)) : 0;
     const league = [affiliate.leagueName, affiliate.playerName].map((v) => String(v || '').trim()).find(Boolean) || 'my league';
 
+    // Issue #185: the poster the owner approved for this affiliate and fight.
+    // The kit shows, copies, downloads and shares this one; fightPoster stays
+    // the general poster for affiliates without a personalized one.
+    let personalizedPoster = null;
+    let personalizedPosterUnavailable = false;
+    try {
+      const posters = app.locals.affiliateCustomPoster;
+      if (posters?.approvedForAffiliate) personalizedPoster = posters.kitPoster(await posters.approvedForAffiliate({ fightId, affiliateId }));
+    } catch (posterError) {
+      console.error('Personalized poster lookup failed:', posterError?.message);
+      personalizedPosterUnavailable = true;
+    }
+
     return res.json({
       ok: true,
       joinLink,
       fightLink,
       attribution: { affiliateId, leagueName: league },
       creative: {
+        personalizedPoster,
+        personalizedPosterUnavailable,
         brandLogo: 'https://res.cloudinary.com/daflot6fo/image/upload/v1736068036/bywcrrcqmcyczdyhjmdv.png',
         fightPoster: fight?.fightPosterImage || fight?.promotionBackground || '',
         affiliateCover: affiliate.profileUrl || '',

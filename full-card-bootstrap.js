@@ -245,6 +245,7 @@ try {
 try {
   require('./affiliate-custom-poster')({
     app: capturedApp, mongoose, verifyAdminToken, cloudinary, upload,
+    verifyToken, requireScope, affiliateScope: 'affiliate',
     sharp: require('sharp'), QRCode: require('qrcode'),
   });
 } catch (error) {
