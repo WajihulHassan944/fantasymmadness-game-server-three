@@ -42,6 +42,10 @@ jobs:
         env:
           GROWTH_TEST_MONGO_URI: mongodb://127.0.0.1:27017
         run: node growth-scheduled-sandbox.e2e.test.js
+      - name: Verify isolated failure recovery and retry ceiling
+        env:
+          GROWTH_TEST_MONGO_URI: mongodb://127.0.0.1:27017
+        run: node growth-failure-recovery.e2e.test.js
       - run: npm audit --omit=dev --audit-level=high
       - uses: gitleaks/gitleaks-action@v2
         if: ${{ always() && !cancelled() }}
