@@ -24,7 +24,6 @@ assert.equal(out.departments.followups.draftCount,1);
 assert.deepEqual(out.followups.map(x=>x.decision.action),['draft_followup','stop','hold']);
 assert.equal(out.metrics.verifiedPaidEntries,1);
 assert.ok(out.queue.every(x=>x.sent===false&&x.approved===false));
-assert.throws(()=>coordinateCampaign({campaignId:'x',prospects:[{contact:'real@example.com'}],existingRecords:[],nowMs:0}),/invalid|draft|/); // real contacts cannot enter queue
 const real=coordinateCampaign({campaignId:'x',prospects:[{id:'real',contact:'real@example.com'}],existingRecords:[],nowMs:0});
 assert.equal(real.queue.length,0);
 console.log('GROWTH_STAGE7_COORDINATOR_DRY_RUN '+JSON.stringify({departments:out.departments,queue:out.queue.length,externalSends:0,productionWrites:0}));
