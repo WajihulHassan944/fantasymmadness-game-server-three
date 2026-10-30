@@ -46,6 +46,8 @@ jobs:
         env:
           GROWTH_TEST_MONGO_URI: mongodb://127.0.0.1:27017
         run: node growth-failure-recovery.e2e.test.js
+      - name: Verify opt-out and follow-up suppression
+        run: node growth-suppression-safety.test.js
       - run: npm audit --omit=dev --audit-level=high
       - uses: gitleaks/gitleaks-action@v2
         if: ${{ always() && !cancelled() }}
