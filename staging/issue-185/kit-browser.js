@@ -10,7 +10,6 @@ const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
 const sharp = require('sharp');
-const { chromium } = require('playwright');
 const { readQr } = require('../../affiliate-custom-poster');
 
 const SITE = process.env.STAGING_SITE || 'http://localhost:3000';
@@ -32,6 +31,7 @@ async function openKit(browser, token, link) {
 }
 
 async function main() {
+  const { chromium } = require('playwright');
   check('Kit link taken from Kelise\'s received email', /affiliate\/fight-launch\?fightId=.+&affiliateId=/.test(context.keliseKitLink), context.keliseKitLink);
   const browser = await chromium.launch();
   try {

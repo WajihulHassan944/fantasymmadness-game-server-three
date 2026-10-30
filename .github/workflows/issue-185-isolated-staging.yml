@@ -108,9 +108,15 @@ jobs:
           for i in $(seq 1 60); do curl -s -o /dev/null http://localhost:3000/ && break; sleep 1; done
       - name: Browser — kit from received email, Copy, Download, Share, link preview
         run: |
-          npm install --no-save --ignore-scripts playwright@1.56.1
-          npx playwright install --with-deps chromium
-          STAGING_OUT_DIR="$PWD/staging/issue-185/out" node staging/issue-185/kit-browser.js
+          set -o pipefail
+          OUTDIR="$PWD/staging/issue-185/out"
+          ( mkdir -p /tmp/pw && cd /tmp/pw && npm init -y >/dev/null && npm install --no-audit --no-fund playwright && npx playwright install --with-deps chromium ) > "$OUTDIR/playwright-install.log" 2>&1 || { echo "::error title=Playwright install failed::$(tail -n 15 "$OUTDIR/playwright-install.log" | tr '\n' ' ')"; exit 1; }
+          STAGING_OUT_DIR="$OUTDIR" NODE_PATH=/tmp/pw/node_modules node staging/issue-185/kit-browser.js 2>&1 | tee "$OUTDIR/browser.log"
+      - name: Report browser log on failure
+        if: failure()
+        run: |
+          f=staging/issue-185/out/browser.log; [ -f "$f" ] && echo "::warning title=Browser log tail::$(tail -n 25 "$f" | sed 's/%/%25/g' | tr '\n' '\r' | sed 's/\r/%0A/g')" || true
+          f=staging/issue-185/out/website.log; [ -f "$f" ] && echo "::warning title=Website log tail::$(tail -n 20 "$f" | sed 's/%/%25/g' | tr '\n' '\r' | sed 's/\r/%0A/g')" || true
       - name: Report results
         if: always()
         run: |
