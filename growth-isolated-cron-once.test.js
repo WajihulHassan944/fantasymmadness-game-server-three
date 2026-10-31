@@ -12,7 +12,7 @@ test('cron worker rejects missing isolated guards before connecting',async()=>{
 });
 test('guarded cron worker runs draft-only workstreams in isolated collection',async()=>{
  const writes=[];let closed=false;
- const connect=async()=>({connect:async()=>{},db:name=>{assert.equal(name,'fmgrowthtest');return {collection:n=>{assert.equal(n,'isolated_workstream_runs');return {createIndex:async()=>{},updateOne:async(k,u)=>{writes.push({k,u})}}}}},close:async()=>{closed=true}});
+ const connect=async()=>({connect:async()=>{},db:name=>{assert.equal(name,'fmgrowthtest');return {collection:n=>{assert.ok(['isolated_workstream_runs','isolated_run_claims'].includes(n));return {createIndex:async()=>{},updateOne:async(k,u,o)=>{if(n==='isolated_workstream_runs')writes.push({k,u});return {upsertedCount:o?.upsert?1:0}}}}}},close:async()=>{closed=true}});
  const result=await runIsolatedCronOnce({env:good,connect,clock:()=>new Date('2026-10-31T14:00:00Z')});
  assert.equal(result.completed,25);assert.equal(result.errors.length,0);
  assert.equal(result.outboundActions,0);assert.equal(writes.length,25);assert.equal(closed,true);
