@@ -12,7 +12,7 @@ test('two cron invocations in same minute execute only once with shared claims',
    return {modifiedCount:1};
   }
  })})});
- const env={GROWTH_STAGING_MODE:'isolated',GROWTH_OUTBOUND_ENABLED:'false',GROWTH_CRON_ENABLED:'true',GROWTH_ATLAS_STORE_ID:'store_5mRLkf9U8eKGIaaO',GROWTH_CRON_DB:'fmgrowthtest',GROWTH_TEST_ATLAS_URI:'mongodb+srv://test.invalid'};
+ const env={GROWTH_STAGING_MODE:'isolated',GROWTH_OUTBOUND_ENABLED:'false',GROWTH_CRON_ENABLED:'true',GROWTH_ATLAS_STORE_ID:'store_5mRLkf9U8eKGIaaO',GROWTH_CRON_DB:'fmgrowthtest',GROWTH_TEST_ATLAS_URI:'mongodb+srv://test.invalid/fmgrowthtest'};
  const opts={env,connect,clock:()=>new Date('2026-10-31T15:00:00Z')};
  const first=await runIsolatedCronOnce(opts),second=await runIsolatedCronOnce(opts);
  assert.equal(first.completed,25);assert.equal(second.alreadyClaimed,true);
