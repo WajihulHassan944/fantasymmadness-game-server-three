@@ -19,6 +19,8 @@ async function main(env=process.env){
  const dbName='fmgrowthtest';
  const client=new MongoClient(uri,{serverSelectionTimeoutMS:10000});
  let created=false;
+ let verified=false;
+ let cleaned=false;
  const collectionName='synthetic_probe_'+randomUUID().replace(/-/g,'');
  try{
   await client.connect();
@@ -32,10 +34,18 @@ async function main(env=process.env){
   assert.equal(read.kind,'synthetic_growth_probe');
   assert.equal(await col.deleteOne({_id:id}).then(x=>x.deletedCount),1);
   assert.equal(await col.countDocuments({}),0);
-  console.log('PASS Atlas synthetic insert/read/delete; record count 0; no outbound actions');
+  verified=true;
  }finally{
-  try{if(created)await client.db(dbName).collection(collectionName).drop();}finally{await client.close();}
+  try{
+   if(created){
+    await client.db(dbName).collection(collectionName).drop();
+    cleaned=!(await client.db(dbName).listCollections({name:collectionName},{nameOnly:true}).hasNext());
+    assert.equal(cleaned,true,'Temporary probe collection still exists');
+   }
+  }finally{await client.close();}
  }
+ if(!verified||!cleaned)throw Error('Atlas probe did not complete and clean up');
+ console.log('PASS Atlas synthetic insert/read/delete and verified collection cleanup; record count 0; no outbound actions');
 }
 if(require.main===module)main().catch(e=>{console.error('Atlas probe failed:',e.message);process.exitCode=1});
 module.exports={main};
