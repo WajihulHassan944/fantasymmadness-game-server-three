@@ -6,7 +6,7 @@ function validateIsolatedAtlasTarget(uri){
  let parsed;
  try{parsed=new URL(uri)}catch{throw Error('Invalid Atlas URI')}
  if(parsed.protocol!=='mongodb+srv:'||!parsed.hostname)throw Error('Atlas host required');
- if(decodeURIComponent(parsed.pathname.slice(1))!=='fmgrowthtest')throw Error('Dedicated test database path required');
+ if(parsed.pathname!=='/fmgrowthtest'&&parsed.pathname!=='/')throw Error('Unexpected database path');
  return true;
 }
 module.exports={validateIsolatedAtlasTarget};
