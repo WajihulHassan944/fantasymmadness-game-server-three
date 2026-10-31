@@ -5,7 +5,8 @@
 const {createIsolatedWorkstreamScheduler}=require('./growth-workstream-scheduler');
 const {createSandboxMailSender}=require('./growth-approved-sandbox-mail');
 const {recordSandboxReceipt,sandboxCampaignReport}=require('./growth-sandbox-receipt-reporting');
-async function runScheduledSandboxCampaign({collection,testMode=false,adapters={},workstreams,transport,approvedDrafts=[],clock=()=>new Date()}={}){
+const {createSandboxDeliveryClaims}=require('./growth-sandbox-delivery-claims');
+async function runScheduledSandboxCampaign({collection,testMode=false,adapters={},workstreams,transport,approvedDrafts=[],deliveryClaimsCollection,clock=()=>new Date()}={}){
  if(testMode!==true)throw Error('Isolated test mode required');
  if(!Array.isArray(approvedDrafts))throw Error('Draft batch required');
  const scheduler=createIsolatedWorkstreamScheduler({collection,testMode,adapters,workstreams,clock});
@@ -14,6 +15,8 @@ async function runScheduledSandboxCampaign({collection,testMode=false,adapters={
   return {execution,report:sandboxCampaignReport([]),receipts:[],blocked:approvedDrafts.map(d=>({id:d?.id||null,reason:'workstream_execution_not_verified'})),mode:'ISOLATED_SANDBOX_ONLY',realMessagesSent:0,productionWrites:0};
  }
  const send=createSandboxMailSender({transport});
+ const claims=deliveryClaimsCollection?createSandboxDeliveryClaims(deliveryClaimsCollection,{testMode}):null;
+ if(claims)await claims.init();
  const receipts=[],blocked=[],seenDraftIds=new Set();
  for(const draft of approvedDrafts){
   if(!draft?.id||seenDraftIds.has(draft.id)){
@@ -21,10 +24,16 @@ async function runScheduledSandboxCampaign({collection,testMode=false,adapters={
    continue;
   }
   seenDraftIds.add(draft.id);
+  if(claims){
+   try{if(!await claims.claim(draft.id)){blocked.push({id:draft.id,reason:'already_attempted_in_prior_run'});continue;}}
+   catch(error){blocked.push({id:draft.id,reason:'delivery_claim_failed'});continue;}
+  }
   try{
    const delivery=await send({draft,approval:{draftId:draft?.id,ownerApproved:draft?.ownerApproved===true}});
    if(!delivery.ok){blocked.push({id:draft?.id||null,reason:delivery.reason});continue;}
-   receipts.push(recordSandboxReceipt({draft,delivery,now:clock().toISOString()}));
+   const receipt=recordSandboxReceipt({draft,delivery,now:clock().toISOString()});
+   if(claims)await claims.record(draft.id,delivery.receipt);
+   receipts.push(receipt);
   }catch(error){
    blocked.push({id:draft?.id||null,reason:'sandbox_delivery_failed'});
   }
