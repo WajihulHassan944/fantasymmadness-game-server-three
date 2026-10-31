@@ -1,7 +1,5 @@
-name: Isolated Growth Engine Scheduled Verification
+name: Isolated Growth Engine Manual Verification
 on:
-  schedule:
-    - cron: '17 * * * *'
   workflow_dispatch:
 permissions:
   contents: read
