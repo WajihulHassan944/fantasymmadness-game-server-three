@@ -10,7 +10,8 @@ function validateIsolatedAtlasTarget(uri,expectedHostname){
   if(typeof expectedHostname!=='string'||!expectedHostname.trim())throw Error('Dedicated Atlas hostname attestation required');
   if(parsed.hostname.toLowerCase()!==expectedHostname.trim().toLowerCase())throw Error('Atlas host does not match approved staging cluster');
  }
- if(parsed.pathname!=='/fmgrowthtest'&&parsed.pathname!=='/'&&parsed.pathname!=='')throw Error('Unexpected database path');
+ if(parsed.pathname!=='/fmgrowthtest')throw Error('Explicit fmgrowthtest database path required');
+ if(parsed.searchParams.has('authSource')&&parsed.searchParams.get('authSource')!=='fmgrowthtest')throw Error('Unexpected authentication database');
  return true;
 }
 module.exports={validateIsolatedAtlasTarget};
