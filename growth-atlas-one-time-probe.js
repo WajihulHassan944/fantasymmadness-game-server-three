@@ -15,14 +15,15 @@ async function main(env=process.env){
  const uri=env.GROWTH_TEST_ATLAS_URI;
  if(!uri)throw Error('Explicit Atlas test URI required');
  validateIsolatedAtlasTarget(uri);
- const dbName='fmgrowthtest_probe_'+randomUUID().replace(/-/g,'');
+ const dbName='fmgrowthtest';
  const client=new MongoClient(uri,{serverSelectionTimeoutMS:10000});
  let created=false;
+ const collectionName='synthetic_probe_'+randomUUID().replace(/-/g,'');
  try{
   await client.connect();
-  // Test is confined to a new random database, never an application collection.
+  // Test is confined to a unique temporary collection in the dedicated staging database.
   const db=client.db(dbName);
-  const col=db.collection('synthetic_probe');
+  const col=db.collection(collectionName);
   const id=randomUUID();
   await col.insertOne({_id:id,kind:'synthetic_growth_probe',createdAt:new Date()});
   created=true;
@@ -32,7 +33,7 @@ async function main(env=process.env){
   assert.equal(await col.countDocuments({}),0);
   console.log('PASS Atlas synthetic insert/read/delete; record count 0; no outbound actions');
  }finally{
-  try{if(created)await client.db(dbName).dropDatabase();}finally{await client.close();}
+  try{if(created)await client.db(dbName).collection(collectionName).drop();}finally{await client.close();}
  }
 }
 if(require.main===module)main().catch(e=>{console.error('Atlas probe failed:',e.message);process.exitCode=1});
