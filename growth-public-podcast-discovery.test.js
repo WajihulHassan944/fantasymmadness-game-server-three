@@ -12,7 +12,9 @@ test('real provider adapter maps five genres into read-only discoveries',async()
  const result=await runDiscovery({discover,limitPerWorker:2});
  assert.equal(urls.length,10);
  assert.equal(result.workersConfigured,10);
- assert.equal(result.uniqueProspects,1);
+ assert.equal(result.uniqueProspects,2);
+ assert.deepEqual(result.results.map(item=>item.focus).sort(),['fans','partners']);
+ assert(result.results.every(item=>item.url==='https://podcasts.apple.com/us/podcast/example/id123'));
  assert.equal(result.errors.length,0);
  assert.equal(result.outboundEnabled,false);
  assert(urls.some(x=>x.includes('kickboxing')));
