@@ -1,0 +1,33 @@
+name: Isolated Growth Engine Scheduled Verification
+on:
+  schedule:
+    - cron: '17 * * * *'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  isolated-verification:
+    if: github.ref == 'refs/heads/test/growth-unattended-controller'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      GROWTH_STAGING_MODE: isolated
+      GROWTH_OUTBOUND_ENABLED: 'false'
+      GROWTH_CRON_ENABLED: 'false'
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: test/growth-unattended-controller
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - run: npm ci --ignore-scripts
+      - name: Verify isolated cron and delivery safety
+        run: node --test growth-isolated-cron-once.test.js growth-isolated-run-claims.test.js growth-sandbox-delivery-claims.test.js growth-sandbox-claim-approval.test.js growth-campaign-failclosed.test.js growth-campaign-dedup.test.js
+      - name: Confirm no real outbound operations are enabled
+        run: |
+          test "$GROWTH_STAGING_MODE" = isolated
+          test "$GROWTH_OUTBOUND_ENABLED" = false
+          test "$GROWTH_CRON_ENABLED" = false
