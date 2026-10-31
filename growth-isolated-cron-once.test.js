@@ -2,7 +2,7 @@
 const {test}=require('node:test');
 const assert=require('node:assert/strict');
 const {runIsolatedCronOnce}=require('./growth-isolated-cron-once');
-const good={GROWTH_STAGING_MODE:'isolated',GROWTH_OUTBOUND_ENABLED:'false',GROWTH_CRON_ENABLED:'true',GROWTH_ATLAS_STORE_ID:'store_5mRLkf9U8eKGIaaO',GROWTH_CRON_DB:'fmgrowthtest',GROWTH_TEST_ATLAS_URI:'mongodb+srv://test.invalid'};
+const good={GROWTH_STAGING_MODE:'isolated',GROWTH_OUTBOUND_ENABLED:'false',GROWTH_CRON_ENABLED:'true',GROWTH_ATLAS_STORE_ID:'store_5mRLkf9U8eKGIaaO',GROWTH_CRON_DB:'fmgrowthtest',GROWTH_TEST_ATLAS_URI:'mongodb+srv://test.invalid/fmgrowthtest'};
 test('cron worker rejects missing isolated guards before connecting',async()=>{
  let calls=0;const connect=async()=>{calls++;throw Error('should not connect')};
  for(const key of Object.keys(good)){
