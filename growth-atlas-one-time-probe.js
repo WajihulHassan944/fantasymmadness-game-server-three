@@ -6,13 +6,15 @@
 const assert=require('node:assert/strict');
 const {randomUUID}=require('node:crypto');
 const {MongoClient}=require('mongodb');
+const {validateIsolatedAtlasTarget}=require('./growth-atlas-target-guard');
 async function main(env=process.env){
  if(env.GROWTH_STAGING_MODE!=='isolated')throw Error('Staging mode not isolated');
  if(env.GROWTH_OUTBOUND_ENABLED!=='false')throw Error('Outbound must be explicitly disabled');
  if(env.GROWTH_ATLAS_STORE_ID!=='store_5mRLkf9U8eKGIaaO')throw Error('Dedicated fmgrowthtest resource not attested');
  if(env.GROWTH_ATLAS_PROBE_APPROVED!=='true')throw Error('One-time test approval required');
  const uri=env.GROWTH_TEST_ATLAS_URI;
- if(!uri||!/^mongodb\+srv:\/\//.test(uri))throw Error('Explicit Atlas test URI required');
+ if(!uri)throw Error('Explicit Atlas test URI required');
+ validateIsolatedAtlasTarget(uri);
  const dbName='fmgrowthtest_probe_'+randomUUID().replace(/-/g,'');
  const client=new MongoClient(uri,{serverSelectionTimeoutMS:10000});
  let created=false;
