@@ -10,6 +10,9 @@ async function runScheduledSandboxCampaign({collection,testMode=false,adapters={
  if(!Array.isArray(approvedDrafts))throw Error('Draft batch required');
  const scheduler=createIsolatedWorkstreamScheduler({collection,testMode,adapters,workstreams,clock});
  const execution=await scheduler.tick();
+ if(execution?.errors?.length||execution?.completed===0||execution?.aborted||execution?.skipped===true){
+  return {execution,report:sandboxCampaignReport([]),receipts:[],blocked:approvedDrafts.map(d=>({id:d?.id||null,reason:'workstream_execution_not_verified'})),mode:'ISOLATED_SANDBOX_ONLY',realMessagesSent:0,productionWrites:0};
+ }
  const send=createSandboxMailSender({transport});
  const receipts=[],blocked=[];
  for(const draft of approvedDrafts){
