@@ -11,3 +11,9 @@ test('accepts Atlas default and dedicated database paths',()=>{
  assert.equal(validateIsolatedAtlasTarget('mongodb+srv://example.invalid/'),true);
  assert.equal(validateIsolatedAtlasTarget('mongodb+srv://example.invalid/fmgrowthtest'),true);
 });
+
+test('requires approved host match when staging host is supplied',()=>{
+ assert.equal(validateIsolatedAtlasTarget('mongodb+srv://staging.example.invalid/fmgrowthtest','staging.example.invalid'),true);
+ assert.throws(()=>validateIsolatedAtlasTarget('mongodb+srv://production.example.invalid/fmgrowthtest','staging.example.invalid'),/does not match/);
+ assert.throws(()=>validateIsolatedAtlasTarget('mongodb+srv://staging.example.invalid/fmgrowthtest',''),/attestation required/);
+});
