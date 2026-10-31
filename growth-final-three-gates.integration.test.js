@@ -19,9 +19,10 @@ assert.equal(conversionProof({signup:{...signup,source:'public_analytics'},affil
 assert.equal(conversionProof({signup,affiliate,referral,entry,payment:{...payment,status:'pending'}}).ok,false);
 assert.equal(conversionProof({signup,affiliate,referral,entry,payment,existingCredit:true}).ok,false);
 assert.equal(conversionProof({signup,affiliate,referral,entry,payment}).ok,true);
-const departmentReceipts=['marketing','pr','affiliate'].map(department=>({ok:true,receipt:{...sandboxReceipt.receipt,department}}));
+const departmentReceipts=['marketing','pr','affiliate'].map(department=>({ok:true,receipt:{...sandboxReceipt.receipt,providerMessageId:'synthetic-'+department,department}}));
 assert.equal(launchGate({serviceReceipts:[sandboxReceipt],conversionVerified:true,securityReview:true,rollbackRehearsed:true,monitoringVerified:true,ownerApproved:true}).ready,false,'one receipt cannot cover three departments');
 assert.equal(launchGate({serviceReceipts:departmentReceipts,conversionVerified:true,securityReview:true,rollbackRehearsed:true,monitoringVerified:true}).ready,false,'owner signoff mandatory');
+assert.equal(launchGate({serviceReceipts:departmentReceipts.map((r,i)=>({...r,receipt:{...r.receipt,providerMessageId:'same-id'}})),conversionVerified:true,securityReview:true,rollbackRehearsed:true,ownerApproved:true,monitoringVerified:true}).ready,false,'duplicate provider receipt cannot prove three integrations');
 assert.equal(launchGate().ready,false);
 const hypothetical=launchGate({serviceReceipts:departmentReceipts,conversionVerified:true,securityReview:true,rollbackRehearsed:true,ownerApproved:true,monitoringVerified:true});
 assert.equal(hypothetical.ready,true,'only all explicit evidence gates permit a hypothetical approval');
