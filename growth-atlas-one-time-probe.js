@@ -14,7 +14,8 @@ async function main(env=process.env){
  if(env.GROWTH_ATLAS_PROBE_APPROVED!=='true')throw Error('One-time test approval required');
  const uri=env.GROWTH_TEST_ATLAS_URI;
  if(!uri)throw Error('Explicit Atlas test URI required');
- validateIsolatedAtlasTarget(uri);
+ if(!env.GROWTH_TEST_ATLAS_HOST)throw Error('Approved isolated Atlas host required');
+ validateIsolatedAtlasTarget(uri,env.GROWTH_TEST_ATLAS_HOST);
  const dbName='fmgrowthtest';
  const client=new MongoClient(uri,{serverSelectionTimeoutMS:10000});
  let created=false;
