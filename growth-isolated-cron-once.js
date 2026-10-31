@@ -3,7 +3,7 @@
 // Explicitly refuses production, outbound activity and non-test databases.
 const {MongoClient}=require('mongodb');
 const {createIsolatedWorkstreamScheduler}=require('./growth-workstream-scheduler');
-const {createDraftWorkstreamAdapters}=require('./growth-workstream-draft-adapters');
+const {createDraftAdapters}=require('./growth-workstream-draft-adapters');
 async function runIsolatedCronOnce({env=process.env,connect,adapters,clock}={}){
  if(env.GROWTH_STAGING_MODE!=='isolated'||env.GROWTH_OUTBOUND_ENABLED!=='false')throw Error('Isolated mode with outbound disabled required');
  if(env.GROWTH_CRON_ENABLED!=='true')throw Error('Explicit isolated cron opt-in required');
