@@ -29,7 +29,7 @@ async function runDiscovery({discover,limitPerWorker=25,onResult=()=>{},signal}=
    let accepted=0;
    for(const raw of found.slice(0,limitPerWorker)){
     const record=normalize(raw,worker);if(!record)continue;
-    const key=record.url.toLowerCase().replace(/\/$/,'');
+    const key=record.focus+':'+record.url.toLowerCase().replace(/\/$/,'');
     if(seen.has(key))continue;
     seen.add(key);results.push(record);accepted++;
     await onResult(record);
