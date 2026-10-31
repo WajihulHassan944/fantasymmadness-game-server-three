@@ -5,12 +5,13 @@ const {MongoClient}=require('mongodb');
 const {createIsolatedWorkstreamScheduler}=require('./growth-workstream-scheduler');
 const {createDraftAdapters}=require('./growth-workstream-draft-adapters');
 const {createIsolatedRunClaims}=require('./growth-isolated-run-claims');
+const {validateIsolatedAtlasTarget}=require('./growth-atlas-target-guard');
 async function runIsolatedCronOnce({env=process.env,connect,adapters,clock}={}){
  if(env.GROWTH_STAGING_MODE!=='isolated'||env.GROWTH_OUTBOUND_ENABLED!=='false')throw Error('Isolated mode with outbound disabled required');
  if(env.GROWTH_CRON_ENABLED!=='true')throw Error('Explicit isolated cron opt-in required');
  if(env.GROWTH_ATLAS_STORE_ID!=='store_5mRLkf9U8eKGIaaO')throw Error('Dedicated Atlas store ID required');
  if(env.GROWTH_CRON_DB!=='fmgrowthtest')throw Error('Dedicated test database required');
- if(!/^mongodb\+srv:\/\//.test(env.GROWTH_TEST_ATLAS_URI||''))throw Error('Dedicated Atlas test URI required');
+ validateIsolatedAtlasTarget(env.GROWTH_TEST_ATLAS_URI);
  const client=connect?await connect(env.GROWTH_TEST_ATLAS_URI):new MongoClient(env.GROWTH_TEST_ATLAS_URI,{serverSelectionTimeoutMS:10000});
  try{
   await client.connect();
