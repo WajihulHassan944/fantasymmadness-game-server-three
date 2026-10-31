@@ -13,7 +13,7 @@ function conversionProof({signup,affiliate,referral,entry,payment,existingCredit
  return reconcilePaidReferral({affiliate,referral,entry,payment,existingCredit});
 }
 function launchGate({serviceReceipts=[],conversionVerified=false,securityReview=false,rollbackRehearsed=false,ownerApproved=false,monitoringVerified=false}={}){
- const checks={serviceIntegration:serviceReceipts.some(r=>r?.ok===true&&r.receipt?.sandbox===true),conversionVerified:conversionVerified===true,securityReview:securityReview===true,rollbackRehearsed:rollbackRehearsed===true,ownerApproved:ownerApproved===true,monitoringVerified:monitoringVerified===true};
+ const checks={serviceIntegration:['marketing','pr','affiliate'].every(department=>serviceReceipts.some(r=>r?.ok===true&&r.receipt?.sandbox===true&&r.receipt?.realDelivery===false&&r.receipt?.department===department)),conversionVerified:conversionVerified===true,securityReview:securityReview===true,rollbackRehearsed:rollbackRehearsed===true,ownerApproved:ownerApproved===true,monitoringVerified:monitoringVerified===true};
  return {ready:Object.values(checks).every(Boolean),checks};
 }
 module.exports={deliveryReceipt,conversionProof,launchGate};
