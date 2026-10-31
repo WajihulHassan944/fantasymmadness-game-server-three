@@ -1,17 +1,35 @@
-name: Isolated Growth Engine Manual Verification
+name: Isolated Growth Engine Unified Verification
 on:
   workflow_dispatch:
+  push:
+    branches: [test/growth-unattended-controller]
+    paths:
+      - 'growth-*'
+      - '.github/workflows/growth-isolated-hourly-verification.yml'
 permissions:
   contents: read
 jobs:
   isolated-verification:
     if: github.ref == 'refs/heads/test/growth-unattended-controller'
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 20
+    services:
+      mongodb:
+        image: mongo:7
+        ports:
+          - 27017:27017
+        options: >-
+          --health-cmd "mongosh --quiet --eval 'db.adminCommand({ping:1})'"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 12
     env:
+      NODE_ENV: test
       GROWTH_STAGING_MODE: isolated
       GROWTH_OUTBOUND_ENABLED: 'false'
+      GROWTH_PRODUCTION_APPROVED: 'false'
       GROWTH_CRON_ENABLED: 'false'
+      GROWTH_TEST_MONGO_URI: mongodb://127.0.0.1:27017
     steps:
       - uses: actions/checkout@v4
         with:
@@ -21,11 +39,16 @@ jobs:
         with:
           node-version: '22'
           cache: npm
-      - run: npm ci --ignore-scripts
-      - name: Verify isolated cron and delivery safety
-        run: node --test growth-isolated-cron-once.test.js growth-isolated-run-claims.test.js growth-sandbox-delivery-claims.test.js growth-sandbox-claim-approval.test.js growth-campaign-failclosed.test.js growth-campaign-dedup.test.js
-      - name: Confirm no real outbound operations are enabled
+      - name: Install locked dependencies
+        run: npm ci --ignore-scripts --no-fund
+      - name: Verify isolated test boundaries
         run: |
           test "$GROWTH_STAGING_MODE" = isolated
           test "$GROWTH_OUTBOUND_ENABLED" = false
+          test "$GROWTH_PRODUCTION_APPROVED" = false
           test "$GROWTH_CRON_ENABLED" = false
+          test "$GROWTH_TEST_MONGO_URI" = mongodb://127.0.0.1:27017
+      - name: Run unified Growth Engine suite with isolated MongoDB
+        run: node --test growth-*.test.js growth-*.integration.test.js
+      - name: Verify dependency vulnerabilities
+        run: npm audit --omit=dev --audit-level=high
