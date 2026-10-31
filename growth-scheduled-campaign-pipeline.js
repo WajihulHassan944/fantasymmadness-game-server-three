@@ -14,8 +14,13 @@ async function runScheduledSandboxCampaign({collection,testMode=false,adapters={
   return {execution,report:sandboxCampaignReport([]),receipts:[],blocked:approvedDrafts.map(d=>({id:d?.id||null,reason:'workstream_execution_not_verified'})),mode:'ISOLATED_SANDBOX_ONLY',realMessagesSent:0,productionWrites:0};
  }
  const send=createSandboxMailSender({transport});
- const receipts=[],blocked=[];
+ const receipts=[],blocked=[],seenDraftIds=new Set();
  for(const draft of approvedDrafts){
+  if(!draft?.id||seenDraftIds.has(draft.id)){
+   blocked.push({id:draft?.id||null,reason:'invalid_or_duplicate_draft'});
+   continue;
+  }
+  seenDraftIds.add(draft.id);
   try{
    const delivery=await send({draft,approval:{draftId:draft?.id,ownerApproved:draft?.ownerApproved===true}});
    if(!delivery.ok){blocked.push({id:draft?.id||null,reason:delivery.reason});continue;}
