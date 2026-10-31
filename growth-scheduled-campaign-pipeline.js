@@ -24,6 +24,10 @@ async function runScheduledSandboxCampaign({collection,testMode=false,adapters={
    continue;
   }
   seenDraftIds.add(draft.id);
+  if(draft.status!=='approved'||draft.ownerApproved!==true||draft.sendPermitted!==true){
+   blocked.push({id:draft.id,reason:'owner_approval_required'});
+   continue;
+  }
   if(claims){
    try{if(!await claims.claim(draft.id)){blocked.push({id:draft.id,reason:'already_attempted_in_prior_run'});continue;}}
    catch(error){blocked.push({id:draft.id,reason:'delivery_claim_failed'});continue;}
