@@ -22,7 +22,13 @@ async function runIsolatedCronOnce({env=process.env,connect,adapters,clock}={}){
   await claims.init();
   if(!await claims.claim(runId))return {completed:0,errors:[],skipped:25,mode:'isolated',outboundActions:0,alreadyClaimed:true};
   const scheduler=createIsolatedWorkstreamScheduler({collection,testMode:true,adapters:adapters||createDraftAdapters(),clock:()=>now});
-  const result=await scheduler.tick();
+  let result;
+  try{
+   result=await scheduler.tick();
+  }catch(error){
+   await claims.complete(runId,{completed:0,errors:[{id:'scheduler',message:'execution_failed'}]});
+   throw error;
+  }
   await claims.complete(runId,result);
   return {completed:result.completed,errors:result.errors,skipped:result.skipped.length,mode:'isolated',outboundActions:0};
  }finally{await client.close();}
