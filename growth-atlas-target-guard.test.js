@@ -7,9 +7,10 @@ test('rejects non-Atlas and alternate database URIs',()=>{
   assert.throws(()=>validateIsolatedAtlasTarget(uri));
  }
 });
-test('accepts Atlas default and dedicated database paths',()=>{
- assert.equal(validateIsolatedAtlasTarget('mongodb+srv://example.invalid/'),true);
+test('accepts only dedicated database path',()=>{
+ assert.throws(()=>validateIsolatedAtlasTarget('mongodb+srv://example.invalid/'),/Explicit fmgrowthtest/);
  assert.equal(validateIsolatedAtlasTarget('mongodb+srv://example.invalid/fmgrowthtest'),true);
+ assert.throws(()=>validateIsolatedAtlasTarget('mongodb+srv://example.invalid/fmgrowthtest?authSource=admin'),/Unexpected authentication database/);
 });
 
 test('requires approved host match when staging host is supplied',()=>{
