@@ -1,0 +1,13 @@
+'use strict';
+const assert=require('node:assert/strict');
+const {reviewEvidence,REQUIRED}=require('./growth-stage13-evidence-ledger');
+const none=reviewEvidence([]);
+assert.equal(none.readyForSandboxIntegration,false);
+assert.equal(none.missing.length,7);
+const all=REQUIRED.map((kind,i)=>({kind,status:'verified',evidenceId:'synthetic-evidence-'+i,verifiedBy:'synthetic-ci',verifiedAt:'2026-10-30T12:00:00Z',account:kind==='business_sender'?'contact@fantasymmadnesscom.com':undefined,productionShared:false,realExternalDelivery:false}));
+assert.equal(reviewEvidence(all).readyForSandboxIntegration,true);
+assert.equal(reviewEvidence(all.map(x=>x.kind==='business_sender'?{...x,account:'facester1@gmail.com'}:x)).readyForSandboxIntegration,false);
+assert.equal(reviewEvidence(all.map(x=>x.kind==='isolated_database'?{...x,productionShared:true}:x)).readyForSandboxIntegration,false);
+assert.equal(reviewEvidence(all.map(x=>x.kind==='sandbox_mail'?{...x,realExternalDelivery:true}:x)).readyForSandboxIntegration,false);
+assert.equal(reviewEvidence(all).realDeliveryPermitted,false);
+console.log('STAGE13_EVIDENCE_LEDGER_DRY_RUN '+JSON.stringify({missingWithoutRealEvidence:none.missing,syntheticAllVerified:true,externalSends:0}));

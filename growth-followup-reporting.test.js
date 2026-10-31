@@ -1,0 +1,17 @@
+'use strict';
+const assert=require('node:assert/strict');
+const {nextFollowup,campaignMetrics}=require('./growth-followup-reporting');
+const now=Date.parse('2026-11-10T12:00:00Z');
+const base={lastSentAt:'2026-11-01T12:00:00Z',deliveryVerified:true,ownerApproved:true,followupCount:0};
+assert.equal(nextFollowup(base,now).action,'draft_followup');
+assert.equal(nextFollowup({...base,replied:true},now).action,'stop');
+assert.equal(nextFollowup({...base,optedOut:true},now).action,'stop');
+assert.equal(nextFollowup({...base,bounced:true},now).action,'stop');
+assert.equal(nextFollowup({...base,deliveryVerified:false},now).action,'hold');
+assert.equal(nextFollowup({...base,ownerApproved:false},now).action,'hold');
+assert.equal(nextFollowup({...base,followupCount:2},now).action,'stop');
+assert.equal(nextFollowup({...base,lastSentAt:'2026-11-09T12:00:00Z'},now).action,'wait');
+assert.equal(nextFollowup(base,now).sendPermitted,false);
+const m=campaignMetrics([{sent:true,deliveryVerified:true,replied:true,verifiedPaidEntries:2},{sent:true,bounced:true,optedOut:true,verifiedPaidEntries:0}]);
+assert.deepEqual(m,{drafted:2,sent:2,delivered:1,replied:1,bounced:1,optedOut:1,verifiedPaidEntries:2});
+console.log('FOLLOWUP_REPORTING_DRY_RUN '+JSON.stringify({result:'passed',externalSends:0,productionWrites:0}));

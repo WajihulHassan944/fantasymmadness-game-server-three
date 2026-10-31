@@ -11,6 +11,11 @@ permissions:
 jobs:
   verify:
     runs-on: ubuntu-latest
+    services:
+      mongo:
+        image: mongo:7
+        ports:
+          - 27017:27017
     steps:
       - uses: actions/checkout@v4
         with:
@@ -23,6 +28,36 @@ jobs:
         run: node fight-registry-regression.test.js
       - run: npm ci --ignore-scripts
       - run: npm test
+      - name: Verify unattended Growth Engine controller offline scenarios
+        run: node growth-unattended-controller.test.js && node growth-unattended-store.test.js && node growth-affiliate-attribution.test.js && node growth-isolated-http.integration.test.js && node growth-existing-revenue-contract.test.js && node growth-payment-reconciliation.test.js && node growth-production-readiness.audit.test.js && node growth-marketing-campaign.simulation.test.js && node growth-expanded-operations.simulation.test.js && node growth-real-discovery-http.integration.test.js && node growth-research-to-campaign.integration.test.js && node growth-staging-execution.integration.test.js && node growth-four-milestones.readiness.test.js && node growth-final-three-gates.integration.test.js && node growth-final-negative-paths.test.js && node growth-staging-preflight.test.js && node growth-prospect-queue.test.js && node growth-followup-reporting.test.js && node growth-campaign-coordinator.test.js && node growth-stage8-end-to-end.test.js && node growth-business-email-templates.test.js && node growth-personalized-email-drafts.test.js && node growth-delivery-readiness.test.js && node growth-stage12-integration-audit.test.js && node growth-stage13-evidence-ledger.test.js
+      - name: Verify five-genre discovery agents and failure isolation
+        run: node --test growth-ten-agent-discovery.test.js growth-global-workstreams.test.js growth-workstream-executor.test.js growth-workstream-mongo.test.js growth-workstream-scheduler.test.js growth-workstream-draft-adapters.test.js growth-public-podcast-discovery.test.js growth-research-draft-cycle.test.js growth-media-qualification.test.js growth-outreach-review-queue.test.js growth-research-review.integration.test.js growth-approved-sandbox-mail.test.js growth-approved-sandbox-mail.integration.test.js growth-sandbox-receipt-reporting.test.js
+      - name: Verify isolated sandbox SMTP delivery (loopback only)
+        run: node growth-sandbox-smtp.integration.test.js
+      - name: Verify read-only external research provider connectivity
+        run: node growth-live-provider-connectivity.smoke.test.js
+      - name: Verify real isolated MongoDB job recovery
+        env:
+          GROWTH_TEST_MONGO_URI: mongodb://127.0.0.1:27017
+        run: node growth-unattended-mongo.integration.test.js && node growth-staging-scheduler.mongo.integration.test.js
+      - name: Verify scheduled campaign to local sandbox end-to-end
+        env:
+          GROWTH_TEST_MONGO_URI: mongodb://127.0.0.1:27017
+        run: node growth-scheduled-sandbox.e2e.test.js
+      - name: Verify isolated failure recovery and retry ceiling
+        env:
+          GROWTH_TEST_MONGO_URI: mongodb://127.0.0.1:27017
+        run: node growth-failure-recovery.e2e.test.js
+      - name: Verify opt-out and follow-up suppression
+        run: node growth-suppression-safety.test.js
+      - name: Verify synthetic paid-entry attribution and campaign reporting
+        run: node growth-attribution-reporting.acceptance.test.js
+      - name: Verify evidence-aware staging launch gates
+        run: node growth-launch-evidence.acceptance.test.js
+      - name: Rehearse isolated staging rollback and restart
+        env:
+          GROWTH_TEST_MONGO_URI: mongodb://127.0.0.1:27017
+        run: node growth-rollback-rehearsal.mongo.test.js
       - run: npm audit --omit=dev --audit-level=high
       - uses: gitleaks/gitleaks-action@v2
         if: ${{ always() && !cancelled() }}

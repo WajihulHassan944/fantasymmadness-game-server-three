@@ -1,0 +1,12 @@
+'use strict';
+const assert=require('node:assert/strict');
+const {stagingPreflight}=require('./growth-staging-preflight');
+assert.equal(stagingPreflight().ready,false);
+assert.ok(stagingPreflight().failures.includes('dedicated_database_attestation_required'));
+assert.ok(stagingPreflight().failures.includes('sandbox_mail_attestation_required'));
+const isolated={GROWTH_STAGING_MODE:'isolated',GROWTH_STAGING_DB_ATTESTED:'true',GROWTH_STAGING_MAIL_SANDBOX_ATTESTED:'true',GROWTH_OUTBOUND_ENABLED:'false'};
+assert.equal(stagingPreflight(isolated).ready,true);
+assert.equal(stagingPreflight({...isolated,GROWTH_OUTBOUND_ENABLED:'true'}).ready,false);
+assert.equal(stagingPreflight({...isolated,GROWTH_PRODUCTION_APPROVED:'true'}).ready,false);
+assert.equal(stagingPreflight(isolated).realDeliveryPermitted,false);
+console.log('PASS staging isolation guard: default-deny, dedicated DB and sandbox mail attestation, no outbound');
