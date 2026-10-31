@@ -14,7 +14,7 @@ async function runIsolatedCronOnce({env=process.env,connect,adapters,clock}={}){
  try{
   await client.connect();
   const collection=client.db('fmgrowthtest').collection('isolated_workstream_runs');
-  const scheduler=createIsolatedWorkstreamScheduler({collection,testMode:true,adapters:adapters||createDraftWorkstreamAdapters(),clock});
+  const scheduler=createIsolatedWorkstreamScheduler({collection,testMode:true,adapters:adapters||createDraftAdapters(),clock});
   const result=await scheduler.tick();
   return {completed:result.completed,errors:result.errors,skipped:result.skipped.length,mode:'isolated',outboundActions:0};
  }finally{await client.close();}
