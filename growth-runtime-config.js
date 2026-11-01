@@ -66,6 +66,10 @@ function resolveGrowthRuntimeConfig(env = process.env) {
   } else if (provider !== 'none') errors.push(`Unknown GROWTH_DELIVERY_PROVIDER "${provider}"`);
   if (env.GROWTH_OUTBOUND_ENABLED === 'true' && !delivery.realDelivery) errors.push('GROWTH_OUTBOUND_ENABLED is "true" but real delivery is not fully authorized');
 
+  // Social publishing (fails closed; see growth-social-publishing.js).
+  const socialResolved = require('./growth-social-publishing').resolveSocialConfig(env);
+  errors.push(...socialResolved.errors);
+
   // Marketing campaigns come only from the published FANTASY MMADNESS contest feeds (read-only).
   let contestSourceUrl = '';
   try { contestSourceUrl = require('./growth-contest-campaigns').sourceBase(env); } catch (e) { errors.push(e.message); }
@@ -82,9 +86,12 @@ function resolveGrowthRuntimeConfig(env = process.env) {
     contestSourceUrl,
     marketingHorizonDays: Math.min(45, Math.max(3, Number(env.GROWTH_MARKETING_HORIZON_DAYS || 21))),
     maxCampaignsPerSport: Math.min(10, Math.max(1, Number(env.GROWTH_MAX_CAMPAIGNS_PER_SPORT || 3))),
+    liveReport: { configured: /^.{20,}$/.test(String(env.GROWTH_LIVE_REPORT_TOKEN || '')) },
+    ingest: { configured: String(env.GROWTH_ATTRIBUTION_INGEST_SECRET || '').length >= 32 },
+    social: { provider: socialResolved.provider, approved: socialResolved.approved, paused: socialResolved.paused, channels: socialResolved.channels },
   };
   // Secrets are kept out of the returned config object.
-  const secrets = { mongoUri: uri, cronSecret: String(env.CRON_SECRET || ''), adminJwtSecret: String(env.JWT_SECRET_ADMIN || ''), unsubscribeSecret: String(env.GROWTH_UNSUBSCRIBE_SECRET || ''), resendApiKey: String(env.GROWTH_RESEND_API_KEY || '') };
+  const secrets = { mongoUri: uri, cronSecret: String(env.CRON_SECRET || ''), adminJwtSecret: String(env.JWT_SECRET_ADMIN || ''), unsubscribeSecret: String(env.GROWTH_UNSUBSCRIBE_SECRET || ''), resendApiKey: String(env.GROWTH_RESEND_API_KEY || ''), social: socialResolved.secrets, liveReportToken: String(env.GROWTH_LIVE_REPORT_TOKEN || ''), ingestSecret: String(env.GROWTH_ATTRIBUTION_INGEST_SECRET || '') };
   return { ok: errors.length === 0, errors, warnings, config, secrets };
 }
 

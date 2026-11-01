@@ -100,6 +100,7 @@ function verifyContest(item, { now = new Date(), horizonDays = 21, mediaNames = 
     contestUrl: wrestling ? `${SITE}/pro-wrestling/play/${encodeURIComponent(id)}` : `${SITE}/fight/${encodeURIComponent(id)}?play=1`,
     source: wrestling ? 'fmm-public-pro-wrestling-feed' : 'fmm-public-prediction-feed',
     status: status || 'ongoing',
+    posterUrl: [item.fightPosterImage, item.featuredFightBackgroundImage, item.promotionBackground, item.bannerImage].map((u) => clean(u, 500)).find((u) => /^https:\/\/[^\s"'<>]+$/i.test(u)) || null,
   };
   contest.fingerprint = hash([contest.id, contest.sport, contest.fighterA, contest.fighterB, contest.dateKey, contest.matchTime, contest.eventName].join('|')).slice(0, 10);
   return { ok: true, contest };
@@ -152,7 +153,10 @@ function whenText(c) {
 }
 function link(c, channel) {
   const sep = c.contestUrl.includes('?') ? '&' : '?';
-  return `${c.contestUrl}${sep}utm_source=${channel}&utm_medium=social&utm_campaign=growth_${c.sport}_${c.id}`;
+  // fan_acquisition / partner_outreach / combat_fans_* is what the live site already
+  // records on registration, so sign-ups from these posts become measurable without
+  // any production change. "gs" = Growth Engine social; utm_content = channel.
+  return `${c.contestUrl}${sep}utm_source=fan_acquisition&utm_medium=partner_outreach&utm_campaign=combat_fans_gs_${c.sport.replace(/[^a-z0-9]+/g, '_')}&utm_content=${channel}`;
 }
 // How you play, by sport (matches what each contest page offers; no prizes or fees).
 const PLAY = {

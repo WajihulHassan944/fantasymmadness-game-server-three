@@ -4,7 +4,8 @@
 // by the runtime. Never sends, publishes, charges, or touches production data.
 const crypto = require('crypto');
 const { GENRES } = require('./growth-ten-agent-discovery');
-const { createRecruit, makeLink, verifyPaidEntry, report: attributionReport } = require('./growth-affiliate-attribution');
+const { createRecruit, verifyPaidEntry, report: attributionReport } = require('./growth-affiliate-attribution');
+const { playerLink } = require('./growth-affiliate-program');
 const { safeReport } = require('./growth-unattended-controller');
 const contestCampaigns = require('./growth-contest-campaigns');
 
@@ -203,19 +204,11 @@ function createBackoffice({ runtime }) {
   // in the isolated database. Nothing here reads or writes the live payment
   // system; no events means $0 credited, never an estimate.
   async function attribution() {
-    const evCol = col.attribution;
-    const events = evCol ? (await evCol.find({}).sort({ at: 1 }).limit(5000).toArray()).map(strip) : [];
-    // Affiliates eligible for tracked links: verified contact + consent and an
-    // owner-approved (or delivered) affiliate invitation.
-    const approvedInvites = await col.drafts.find({ kind: 'affiliate', status: { $in: ['approved', 'delivered'] } }).toArray();
-    const prospectIds = [...new Set(approvedInvites.map((d) => d.prospectId).filter(Boolean))];
-    const pmap = await prospectNames(prospectIds);
+    const events = (await col.attribution.find({}).sort({ at: 1 }).limit(5000).toArray()).map(strip);
+    // Only affiliates who joined the live program (owner-linked live affiliate ID) earn credit.
+    const rows = await col.affiliates.find({ status: { $in: ['active', 'paused'] } }).toArray();
     const affiliates = new Map();
-    for (const pid of prospectIds) {
-      const p = await col.prospects.findOne({ id: pid });
-      if (!p) continue;
-      try { affiliates.set(pid, { ...createRecruit({ id: pid, name: p.name, consent: p.consent === true, approved: p.contactVerified === true }), genre: p.genre }); } catch { /* skip */ }
-    }
+    for (const a of rows) { try { affiliates.set(a.id, { ...createRecruit({ id: a.id, name: a.name, consent: true, approved: true }), genre: a.genre, code: a.code, liveAffiliateId: a.liveAffiliateId, lifecycle: a.status }); } catch { /* skip */ } }
     const entries = new Map(); const rejected = {};
     for (const e of events.filter((x) => x.type === 'paid_entry')) {
       const r = verifyPaidEntry(e, { affiliates, entries });
@@ -224,20 +217,55 @@ function createBackoffice({ runtime }) {
     const totals = attributionReport(entries);
     const byGenre = {};
     for (const e of entries.values()) { const g = affiliates.get(e.affiliateId)?.genre || 'unknown'; byGenre[g] = byGenre[g] || { paidEntries: 0, revenueCents: 0 }; byGenre[g].paidEntries++; byGenre[g].revenueCents += e.amountCents; }
-    const funnel = safeReport(events);
+    const contests = await activeContests();
     return {
-      paymentSource: { connected: false, note: 'Revenue is credited only from verified, settled paid-entry events recorded in fmgrowthtest.' },
+      paymentSource: { connected: events.some((e) => e.source === 'signed_ingest' && e.type === 'paid_entry'), note: 'Revenue is credited only from server-verified, settled paid-entry events (signed by a trusted server). Live payments are never read or changed from here.' },
       eventsRecorded: events.length,
-      funnel,
+      funnel: safeReport(events.map((e) => (e.type === 'registration' ? { ...e, type: 'signup' } : e))),
       affiliates: [...affiliates.values()].map((a) => {
         const t = totals[a.id] || { paidEntries: 0, revenueCents: 0 };
-        let link = null; try { link = makeLink(a, 'next-event'); } catch { link = null; }
-        return { id: a.id, name: pmap.get(a.id)?.name || a.name, genre: a.genre, status: a.status, trackingLink: link, ...t };
+        const c = contests.find((x) => x.sport === a.genre) || contests[0];
+        return { id: a.id, name: a.name, genre: a.genre, status: a.lifecycle === 'active' ? 'approved' : a.lifecycle, code: a.code, trackingLink: c ? playerLink({ status: a.lifecycle, liveAffiliateId: a.liveAffiliateId, code: a.code }, c) : null, trackingLinkFight: c ? `${c.fighterA} vs ${c.fighterB}` : null, ...t };
       }),
       byGenre: GENRES.map((g) => ({ genre: g, ...(byGenre[g] || { paidEntries: 0, revenueCents: 0 }) })),
       totalRevenueCents: [...entries.values()].reduce((n, e) => n + e.amountCents, 0),
       creditedEntries: entries.size,
+      payingPlayers: new Set([...entries.values()].map((e) => e.playerId)).size,
       rejectedEvents: rejected,
+    };
+  }
+
+  async function activeContests() {
+    const ds = await col.drafts.find({ kind: 'marketing', contestId: { $exists: true }, status: { $in: ['needs_owner_review', 'approved', 'published'] } }, { projection: { contest: 1 } }).toArray();
+    const seen = new Map(); for (const d of ds) if (d.contest && !seen.has(d.contest.id)) seen.set(d.contest.id, d.contest);
+    return [...seen.values()].sort((a, b) => a.dateKey.localeCompare(b.dateKey));
+  }
+
+  // Campaign funnel. Each stage is counted from its own evidence and labelled with its source.
+  async function funnel() {
+    const count = (c, q) => c.countDocuments(q);
+    const approvedStatuses = ['approved', 'published', 'delivered'];
+    const kinds = ['marketing', 'pr', 'affiliate'];
+    const approved = {}; for (const k of kinds) approved[k] = await count(col.drafts, { kind: k, ownerApproved: true, status: { $in: approvedStatuses } });
+    const socialReal = await count(col.social, { status: 'published', sandbox: { $ne: true } });
+    const socialSandbox = await count(col.social, { status: 'published', sandbox: true });
+    const manual = await count(col.drafts, { kind: 'marketing', status: 'published', publishedManually: true });
+    const regEvents = await count(col.attribution, { type: 'registration', verified: true, source: 'signed_ingest' });
+    const live = await col.liveReports.find({}).sort({ day: -1 }).limit(1).next();
+    const liveRegs = live ? live.groups.reduce((n, g) => n + g.registrations, 0) : 0;
+    const att = await attribution();
+    const aff = {}; for (const st of ['invite_prepared', 'invited', 'active', 'paused', 'declined']) aff[st] = await count(col.affiliates, { status: st });
+    return {
+      stages: [
+        { key: 'prospects', label: 'Discovered prospects', value: await count(col.prospects, {}), source: 'Public discovery (podcasts, shows, creators)' },
+        { key: 'approved', label: 'Approved content', value: approved.marketing + approved.pr + approved.affiliate, detail: approved, source: 'Owner approvals in this console' },
+        { key: 'published', label: 'Published posts', value: socialReal + manual, detail: { scheduler: socialReal, markedByOwner: manual, sandboxSimulated: socialSandbox }, source: socialReal ? 'Channel receipts + owner records' : 'Owner records (simulated sandbox posts are not counted)' },
+        { key: 'emails', label: 'Outreach emails delivered', value: await count(col.deliveries, { status: 'delivered', realDelivery: true }), source: 'Email provider receipts (real sending is off)' },
+        { key: 'registrations', label: 'Registrations', value: regEvents + liveRegs, detail: { signedEvents: regEvents, liveSiteReport: liveRegs }, source: regEvents || live ? 'Verified by the live site' : 'Not connected yet' , connected: Boolean(regEvents || live) },
+        { key: 'paying', label: 'Verified paying players', value: att.payingPlayers, detail: { creditedEntries: att.creditedEntries, revenueCents: att.totalRevenueCents }, source: att.paymentSource.connected ? 'Server-verified settled payments' : 'Not connected yet', connected: att.paymentSource.connected },
+      ],
+      affiliates: aff,
+      liveReportDay: live?.day || null,
     };
   }
 
@@ -253,7 +281,7 @@ function createBackoffice({ runtime }) {
     return (await col.suppressions.find({}).sort({ createdAt: -1 }).limit(lim(limit, 100, 500)).toArray()).map(({ _id, ...s }) => s);
   }
 
-  return { marketingCoverage, runs, jobs, schedulerStatus, workstreams, workstreamDetail, editDraft, markPublished, analytics, attribution, reports, auditLog, suppressions };
+  return { funnel, activeContests, marketingCoverage, runs, jobs, schedulerStatus, workstreams, workstreamDetail, editDraft, markPublished, analytics, attribution, reports, auditLog, suppressions };
 }
 
 module.exports = { createBackoffice, hashPassword, verifyPassword, createLoginLimiter, DEPARTMENTS };

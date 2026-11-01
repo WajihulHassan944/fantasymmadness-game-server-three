@@ -5,7 +5,7 @@
 // reject. Used only by tests; production reads the real feeds.
 function contestFeed(baseNow = () => Date.now()) {
   const day = (n) => new Date(baseNow() + n * 86400000).toISOString().slice(0, 10);
-  const m = (id, cat, a, b, d, extra = {}) => ({ _id: id, sourceType: 'match', matchCategory: cat, matchFighterA: a, matchFighterB: b, matchStatus: 'Scheduled', matchDateKey: day(d), matchDate: `${day(d)}T00:00:00.000Z`, ...extra });
+  const m = (id, cat, a, b, d, extra = {}) => ({ _id: id, sourceType: 'match', matchCategory: cat, matchFighterA: a, matchFighterB: b, matchStatus: 'Scheduled', matchDateKey: day(d), matchDate: `${day(d)}T00:00:00.000Z`, fightPosterImage: id === 'mm0000000002' ? '' : `https://res.cloudinary.com/demo/image/upload/${id}.jpg`, ...extra });
   const matches = () => [
     m('bx0000000001', 'boxing', 'Naoya Inoue', 'Murodjon Akhmadaliev', 4, { venue: 'Ariake Arena', eventCity: 'Tokyo', maxRounds: 12, weightClass: 'Super Bantamweight' }),
     m('bx0000000002', 'Boxing', 'Shakur Stevenson', 'William Zepeda', 9, { maxRounds: 12 }),
