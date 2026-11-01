@@ -428,7 +428,7 @@ test('Growth Engine back-office console: every screen, button and workflow', { s
       await page.waitForSelector('[data-testid=funnel]');
       const v = async (k) => (await page.textContent(`[data-testid=funnel-${k}] .value`)).replace(/,/g, '');
       assert.ok(Number(await v('prospects')) >= 30);
-      assert.ok(Number(await v('approved')) >= 5);
+      assert.equal(await v('approved'), '4');           // 2 marketing (1 approved + 1 published), 1 PR, 1 affiliate; withdrawn ones excluded
       assert.equal(await v('published'), '1');         // the one post the owner marked published; sandbox posts excluded
       assert.equal(await v('registrations'), '1');     // one signed registration (duplicate ignored)
       assert.equal(await v('paying'), '1');            // one settled, server-verified paid entry
