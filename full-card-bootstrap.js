@@ -262,3 +262,17 @@ require('./affiliate-league-roster')({
   affiliateScope: 'affiliate',
 });
 
+
+// Isolated Growth Engine service. Mounted ONLY inside the dedicated isolated
+// Vercel project (fantasymmadness-growth-isolated-test); inert everywhere else,
+// including the production backend. The service validates its own environment
+// and, if anything is missing, exposes only /api/growth/health with the reasons.
+try {
+  const { ISOLATED_PROJECT_ID } = require('./growth-runtime-config');
+  if (process.env.VERCEL_PROJECT_ID === ISOLATED_PROJECT_ID) {
+    const growth = require('./growth-isolated-routes').registerIsolatedGrowthRoutes({ app: capturedApp, express: expressOriginal });
+    console.log(`[growth] isolated Growth Engine ${growth.mounted ? 'mounted' : 'NOT mounted: ' + growth.errors.join('; ')}`);
+  }
+} catch (error) {
+  console.error('[growth] isolated Growth Engine unavailable:', error?.message);
+}
