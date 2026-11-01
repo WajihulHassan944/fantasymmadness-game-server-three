@@ -40,7 +40,7 @@ function createSocialScheduler({ col, social, publisher, reverifyMarketing, aler
     if (!list.length || list.some((c) => !CHANNELS.includes(c))) return { ok: false, reason: 'choose_at_least_one_valid_channel' };
     const when = new Date(scheduledAt);
     if (!Number.isFinite(when.getTime())) return { ok: false, reason: 'invalid_time' };
-    if (when.getTime() < now.getTime() - 60000) return { ok: false, reason: 'time_is_in_the_past' };
+    if (when.getTime() < now.getTime() - 120000) return { ok: false, reason: 'time_is_in_the_past' }; // the time box has minute precision
     const lastMoment = Date.parse(`${d.contest.dateKey}T23:59:59Z`) + 14 * 3600000; // end of fight day, any timezone
     if (when.getTime() > lastMoment) return { ok: false, reason: 'time_is_after_the_fight' };
     const results = [];

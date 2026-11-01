@@ -179,3 +179,13 @@ table.data td.num,table.data th.num{text-align:right;font-variant-numeric:tabula
 .checklist{list-style:none;padding:0;margin:8px 0}
 .checklist li{padding:4px 0}.checklist li.done{color:var(--good)}.checklist li.todo{color:var(--ink-2)}
 .conn-row{padding:8px 0;border-bottom:1px solid #eef0f2}
+
+/* embedded in the admin back office: no duplicate chrome */
+html.embedded .sidenav{display:none}
+html.embedded .layout{grid-template-columns:1fr;min-height:0}
+html.embedded .topbar{position:static;height:44px;background:#fff;color:var(--ink);border-bottom:1px solid var(--line)}
+html.embedded .topbar .logo{display:none}
+html.embedded .topbar .signout{color:var(--ink-2);border-color:var(--line-2)}
+html.embedded .topbar .signout:hover{background:var(--bg)}
+html.embedded main{padding:16px 18px 40px}
+html.embedded .login-wrap{min-height:100vh}

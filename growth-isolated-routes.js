@@ -29,7 +29,10 @@ const CONSOLE_ASSETS = {
   'app.js': readAsset(path.join(__dirname, 'growth-console', 'app.js')),
   'app.css': readAsset(path.join(__dirname, 'growth-console', 'app.css')),
 };
-const CONSOLE_CSP = "default-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: https:; connect-src 'self'; frame-src 'self'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'";
+// The console may be embedded ONLY by the origins listed in GROWTH_CONSOLE_EMBED_ORIGINS
+// (the FANTASY MMADNESS admin site). Anything else cannot frame it.
+const embedOrigins = (env) => String(env.GROWTH_CONSOLE_EMBED_ORIGINS || '').split(/[\s,]+/).filter((o) => /^https?:\/\/[a-z0-9.-]+(:\d+)?$/i.test(o) && (o.startsWith('https://') || /^http:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/.test(o)));
+const consoleCsp = (origins) => `default-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: https:; connect-src 'self'; frame-src 'self'; base-uri 'none'; form-action 'none'; frame-ancestors ${origins.length ? origins.join(' ') : "'none'"}`;
 const EMAIL_RE = /^[^\s@<>()",;:]+@[A-Za-z0-9-]+(\.[A-Za-z0-9-]+)+$/;
 
 function safeEqual(a, b) {
@@ -43,7 +46,7 @@ function registerIsolatedGrowthRoutes({ app, env = process.env, express, transpo
   router.use(express.json({ limit: '32kb' }));
   router.get('/health', (req, res) => {
     res.set('Cache-Control', 'no-store');
-    res.status(resolved.ok ? 200 : 503).json({ ok: resolved.ok, service: 'growth-engine-isolated', mode: 'isolated', errors: resolved.errors, warnings: resolved.warnings, delivery: { provider: resolved.config.delivery.provider, realDelivery: resolved.config.delivery.realDelivery, blockers: resolved.config.delivery.blockers }, database: resolved.config.database, console: { path: '/api/growth/console', signInConfigured: Boolean(env.GROWTH_ADMIN_PASSWORD_HASH) } });
+    res.status(resolved.ok ? 200 : 503).json({ ok: resolved.ok, service: 'growth-engine-isolated', mode: 'isolated', errors: resolved.errors, warnings: resolved.warnings, delivery: { provider: resolved.config.delivery.provider, realDelivery: resolved.config.delivery.realDelivery, blockers: resolved.config.delivery.blockers }, database: resolved.config.database, console: { path: '/api/growth/console', signInConfigured: Boolean(env.GROWTH_ADMIN_PASSWORD_HASH), embedOrigins: embedOrigins(env) } });
   });
   if (!resolved.ok) { app.use('/api/growth', router); return { mounted: false, errors: resolved.errors }; }
 
@@ -96,7 +99,9 @@ function registerIsolatedGrowthRoutes({ app, env = process.env, express, transpo
   const sendConsole = (file) => (req, res) => {
     const body = CONSOLE_ASSETS[file];
     if (!body) return res.status(404).end();
-    res.set({ 'Content-Type': CONSOLE_FILES[file], 'Cache-Control': 'no-store', 'Content-Security-Policy': CONSOLE_CSP, 'X-Content-Type-Options': 'nosniff', 'Referrer-Policy': 'no-referrer', 'X-Frame-Options': 'DENY' });
+    const origins = embedOrigins(env);
+    res.set({ 'Content-Type': CONSOLE_FILES[file], 'Cache-Control': 'no-store', 'Content-Security-Policy': consoleCsp(origins), 'X-Content-Type-Options': 'nosniff', 'Referrer-Policy': 'no-referrer' });
+    if (!origins.length) res.set('X-Frame-Options', 'DENY');
     res.send(body);
   };
   router.get('/console', sendConsole('index.html'));
