@@ -1,6 +1,6 @@
 'use strict';
 // End-to-end test of the website back office with the Growth Engine replacement
-// (fmm-ver2, branch test/growth-engine-admin-bridge), built and served by Next.js,
+// (fmm-ver2, branch test/growth-engine-replacement, built on the live website code), built and served by Next.js,
 // against a real Growth Engine on loopback MongoDB. Every request to any other host
 // (including the live backend) is blocked, so production is never contacted.
 //   GROWTH_V2=on  -> one Growth Engine command center replaces the retired screens
@@ -27,8 +27,11 @@ const SHOTS = process.env.GROWTH_CONSOLE_SCREENSHOTS;
 const feed = contestFeed();
 const fetchImpl = async (url) => { const f = feed(url); if (f) return f; const term = new URL(url).searchParams.get('term') || 'x'; const slug = term.replace(/[^a-z]+/gi, '-').toLowerCase(); return { ok: true, status: 200, json: async () => ({ results: [1, 2].map((n) => ({ collectionName: `${term} show ${n}`, collectionViewUrl: `https://podcasts.apple.com/us/podcast/${slug}-${n}/id${n}` })) }) }; };
 const SECTIONS = ['overview', 'approvals', 'marketing', 'pr', 'affiliates', 'publishing', 'automation', 'analytics', 'revenue', 'connections'];
-const RETIRED_LABELS = ['Fight Launch Desk', 'July 10K growth', 'This Week’s Three Fights', 'Growth Engine (staging)', 'Swarm command center'];
-const PRESERVED_LABELS = ['Fight registry', 'Create fight', 'Registered users', 'Affiliate users', 'Payouts', 'Wrestling registry', 'SEO growth center', 'Social publishing', 'Content assistants', 'Jarvis AI assistant', 'Blogs', 'Support tickets'];
+// Legacy automation audit (Nov 2026): obsolete, broken and display-only screens are hidden
+// from the V2 menu; the working Fight Launch Desk is kept inside the Growth Engine group.
+const RETIRED_LABELS = ['July 10K growth', 'This Week’s Three Fights', 'Growth Engine (staging)', 'Swarm command center', 'SEO growth center', 'Content assistants', 'Social publishing', 'Blog & SEO automation'];
+const LEGACY_ONLY_LABELS = ['Fight Launch Desk', 'July 10K growth', 'This Week’s Three Fights', 'Swarm command center', 'SEO growth center', 'Content assistants', 'Social publishing'];
+const PRESERVED_LABELS = ['Fight registry', 'Create fight', 'Registered users', 'Affiliate users', 'Payouts', 'Wrestling registry', 'Jarvis AI assistant', 'Blogs', 'Support tickets'];
 
 test(`admin back office — Growth Engine ${V2 ? 'replacement' : 'rollback'}`, { skip, timeout: 300000 }, async (t) => {
   const client = await new MongoClient(uri).connect();
@@ -76,21 +79,22 @@ test(`admin back office — Growth Engine ${V2 ? 'replacement' : 'rollback'}`, {
       for (const l of PRESERVED_LABELS) assert.ok(nav.includes(l), `missing preserved menu item: ${l}`);
       if (V2) {
         for (const l of RETIRED_LABELS) assert.ok(!nav.includes(l), `retired item still in menu: ${l}`);
-        for (const l of ['Growth Engine', 'Campaign approvals', 'Marketing', 'Public relations', 'Affiliate recruitment', 'Publishing', 'Automation', 'Analytics', 'Revenue attribution', 'Connections', 'Blog & SEO automation (Swarm)']) assert.ok(nav.includes(l), `missing ${l}`);
+        for (const l of ['Growth Engine', 'Campaign approvals', 'Marketing', 'Public relations', 'Affiliate recruitment', 'Publishing', 'Automation', 'Analytics', 'Revenue attribution', 'Connections', 'Fight Launch Desk (posters & QR)']) assert.ok(nav.includes(l), `missing ${l}`);
         await page.waitForSelector('[data-testid=growth-engine-panel]');
         const dash = await page.textContent('main');
-        assert.ok(!/FAN ACQUISITION COMMAND CENTER|Fan Acquisition Swarm|Fight Launch Desk/.test(dash), 'retired dashboard entries remain');
+        assert.ok(!/FAN ACQUISITION COMMAND CENTER|Fan Acquisition Swarm|Swarm automation|SEO growth center/.test(dash), 'retired dashboard entries remain');
+        assert.match(dash, /Fight Launch Desk/, 'working Fight Launch Desk shortcut kept');
         assert.match(dash, /Revenue Command Center/);
       } else {
-        for (const l of ['Fight Launch Desk', 'July 10K growth', 'This Week’s Three Fights', 'Swarm command center']) assert.ok(nav.includes(l), `rollback lost ${l}`);
+        for (const l of LEGACY_ONLY_LABELS) assert.ok(nav.includes(l), `rollback lost ${l}`);
         assert.ok(!nav.includes('Campaign approvals') && !nav.includes('Growth Engine'), 'rollback still shows the new group');
         assert.match(await page.textContent('main'), /FAN ACQUISITION COMMAND CENTER/);
       }
       await shot(page, 'dashboard');
     });
 
-    await t.test('retired routes redirect to the matching Growth Engine section (V2) / still work (rollback)', async () => {
-      const cases = { '/administration/growth': 'marketing', '/administration/fan-acquisition': 'pr', '/administration/july-growth': '' };
+    await t.test('replaced routes redirect to the matching Growth Engine section (V2) / still work (rollback)', async () => {
+      const cases = { '/administration/fan-acquisition': 'pr', '/administration/july-growth': '', '/administration/MakePost': 'publishing', '/administration/tweet': 'publishing', '/administration/tiktok': 'publishing' };
       for (const [from, to] of Object.entries(cases)) {
         await page.goto(`${SITE}${from}`);
         if (V2) await page.waitForURL(new RegExp(`/administration/growth-engine${to ? `/${to}` : ''}$`), { timeout: 20000 });
@@ -98,8 +102,17 @@ test(`admin back office — Growth Engine ${V2 ? 'replacement' : 'rollback'}`, {
       }
     });
 
+    await t.test('Fight Launch Desk kept: posters & QR desk loads; weekly draft generator only in rollback', async () => {
+      await page.goto(`${SITE}/administration/growth`);
+      await page.waitForSelector('.admin-command-nav', { timeout: 20000 });
+      await page.waitForTimeout(1500);
+      assert.ok(page.url().endsWith('/administration/growth'), `Fight Launch Desk redirected to ${page.url()}`);
+      assert.match(await page.title(), /Fight Launch Desk/);
+      await shot(page, 'fight-launch-desk');
+    });
+
     await t.test('working admin pages and the shared affiliate fight-launch page still load', async () => {
-      for (const p of ['/administration/fights', '/administration/RegisteredUsers', '/administration/AffiliateUsers', '/administration/payouts', '/administration/revenue', '/administration/seo-growth', '/administration/swarm', '/administration/MakePost']) {
+      for (const p of ['/administration/fights', '/administration/RegisteredUsers', '/administration/AffiliateUsers', '/administration/payouts', '/administration/revenue', '/administration/seo-growth', '/administration/swarm', '/administration/blogs', '/administration/YoutubeArchive', '/administration/jarvis']) {
         const r = await page.goto(`${SITE}${p}`);
         assert.ok(r.status() < 400, `${p} -> ${r.status()}`);
         await page.waitForSelector('.admin-command-nav', { timeout: 20000 });

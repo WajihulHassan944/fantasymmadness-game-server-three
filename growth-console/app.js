@@ -28,7 +28,7 @@
   // navigation, so the console hides its own sidebar and reports the current section.
   var EMBEDDED = /[?&]embed=1(&|$)/.test(location.search) && window.parent !== window;
   if (EMBEDDED) document.documentElement.classList.add('embedded');
-  function tellParent(section) { if (EMBEDDED) { try { window.parent.postMessage({ type: 'fmm-growth-console', section: section, signedIn: Boolean(token()) }, '*'); } catch (e) { /* ignore */ } } }
+  function tellParent(section) { if (EMBEDDED) { try { var parentOrigin = (window.location.ancestorOrigins && window.location.ancestorOrigins[0]) || '*'; window.parent.postMessage({ type: 'fmm-growth-console', section: section, signedIn: Boolean(token()) }, parentOrigin); } catch (e) { /* ignore */ } } }
 
   // ---------- tiny DOM helpers ----------
   function h(tag, attrs) {

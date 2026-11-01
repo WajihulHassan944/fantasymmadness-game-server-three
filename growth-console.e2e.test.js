@@ -477,8 +477,8 @@ test('Growth Engine back-office console: every screen, button and workflow', { s
       assert.equal((await call('POST', '/drafts/nope/mark-published', {})).status, 409);
       assert.equal((await call('GET', '/workstreams/none/none')).status, 404);
       // A console session from before a password change is refused
-      const jwt = require('jsonwebtoken');
-      const stale = jwt.sign({ email: 'owner@growth-console', role: 'growth_owner', pwv: 'old-password-ver' }, secret, { expiresIn: '1h' });
+      const { signConsoleToken } = require('./growth-console-token');
+      const stale = signConsoleToken(secret, { pwv: 'old-password-ver' }, { expiresIn: '1h' });
       assert.equal((await fetch(`${origin}/api/growth/admin/session`, { headers: { Authorization: `Bearer ${stale}` } })).status, 401);
       assert.equal((await call('GET', '/session')).status, 200);
       // Markup typed into an email draft is escaped, never injected into the HTML

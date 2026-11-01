@@ -19,6 +19,7 @@
 //   100+N = check N failed      1 = could not start      98/99 = cleanup problem
 const crypto = require('crypto');
 const jwt = require('jsonwebtoken');
+const { signConsoleToken, consolePasswordVersion } = require('../growth-console-token');
 const { MongoClient } = require('mongodb');
 const path = require('path');
 const cc = require(path.join(__dirname, '..', 'growth-contest-campaigns'));
@@ -49,8 +50,8 @@ async function main() {
     suppressions: gdb.collection('growth_suppressions'), audit: gdb.collection('growth_audit_log'), runs: gdb.collection('isolated_run_claims'),
     social: gdb.collection('growth_social_posts'), sandbox: gdb.collection('growth_social_sandbox'), affiliates: gdb.collection('growth_affiliates'),
   };
-  const pwv = crypto.createHash('sha256').update(String(process.env.GROWTH_ADMIN_PASSWORD_HASH || '')).digest('hex').slice(0, 16);
-  const token = jwt.sign({ email: LABEL, role: 'growth_owner', pwv }, process.env.JWT_SECRET_ADMIN, { expiresIn: '30m' });
+  const pwv = consolePasswordVersion(process.env.GROWTH_ADMIN_PASSWORD_HASH);
+  const token = signConsoleToken(process.env.JWT_SECRET_ADMIN, { email: LABEL, pwv }, { expiresIn: '30m' });
   const api = async (m, p, body, extra = {}) => { const r = await fetch(`${origin}/api/growth${p}`, { method: m, headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json', Origin: STAGING, ...extra }, body: body ? JSON.stringify(body) : undefined }); return { status: r.status, json: await r.json().catch(() => null), headers: r.headers }; };
   let browser = null; let browserOk = false; let exitCode = 0;
   const live = {};
@@ -74,7 +75,7 @@ async function main() {
       ok(pre.headers.get('access-control-allow-origin') !== 'https://evil.example', 'preflight leaked');
     });
     await check('sessions from before the password change are refused', async () => {
-      const stale = jwt.sign({ email: LABEL, role: 'growth_owner', pwv: 'old-password-ver' }, process.env.JWT_SECRET_ADMIN, { expiresIn: '5m' });
+      const stale = signConsoleToken(process.env.JWT_SECRET_ADMIN, { email: LABEL, pwv: 'old-password-ver' }, { expiresIn: '5m' });
       ok((await fetch(`${origin}/api/growth/admin/session`, { headers: { Authorization: `Bearer ${stale}`, Origin: STAGING } })).status === 401, 'stale accepted');
       ok((await api('GET', '/admin/session')).status === 200, 'current refused');
     });
@@ -316,7 +317,7 @@ async function main() {
       });
       await check('browser: sign out, stale session and bad token all return to sign-in', async () => {
         await page.click('[data-testid=signout]'); await page.waitForSelector('[data-testid=login]');
-        const stale = jwt.sign({ email: LABEL, role: 'growth_owner', pwv: 'old-password-ver' }, process.env.JWT_SECRET_ADMIN, { expiresIn: '5m' });
+        const stale = signConsoleToken(process.env.JWT_SECRET_ADMIN, { email: LABEL, pwv: 'old-password-ver' }, { expiresIn: '5m' });
         for (const t of [stale, 'not.a.token']) {
           await page.evaluate((x) => sessionStorage.setItem('fmmGrowthConsoleToken', x), t);
           await page.goto(`${STAGING}/api/growth/console#/automation`); await page.waitForSelector('[data-testid=login]');
