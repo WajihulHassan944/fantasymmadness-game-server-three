@@ -65,6 +65,11 @@ test('isolated Growth Engine service', { skip }, async (t) => {
       assert.equal(disc.result.workstreams, 25);
       assert.ok(disc.result.prospectsFound >= 20); // already stored by the earlier cron call, so newProspects may be 0
       assert.ok(await runtime.collections.prospects.countDocuments() >= 20);
+      const ws = runtime.collections.workstreams;
+      for (const fn of ['public-relations', 'affiliate-recruitment']) {
+        const withDrafts = await ws.distinct('genre', { runId: s.runId.replace('growth_', 'growth_'), functionName: fn, 'data.drafts.0': { $exists: true } });
+        assert.equal(withDrafts.length, 5, `${fn} drafts prepared for all five sports`);
+      }
       const drafts = await runtime.listDrafts({ kind: 'marketing', status: 'needs_owner_review' });
       assert.equal(new Set(drafts.map((d) => d.genre)).size, 5);
     });

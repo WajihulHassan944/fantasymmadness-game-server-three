@@ -14,6 +14,8 @@ test('isolated Vercel project with Atlas URI is accepted; secrets are not in con
   assert.equal(r.config.database.name, 'fmgrowthtest');
   assert.equal(JSON.stringify(r.config).includes('u:p@'), false);
   assert.equal(r.config.delivery.provider, 'none');
+  assert.equal(r.config.database.host, 'cluster0.abcde.mongodb.net');
+  assert.equal(r.config.database.hostPinned, false);
 });
 test('refuses any other Vercel project (production backend stays inert)', () => {
   const r = resolveGrowthRuntimeConfig({ ...vercelBase, VERCEL_PROJECT_ID: 'prj_vjqJrHyYFrs0GW57b3KWMpeU6ykS' });

@@ -70,7 +70,15 @@ function createGrowthRuntime({ db, config, secrets = {}, provider, fetchImpl = g
     }
     // Marketing: one review draft per sport per day from verified public sources.
     const research = run.results.filter((r) => r.focus === 'fans').map((r) => ({ genre: r.genre, title: `${r.name}: fight-week prediction challenge`, sourceUrl: r.url, verified: true }));
-    const adapters = createDraftAdapters({ research, prospects: (await col.prospects.find({ verified: true }).toArray()).map((p) => ({ ...p, category: p.focus === 'partners' ? 'media' : 'fans' })) });
+    // Partner-side prospects (podcasts, creators) are candidates for BOTH public
+    // relations (as media) and affiliate recruitment (as creators). Fan-side
+    // sources feed marketing only.
+    const stored = await col.prospects.find({ verified: true }).toArray();
+    const partnerProspects = stored.filter((p) => p.focus === 'partners').flatMap((p) => [
+      { ...p, category: 'media' },
+      { ...p, id: `${p.id}-affiliate`, category: 'affiliate' },
+    ]);
+    const adapters = createDraftAdapters({ research, prospects: partnerProspects });
     let marketingDrafts = 0;
     for (const genre of GENRES) {
       const d = (await adapters.marketing({ genre })).drafts[0];

@@ -66,8 +66,11 @@ function resolveGrowthRuntimeConfig(env = process.env) {
   } else if (provider !== 'none') errors.push(`Unknown GROWTH_DELIVERY_PROVIDER "${provider}"`);
   if (env.GROWTH_OUTBOUND_ENABLED === 'true' && !delivery.realDelivery) errors.push('GROWTH_OUTBOUND_ENABLED is "true" but real delivery is not fully authorized');
 
+  // Hostname only (never credentials), so the operator can confirm the cluster
+  // and pin it with GROWTH_TEST_ATLAS_HOST.
+  let host = null; try { host = uri ? new URL(uri).hostname : null; } catch {}
   const config = {
-    mode: 'isolated', onVercel, database: { kind: dbKind, name: DATABASE }, delivery,
+    mode: 'isolated', onVercel, database: { kind: dbKind, name: DATABASE, host, hostPinned: Boolean(env.GROWTH_TEST_ATLAS_HOST) }, delivery,
     discoveryEnabled: env.GROWTH_DISCOVERY_ENABLED !== 'false',
     discoveryLimitPerWorker: Math.min(25, Math.max(1, Number(env.GROWTH_DISCOVERY_LIMIT || 10))),
     unsubscribeBaseUrl: String(env.GROWTH_UNSUBSCRIBE_BASE_URL || ''),
