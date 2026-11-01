@@ -1,8 +1,11 @@
 'use strict';
 // Live check of the back-office console against the REAL isolated staging data
 // (Atlas fmgrowthtest). Runs inside a build of the isolated Vercel project, which
-// is the only place that holds the staging credentials. It serves the console
-// from this commit, drives it in a real browser, and:
+// is the only place that holds the staging credentials. It boots the FULL backend
+// exactly as the deployed function does (full-card-bootstrap -> server.js, incl.
+// its CORS allowlist), puts a real browser on the exact staging origin
+// (https://fantasymmadness-growth-isolated-tes.vercel.app, routed to this server),
+// and:
 //   - reads every screen from the live data (read-only), and
 //   - exercises every button on clearly labelled "uitest-" fixtures it creates,
 //     then deletes every fixture and every audit entry it produced.
@@ -12,13 +15,14 @@
 //   77 = all checks passed in the browser
 //   78 = all HTTP checks passed, browser could not start
 //   100+N = check N failed      1 = could not start
-const express = require('express');
+const crypto = require('crypto');
 const jwt = require('jsonwebtoken');
 const { MongoClient } = require('mongodb');
 const path = require('path');
 
 const ISOLATED = 'prj_Hpe9UjGrBBJOm3boxHsL9lHesWLl';
 const LABEL = 'live-check@growth-console';
+const STAGING = 'https://fantasymmadness-growth-isolated-tes.vercel.app';
 const stamp = Date.now().toString(36);
 const FX = { mkt1: `uitest-mkt-a-${stamp}`, mkt2: `uitest-mkt-b-${stamp}`, prospect: `uitest-p-${stamp}`, alert: `uitest:alert-${stamp}`, job: `uitest-job-${stamp}`, optout: `uitest-${stamp}@example.invalid` };
 const log = (...a) => console.log('[console-live-check]', ...a);
@@ -29,17 +33,21 @@ const ok = (v, msg) => { if (!v) throw new Error(msg || 'assertion failed'); };
 async function main() {
   if (process.env.VERCEL && !process.env.VERCEL_PROJECT_ID) process.env.VERCEL_PROJECT_ID = ISOLATED;
   ok(process.env.VERCEL_PROJECT_ID === ISOLATED, 'not the isolated project');
-  const { registerIsolatedGrowthRoutes } = require(path.join(__dirname, '..', 'growth-isolated-routes'));
-  const app = express();
-  const mounted = registerIsolatedGrowthRoutes({ app, env: process.env, express });
-  if (!mounted.mounted) { log('not mounted', mounted.errors); process.exit(1); }
-  const server = app.listen(0, '127.0.0.1');
-  await new Promise((r) => server.once('listening', r));
-  const origin = `http://127.0.0.1:${server.address().port}`;
-  const runtime = await mounted.getRuntime();
-  const C = runtime.collections;
-  const token = jwt.sign({ email: LABEL, role: 'growth_owner' }, process.env.JWT_SECRET_ADMIN, { expiresIn: '30m' });
-  const api = async (m, p, body) => { const r = await fetch(`${origin}/api/growth${p}`, { method: m, headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' }, body: body ? JSON.stringify(body) : undefined }); return { status: r.status, json: await r.json().catch(() => null), headers: r.headers }; };
+  ok(String(process.env.CORS_ORIGINS || '').split(',').map((x) => x.trim()).includes(STAGING), 'CORS_ORIGINS does not list the staging origin');
+  const port = 3000 + Math.floor(Math.random() * 2000);
+  process.env.PORT = String(port);
+  require(path.join(__dirname, '..', 'full-card-bootstrap'));   // the real deployed entry point
+  const origin = `http://127.0.0.1:${port}`;
+  for (let i = 0; i < 60; i++) { try { if ((await fetch(`${origin}/api/growth/health`)).status === 200) break; } catch {} await new Promise((r) => setTimeout(r, 1000)); }
+  const client = await new MongoClient(process.env.MONGODB_URI, { serverSelectionTimeoutMS: 15000 }).connect();
+  const gdb = client.db('fmgrowthtest');
+  const C = {
+    drafts: gdb.collection('growth_drafts'), prospects: gdb.collection('growth_prospects'), alerts: gdb.collection('growth_alerts'), jobs: gdb.collection('unattended_jobs'),
+    suppressions: gdb.collection('growth_suppressions'), audit: gdb.collection('growth_audit_log'), runs: gdb.collection('isolated_run_claims'),
+  };
+  const pwv = crypto.createHash('sha256').update(String(process.env.GROWTH_ADMIN_PASSWORD_HASH || '')).digest('hex').slice(0, 16);
+  const token = jwt.sign({ email: LABEL, role: 'growth_owner', pwv }, process.env.JWT_SECRET_ADMIN, { expiresIn: '30m' });
+  const api = async (m, p, body, extra = {}) => { const r = await fetch(`${origin}/api/growth${p}`, { method: m, headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json', Origin: STAGING, ...extra }, body: body ? JSON.stringify(body) : undefined }); return { status: r.status, json: await r.json().catch(() => null), headers: r.headers }; };
   let browser = null; let browserOk = false; let exitCode = 0;
   const live = {};
   try {
@@ -48,6 +56,23 @@ async function main() {
       ok(h.ok && h.database.name === 'fmgrowthtest' && h.database.kind === 'atlas', 'health');
       ok(h.console.signInConfigured === true, 'sign-in not configured');
       ok(h.delivery.provider === 'none' && h.delivery.realDelivery === false, 'delivery not none');
+    });
+    await check('CORS: exact staging origin allowed on sign-in; other origins still refused', async () => {
+      const post = (o) => fetch(`${origin}/api/growth/admin/login`, { method: 'POST', headers: { 'Content-Type': 'application/json', Origin: o, 'X-Forwarded-For': '198.51.100.8' }, body: JSON.stringify({ password: 'definitely-not-the-password' }) });
+      const good = await post(STAGING);
+      ok(good.status === 401, `staging origin status ${good.status}`);
+      ok(good.headers.get('access-control-allow-origin') === STAGING, 'ACAO header');
+      const evil = await post('https://evil.example');
+      ok(evil.status === 403 && /CORS/.test((await evil.json()).message), `evil origin status ${evil.status}`);
+      const near = await post('https://fantasymmadness-growth-isolated-tes.vercel.app.evil.example');
+      ok(near.status === 403, 'look-alike origin');
+      const pre = await fetch(`${origin}/api/growth/admin/login`, { method: 'OPTIONS', headers: { Origin: 'https://evil.example', 'Access-Control-Request-Method': 'POST' } });
+      ok(pre.headers.get('access-control-allow-origin') !== 'https://evil.example', 'preflight leaked');
+    });
+    await check('sessions from before the password change are refused', async () => {
+      const stale = jwt.sign({ email: LABEL, role: 'growth_owner', pwv: 'old-password-ver' }, process.env.JWT_SECRET_ADMIN, { expiresIn: '5m' });
+      ok((await fetch(`${origin}/api/growth/admin/session`, { headers: { Authorization: `Bearer ${stale}`, Origin: STAGING } })).status === 401, 'stale accepted');
+      ok((await api('GET', '/admin/session')).status === 200, 'current refused');
     });
     await check('console page and assets served with CSP', async () => {
       for (const f of ['', '/app.js', '/app.css']) { const r = await fetch(`${origin}/api/growth/console${f}`); ok(r.status === 200, f); ok(/script-src 'self'/.test(r.headers.get('content-security-policy')), 'csp'); }
@@ -83,6 +108,13 @@ async function main() {
 
     if (browserOk) {
       const context = await browser.newContext({ viewport: { width: 1360, height: 900 } });
+      // The browser is on the real staging origin; requests are served by the real backend booted above.
+      await context.route(`${STAGING}/**`, async (route) => {
+        const req = route.request(); const u = new URL(req.url());
+        const resp = await route.fetch({ url: `${origin}${u.pathname}${u.search}`, headers: req.headers() });
+        await route.fulfill({ response: resp });
+      });
+      const corsErrors = [];
       const page = await context.newPage(); page.setDefaultTimeout(20000);
       const problems = [];
       page.on('pageerror', (e) => problems.push(e.message));
@@ -94,10 +126,20 @@ async function main() {
       };
       const status = async (id) => (await C.drafts.findOne({ id }))?.status;
 
-      await check('browser: sign-in screen, then live overview', async () => {
-        await page.goto(`${origin}/api/growth/console`); await page.waitForSelector('[data-testid=login]');
+      page.on('response', async (r) => { if (r.status() === 403) { const t = await r.text().catch(() => ''); if (/CORS/.test(t)) corsErrors.push(r.url()); } });
+      await check('browser on the staging origin: sign-in reaches the password check (no CORS error)', async () => {
+        await page.goto(`${STAGING}/api/growth/console`); await page.waitForSelector('[data-testid=login]');
+        ok(page.url().startsWith(STAGING), 'not on staging origin');
+        await page.fill('[data-testid=login-password]', 'definitely-not-the-password');
+        await page.click('[data-testid=login-submit]');
+        await page.waitForFunction(() => document.querySelector('[data-testid=login-error]').textContent.trim().length > 0);
+        const msg = await page.textContent('[data-testid=login-error]');
+        ok(/Incorrect password/.test(msg), `login message: ${msg}`);
+        ok(corsErrors.length === 0, 'CORS error in browser');
+      });
+      await check('browser: session, then live overview', async () => {
         await page.evaluate((t) => sessionStorage.setItem('fmmGrowthConsoleToken', t), token);
-        await page.goto(`${origin}/api/growth/console#/overview`);
+        await page.goto(`${STAGING}/api/growth/console#/overview`);
         await page.waitForSelector('[data-testid=scheduler-banner]');
         ok(/running automatically/.test(await page.textContent('[data-testid=scheduler-banner]')), 'banner');
         ok((await page.textContent('[data-testid=tile-prospects] .value')).replace(/,/g, '') === String(live.overview.prospects), 'prospect tile');
@@ -165,7 +207,15 @@ async function main() {
         await page.waitForSelector('[data-testid=toast]');
         ok(await C.runs.countDocuments() >= before, 'run now');
       });
-      await check('no browser errors', async () => { ok(problems.length === 0, problems.join(' | ')); });
+      await check('browser: sign out, stale session and bad token all return to sign-in', async () => {
+        await page.click('[data-testid=signout]'); await page.waitForSelector('[data-testid=login]');
+        const stale = jwt.sign({ email: LABEL, role: 'growth_owner', pwv: 'old-password-ver' }, process.env.JWT_SECRET_ADMIN, { expiresIn: '5m' });
+        for (const t of [stale, 'not.a.token']) {
+          await page.evaluate((x) => sessionStorage.setItem('fmmGrowthConsoleToken', x), t);
+          await page.goto(`${STAGING}/api/growth/console#/automation`); await page.waitForSelector('[data-testid=login]');
+        }
+      });
+      await check('no browser errors and no CORS refusals', async () => { ok(problems.length === 0, problems.join(' | ')); ok(corsErrors.length === 0, corsErrors.join(' ')); });
     }
   } catch (e) {
     exitCode = e.code || 1;
@@ -183,7 +233,7 @@ async function main() {
       if (left !== 0 && exitCode === 0) exitCode = 99;
     } catch (e) { log('cleanup failed', e.message); if (exitCode === 0) exitCode = 98; }
     if (browser) await browser.close().catch(() => {});
-    server.close();
+    await client.close().catch(() => {});
   }
   if (exitCode === 0) exitCode = browserOk ? 77 : 78;
   log('exit', exitCode);

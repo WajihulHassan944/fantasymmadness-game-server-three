@@ -352,6 +352,11 @@ test('Growth Engine back-office console: every screen, button and workflow', { s
       assert.equal((await call('POST', `/drafts/${published.id}/approve`)).status, 409);
       assert.equal((await call('POST', '/drafts/nope/mark-published', {})).status, 409);
       assert.equal((await call('GET', '/workstreams/none/none')).status, 404);
+      // A console session from before a password change is refused
+      const jwt = require('jsonwebtoken');
+      const stale = jwt.sign({ email: 'owner@growth-console', role: 'growth_owner', pwv: 'old-password-ver' }, secret, { expiresIn: '1h' });
+      assert.equal((await fetch(`${origin}/api/growth/admin/session`, { headers: { Authorization: `Bearer ${stale}` } })).status, 401);
+      assert.equal((await call('GET', '/session')).status, 200);
       // Markup typed into an email draft is escaped, never injected into the HTML
       const target = await db.collection('growth_prospects').findOne({ focus: 'partners', contactVerified: false, genre: 'pro-wrestling' });
       assert.equal((await call('POST', `/prospects/${target.id}/contact`, { contact: 'media@wrestling-show.example', kind: 'pr', consentNote: 'Press contact on official site' })).status, 201);
