@@ -12,8 +12,8 @@ function createSandboxDeliveryClaims(collection,{testMode=false}={}){
    return result?.upsertedCount===1;
   },
   async record(draftId,receipt){
-   if(!receipt?.sandbox||receipt?.realDelivery!==false||!receipt?.providerMessageId)throw Error('Verified sandbox receipt required');
-   await collection.updateOne({draftId,status:'attempted'},{$set:{status:'sandbox_delivered',providerMessageId:receipt.providerMessageId}},{upsert:false});
+   if(!receipt?.sandbox||receipt?.realDelivery!==false||typeof receipt?.providerMessageId!=='string'||!receipt.providerMessageId.trim())throw Error('Verified sandbox receipt required');
+   await collection.updateOne({draftId,status:'attempted'},{$set:{status:'sandbox_delivered',providerMessageId:receipt.providerMessageId.trim()}},{upsert:false});
   }
  };
 }
