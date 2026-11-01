@@ -60,7 +60,12 @@ jobs:
       - name: Install locked dependencies
         run: npm ci --ignore-scripts --no-fund && npm rebuild bcrypt sharp
       - name: Unified Growth Engine test suite (real MongoDB)
-        run: node --test growth-*.test.js growth-*.integration.test.js && echo "::notice title=Unified suite::all growth tests passed"
+        run: |
+          node --test --test-reporter=tap growth-*.test.js growth-*.integration.test.js > /tmp/unit.tap 2>&1 && { echo "::notice title=Unified suite::$(grep -E '^# (tests|pass|fail)' /tmp/unit.tap | tr '\n' ' ')"; exit 0; }
+          echo "::error title=Unified suite failures::$(grep -E '^# (tests|pass|fail)' /tmp/unit.tap | tr '\n' ' ')"
+          grep -n -A 25 -E '^\s*not ok' /tmp/unit.tap | grep -vE '^\S*-\s*$' | head -c 50000 > /tmp/fail.txt
+          echo "::error title=Failing tests (detail)::$(sed 's/%/%25/g' /tmp/fail.txt | tr '\n' '\r' | sed 's/\r/%0A/g' | head -c 60000)"
+          exit 1
       - name: Rollback rehearsal (real MongoDB)
         run: node growth-rollback-rehearsal.mongo.test.js && echo "GROWTH_ROLLBACK_REHEARSED=true" >> "$GITHUB_ENV" && echo "::notice title=Rollback rehearsal::passed"
       - name: Start backend under test (loopback-only, local staging database)
