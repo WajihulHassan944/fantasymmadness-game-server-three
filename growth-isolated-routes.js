@@ -103,6 +103,9 @@ function registerIsolatedGrowthRoutes({ app, env = process.env, express, transpo
   // Console sign-in: owner password (scrypt hash in GROWTH_ADMIN_PASSWORD_HASH)
   // exchanged for a 12-hour admin token signed with this project's JWT_SECRET_ADMIN.
   const limiter = createLoginLimiter();
+  // Console tokens carry a fingerprint of the current password hash, so
+  // rotating GROWTH_ADMIN_PASSWORD_HASH signs out every earlier console session.
+  const passwordVersion = crypto.createHash('sha256').update(String(env.GROWTH_ADMIN_PASSWORD_HASH || '')).digest('hex').slice(0, 16);
   router.post('/admin/login', (req, res) => {
     res.set('Cache-Control', 'no-store');
     const stored = String(env.GROWTH_ADMIN_PASSWORD_HASH || '');
@@ -111,15 +114,17 @@ function registerIsolatedGrowthRoutes({ app, env = process.env, express, transpo
     if (!limiter.allow(ip)) return res.status(429).json({ ok: false, message: 'Too many sign-in attempts. Wait 15 minutes and try again.' });
     if (!verifyPassword(typeof req.body?.password === 'string' ? req.body.password : '', stored)) return res.status(401).json({ ok: false, message: 'Incorrect password.' });
     limiter.reset(ip);
-    const token = jwt.sign({ email: 'owner@growth-console', role: 'growth_owner' }, secrets.adminJwtSecret, { expiresIn: '12h' });
+    const token = jwt.sign({ email: 'owner@growth-console', role: 'growth_owner', pwv: passwordVersion }, secrets.adminJwtSecret, { expiresIn: '12h' });
     res.json({ ok: true, token, expiresInHours: 12 });
   });
 
   // ---- back office ----
   const admin = (req, res, next) => {
     const token = String(req.headers.authorization || '').replace(/^Bearer\s+/i, '');
-    try { req.admin = jwt.verify(token, secrets.adminJwtSecret); return next(); }
+    try { req.admin = jwt.verify(token, secrets.adminJwtSecret); }
     catch { return res.status(401).json({ ok: false, message: 'Admin authentication required' }); }
+    if (req.admin?.role === 'growth_owner' && req.admin.pwv !== passwordVersion) return res.status(401).json({ ok: false, message: 'Session ended because the console password was changed' });
+    return next();
   };
   const who = (req) => String(req.admin?.email || req.admin?.id || 'admin');
   router.get('/admin/overview', admin, wrap(async (req, res, rt) => res.json({ ok: true, overview: await rt.overview() })));

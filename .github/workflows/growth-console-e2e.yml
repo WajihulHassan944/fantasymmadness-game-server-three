@@ -34,6 +34,10 @@ jobs:
           cache: npm
       - name: Install locked dependencies
         run: npm ci --ignore-scripts --no-fund
+      - name: Console assets are traced into the Vercel function bundle
+        run: |
+          npx --yes @vercel/nft@0.29.4 print growth-isolated-routes.js > nft.txt
+          for f in growth-console/index.html growth-console/app.js growth-console/app.css; do grep -qx "$f" nft.txt || { echo "missing $f"; exit 1; }; echo "traced $f"; done
       - name: Full Growth Engine suite (regression; browser test skipped here)
         run: node --test growth-*.test.js growth-*.integration.test.js
       - name: Install Playwright + Chromium (test-only, not saved to package.json)
