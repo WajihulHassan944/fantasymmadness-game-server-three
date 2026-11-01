@@ -99,8 +99,8 @@ jobs:
       - name: Bundle the admin Growth Engine page from the website source
         run: |
           mkdir -p bridge-dist console-screenshots
-          npx --yes esbuild@0.25.10 growth-acceptance/bridge-harness/entry.jsx --bundle --outfile=bridge-dist/bridge.js \
-            --alias:@=./web/src --loader:.js=jsx --jsx=automatic --nodepaths=bridge-deps/node_modules \
+          NODE_PATH=$PWD/bridge-deps/node_modules npx --yes esbuild@0.25.10 growth-acceptance/bridge-harness/entry.jsx --bundle --outfile=bridge-dist/bridge.js \
+            --alias:@=./web/src --loader:.js=jsx --jsx=automatic \
             --define:process.env.NEXT_PUBLIC_GROWTH_ENGINE_URL='"http://127.0.0.1:4300"' --define:process.env.NODE_ENV='"production"'
       - name: Install Playwright + Chromium (test-only)
         run: |
