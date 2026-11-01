@@ -9,8 +9,8 @@ function reviewEvidence(records=[]){
   if(!item||!REQUIRED.includes(item.kind)||accepted[item.kind])continue;
   if(item.status!=='verified'||!item.evidenceId||!item.verifiedBy||!item.verifiedAt||!Number.isFinite(Date.parse(item.verifiedAt)))continue;
   if(item.kind==='business_sender'&&item.account!=='contact@fantasymmadnesscom.com')continue;
-  if(item.kind==='isolated_database'&&item.productionShared===true)continue;
-  if(item.kind==='sandbox_mail'&&item.realExternalDelivery===true)continue;
+  if(item.kind==='isolated_database'&&item.productionShared!==false)continue;
+  if(item.kind==='sandbox_mail'&&item.realExternalDelivery!==false)continue;
   accepted[item.kind]={evidenceId:item.evidenceId,verifiedAt:item.verifiedAt};
  }
  const missing=REQUIRED.filter(k=>!accepted[k]);
