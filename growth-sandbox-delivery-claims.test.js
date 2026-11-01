@@ -20,3 +20,12 @@ test('persistent delivery claims prevent repeat SMTP attempt in later run',async
  assert.equal(first.receipts.length,1);assert.equal(second.receipts.length,0);
  assert.equal(second.blocked[0].reason,'already_attempted_in_prior_run');assert.equal(sends,1);
 });
+
+test('persistent delivery claims reject blank and non-string receipts',async()=>{
+ const {createSandboxDeliveryClaims}=require('./growth-sandbox-delivery-claims');
+ const collection={createIndex:async()=>{},updateOne:async()=>({modifiedCount:1})};
+ const claims=createSandboxDeliveryClaims(collection,{testMode:true});
+ for(const providerMessageId of ['   ',123,null]){
+  await assert.rejects(claims.record('draft-1',{sandbox:true,realDelivery:false,providerMessageId}),/Verified sandbox receipt required/);
+ }
+});
