@@ -6,6 +6,8 @@ const approval={draftId:draft.id,ownerApproved:true};
 assert.equal(deliveryReceipt({draft,providerResult:{sandbox:true,accepted:true,messageId:'fake'}}).ok,false);
 assert.equal(deliveryReceipt({draft,approval,providerResult:{accepted:true,messageId:'fake'}}).ok,false);
 assert.equal(deliveryReceipt({draft,approval,providerResult:{sandbox:true,accepted:true}}).ok,false);
+assert.equal(deliveryReceipt({draft,approval,providerResult:{sandbox:true,accepted:true,messageId:'   '}}).ok,false);
+assert.equal(deliveryReceipt({draft,approval,providerResult:{sandbox:true,accepted:true,messageId:123}}).ok,false);
 const sandboxReceipt=deliveryReceipt({draft,approval,providerResult:{sandbox:true,accepted:true,messageId:'synthetic-provider-receipt'}});
 assert.equal(sandboxReceipt.ok,true);
 assert.equal(sandboxReceipt.receipt.realDelivery,false);
