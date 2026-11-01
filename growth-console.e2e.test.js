@@ -60,7 +60,7 @@ test('Growth Engine back-office console: every screen, button and workflow', { s
   const problems = [];
   page.on('pageerror', (e) => problems.push(`pageerror: ${e.message}`));
   page.on('console', (m) => { if (m.type() === 'error' && !/401|409|422|429|Failed to load resource/.test(m.text())) problems.push(`console: ${m.text()}`); });
-  const shot = (name) => page.screenshot({ path: path.join(SHOTS, `${name}.png`), fullPage: true });
+  const shot = (name) => page.screenshot({ path: path.join(SHOTS, `${name}.jpg`), fullPage: true, type: "jpeg", quality: 70 });
   const confirm = async () => { await page.click('[data-testid=modal-confirm]'); await page.waitForSelector('[data-testid=modal]', { state: 'detached' }); };
   const toastText = async () => (await page.waitForSelector('[data-testid=toast]')).textContent();
   const clearToasts = () => page.evaluate(() => document.querySelectorAll('[data-testid=toast]').forEach((e) => e.remove()));

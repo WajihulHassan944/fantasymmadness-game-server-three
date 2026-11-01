@@ -42,6 +42,9 @@ jobs:
           npx playwright install --with-deps chromium
       - name: Browser E2E — every screen, button and workflow
         run: node --test --test-reporter=spec growth-console.e2e.test.js
+      - name: Print screenshots (base64, for reviewers without artifact access)
+        if: always()
+        run: for f in console-screenshots/*.jpg; do echo "SCREENSHOT $(basename $f) $(base64 -w0 $f)"; done
       - name: Upload screenshots
         if: always()
         uses: actions/upload-artifact@v4
