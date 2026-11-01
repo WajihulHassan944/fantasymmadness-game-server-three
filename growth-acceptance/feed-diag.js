@@ -1,22 +1,17 @@
 'use strict';
-// TEST ONLY: read-only. Why did future-dated Boxing / Bare-Knuckle listings fail verification?
-// Exit = 1 + bitmask of reasons: horizon=1, not_open/closed=2, auto_discovered=4,
-// shadow/mystery=8, name_placeholder_or_media=16, locked/entries_closed=32, other=64.
-const cc = require('../growth-contest-campaigns');
+// TEST ONLY, read-only: public DNS records of the business sender domain.
+// Exit = 64 + bits: SPF=1, DKIM(resend._domainkey)=2, DMARC=4, MX=8, domain resolves (any record)=16
 (async () => {
   try {
-    const pf = await (await fetch(`${cc.DEFAULT_SOURCE}/api/public/prediction-fights?limit=100`)).json();
-    const today = new Date().toISOString().slice(0, 10); let mask = 0;
-    for (const it of (pf.items || []).map((x) => ({ ...x, __feed: 'prediction' }))) {
-      const sp = cc.sportOf(it); if (!['boxing', 'bare-knuckle'].includes(sp)) continue;
-      const key = it.matchDateKey || (it.matchDate ? new Date(it.matchDate).toISOString().slice(0, 10) : '');
-      if (!key || key < today) continue;
-      const v = cc.verifyContest(it, { now: new Date() }); if (v.ok) continue;
-      for (const r of v.reasons) {
-        if (/horizon/.test(r)) mask |= 1; else if (/not_open|entries_closed$|contest_entries_closed/.test(r)) mask |= 2; else if (/auto_discovered/.test(r)) mask |= 4;
-        else if (/shadow/.test(r)) mask |= 8; else if (/fighter_/.test(r) || /same_fighter|media/.test(r)) mask |= 16; else if (/locked|entries_already/.test(r)) mask |= 32; else mask |= 64;
-      }
-    }
-    process.exit(1 + mask);
+    const d = 'fantasymmadnesscom.com';
+    const q = async (name, type) => { const r = await fetch(`https://cloudflare-dns.com/dns-query?name=${name}&type=${type}`, { headers: { Accept: 'application/dns-json' } }); const j = await r.json(); return j; };
+    let m = 0;
+    const txt = await q(d, 'TXT'); const ans = (txt.Answer || []).map((a) => String(a.data));
+    if (ans.some((t) => /v=spf1/i.test(t))) m |= 1;
+    if (((await q(`resend._domainkey.${d}`, 'TXT')).Answer || []).length) m |= 2;
+    if (((await q(`_dmarc.${d}`, 'TXT')).Answer || []).some((a) => /DMARC1/i.test(a.data))) m |= 4;
+    const mx = await q(d, 'MX'); if ((mx.Answer || []).length) m |= 8;
+    if (txt.Status === 0 || mx.Status === 0) m |= 16;
+    process.exit(64 + m);
   } catch (e) { process.exit(250); }
 })();
