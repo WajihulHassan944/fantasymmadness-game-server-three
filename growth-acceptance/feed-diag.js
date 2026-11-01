@@ -18,6 +18,6 @@ const cc = require('../growth-contest-campaigns');
       if (key && key >= today) mask |= 1 << cc.SPORTS.indexOf(sp);
     }
     console.log('[feed-diag]', rows.length, 'listings; future mask', mask);
-    process.exit(128 + mask);
+    process.exit(64 + mask);
   } catch (e) { console.log('[feed-diag] failed', e.message); process.exit(1); }
 })();
