@@ -168,7 +168,7 @@ function createBackoffice({ runtime }) {
     const latest = await workstreams({});
     const matrix = {};
     for (const d of DEPARTMENTS) matrix[d] = Object.fromEntries(GENRES.map((g) => [g, null]));
-    for (const w of latest.workstreams) if (matrix[w.functionName]) matrix[w.functionName][w.genre] = w.functionName === 'audience' ? w.verifiedProspects : w.draftCount;
+    for (const w of latest.workstreams) if (matrix[w.functionName]) matrix[w.functionName][w.genre] = w.functionName === 'audience' ? w.verifiedProspects : w.functionName === 'performance' ? (Number.isInteger(w.metrics?.drafted) ? w.metrics.drafted : 0) : w.draftCount;
     const since = new Date(now.getTime() - 7 * 86400000).toISOString();
     const runRows = await col.runs.find({ createdAt: { $gte: since } }, { projection: { createdAt: 1, state: 1 } }).toArray();
     const runsByDay = {};
@@ -215,7 +215,7 @@ function createBackoffice({ runtime }) {
     for (const e of entries.values()) { const g = affiliates.get(e.affiliateId)?.genre || 'unknown'; byGenre[g] = byGenre[g] || { paidEntries: 0, revenueCents: 0 }; byGenre[g].paidEntries++; byGenre[g].revenueCents += e.amountCents; }
     const funnel = safeReport(events);
     return {
-      paymentSource: { connected: false, note: 'Live payments are not connected to staging. Revenue is credited only from verified, settled paid-entry events recorded in fmgrowthtest.' },
+      paymentSource: { connected: false, note: 'Revenue is credited only from verified, settled paid-entry events recorded in fmgrowthtest.' },
       eventsRecorded: events.length,
       funnel,
       affiliates: [...affiliates.values()].map((a) => {
