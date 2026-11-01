@@ -185,10 +185,16 @@
   function refreshCounts() {
     return Promise.all([api('GET', '/admin/overview'), api('GET', '/admin/alerts')]).then(function (r) {
       state.pendingCount = r[0].overview.draftsAwaitingReview; state.alertCount = r[1].alerts.length;
-      var p = document.querySelector('[data-testid=nav-approvals]');
-      if (p) { var b = p.querySelector('.badge'); if (!b) { b = h('span', { class: 'badge', testid: 'nav-pending' }); p.appendChild(b); } b.textContent = String(state.pendingCount); b.className = 'badge' + (state.pendingCount ? '' : ' zero'); }
+      paintBadges();
       return r;
     }).catch(function () { /* counts are best-effort */ });
+  }
+
+  function paintBadges() {
+    var p = document.querySelector('[data-testid=nav-approvals]');
+    if (p && state.pendingCount !== null) { var b = p.querySelector('.badge'); if (!b) { b = h('span', { class: 'badge', testid: 'nav-pending' }); p.appendChild(b); } b.textContent = String(state.pendingCount); b.className = 'badge' + (state.pendingCount ? '' : ' zero'); }
+    var a = document.querySelector('[data-testid=nav-automation]');
+    if (a) { var c = a.querySelector('.badge'); if (state.alertCount) { if (!c) { c = h('span', { class: 'badge', testid: 'nav-alerts' }); a.appendChild(c); } c.textContent = String(state.alertCount); } else if (c) c.remove(); }
   }
 
   // ---------- draft card (shared by Approvals / Marketing / PR / Affiliate) ----------
@@ -618,7 +624,7 @@
     if (!token()) return renderLogin();
     var r = parse(); var main = shell(r.name);
     document.title = (NAV.filter(function (n) { return n[0] === r.name; })[0] || ['', 'Growth Engine'])[1] + ' · Growth Engine (staging)';
-    Promise.resolve(pages[r.name](main, r.params)).then(function () { if (state.pendingCount === null) refreshCounts(); })
+    Promise.resolve(pages[r.name](main, r.params)).then(function () { if (state.pendingCount === null) refreshCounts(); else paintBadges(); })
       .catch(function (e) { if (e && e.silent) return; clear(main).appendChild(h('div', { class: 'banner bad', testid: 'page-error' }, h('span', { class: 'ico', text: '!' }), h('div', null, h('strong', { text: 'Could not load this page.' }), (e && e.message) || 'Request failed', ' ', h('button', { class: 'btn small', text: 'Try again', onclick: route })))); });
   }
   function boot() {
