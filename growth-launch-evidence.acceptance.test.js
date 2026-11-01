@@ -17,6 +17,9 @@ for(const kind of REQUIRED){
 }
 assert.equal(reviewEvidence(records.map(x=>x.kind==='isolated_database'?{...x,productionShared:true}:x)).readyForSandboxIntegration,false);
 assert.equal(reviewEvidence(records.map(x=>x.kind==='sandbox_mail'?{...x,realExternalDelivery:true}:x)).readyForSandboxIntegration,false);
+assert.equal(reviewEvidence(records.map(x=>x.kind==='isolated_database'?{...x,productionShared:undefined}:x)).readyForSandboxIntegration,false);
+assert.equal(reviewEvidence(records.map(x=>x.kind==='sandbox_mail'?{...x,realExternalDelivery:undefined}:x)).readyForSandboxIntegration,false);
+
 assert.equal(launchGate({serviceReceipts:[],conversionVerified:true,securityReview:true,rollbackRehearsed:true,ownerApproved:true,monitoringVerified:true}).ready,false);
 assert.equal(launchGate({serviceReceipts:[{ok:true,receipt:{sandbox:true}}],conversionVerified:true,securityReview:true,rollbackRehearsed:true,ownerApproved:false,monitoringVerified:true}).ready,false);
 const audit=auditLaunchIntegration({});
