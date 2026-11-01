@@ -79,7 +79,7 @@
       post_link_must_start_with_https: 'The post link must start with https://',
       consent_basis_required: 'Please describe how this contact agreed to be contacted (consent basis).',
       kind_must_be_pr_or_affiliate: 'Choose PR or affiliate.', contact_opted_out: 'This contact has opted out and cannot be contacted.',
-      invalid_contact: 'That email address is not valid.', prospect_not_found: 'Prospect not found.', draft_already_exists: 'An outreach draft for this prospect already exists — check Campaign Approvals.',
+      invalid_contact: 'That email address is not valid.', verified_contact_required: 'That email address is not valid.', prospect_not_found: 'Prospect not found.', draft_already_exists: 'An outreach draft for this prospect already exists — check Campaign Approvals.',
       valid_email_required: 'Please enter a valid email address.', headline_required: 'The headline cannot be empty.', text_required: 'The text cannot be empty.', subject_required: 'The subject cannot be empty.',
     };
     return map[reason] || (reason ? String(reason).replace(/_/g, ' ') : 'Something went wrong.');

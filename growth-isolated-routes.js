@@ -18,8 +18,14 @@ const path = require('path');
 const { createBackoffice, verifyPassword, createLoginLimiter } = require('./growth-backoffice');
 
 // Back-office console assets (served only by the isolated project).
-const CONSOLE_DIR = path.join(__dirname, 'growth-console');
+// Literal paths so the Vercel bundler traces and ships these files with the function.
 const CONSOLE_FILES = { 'index.html': 'text/html; charset=utf-8', 'app.js': 'application/javascript; charset=utf-8', 'app.css': 'text/css; charset=utf-8' };
+const readAsset = (p) => { try { return fs.readFileSync(p); } catch { return null; } };
+const CONSOLE_ASSETS = {
+  'index.html': readAsset(path.join(__dirname, 'growth-console', 'index.html')),
+  'app.js': readAsset(path.join(__dirname, 'growth-console', 'app.js')),
+  'app.css': readAsset(path.join(__dirname, 'growth-console', 'app.css')),
+};
 const CONSOLE_CSP = "default-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: https:; connect-src 'self'; frame-src 'self'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'";
 const EMAIL_RE = /^[^\s@<>()",;:]+@[A-Za-z0-9-]+(\.[A-Za-z0-9-]+)+$/;
 
@@ -85,7 +91,8 @@ function registerIsolatedGrowthRoutes({ app, env = process.env, express, transpo
 
   // ---- back-office console (static, same origin as the API) ----
   const sendConsole = (file) => (req, res) => {
-    let body; try { body = fs.readFileSync(path.join(CONSOLE_DIR, file)); } catch { return res.status(404).end(); }
+    const body = CONSOLE_ASSETS[file];
+    if (!body) return res.status(404).end();
     res.set({ 'Content-Type': CONSOLE_FILES[file], 'Cache-Control': 'no-store', 'Content-Security-Policy': CONSOLE_CSP, 'X-Content-Type-Options': 'nosniff', 'Referrer-Policy': 'no-referrer', 'X-Frame-Options': 'DENY' });
     res.send(body);
   };
