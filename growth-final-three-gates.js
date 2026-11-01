@@ -5,8 +5,8 @@ const {reconcilePaidReferral}=require('./growth-payment-reconciliation');
 function deliveryReceipt({draft,approval,providerResult}={}){
  if(!draft?.id||!['email','social'].includes(draft.channel))return {ok:false,reason:'invalid_draft'};
  if(approval?.draftId!==draft.id||approval?.ownerApproved!==true)return {ok:false,reason:'owner_approval_required'};
- if(providerResult?.sandbox!==true||providerResult?.accepted!==true||!providerResult?.messageId)return {ok:false,reason:'sandbox_receipt_missing'};
- return {ok:true,receipt:{draftId:draft.id,channel:draft.channel,providerMessageId:String(providerResult.messageId),sandbox:true,realDelivery:false}};
+ if(providerResult?.sandbox!==true||providerResult?.accepted!==true||typeof providerResult?.messageId!=='string'||!providerResult.messageId.trim())return {ok:false,reason:'sandbox_receipt_missing'};
+ return {ok:true,receipt:{draftId:draft.id,channel:draft.channel,providerMessageId:providerResult.messageId.trim(),sandbox:true,realDelivery:false}};
 }
 function conversionProof({signup,affiliate,referral,entry,payment,existingCredit}={}){
  if(signup?.source!=='server_verified'||signup?.status!=='created'||signup?.playerId!==referral?.playerId)return {ok:false,reason:'signup_unverified'};
