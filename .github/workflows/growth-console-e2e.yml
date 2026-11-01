@@ -58,9 +58,13 @@ jobs:
           path: console-screenshots
           if-no-files-found: ignore
 
-  admin-bridge-e2e:
+  admin-replacement-e2e:
     runs-on: ubuntu-24.04
-    timeout-minutes: 20
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        v2: ['on', 'off']   # on = Growth Engine replacement, off = rollback
     services:
       mongodb:
         image: mongo:7
@@ -74,12 +78,13 @@ jobs:
     env:
       GROWTH_TEST_MONGO_URI: mongodb://127.0.0.1:27017
       GROWTH_CONSOLE_SCREENSHOTS: ${{ github.workspace }}/console-screenshots
-      BRIDGE_BUNDLE: ${{ github.workspace }}/bridge-dist/bridge.js
+      SITE_URL: http://localhost:3000
+      GROWTH_V2: ${{ matrix.v2 }}
     steps:
       - uses: actions/checkout@v4
         with:
           persist-credentials: false
-      - name: Check out the website admin page (test branch, read-only)
+      - name: Check out the website (test branch, read-only)
         uses: actions/checkout@v4
         with:
           repository: WajihulHassan944/fmm-ver2
@@ -91,23 +96,28 @@ jobs:
           node-version: '22'
       - name: Install backend dependencies
         run: npm ci --ignore-scripts --no-fund
-      - name: Install only what the admin page needs (versions from the website's package.json)
+      - name: Install website dependencies
+        run: cd web && npm install --ignore-scripts --no-fund --no-audit
+      - name: Build the website (Growth Engine switch = ${{ matrix.v2 }})
+        env:
+          NEXT_PUBLIC_GROWTH_ENGINE_URL: http://127.0.0.1:4300
+          NEXT_PUBLIC_GROWTH_ENGINE_V2: ${{ matrix.v2 }}
+          NEXT_TELEMETRY_DISABLED: '1'
+        run: cd web && npm run build
+      - name: Start the website
         run: |
-          mkdir -p bridge-deps && cd bridge-deps && npm init -y >/dev/null
-          v() { node -p "(require('../web/package.json').dependencies||{})['$1']"; }
-          npm install --no-fund --ignore-scripts "react@$(v react)" "react-dom@$(v react-dom)" "react-icons@$(v react-icons)"
-      - name: Bundle the admin Growth Engine page from the website source
-        run: |
-          mkdir -p bridge-dist console-screenshots
-          NODE_PATH=$PWD/bridge-deps/node_modules npx --yes esbuild@0.25.10 growth-acceptance/bridge-harness/entry.jsx --bundle --outfile=bridge-dist/bridge.js \
-            --alias:@=./web/src --loader:.js=jsx --jsx=automatic \
-            --define:process.env.NEXT_PUBLIC_GROWTH_ENGINE_URL='"http://127.0.0.1:4300"' --define:process.env.NODE_ENV='"production"'
+          cd web && (npx next start -p 3000 > ../next.log 2>&1 &)
+          for i in $(seq 1 60); do curl -sf -o /dev/null http://localhost:3000/administration/login && break; sleep 2; done
       - name: Install Playwright + Chromium (test-only)
         run: |
+          mkdir -p console-screenshots
           npm install --no-save --no-fund --ignore-scripts playwright@1.56.1
           npx playwright install --with-deps chromium
-      - name: Browser test — admin back office page against a real Growth Engine
-        run: node --test --test-reporter=spec growth-acceptance/admin-bridge.e2e.test.js
+      - name: Browser test — back office navigation, auth, permissions, responsiveness, rollback
+        run: node --test --test-reporter=spec growth-acceptance/admin-replacement.e2e.test.js
+      - name: Website log (on failure)
+        if: failure()
+        run: tail -60 next.log || true
       - name: Print screenshots
         if: always()
         run: |

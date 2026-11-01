@@ -24,6 +24,11 @@
     ['affiliates', 'Affiliate Recruitment', '🤝'], ['publishing', 'Publishing', '📅'], ['automation', 'Automation', '⚙'], ['analytics', 'Analytics', '📊'], ['revenue', 'Revenue Attribution', '$'], ['connections', 'Connections', '🔌'],
   ];
   var state = { pendingCount: null, alertCount: null }; var renders = 0;
+  // Embedded in the FANTASY MMADNESS admin back office: the admin site provides the
+  // navigation, so the console hides its own sidebar and reports the current section.
+  var EMBEDDED = /[?&]embed=1(&|$)/.test(location.search) && window.parent !== window;
+  if (EMBEDDED) document.documentElement.classList.add('embedded');
+  function tellParent(section) { if (EMBEDDED) { try { window.parent.postMessage({ type: 'fmm-growth-console', section: section, signedIn: Boolean(token()) }, '*'); } catch (e) { /* ignore */ } } }
 
   // ---------- tiny DOM helpers ----------
   function h(tag, attrs) {
@@ -154,7 +159,7 @@
 
   // ---------- login ----------
   function renderLogin(message) {
-    var app = clear(document.getElementById('app'));
+    var app = clear(document.getElementById('app')); tellParent('signin');
     var pw = h('input', { type: 'password', id: 'pw', autocomplete: 'current-password', required: true, testid: 'login-password' });
     var errBox = h('p', { class: 'error', role: 'alert', testid: 'login-error', text: message || '' });
     var btn = h('button', { class: 'btn primary', type: 'submit', testid: 'login-submit', text: 'Sign in' });
@@ -803,7 +808,7 @@
   }
   function route() {
     if (!token()) return renderLogin();
-    var r = parse(); var main = shell(r.name);
+    var r = parse(); var main = shell(r.name); tellParent(r.name);
     document.title = (NAV.filter(function (n) { return n[0] === r.name; })[0] || ['', 'Growth Engine'])[1] + ' · Growth Engine (staging)';
     Promise.resolve(pages[r.name](main, r.params)).then(function () { if (state.pendingCount === null) refreshCounts(); else paintBadges(); })
       .catch(function (e) { if (e && e.silent) return; clear(main).appendChild(h('div', { class: 'banner bad', testid: 'page-error' }, h('span', { class: 'ico', text: '!' }), h('div', null, h('strong', { text: 'Could not load this page.' }), (e && e.message) || 'Request failed', ' ', h('button', { class: 'btn small', text: 'Try again', onclick: route })))); });
