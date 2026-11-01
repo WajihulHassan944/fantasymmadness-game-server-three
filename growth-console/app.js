@@ -51,7 +51,7 @@
     if (!iso) return '—';
     var d = new Date(iso); if (isNaN(d)) return String(iso);
     var mins = Math.round((Date.now() - d.getTime()) / 60000);
-    var rel = mins < 1 ? 'just now' : mins < 60 ? mins + ' min ago' : mins < 1440 ? Math.round(mins / 60) + ' hr ago' : Math.round(mins / 1440) + ' days ago';
+    var rel = mins < 1 ? 'just now' : mins < 60 ? mins + ' min ago' : mins < 1440 ? Math.round(mins / 60) + ' hr ago' : Math.round(mins / 1440) === 1 ? '1 day ago' : Math.round(mins / 1440) + ' days ago';
     return d.toLocaleString('en-US', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' }) + ' (' + rel + ')';
   }
   function chip(status) {
@@ -490,10 +490,10 @@
       add(main, [
         head('Automation', 'The scheduler, background jobs, alerts and safety lists.', runNow),
         h('div', { class: 'grid tiles' },
-          h('div', { class: 'tile', testid: 'sched-tile' }, h('div', { class: 'label', text: 'Scheduler' }), h('div', { class: 'value', text: sc.healthy ? 'Running' : 'Check' }), h('div', { class: 'hint', text: sc.schedule + ' · last run ' + when(sc.lastRunAt) })),
+          h('div', { class: 'tile', testid: 'sched-tile' }, h('div', { class: 'label', text: 'Scheduler' }), h('div', { class: 'value text', text: sc.healthy ? 'Running' : 'Check' }), h('div', { class: 'hint', text: sc.schedule + ' · last run ' + when(sc.lastRunAt) })),
           h('div', { class: 'tile' }, h('div', { class: 'label', text: 'Runs in last 24 h' }), h('div', { class: 'value', text: fmtNum(sc.runsLast24h) }), h('div', { class: 'hint', text: 'About 96 expected per day' })),
           h('div', { class: 'tile', testid: 'delivery-tile' }, h('div', { class: 'label', text: 'Email delivery' }), h('div', { class: 'value', text: st.delivery.realDelivery ? 'ON' : 'OFF' }), h('div', { class: 'hint', text: 'Provider: ' + st.delivery.provider })),
-          h('div', { class: 'tile' }, h('div', { class: 'label', text: 'Database' }), h('div', { class: 'value', text: st.database.name }), h('div', { class: 'hint', text: st.database.hostPinned ? 'Host pinned ✓' : 'Host not pinned yet' }))),
+          h('div', { class: 'tile' }, h('div', { class: 'label', text: 'Database' }), h('div', { class: 'value text', text: st.database.name }), h('div', { class: 'hint', text: st.database.hostPinned ? 'Host pinned ✓' : 'Host not pinned yet' }))),
         st.warnings && st.warnings.length ? h('div', { class: 'banner warn' }, h('span', { class: 'ico', text: '!' }), h('div', null, h('strong', { text: 'Configuration notes' }), st.warnings.join(' · '))) : null,
         h('section', { class: 'card' },
           h('div', { class: 'card-head' }, h('h2', { text: 'Alerts' }), h('div', { class: 'right' },
@@ -553,7 +553,7 @@
           tile('Workstreams (latest run)', a.workstreams.total, '5 sports × 5 departments', '#/analytics', 'an-workstreams'),
           tile('Runs, last 7 days', a.runs.last7Days, 'Automatic + manual', '#/automation', 'an-runs'),
           tile('Real emails sent', a.deliveries.real, 'Delivery is off in staging', '#/automation', 'an-real')),
-        h('section', { class: 'card' }, h('h2', { text: 'What each department produced in the latest run' }), h('p', { class: 'sub', text: 'Run ' + (a.workstreams.runId || '—') + '. Audience = verified prospects found; other departments = drafts prepared. Darker = more.' }),
+        h('section', { class: 'card' }, h('h2', { text: 'What each department produced in the latest run' }), h('p', { class: 'sub', text: 'Run ' + (a.workstreams.runId || '—') + '. Audience = verified prospects found; Performance = verified tracking events measured (none in staging yet); other departments = drafts prepared. Darker = more.' }),
           h('div', { class: 'table-wrap' }, h('table', { class: 'data matrix', testid: 'workstream-matrix' },
             h('thead', null, h('tr', null, h('th', { text: 'Department' }), a.workstreams.genres.map(function (g) { return h('th', { class: 'num', text: sport(g) }); }))),
             h('tbody', null, a.workstreams.departments.map(function (d) {
@@ -576,7 +576,7 @@
         h('section', { class: 'card' }, h('h2', { text: 'Daily reports' }), h('p', { class: 'sub', text: 'One snapshot saved per day by the engine' }),
           a.reports.length ? h('div', { class: 'table-wrap' }, h('table', { class: 'data', testid: 'reports-table' },
             h('thead', null, h('tr', null, h('th', { text: 'Day' }), h('th', { class: 'num', text: 'Prospects' }), h('th', { class: 'num', text: 'Marketing' }), h('th', { class: 'num', text: 'PR' }), h('th', { class: 'num', text: 'Affiliate' }), h('th', { class: 'num', text: 'Open alerts' }))),
-            h('tbody', null, a.reports.map(function (x) { var k = x.draftsByKind || {}; return h('tr', null, h('td', { text: x.day }), h('td', { class: 'num', text: fmtNum(x.prospects) }), h('td', { class: 'num', text: fmtNum(k.marketing || 0) }), h('td', { class: 'num', text: fmtNum(k.pr || 0) }), h('td', { class: 'num', text: fmtNum(k.affiliate || 0) }), h('td', { class: 'num', text: fmtNum(x.openAlerts) })); })))) : h('div', { class: 'empty', text: 'No daily reports yet.' })),
+            h('tbody', null, a.reports.map(function (x) { var k = x.draftsByKind || {}; return h('tr', null, h('td', { text: String(x.day).replace(/^(\d{4})(\d{2})(\d{2})$/, '$1-$2-$3') }), h('td', { class: 'num', text: fmtNum(x.prospects) }), h('td', { class: 'num', text: fmtNum(k.marketing || 0) }), h('td', { class: 'num', text: fmtNum(k.pr || 0) }), h('td', { class: 'num', text: fmtNum(k.affiliate || 0) }), h('td', { class: 'num', text: fmtNum(x.openAlerts) })); })))) : h('div', { class: 'empty', text: 'No daily reports yet.' })),
       ]);
     });
   };
@@ -592,7 +592,7 @@
           h('div', { class: 'tile', testid: 'rev-total' }, h('div', { class: 'label', text: 'Credited revenue' }), h('div', { class: 'value', text: money(a.totalRevenueCents) }), h('div', { class: 'hint', text: 'Verified, settled payments only' })),
           h('div', { class: 'tile', testid: 'rev-entries' }, h('div', { class: 'label', text: 'Paid entries credited' }), h('div', { class: 'value', text: fmtNum(a.creditedEntries) }), h('div', { class: 'hint', text: 'Duplicates never counted' })),
           h('div', { class: 'tile' }, h('div', { class: 'label', text: 'Verified visits' }), h('div', { class: 'value', text: fmtNum(a.funnel.visits) }), h('div', { class: 'hint', text: 'From tracked links' })),
-          h('div', { class: 'tile' }, h('div', { class: 'label', text: 'Verified sign-ups' }), h('div', { class: 'value', text: fmtNum(a.funnel.signups) }), h('div', { class: 'hint', text: fmtNum(a.funnel.unverifiedExcluded) + ' unverified events excluded' }))),
+          h('div', { class: 'tile' }, h('div', { class: 'label', text: 'Verified sign-ups' }), h('div', { class: 'value', text: fmtNum(a.funnel.signups) }), h('div', { class: 'hint', text: fmtNum(a.funnel.unverifiedExcluded) + ' unverified event' + (a.funnel.unverifiedExcluded === 1 ? '' : 's') + ' excluded' }))),
         h('section', { class: 'card' }, h('h2', { text: 'Revenue by sport' }),
           h('div', { class: 'table-wrap' }, h('table', { class: 'data', testid: 'rev-by-sport' }, h('thead', null, h('tr', null, h('th', { text: 'Sport' }), h('th', { class: 'num', text: 'Paid entries' }), h('th', { class: 'num', text: 'Revenue' }))),
             h('tbody', null, a.byGenre.map(function (x) { return h('tr', null, h('td', { text: sport(x.genre) }), h('td', { class: 'num', text: fmtNum(x.paidEntries) }), h('td', { class: 'num', text: money(x.revenueCents) })); }))))),
@@ -607,7 +607,7 @@
           h('ul', { class: 'small' },
             h('li', { text: 'Only payments confirmed by the server as settled count. Browser analytics never count as revenue.' }),
             h('li', { text: 'The paying player must have arrived through that affiliate’s tracked link, for that fight.' }),
-            h('li', { text: 'Each paid entry is credited once. Duplicates and refunds are excluded.' })),
+            h('li', { text: 'Each paid entry is credited once. Duplicates and payments that have not settled are excluded.' })),
           h('p', { class: 'small muted', testid: 'rev-events', text: fmtNum(a.eventsRecorded) + ' tracking events recorded in staging' + (rejected.length ? ' · not credited: ' + rejected.map(function (k) { return k.replace(/_/g, ' ') + ' (' + a.rejectedEvents[k] + ')'; }).join(', ') : '') + '.' })),
       ]);
     });
