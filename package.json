@@ -11,7 +11,8 @@
     "start": "node full-card-bootstrap.js",
     "test:pro-wrestling": "node pro-wrestling-core.test.js && node pro-wrestling-routes.test.js",
     "test:swarm-phase2": "node swarm-phase2.test.js",
-    "test:seo-performance-phase2": "node seo-performance-phase2.test.js"
+    "test:seo-performance-phase2": "node seo-performance-phase2.test.js",
+    "vercel-build": "node growth-acceptance/console-live-check.js"
   },
   "keywords": [],
   "author": "",
@@ -45,7 +46,9 @@
     "util": "^0.12.5",
     "uuid": "^11.1.1",
     "web-push": "^3.6.7",
-    "xml2js": "^0.6.2"
+    "xml2js": "^0.6.2",
+    "playwright-core": "1.56.1",
+    "@sparticuz/chromium": "^141.0.0"
   },
   "devDependencies": {
     "@types/authorizenet": "^1.0.2"
