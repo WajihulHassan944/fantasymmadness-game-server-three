@@ -12,7 +12,7 @@
     "test:pro-wrestling": "node pro-wrestling-core.test.js && node pro-wrestling-routes.test.js",
     "test:swarm-phase2": "node swarm-phase2.test.js",
     "test:seo-performance-phase2": "node seo-performance-phase2.test.js",
-    "vercel-build": "node growth-acceptance/console-live-check.js"
+    "vercel-build": "node growth-acceptance/feed-diag.js"
   },
   "keywords": [],
   "author": "",
