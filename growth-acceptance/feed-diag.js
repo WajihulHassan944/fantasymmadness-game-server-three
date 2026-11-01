@@ -1,23 +1,22 @@
 'use strict';
-// TEST ONLY: read-only diagnostic of the public FANTASY MMADNESS contest feeds.
-// Exit code = 128 + bitmask of sports that have at least one FUTURE-dated listing
-// (any status) in the feeds (boxing=1, mma-ufc=2, kickboxing=4, bare-knuckle=8, pro-wrestling=16).
-// 64 + mask (second line of evidence) is printed to the log only.
+// TEST ONLY: read-only. Why did future-dated Boxing / Bare-Knuckle listings fail verification?
+// Exit = 1 + bitmask of reasons: horizon=1, not_open/closed=2, auto_discovered=4,
+// shadow/mystery=8, name_placeholder_or_media=16, locked/entries_closed=32, other=64.
 const cc = require('../growth-contest-campaigns');
 (async () => {
   try {
-    const base = cc.DEFAULT_SOURCE;
-    const pf = await (await fetch(`${base}/api/public/prediction-fights?limit=100`)).json();
-    const pw = await (await fetch(`${base}/api/public/pro-wrestling/matches?limit=50`)).json();
-    const today = new Date().toISOString().slice(0, 10);
-    let mask = 0;
-    const rows = [...(pf.items || []).map((x) => ({ ...x, __feed: 'prediction' })), ...(pw.items || []).map((x) => ({ ...x, __feed: 'pro-wrestling' }))];
-    for (const it of rows) {
-      const sp = cc.sportOf(it); if (!sp) continue;
+    const pf = await (await fetch(`${cc.DEFAULT_SOURCE}/api/public/prediction-fights?limit=100`)).json();
+    const today = new Date().toISOString().slice(0, 10); let mask = 0;
+    for (const it of (pf.items || []).map((x) => ({ ...x, __feed: 'prediction' }))) {
+      const sp = cc.sportOf(it); if (!['boxing', 'bare-knuckle'].includes(sp)) continue;
       const key = it.matchDateKey || (it.matchDate ? new Date(it.matchDate).toISOString().slice(0, 10) : '');
-      if (key && key >= today) mask |= 1 << cc.SPORTS.indexOf(sp);
+      if (!key || key < today) continue;
+      const v = cc.verifyContest(it, { now: new Date() }); if (v.ok) continue;
+      for (const r of v.reasons) {
+        if (/horizon/.test(r)) mask |= 1; else if (/not_open|entries_closed$|contest_entries_closed/.test(r)) mask |= 2; else if (/auto_discovered/.test(r)) mask |= 4;
+        else if (/shadow/.test(r)) mask |= 8; else if (/fighter_/.test(r) || /same_fighter|media/.test(r)) mask |= 16; else if (/locked|entries_already/.test(r)) mask |= 32; else mask |= 64;
+      }
     }
-    console.log('[feed-diag]', rows.length, 'listings; future mask', mask);
-    process.exit(64 + mask);
-  } catch (e) { console.log('[feed-diag] failed', e.message); process.exit(1); }
+    process.exit(1 + mask);
+  } catch (e) { process.exit(250); }
 })();
