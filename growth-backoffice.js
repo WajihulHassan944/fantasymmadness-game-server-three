@@ -6,6 +6,7 @@ const crypto = require('crypto');
 const { GENRES } = require('./growth-ten-agent-discovery');
 const { createRecruit, makeLink, verifyPaidEntry, report: attributionReport } = require('./growth-affiliate-attribution');
 const { safeReport } = require('./growth-unattended-controller');
+const contestCampaigns = require('./growth-contest-campaigns');
 
 const DEPARTMENTS = Object.freeze(['audience', 'marketing', 'public-relations', 'affiliate-recruitment', 'performance']);
 const clean = (s, n = 200) => String(s ?? '').replace(/[\x00-\x08\x0b\x0c\x0e-\x1f]/g, ' ').trim().slice(0, n);
@@ -126,6 +127,16 @@ function createBackoffice({ runtime }) {
       const esc = (s) => String(s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
       set.html = `<!doctype html><html lang="en"><head><meta charset="utf-8"></head><body style="margin:0;padding:24px 12px;background:#f3f4f6;font-family:Arial,Helvetica,sans-serif"><div style="max-width:600px;margin:0 auto;background:#fff;border:1px solid #e4e5e8;padding:28px;color:#30333a;font-size:15px;line-height:1.6">${set.text.split(/\n{2,}/).map((p) => `<p>${esc(p).replace(/\n/g, '<br>')}</p>`).join('')}</div></body></html>`;
     }
+    // Marketing edits must still describe the verified fight: names, link, no
+    // prizes/money, no media names. The caption edit applies to Instagram and Facebook.
+    if (current.kind === 'marketing') {
+      if (!current.contestId || !current.contest) return { ok: false, reason: 'not_based_on_a_verified_contest' };
+      if (set.text) set.posts = { ...(current.posts || {}), instagram: set.text, facebook: set.text };
+      const rows = await col.prospects.find({}, { projection: { name: 1 } }).toArray();
+      const mediaNames = new Set(rows.map((r) => contestCampaigns.norm(r.name)).filter((n) => n.length >= 4));
+      const reasons = contestCampaigns.checkCampaign({ ...current, ...set }, current.contest, { now, mediaNames });
+      if (reasons.length) return { ok: false, reason: 'edit_failed_safeguard', details: reasons };
+    }
     set.editedBy = clean(admin, 120); set.editedAt = now.toISOString();
     const r = await col.drafts.findOneAndUpdate({ id: current.id, status: 'needs_owner_review' }, { $set: set, $inc: { editCount: 1 } }, { returnDocument: 'after' });
     if (!r) return { ok: false, reason: 'only_drafts_awaiting_review_can_be_edited' };
@@ -137,7 +148,7 @@ function createBackoffice({ runtime }) {
   async function markPublished(id, { postUrl = '', admin, now = new Date() } = {}) {
     const url = oneLine(postUrl, 500);
     if (url && !/^https:\/\//i.test(url)) return { ok: false, reason: 'post_link_must_start_with_https' };
-    const r = await col.drafts.findOneAndUpdate({ id: clean(id, 160), kind: 'marketing', status: 'approved' }, { $set: { status: 'published', publishedManually: true, postUrl: url || null, publishedBy: clean(admin, 120), publishedAt: now.toISOString() } }, { returnDocument: 'after' });
+    const r = await col.drafts.findOneAndUpdate({ id: clean(id, 160), kind: 'marketing', status: 'approved', contestId: { $exists: true } }, { $set: { status: 'published', publishedManually: true, postUrl: url || null, publishedBy: clean(admin, 120), publishedAt: now.toISOString() } }, { returnDocument: 'after' });
     if (!r) return { ok: false, reason: 'only_approved_marketing_posts_can_be_marked_published' };
     await audit('mark_published', { id: r.id, admin: clean(admin, 120) });
     return { ok: true, draft: strip(r) };
@@ -230,13 +241,19 @@ function createBackoffice({ runtime }) {
     };
   }
 
+  async function marketingCoverage() {
+    const latest = await col.coverage.find({}).sort({ day: -1 }).limit(1).next();
+    const blocked = (await col.gateRejections.find({}).sort({ at: -1 }).limit(20).toArray()).map(strip);
+    return { latest: latest ? strip(latest) : null, recentlyBlocked: blocked, sports: contestCampaigns.SPORTS, horizonNote: 'Campaigns are prepared only for published, open FANTASY MMADNESS contests in the next few weeks.' };
+  }
+
   async function reports({ limit } = {}) { return (await col.reports.find({}).sort({ day: -1 }).limit(lim(limit, 30, 365)).toArray()).map(strip); }
   async function auditLog({ limit } = {}) { return (await col.audit.find({}).sort({ at: -1 }).limit(lim(limit, 100, 500)).toArray()).map(strip); }
   async function suppressions({ limit } = {}) {
     return (await col.suppressions.find({}).sort({ createdAt: -1 }).limit(lim(limit, 100, 500)).toArray()).map(({ _id, ...s }) => s);
   }
 
-  return { runs, jobs, schedulerStatus, workstreams, workstreamDetail, editDraft, markPublished, analytics, attribution, reports, auditLog, suppressions };
+  return { marketingCoverage, runs, jobs, schedulerStatus, workstreams, workstreamDetail, editDraft, markPublished, analytics, attribution, reports, auditLog, suppressions };
 }
 
 module.exports = { createBackoffice, hashPassword, verifyPassword, createLoginLimiter, DEPARTMENTS };

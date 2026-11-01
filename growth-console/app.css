@@ -164,3 +164,7 @@ table.data td.num,table.data th.num{text-align:right;font-variant-numeric:tabula
   .bar-row{grid-template-columns:110px 1fr 48px}
   .stage-pill{display:none}
 }
+
+.facts{display:flex;flex-wrap:wrap;gap:8px 14px;align-items:center;background:#f3f8f3;border:1px solid #cfe6cf;border-radius:8px;padding:8px 12px;margin:6px 0;font-size:13.5px}
+.channel-tabs{display:flex;gap:6px;margin-top:8px;flex-wrap:wrap}
+.channel-tabs .btn.active{background:var(--brand);color:#fff;border-color:var(--brand)}
