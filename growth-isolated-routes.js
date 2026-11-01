@@ -4,11 +4,11 @@
 //   GET  /api/growth/cron/tick              Vercel Cron (Authorization: Bearer CRON_SECRET)
 //   GET  /api/growth/unsubscribe?token=...  public one-click opt-out
 //   POST /api/growth/unsubscribe            RFC 8058 one-click (List-Unsubscribe-Post)
-//   /api/growth/admin/*                     back office (Bearer admin JWT, JWT_SECRET_ADMIN)
+//   /api/growth/admin/*                     back office (Bearer console token: key derived from JWT_SECRET_ADMIN, own audience)
 // Mounted only when resolveGrowthRuntimeConfig() allows it; otherwise only
 // /health is mounted and reports exactly what is missing.
 const crypto = require('crypto');
-const jwt = require('jsonwebtoken');
+const { signConsoleToken, verifyConsoleToken, consolePasswordVersion } = require('./growth-console-token');
 const { MongoClient } = require('mongodb');
 const { resolveGrowthRuntimeConfig } = require('./growth-runtime-config');
 const { createDeliveryProvider } = require('./growth-delivery-provider');
@@ -113,7 +113,7 @@ function registerIsolatedGrowthRoutes({ app, env = process.env, express, transpo
   const limiter = createLoginLimiter();
   // Console tokens carry a fingerprint of the current password hash, so
   // rotating GROWTH_ADMIN_PASSWORD_HASH signs out every earlier console session.
-  const passwordVersion = crypto.createHash('sha256').update(String(env.GROWTH_ADMIN_PASSWORD_HASH || '')).digest('hex').slice(0, 16);
+  const passwordVersion = consolePasswordVersion(env.GROWTH_ADMIN_PASSWORD_HASH);
   router.post('/admin/login', (req, res) => {
     res.set('Cache-Control', 'no-store');
     const stored = String(env.GROWTH_ADMIN_PASSWORD_HASH || '');
@@ -122,16 +122,18 @@ function registerIsolatedGrowthRoutes({ app, env = process.env, express, transpo
     if (!limiter.allow(ip)) return res.status(429).json({ ok: false, message: 'Too many sign-in attempts. Wait 15 minutes and try again.' });
     if (!verifyPassword(typeof req.body?.password === 'string' ? req.body.password : '', stored)) return res.status(401).json({ ok: false, message: 'Incorrect password.' });
     limiter.reset(ip);
-    const token = jwt.sign({ email: 'owner@growth-console', role: 'growth_owner', pwv: passwordVersion }, secrets.adminJwtSecret, { expiresIn: '12h' });
+    const token = signConsoleToken(secrets.adminJwtSecret, { pwv: passwordVersion });
     res.json({ ok: true, token, expiresInHours: 12 });
   });
 
   // ---- back office ----
   const admin = (req, res, next) => {
     const token = String(req.headers.authorization || '').replace(/^Bearer\s+/i, '');
-    try { req.admin = jwt.verify(token, secrets.adminJwtSecret); }
+    // Only Growth Engine console tokens are accepted (dedicated key + audience); a live
+    // back-office admin token is rejected here, and console tokens are useless on the live API.
+    try { req.admin = verifyConsoleToken(secrets.adminJwtSecret, token); }
     catch { return res.status(401).json({ ok: false, message: 'Admin authentication required' }); }
-    if (req.admin?.role === 'growth_owner' && req.admin.pwv !== passwordVersion) return res.status(401).json({ ok: false, message: 'Session ended because the console password was changed' });
+    if (req.admin.pwv !== passwordVersion) return res.status(401).json({ ok: false, message: 'Session ended because the console password was changed' });
     return next();
   };
   const who = (req) => String(req.admin?.email || req.admin?.id || 'admin');

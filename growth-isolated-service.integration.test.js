@@ -9,6 +9,7 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const express = require('express');
 const jwt = require('jsonwebtoken');
+const { signConsoleToken, consolePasswordVersion } = require('./growth-console-token');
 const { MongoClient } = require('mongodb');
 const { registerIsolatedGrowthRoutes } = require('./growth-isolated-routes');
 const { createGrowthRuntime } = require('./growth-runtime');
@@ -40,7 +41,9 @@ test('isolated Growth Engine service', { skip }, async (t) => {
   assert.equal(mounted.mounted, true);
   const server = app.listen(0);
   const base = `http://127.0.0.1:${server.address().port}/api/growth`;
-  const adminToken = jwt.sign({ email: 'owner@fmm-staging.test' }, secret);
+  const adminToken = signConsoleToken(secret, { email: 'owner@fmm-staging.test', pwv: consolePasswordVersion(env.GROWTH_ADMIN_PASSWORD_HASH) });
+  // A token signed directly with JWT_SECRET_ADMIN (what the live backend issues) is refused.
+  assert.equal((await fetch(`${base}/admin/overview`, { headers: { Authorization: `Bearer ${jwt.sign({ email: 'owner@fmm-staging.test', role: 'growth_owner', pwv: consolePasswordVersion(env.GROWTH_ADMIN_PASSWORD_HASH) }, secret)}` } })).status, 401);
   const call = async (method, path, { token, body, headers = {} } = {}) => {
     const h = { ...headers }; if (token) h.Authorization = `Bearer ${token}`; if (body) h['Content-Type'] = 'application/json';
     const r = await fetch(base + path, { method, headers: h, body: body ? JSON.stringify(body) : undefined });
