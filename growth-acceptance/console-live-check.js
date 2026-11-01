@@ -179,6 +179,7 @@ async function main() {
         ok(corsErrors.length === 0, 'CORS error in browser');
       });
       await check('browser: session, then live overview', async () => {
+        live.overview = (await api('GET', '/admin/overview')).json.overview; // counts after the marketing refresh
         await page.evaluate((t) => sessionStorage.setItem('fmmGrowthConsoleToken', t), token);
         await page.goto(`${STAGING}/api/growth/console#/overview`);
         await page.waitForSelector('[data-testid=scheduler-banner]');
