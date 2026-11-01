@@ -113,7 +113,8 @@ async function discover() {
   fs.writeFileSync(path.join(OUT, 'discovery.json'), JSON.stringify(run, null, 2));
   return run;
 }
-const sandboxAddress = (prefix, text) => `${prefix}-${String(text).toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '').slice(0, 40)}@localhost`;
+// Loopback sandbox mailbox with a dotted domain (accepted by the review queue's contact check).
+const sandboxAddress = (prefix, text) => `${prefix}-${String(text).toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '').slice(0, 40)}@sandbox.localhost`;
 
 // ---------------------------------------------------------- 2 AI MARKETING
 async function checkMarketing(client, discovery) {
@@ -170,7 +171,7 @@ async function checkPR(client, discovery) {
   const run = await runScheduledSandboxCampaign({ collection: client.db('fmgrowthtest').collection('isolated_workstream_runs'), testMode: true, adapters: createDraftAdapters(), transport, approvedDrafts: [...approvedSet, held], deliveryClaimsCollection: client.db('fmgrowthtest').collection('sandbox_delivery_claims'), clock: () => new Date('2026-11-01T15:00:00Z') });
   await sleep(1500);
   let received = 0; for (const d of approvedSet) received += (await mailTo(d.recipient)).length;
-  pass(C, 'Approved PR emails delivered to sandbox mailboxes (Mailpit-verified)', received === approvedSet.length && run.receipts.length === approvedSet.length, `${received}/${approvedSet.length}`);
+  pass(C, 'Approved PR emails delivered to sandbox mailboxes (Mailpit-verified)', approvedSet.length === 4 && received === 4 && run.receipts.length === 4, `${received}/${approvedSet.length}`);
   pass(C, 'Approval control: the draft still awaiting review was not sent', run.blocked.some((b) => b.id === held.id && b.reason === 'owner_approval_required') && (await mailTo(held.recipient)).length === 0);
   const sample = (await mailTo(approvedSet[0].recipient))[0];
   const full = sample ? await mailpit(`/api/v1/message/${sample.ID}`) : {};
@@ -206,7 +207,7 @@ async function checkRecruitment(client, discovery) {
   const run = await runScheduledSandboxCampaign({ collection: client.db('fmgrowthtest').collection('isolated_workstream_runs'), testMode: true, adapters, transport, approvedDrafts: approved, deliveryClaimsCollection: client.db('fmgrowthtest').collection('sandbox_delivery_claims'), clock: () => new Date('2026-11-01T16:00:00Z') });
   await sleep(1500);
   let received = 0; for (const d of approved) received += (await mailTo(d.recipient)).length;
-  pass(C, 'Approved recruitment invitations delivered to sandbox mailboxes (Mailpit-verified)', received === approved.length, `${received}/${approved.length}`);
+  pass(C, 'Approved recruitment invitations delivered to sandbox mailboxes for all five sports (Mailpit-verified)', approved.length === 5 && received === 5 && run.receipts.length === 5, `${received}/${approved.length}`);
   const pending = createRecruit({ id: 'r1', name: sandbox[0].name, consent: true, approved: false });
   let linkRefused = false; try { makeLink(pending, 'fight1'); } catch { linkRefused = true; }
   pass(C, 'Workflow: no tracked link until the recruit consents AND is approved', pending.status === 'pending' && linkRefused);
@@ -315,7 +316,9 @@ async function checkSecurity() {
   const hosts = fs.existsSync(blockedLog) ? [...new Set(fs.readFileSync(blockedLog, 'utf8').trim().split('\n').map((l) => l.split(' ')[1]).filter(Boolean))] : [];
   pass(C, 'Backend under test made no successful outbound connection (all non-loopback attempts blocked)', true, `blocked attempts to: ${hosts.join(', ') || 'none'}`);
   const msgs = (await mailpit('/api/v1/messages?limit=500')).messages || [];
-  pass(C, 'Every email in this run went to a loopback sandbox address', msgs.length > 0 && msgs.every((m) => (m.To || []).every((t) => /@localhost$/.test(t.Address))), `${msgs.length} sandbox emails`);
+  const reserved = (a) => /@(?:[a-z0-9-]+\.)*localhost$/i.test(a) || /\.test$/i.test(a); // RFC 6761 reserved, never routable
+  const outside = msgs.flatMap((m) => (m.To || []).map((t) => t.Address)).filter((a) => !reserved(a));
+  pass(C, 'Every email in this run was captured by the sandbox and addressed to reserved non-routable domains', msgs.length > 0 && outside.length === 0, `${msgs.length} sandbox emails${outside.length ? `; outside: ${outside.join(', ')}` : ''}`);
   const gate = launchGate({ serviceReceipts: evidence.receipts, conversionVerified: evidence.conversionVerified === true, securityReview: true, rollbackRehearsed: process.env.GROWTH_ROLLBACK_REHEARSED === 'true', ownerApproved: false, monitoringVerified: evidence.monitoringVerified === true });
   record(C, 'Launch gate evaluation (sandbox receipts, conversion, security, rollback, monitoring, owner approval)', gate.ready ? 'PASS' : 'BLOCKED', JSON.stringify(gate.checks));
   fs.writeFileSync(path.join(OUT, 'launch-gate.json'), JSON.stringify(gate, null, 2));
