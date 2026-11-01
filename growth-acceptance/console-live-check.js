@@ -27,7 +27,7 @@ const ISOLATED = 'prj_Hpe9UjGrBBJOm3boxHsL9lHesWLl';
 const LABEL = 'live-check@growth-console';
 const STAGING = 'https://fantasymmadness-growth-isolated-tes.vercel.app';
 const stamp = Date.now().toString(36);
-const FX = { mkt1: `uitest-mkt-a-${stamp}`, mkt2: `uitest-mkt-b-${stamp}`, prospect: `uitest-p-${stamp}`, alert: `uitest:alert-${stamp}`, job: `uitest-job-${stamp}`, optout: `uitest-${stamp}@example.invalid` };
+const FX = { mkt1: `uitest-mkt-a-${stamp}`, mkt2: `uitest-mkt-b-${stamp}`, prospect: `uitest-p-${stamp}`, prospect2: `uitest-q-${stamp}`, alert: `uitest:alert-${stamp}`, job: `uitest-job-${stamp}`, optout: `uitest-${stamp}@example.invalid` };
 const log = (...a) => console.log('[console-live-check]', ...a);
 let step = 0;
 const check = async (name, fn) => { step++; try { await fn(); log(`PASS ${step} ${name}`); } catch (e) { log(`FAIL ${step} ${name}: ${e && e.stack || e}`); throw Object.assign(new Error('check failed'), { code: 100 + step }); } };
@@ -47,6 +47,7 @@ async function main() {
   const C = {
     drafts: gdb.collection('growth_drafts'), prospects: gdb.collection('growth_prospects'), alerts: gdb.collection('growth_alerts'), jobs: gdb.collection('unattended_jobs'),
     suppressions: gdb.collection('growth_suppressions'), audit: gdb.collection('growth_audit_log'), runs: gdb.collection('isolated_run_claims'),
+    social: gdb.collection('growth_social_posts'), sandbox: gdb.collection('growth_social_sandbox'), affiliates: gdb.collection('growth_affiliates'),
   };
   const pwv = crypto.createHash('sha256').update(String(process.env.GROWTH_ADMIN_PASSWORD_HASH || '')).digest('hex').slice(0, 16);
   const token = jwt.sign({ email: LABEL, role: 'growth_owner', pwv }, process.env.JWT_SECRET_ADMIN, { expiresIn: '30m' });
@@ -136,6 +137,20 @@ async function main() {
       ok(cov.latest && cc.SPORTS.every((sp) => cov.latest.sports[sp]), 'coverage missing a sport');
       for (const sp of cc.SPORTS) ok((cov.latest.sports[sp].verifiedContests > 0) === Boolean(sportMask & (1 << cc.SPORTS.indexOf(sp))) || cov.latest.sports[sp].campaignsActive > 0, `coverage inconsistent for ${sp}`);
       log('marketing', JSON.stringify({ refresh: live.refresh, queued: queued.length, sportMask }));
+    });
+
+    await check('connections, email readiness and funnel endpoints work on staging', async () => {
+      const c = (await api('GET', '/admin/connections')).json.connections;
+      ok(c.social.provider === 'sandbox', `social provider ${c.social.provider}`);
+      ok(Object.values(c.social.channels).every((x) => x.mode === 'sandbox'), 'channels not sandbox');
+      ok(c.email.realDelivery === false, 'real email is on');
+      const e = (await api('GET', '/admin/email/readiness')).json.readiness;
+      ok(e && Array.isArray(e.steps) && e.steps.length === 5 && e.realDelivery === false, 'email readiness');
+      live.email = e;
+      const f = (await api('GET', '/admin/funnel')).json.funnel;
+      ok(f.stages.length === 6 && f.stages.find((x) => x.key === 'paying').connected === false, 'funnel');
+      const ing = await fetch(`${origin}/api/growth/events`, { method: 'POST', headers: { 'Content-Type': 'application/json', Origin: STAGING }, body: '{}' });
+      ok([401, 503].includes(ing.status), `unsigned event accepted (${ing.status})`);
     });
 
     // ---- browser ----
@@ -246,6 +261,32 @@ async function main() {
         await page.click(`[data-draft-id="${FX.mkt1}"] [data-testid=btn-mark-published]`); await page.fill('[data-testid=post-url]', 'https://example.com/uitest-post'); await confirm();
         await page.waitForSelector(`[data-draft-id="${FX.mkt1}"]`, { state: 'detached' }); ok(await status(FX.mkt1) === 'published', 'publish');
       });
+      if (realContest) await check('Publishing on staging: schedule approved fixture campaign, sandbox-publish on the run, pause/resume, cancel', async () => {
+        await C.drafts.updateOne({ id: FX.mkt1 }, { $set: { status: 'approved', ownerApproved: true } }); // re-approve the fixture copy (it was published above)
+        const r = await api('POST', `/admin/drafts/${FX.mkt1}/schedule`, { channels: ['x', 'facebook'], scheduledAt: new Date(Date.now() - 20000).toISOString() });
+        ok(r.status === 200 && r.json.results.some((x) => x.ok), `schedule ${JSON.stringify(r.json)}`);
+        ok((await api('POST', '/admin/social/pause', { paused: true })).json.paused.paused === true, 'pause');
+        await api('POST', '/admin/run-now');
+        ok(await C.social.countDocuments({ draftId: FX.mkt1, status: 'published' }) === 0, 'published while paused');
+        await api('POST', '/admin/social/pause', { paused: false });
+        await new Promise((res) => setTimeout(res, 61000 - (Date.now() % 60000) + 500)); // next minute: a new run id
+        await api('POST', '/admin/run-now');
+        const pub = await C.social.find({ draftId: FX.mkt1, status: 'published' }).toArray();
+        ok(pub.length >= 1 && pub.every((p) => p.sandbox === true), 'sandbox publish');
+        ok((await C.drafts.findOne({ id: FX.mkt1 })).status === 'approved', 'sandbox counted as real');
+        await goto('#/publishing'); await page.waitForSelector('[data-testid=post-row][data-status=published]');
+      });
+      await check('Affiliate onboarding on staging (fixture): approve invite -> invited -> active with live ID', async () => {
+        await C.prospects.insertOne({ key: `partners:uitest2:${stamp}`, id: FX.prospect2, genre: 'boxing', focus: 'partners', name: `UI Test Creator ${stamp}`, sourceUrl: 'https://example.com/uitest-creator', source: 'uitest', verified: false, contact: null, contactVerified: false, consent: false, optedOut: false, firstSeenAt: new Date().toISOString(), uitest: true });
+        ok((await api('POST', `/admin/prospects/${FX.prospect2}/contact`, { contact: `aff-${stamp}@example.invalid`, kind: 'affiliate', consentNote: 'UI test fixture' })).status === 201, 'aff contact');
+        ok((await api('POST', `/admin/drafts/affiliate-${FX.prospect2}/approve`)).status === 200, 'aff approve');
+        await goto('#/affiliates?sport=boxing');
+        const row = `[data-testid=aff-row][data-aff-id="${FX.prospect2}"]`;
+        await page.waitForSelector(`${row}[data-status=invite_prepared]`);
+        await page.click(`${row} [data-testid=btn-aff-invited]`); await page.waitForSelector(`${row}[data-status=invited]`);
+        await page.click(`${row} [data-testid=btn-aff-activate]`); await page.fill('[data-testid=live-affiliate-id]', 'ffffffffffffffffffff0001'); await confirm();
+        await page.waitForSelector(`${row}[data-status=active]`);
+      });
       await check('Public Relations: verified contact creates personalized email; approve in browser (fixture)', async () => {
         const r = await api('POST', `/admin/prospects/${FX.prospect}/contact`, { contact: `pr-${stamp}@example.invalid`, kind: 'pr', consentNote: 'UI test fixture' });
         ok(r.status === 201, `contact ${r.status} ${JSON.stringify(r.json)}`);
@@ -288,13 +329,18 @@ async function main() {
   } finally {
     // ---- cleanup: every fixture and every audit entry from this check ----
     try {
-      await C.drafts.deleteMany({ id: { $in: [FX.mkt1, FX.mkt2, `pr-${FX.prospect}`] } });
-      await C.prospects.deleteMany({ id: FX.prospect, uitest: true });
+      await C.drafts.deleteMany({ id: { $in: [FX.mkt1, FX.mkt2, `pr-${FX.prospect}`, `affiliate-${FX.prospect2}`] } });
+      await C.prospects.deleteMany({ id: { $in: [FX.prospect, FX.prospect2] }, uitest: true });
+      await C.social.deleteMany({ draftId: { $in: [FX.mkt1, FX.mkt2] } });
+      await C.sandbox.deleteMany({ postId: { $regex: `^uitest-` } });
+      await C.affiliates.deleteMany({ id: FX.prospect2 });
+      await gdb.collection('growth_settings').updateOne({ key: 'social' }, { $set: { paused: false } });
       await C.alerts.deleteMany({ alertKey: FX.alert, uitest: true });
       await C.jobs.deleteMany({ id: FX.job });
-      await C.suppressions.deleteMany({ address: { $in: [FX.optout, `pr-${stamp}@example.invalid`] } });
+      await C.suppressions.deleteMany({ address: { $in: [FX.optout, `pr-${stamp}@example.invalid`, `aff-${stamp}@example.invalid`] } });
       await C.audit.deleteMany({ admin: LABEL });
-      const left = await C.drafts.countDocuments({ id: { $regex: `^(uitest-|pr-uitest-)` } }) + await C.prospects.countDocuments({ uitest: true }) + await C.alerts.countDocuments({ uitest: true }) + await C.jobs.countDocuments({ uitest: true }) + await C.suppressions.countDocuments({ address: { $regex: 'example\\.invalid$' } }) + await C.audit.countDocuments({ admin: LABEL });
+      await C.audit.deleteMany({ id: { $regex: '^uitest-' } });
+      const left = await C.drafts.countDocuments({ id: { $regex: `^(uitest-|pr-uitest-)` } }) + await C.prospects.countDocuments({ uitest: true }) + await C.alerts.countDocuments({ uitest: true }) + await C.jobs.countDocuments({ uitest: true }) + await C.suppressions.countDocuments({ address: { $regex: 'example\\.invalid$' } }) + await C.audit.countDocuments({ admin: LABEL }) + await C.social.countDocuments({ draftId: { $regex: '^uitest-' } }) + await C.affiliates.countDocuments({ id: { $regex: '^uitest-' } });
       log('cleanup leftovers:', left);
       if (left !== 0 && exitCode === 0) exitCode = 99;
     } catch (e) { log('cleanup failed', e.message); if (exitCode === 0) exitCode = 98; }
