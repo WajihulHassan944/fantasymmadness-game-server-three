@@ -78,6 +78,7 @@ test('Growth Engine back-office console: every screen, button and workflow', { s
   const toastText = async () => (await page.waitForSelector('[data-testid=toast]')).textContent();
   const clearToasts = () => page.evaluate(() => document.querySelectorAll('[data-testid=toast]').forEach((e) => e.remove()));
   const goto = async (hash) => {
+    if (await page.evaluate((hh) => location.hash === hh, hash)) await goto(hash.startsWith('#/overview') ? '#/automation' : '#/overview');
     const before = Number(await page.evaluate(() => document.querySelector('main')?.dataset.render || 0));
     await page.evaluate((hh) => { location.hash = hh; }, hash);
     await page.waitForSelector(`main[data-render="${before + 1}"]`);
@@ -377,6 +378,7 @@ test('Growth Engine back-office console: every screen, button and workflow', { s
       await goto('#/approvals?status=approved&kind=marketing');
       const id = await page.getAttribute('[data-testid=draft]', 'data-draft-id');
       await page.click(`[data-draft-id="${id}"] [data-testid=btn-schedule]`);
+      await page.waitForSelector('[data-testid=schedule-time]');
       await page.evaluate(() => { const i = document.querySelector('[data-testid=schedule-time]'); const d = new Date(Date.now() - 30000); i.value = new Date(d.getTime() - d.getTimezoneOffset() * 60000).toISOString().slice(0, 16); });
       await confirm();
       assert.match(await toastText(), /scheduled/); await clearToasts();
