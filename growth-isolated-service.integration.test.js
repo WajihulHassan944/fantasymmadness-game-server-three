@@ -63,7 +63,8 @@ test('isolated Growth Engine service', { skip }, async (t) => {
       assert.equal(disc.ok, true, JSON.stringify(s));
       assert.equal(disc.result.marketingDrafts, 5);
       assert.equal(disc.result.workstreams, 25);
-      assert.ok(disc.result.newProspects >= 20);
+      assert.ok(disc.result.prospectsFound >= 20); // already stored by the earlier cron call, so newProspects may be 0
+      assert.ok(await runtime.collections.prospects.countDocuments() >= 20);
       const drafts = await runtime.listDrafts({ kind: 'marketing', status: 'needs_owner_review' });
       assert.equal(new Set(drafts.map((d) => d.genre)).size, 5);
     });
