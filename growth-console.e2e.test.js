@@ -379,7 +379,7 @@ test('Growth Engine back-office console: every screen, button and workflow', { s
       const id = await page.getAttribute('[data-testid=draft]', 'data-draft-id');
       await page.click(`[data-draft-id="${id}"] [data-testid=btn-schedule]`);
       await page.waitForSelector('[data-testid=schedule-time]');
-      await page.evaluate(() => { const i = document.querySelector('[data-testid=schedule-time]'); const d = new Date(Date.now() - 30000); i.value = new Date(d.getTime() - d.getTimezoneOffset() * 60000).toISOString().slice(0, 16); });
+      await page.evaluate(() => { const i = document.querySelector('[data-testid=schedule-time]'); const d = new Date(Math.floor(Date.now() / 60000) * 60000); i.value = new Date(d.getTime() - d.getTimezoneOffset() * 60000).toISOString().slice(0, 16); });
       await confirm();
       assert.match(await toastText(), /scheduled/); await clearToasts();
       const scheduled = await db.collection('growth_social_posts').find({ draftId: id }).toArray();
