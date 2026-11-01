@@ -30,6 +30,7 @@ function createGrowthRuntime({ db, config, secrets = {}, provider, fetchImpl = g
     jobs: db.collection('unattended_jobs'), drafts: db.collection('growth_drafts'), prospects: db.collection('growth_prospects'),
     deliveries: db.collection('growth_delivery_claims'), alerts: db.collection('growth_alerts'), reports: db.collection('growth_reports'),
     suppressions: db.collection('growth_suppressions'), audit: db.collection('growth_audit_log'),
+    attribution: db.collection('growth_attribution_events'),
   };
   const claims = createIsolatedRunClaims(col.runs, { testMode: true });
   const store = createStore(col.jobs, { testMode: true });

@@ -1,0 +1,51 @@
+name: Growth Engine back-office console E2E
+on:
+  workflow_dispatch:
+  push:
+    branches: [test/growth-backoffice-console]
+permissions:
+  contents: read
+jobs:
+  console-e2e:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    services:
+      mongodb:
+        image: mongo:7
+        ports:
+          - 27017:27017
+        options: >-
+          --health-cmd "mongosh --quiet --eval 'db.adminCommand({ping:1})'"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 12
+    env:
+      GROWTH_STAGING_MODE: isolated
+      GROWTH_OUTBOUND_ENABLED: 'false'
+      GROWTH_TEST_MONGO_URI: mongodb://127.0.0.1:27017
+      GROWTH_CONSOLE_SCREENSHOTS: ${{ github.workspace }}/console-screenshots
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - name: Install locked dependencies
+        run: npm ci --ignore-scripts --no-fund
+      - name: Full Growth Engine suite (regression; browser test skipped here)
+        run: node --test growth-*.test.js growth-*.integration.test.js
+      - name: Install Playwright + Chromium (test-only, not saved to package.json)
+        run: |
+          npm install --no-save --no-fund --ignore-scripts playwright@1.56.1
+          npx playwright install --with-deps chromium
+      - name: Browser E2E — every screen, button and workflow
+        run: node --test --test-reporter=spec growth-console.e2e.test.js
+      - name: Upload screenshots
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: console-screenshots
+          path: console-screenshots
+          if-no-files-found: ignore
