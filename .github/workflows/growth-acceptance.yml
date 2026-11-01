@@ -1,0 +1,111 @@
+name: Growth Engine seven-check acceptance (isolated)
+
+# Isolated acceptance run for the seven Growth Engine checks. Everything runs in
+# this throwaway CI machine: MongoDB 7 replica set and Mailpit sandbox mailbox
+# on loopback, the backend under test with loopback-only networking, and
+# read-only public discovery. No repository secrets, production data, real
+# recipients or payment gateways are used.
+on:
+  push:
+    branches: [test/growth-unattended-controller]
+    paths:
+      - 'growth-*'
+      - 'growth-acceptance/**'
+      - '.github/workflows/growth-acceptance.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  acceptance:
+    if: github.ref == 'refs/heads/test/growth-unattended-controller'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    services:
+      mailpit:
+        image: axllent/mailpit:latest
+        ports: ['1025:1025', '8025:8025']
+        env:
+          MP_SMTP_AUTH_ACCEPT_ANY: '1'
+          MP_SMTP_AUTH_ALLOW_INSECURE: '1'
+    env:
+      NODE_ENV: test
+      GROWTH_STAGING_MODE: isolated
+      GROWTH_OUTBOUND_ENABLED: 'false'
+      GROWTH_PRODUCTION_APPROVED: 'false'
+      GROWTH_CRON_ENABLED: 'false'
+      GROWTH_TEST_MONGO_URI: mongodb://127.0.0.1:27017/?directConnection=true
+      GROWTH_BACKEND_MONGO_URI: mongodb://127.0.0.1:27017/fmm_growth_backend?directConnection=true
+      GROWTH_ACCEPTANCE_API: http://127.0.0.1:5056
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - name: Throwaway secrets for this run only
+        run: |
+          echo "JWT_SECRET=$(openssl rand -hex 32)" >> "$GITHUB_ENV"
+          echo "JWT_SECRET_ADMIN=$(openssl rand -hex 32)" >> "$GITHUB_ENV"
+          mkdir -p growth-acceptance/out && echo "GROWTH_ACCEPTANCE_OUT=$PWD/growth-acceptance/out" >> "$GITHUB_ENV"
+      - name: Start staging MongoDB 7 (replica set, so payments use real transactions)
+        run: |
+          docker run -d --name growth-mongo -p 27017:27017 mongo:7 --replSet rs0 --bind_ip_all
+          for i in $(seq 1 40); do docker exec growth-mongo mongosh --quiet --eval 'db.runCommand({ping:1}).ok' >/dev/null 2>&1 && break; sleep 1; done
+          docker exec growth-mongo mongosh --quiet --eval 'rs.initiate({_id:"rs0",members:[{_id:0,host:"127.0.0.1:27017"}]})'
+          for i in $(seq 1 30); do [ "$(docker exec growth-mongo mongosh --quiet --eval 'rs.status().myState')" = "1" ] && break; sleep 1; done
+      - name: Install locked dependencies
+        run: npm ci --ignore-scripts --no-fund && npm rebuild bcrypt sharp
+      - name: Unified Growth Engine test suite (real MongoDB)
+        run: |
+          node --test --test-reporter=tap growth-*.test.js growth-*.integration.test.js > /tmp/unit.tap 2>&1 && { echo "::notice title=Unified suite::$(grep -E '^# (tests|pass|fail)' /tmp/unit.tap | tr '\n' ' ')"; exit 0; }
+          echo "::error title=Unified suite failures::$(grep -E '^# (tests|pass|fail)' /tmp/unit.tap | tr '\n' ' ')"
+          grep -n -A 25 -E '^\s*not ok' /tmp/unit.tap | grep -vE '^\S*-\s*$' | head -c 50000 > /tmp/fail.txt
+          echo "::error title=Failing tests (detail)::$(sed 's/%/%25/g' /tmp/fail.txt | tr '\n' '\r' | sed 's/\r/%0A/g' | head -c 60000)"
+          exit 1
+      - name: Rollback rehearsal (real MongoDB)
+        run: node growth-rollback-rehearsal.mongo.test.js && echo "GROWTH_ROLLBACK_REHEARSED=true" >> "$GITHUB_ENV" && echo "::notice title=Rollback rehearsal::passed"
+      - name: Start backend under test (loopback-only, local staging database)
+        env:
+          GROWTH_ACCEPTANCE_ISOLATED: '1'
+          PORT: '5056'
+          MONGODB_URI: mongodb://127.0.0.1:27017/fmm_growth_backend?directConnection=true
+          SMTP_HOST: 127.0.0.1
+          SMTP_PORT: '1025'
+          SMTP_SECURE: 'false'
+          SMTP_USER: growth-staging@localhost
+          SMTP_PASS: staging-only
+          OWNER_EMAIL: growth-owner@localhost
+        run: |
+          nohup node -r ./growth-acceptance/isolation-preload.js full-card-bootstrap.js > growth-acceptance/out/backend.log 2>&1 &
+          for i in $(seq 1 60); do curl -s -o /dev/null http://127.0.0.1:5056/ && break; sleep 1; done
+          grep -m1 "isolation active" growth-acceptance/out/backend.log
+      - name: Seven acceptance checks
+        run: node growth-acceptance/acceptance.js 2>&1 | tee growth-acceptance/out/acceptance.log; exit ${PIPESTATUS[0]}
+      - name: Dependency security audit (production deps, high+)
+        if: always()
+        run: npm audit --omit=dev --audit-level=high && echo "::notice title=npm audit::no high or critical findings" || { echo "::error title=npm audit::$(npm audit --omit=dev 2>&1 | tail -n 20 | tr '\n' ' ')"; exit 1; }
+      - name: Report results
+        if: always()
+        run: |
+          node -e '
+            const fs = require("fs"); const f = "growth-acceptance/out/acceptance-results.json";
+            const rows = fs.existsSync(f) ? JSON.parse(fs.readFileSync(f, "utf8")) : [];
+            const esc = (s) => s.replace(/%/g, "%25").replace(/\r/g, "").replace(/\n/g, "%0A");
+            const n = (s) => rows.filter((r) => r.status === s).length;
+            console.log("::notice title=Growth acceptance summary::" + esc(`PASS ${n("PASS")}  FAIL ${n("FAIL")}  BLOCKED ${n("BLOCKED")}`));
+            const groups = [...new Set(rows.map((r) => r.check))];
+            groups.slice(0, 8).forEach((g) => console.log("::notice title=Check " + g + "::" + esc(rows.filter((r) => r.check === g).map((r) => r.status + " " + r.name + (r.detail ? " — " + r.detail.slice(0, 220) : "")).join("\n"))));
+            const bad = rows.filter((r) => r.status === "FAIL");
+            if (bad.length) console.log("::error title=Growth acceptance failures::" + esc(bad.map((r) => "[" + r.check + "] " + r.name + " — " + r.detail.slice(0, 300)).join("\n")));
+          '
+          echo "--- backend log tail ---"; tail -n 30 growth-acceptance/out/backend.log || true
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: growth-acceptance-evidence
+          path: growth-acceptance/out/
+          retention-days: 30

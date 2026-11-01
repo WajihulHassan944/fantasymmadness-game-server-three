@@ -1,0 +1,19 @@
+name: Isolated unattended controller prototype tests
+on:
+  push:
+    branches: [test/growth-unattended-controller]
+permissions:
+  contents: read
+jobs:
+  offline-controller:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Run offline controller tests (no secrets, database or outbound)
+        run: node growth-unattended-controller.test.js
