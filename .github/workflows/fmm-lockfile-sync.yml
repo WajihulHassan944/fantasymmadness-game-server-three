@@ -1,0 +1,35 @@
+name: Website lockfile sync (test only)
+# Regenerates fmm-ver2's package-lock.json for the Growth Engine test branch and runs the
+# website's own "Quality and security" steps against it. Read-only checkout; nothing is pushed.
+on:
+  push:
+    branches: [test/fmm-lockfile-sync]
+permissions:
+  contents: read
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          repository: WajihulHassan944/fmm-ver2
+          ref: test/growth-engine-replacement
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Regenerate the lock file (keep existing versions, add what is missing)
+        run: |
+          npm --version
+          cp package-lock.json /tmp/lock.before.json
+          npm install --package-lock-only --ignore-scripts --no-audit --no-fund
+          node -e "const a=require('/tmp/lock.before.json').packages,b=require('./package-lock.json').packages;const ch=[];for(const k of new Set([...Object.keys(a),...Object.keys(b)])){const x=a[k]&&a[k].version,y=b[k]&&b[k].version;if(x!==y)ch.push(k+': '+(x||'-')+' -> '+(y||'-'))}console.log(ch.length+' changed entries');console.log(ch.join('\n'))"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: package-lock
+          path: package-lock.json
+      - run: node scripts/fight-registry-regression.test.cjs
+      - run: npm ci --ignore-scripts
+      - run: npm run lint
+      - run: npm run build
+      - run: npm audit --omit=dev --audit-level=high
