@@ -24,6 +24,14 @@ const SHOTS = process.env.GROWTH_CONSOLE_SCREENSHOTS || path.join(__dirname, 'gr
 const env = {
   GROWTH_STAGING_MODE: 'isolated', GROWTH_OUTBOUND_ENABLED: 'false', GROWTH_TEST_MONGO_URI: uri, JWT_SECRET_ADMIN: secret, GROWTH_UNSUBSCRIBE_SECRET: secret,
   CRON_SECRET: 'cron-secret-for-tests-only', GROWTH_DELIVERY_PROVIDER: 'none', GROWTH_ADMIN_PASSWORD_HASH: hashPassword(PASSWORD),
+  GROWTH_SOCIAL_PROVIDER: 'sandbox', GROWTH_ATTRIBUTION_INGEST_SECRET: 'i'.repeat(40),
+};
+const LIVE_AFFILIATE_ID = '0123456789abcdef01234567';
+const signedPost = async (origin, event, { secretOverride, ts = Date.now() } = {}) => {
+  const raw = JSON.stringify(event);
+  const sig = require('crypto').createHmac('sha256', secretOverride || env.GROWTH_ATTRIBUTION_INGEST_SECRET).update(`${ts}.${raw}`).digest('hex');
+  const r = await fetch(`${origin}/api/growth/events`, { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Growth-Timestamp': String(ts), 'X-Growth-Signature': `sha256=${sig}` }, body: raw });
+  return { status: r.status, json: await r.json() };
 };
 const { contestFeed } = require('./growth-contest-feed.fixture');
 const feed = contestFeed();
@@ -70,6 +78,7 @@ test('Growth Engine back-office console: every screen, button and workflow', { s
   const toastText = async () => (await page.waitForSelector('[data-testid=toast]')).textContent();
   const clearToasts = () => page.evaluate(() => document.querySelectorAll('[data-testid=toast]').forEach((e) => e.remove()));
   const goto = async (hash) => {
+    if (await page.evaluate((hh) => location.hash === hh, hash)) await goto(hash.startsWith('#/overview') ? '#/automation' : '#/overview');
     const before = Number(await page.evaluate(() => document.querySelector('main')?.dataset.render || 0));
     await page.evaluate((hh) => { location.hash = hh; }, hash);
     await page.waitForSelector(`main[data-render="${before + 1}"]`);
@@ -271,25 +280,49 @@ test('Growth Engine back-office console: every screen, button and workflow', { s
       await page.waitForSelector(`[data-draft-id="affiliate-${affiliateProspect}"]`);
       await page.click(`[data-draft-id="affiliate-${affiliateProspect}"] [data-testid=btn-approve]`); await confirm(); await clearToasts();
       await page.waitForSelector(`[data-draft-id="affiliate-${affiliateProspect}"][data-status=approved]`);
+      // Onboarding pipeline: approved invitation -> invited -> active (linked to the live affiliate program)
+      await goto('#/affiliates?sport=boxing');
+      const row = `[data-testid=aff-row][data-aff-id="${affiliateProspect}"]`;
+      await page.waitForSelector(`${row}[data-status=invite_prepared]`);
+      await page.click(`${row} [data-testid=btn-copy-onboarding]`);
+      assert.match(await page.evaluate(() => navigator.clipboard.readText()), /affiliate-create-account\?utm_source=fan_acquisition&utm_medium=partner_outreach&utm_campaign=combat_fans_aff_/);
+      await clearToasts();
+      await page.click(`${row} [data-testid=btn-aff-invited]`);
+      await page.waitForSelector(`${row}[data-status=invited]`);
+      await page.click(`${row} [data-testid=btn-aff-activate]`);
+      await page.fill('[data-testid=live-affiliate-id]', 'not-an-id');
+      await page.click('[data-testid=modal-confirm]');
+      await page.waitForFunction(() => /live ID/.test(document.querySelector('[data-testid=modal] .error')?.textContent || ''));
+      await page.fill('[data-testid=live-affiliate-id]', LIVE_AFFILIATE_ID);
+      await confirm(); await clearToasts();
+      await page.waitForSelector(`${row}[data-status=active]`);
+      await page.click(`${row} [data-testid=btn-copy-player-link]`);
+      assert.match(await page.evaluate(() => navigator.clipboard.readText()), new RegExp(`/fight/bx\\d+\\?play=1&ref=${LIVE_AFFILIATE_ID}&utm_source=fan_acquisition`));
+      await clearToasts();
+      await shot('06b-affiliate-onboarding');
     });
 
-    await t.test('Revenue Attribution: tracked link, verified revenue only', async () => {
+    await t.test('Revenue Attribution: tracked link + verified events from a signed server only', async () => {
       await goto('#/revenue');
       assert.match(await page.textContent('[data-testid=payment-banner]'), /not connected/);
       assert.equal(await page.textContent('[data-testid=rev-total] .value'), '$0.00');
       await page.waitForSelector('[data-testid=rev-affiliate-row]');
       await page.click('[data-testid=btn-copy-link]');
-      assert.match(await page.evaluate(() => navigator.clipboard.readText()), /^https:\/\/fantasymmadness\.com\/affiliate\/.+\?fight=next-event$/);
+      assert.match(await page.evaluate(() => navigator.clipboard.readText()), new RegExp(`ref=${LIVE_AFFILIATE_ID}`));
       await clearToasts();
-      // Verified tracking events recorded in the isolated database
-      const base = { affiliateId: affiliateProspect, referralAffiliateId: affiliateProspect, playerId: 'player-1', fightId: 'fight-1', at: new Date().toISOString() };
-      await db.collection('growth_attribution_events').insertMany([
-        { ...base, type: 'visit', verified: true }, { ...base, type: 'signup', verified: true },
-        { ...base, type: 'paid_entry', verified: true, paymentStatus: 'settled', entryId: 'entry-1', amountCents: 500 },
-        { ...base, type: 'paid_entry', verified: true, paymentStatus: 'settled', entryId: 'entry-1', amountCents: 500 }, // duplicate
-        { ...base, type: 'paid_entry', verified: true, paymentStatus: 'pending', entryId: 'entry-2', amountCents: 500 }, // not settled
-        { ...base, type: 'paid_entry', verified: false, paymentStatus: 'settled', entryId: 'entry-3', amountCents: 500 }, // browser-only
-      ]);
+      const base = { liveAffiliateId: LIVE_AFFILIATE_ID, playerRef: 'player_0001', fightId: 'bx0000000001' };
+      // Unsigned / wrongly signed / stale events are refused
+      assert.equal((await signedPost(origin, { eventId: 'evt_bad_sig_1', type: 'registration', ...base }, { secretOverride: 'w'.repeat(40) })).status, 401);
+      assert.equal((await signedPost(origin, { eventId: 'evt_stale_001', type: 'registration', ...base }, { ts: Date.now() - 10 * 60000 })).status, 401);
+      assert.equal((await fetch(`${origin}/api/growth/events`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' })).status, 401);
+      assert.equal((await signedPost(origin, { eventId: 'evt_no_player', type: 'registration', liveAffiliateId: LIVE_AFFILIATE_ID })).status, 422);
+      // Verified events
+      assert.equal((await signedPost(origin, { eventId: 'evt_reg_0001', type: 'registration', ...base })).json.attributedTo, affiliateProspect);
+      assert.equal((await signedPost(origin, { eventId: 'evt_reg_0001', type: 'registration', ...base })).json.duplicate, true);
+      await signedPost(origin, { eventId: 'evt_paid_001', type: 'paid_entry', ...base, entryId: 'entry-1', amountCents: 500, paymentStatus: 'settled' });
+      await signedPost(origin, { eventId: 'evt_paid_002', type: 'paid_entry', ...base, entryId: 'entry-1', amountCents: 500, paymentStatus: 'settled' }); // same entry again
+      await signedPost(origin, { eventId: 'evt_paid_003', type: 'paid_entry', ...base, entryId: 'entry-2', amountCents: 500, paymentStatus: 'pending' }); // not settled
+      await db.collection('growth_attribution_events').insertOne({ type: 'paid_entry', verified: false, paymentStatus: 'settled', entryId: 'entry-3', amountCents: 500, affiliateId: affiliateProspect, referralAffiliateId: affiliateProspect, playerId: 'p3', fightId: 'f', at: new Date().toISOString() }); // browser-only, never counts
       await goto('#/overview'); await goto('#/revenue');
       assert.equal(await page.textContent('[data-testid=rev-total] .value'), '$5.00');
       assert.equal(await page.textContent('[data-testid=rev-entries] .value'), '1');
@@ -333,6 +366,73 @@ test('Growth Engine back-office console: every screen, button and workflow', { s
       await page.waitForSelector('[data-testid=optout-row]');
       assert.match(await page.textContent('[data-testid=optout-table]'), /stop\.contacting@example\.com/);
       assert.ok((await page.$$('[data-testid=audit-table] tbody tr')).length >= 8);
+    });
+
+    await t.test('Publishing: schedule (approval-gated), sandbox publish, pause, cancel, interrupted-post recovery', async () => {
+      // Only approved fight campaigns can be scheduled
+      const pending = await db.collection('growth_drafts').findOne({ kind: 'marketing', status: 'needs_owner_review' });
+      const tok = (await (await fetch(`${origin}/api/growth/admin/login`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ password: PASSWORD }) })).json()).token;
+      const sch = await fetch(`${origin}/api/growth/admin/drafts/${pending.id}/schedule`, { method: 'POST', headers: { Authorization: `Bearer ${tok}`, 'Content-Type': 'application/json' }, body: JSON.stringify({ channels: ['x'], scheduledAt: new Date().toISOString() }) });
+      assert.equal(sch.status, 409); assert.equal((await sch.json()).reason, 'approve_the_campaign_before_scheduling');
+      // Schedule an approved campaign now, through the UI
+      await goto('#/approvals?status=approved&kind=marketing');
+      const id = await page.getAttribute('[data-testid=draft]', 'data-draft-id');
+      await page.click(`[data-draft-id="${id}"] [data-testid=btn-schedule]`);
+      await page.waitForSelector('[data-testid=schedule-time]');
+      await page.evaluate(() => { const i = document.querySelector('[data-testid=schedule-time]'); const d = new Date(Date.now() - 30000); i.value = new Date(d.getTime() - d.getTimezoneOffset() * 60000).toISOString().slice(0, 16); });
+      await confirm();
+      assert.match(await toastText(), /scheduled/); await clearToasts();
+      const scheduled = await db.collection('growth_social_posts').find({ draftId: id }).toArray();
+      assert.ok(scheduled.length >= 2 && scheduled.every((p) => p.status === 'scheduled'));
+      // Pause: nothing goes out
+      await goto('#/publishing');
+      await page.click('[data-testid=btn-toggle-pause]'); await confirm(); await clearToasts();
+      await page.waitForSelector('[data-testid=paused-banner]');
+      let out = await runtime.social.dispatch(new Date());
+      assert.equal(out.paused, true); assert.equal(await db.collection('growth_social_posts').countDocuments({ draftId: id, status: 'published' }), 0);
+      await page.click('[data-testid=btn-toggle-pause]'); await confirm(); await clearToasts();
+      // The 15-minute run publishes them (sandbox: simulated, never counted as real posts)
+      out = await runtime.social.dispatch(new Date());
+      assert.equal(out.published, scheduled.length);
+      assert.equal(await db.collection('growth_social_sandbox').countDocuments(), scheduled.length);
+      assert.equal((await db.collection('growth_drafts').findOne({ id })).status, 'approved', 'sandbox posts do not mark the campaign published');
+      await goto('#/publishing');
+      await page.waitForSelector('[data-testid=post-row][data-status=published]');
+      assert.match(await page.textContent('[data-testid=posts-table]'), /Sandbox \(simulated\)/);
+      // Cannot schedule the same channel twice
+      const again = await fetch(`${origin}/api/growth/admin/drafts/${id}/schedule`, { method: 'POST', headers: { Authorization: `Bearer ${tok}`, 'Content-Type': 'application/json' }, body: JSON.stringify({ channels: ['x'], scheduledAt: new Date(Date.now() + 3600000).toISOString() }) });
+      assert.equal(again.status, 409);
+      // Recovery: a post interrupted mid-publish is flagged, never re-posted automatically
+      await db.collection('growth_social_posts').insertOne({ id: 'stuck__facebook', draftId: id, channel: 'facebook', genre: 'boxing', text: 'stuck post', status: 'publishing', claimedAt: new Date(Date.now() - 30 * 60000).toISOString(), scheduledAt: new Date(Date.now() - 31 * 60000).toISOString(), attempts: 1, history: [] });
+      out = await runtime.social.dispatch(new Date());
+      assert.equal(out.needsCheck, 1);
+      await goto('#/publishing');
+      await page.click('[data-post-id="stuck__facebook"] [data-testid=btn-check-post]');
+      await page.click('[data-testid=modal-confirm]');
+      await page.waitForFunction(() => /not already live/.test(document.querySelector('[data-testid=modal] .error')?.textContent || ''));
+      await page.check('[data-testid=confirm-not-live]'); await confirm(); await clearToasts();
+      await page.waitForSelector('[data-post-id="stuck__facebook"][data-status=scheduled]');
+      await page.click('[data-post-id="stuck__facebook"] [data-testid=btn-cancel-post]'); await clearToasts();
+      await page.waitForSelector('[data-post-id="stuck__facebook"][data-status=cancelled]');
+      assert.ok((await db.collection('growth_alerts').findOne({ alertKey: 'social-check:stuck__facebook' })));
+      await shot('10-publishing');
+    });
+
+    await t.test('Connections + funnel: every stage counted from its own evidence', async () => {
+      await goto('#/connections');
+      assert.match(await page.textContent('[data-testid=conn-social]'), /sandbox/);
+      assert.match(await page.textContent('[data-testid=conn-email]'), /real sending: OFF/);
+      assert.match(await page.textContent('[data-testid=conn-results]'), /Signed event channel/);
+      await shot('11-connections');
+      await goto('#/overview');
+      await page.waitForSelector('[data-testid=funnel]');
+      const v = async (k) => (await page.textContent(`[data-testid=funnel-${k}] .value`)).replace(/,/g, '');
+      assert.ok(Number(await v('prospects')) >= 30);
+      assert.equal(await v('approved'), '4');           // 2 marketing (1 approved + 1 published), 1 PR, 1 affiliate; withdrawn ones excluded
+      assert.equal(await v('published'), '1');         // the one post the owner marked published; sandbox posts excluded
+      assert.equal(await v('registrations'), '1');     // one signed registration (duplicate ignored)
+      assert.equal(await v('paying'), '1');            // one settled, server-verified paid entry
+      await goto('#/analytics'); await page.waitForSelector('[data-testid=funnel]');
     });
 
     await t.test('opted-out contact cannot be given an outreach email', async () => {

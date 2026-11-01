@@ -16,6 +16,9 @@ const { renderBusinessEmail } = require('./growth-business-email-templates');
 const { nextFollowup } = require('./growth-followup-reporting');
 const { createSuppression } = require('./growth-suppression');
 const contestCampaigns = require('./growth-contest-campaigns');
+const { createSocialPublisher } = require('./growth-social-publishing');
+const { createSocialScheduler } = require('./growth-social-scheduler');
+const { createAffiliateProgram } = require('./growth-affiliate-program');
 
 const clean = (s, n = 200) => String(s ?? '').replace(/[\r\n\x00-\x1f]/g, ' ').trim().slice(0, n);
 const minuteId = (d) => 'growth_' + d.toISOString().replace(/[^0-9]/g, '').slice(0, 12);
@@ -33,14 +36,19 @@ function createGrowthRuntime({ db, config, secrets = {}, provider, fetchImpl = g
     suppressions: db.collection('growth_suppressions'), audit: db.collection('growth_audit_log'),
     attribution: db.collection('growth_attribution_events'),
     coverage: db.collection('growth_marketing_coverage'), gateRejections: db.collection('growth_campaign_rejections'),
+    affiliates: db.collection('growth_affiliates'), liveReports: db.collection('growth_live_reports'),
+    social: db.collection('growth_social_posts'), settings: db.collection('growth_settings'), socialSandbox: db.collection('growth_social_sandbox'),
   };
   const claims = createIsolatedRunClaims(col.runs, { testMode: true });
   const store = createStore(col.jobs, { testMode: true });
   const suppression = createSuppression(col.suppressions, { secret: secrets.unsubscribeSecret, testMode: true });
   const audit = (action, details) => col.audit.insertOne({ action, ...details, at: new Date().toISOString() });
 
+  let socialScheduler = null; // created below once reverifyMarketing exists
+  const affiliateProgram = createAffiliateProgram({ col, audit });
   async function init() {
-    await claims.init(); await store.init(); await suppression.init();
+    await claims.init(); await store.init(); await suppression.init(); await socialScheduler.init(); await affiliateProgram.init();
+    await col.liveReports.createIndex({ day: 1 }, { unique: true });
     await col.drafts.createIndex({ id: 1 }, { unique: true });
     await col.drafts.createIndex({ status: 1, kind: 1 });
     await col.prospects.createIndex({ key: 1 }, { unique: true });
@@ -160,6 +168,9 @@ function createGrowthRuntime({ db, config, secrets = {}, provider, fetchImpl = g
     return reasons.length ? { ok: false, reason: 'campaign_failed_safeguard', details: reasons } : { ok: true, contest: c };
   }
 
+  const socialConfig = { ...(config.social || { provider: 'none', channels: {} }), secrets: secrets.social || {} };
+  socialScheduler = createSocialScheduler({ col, social: socialConfig, publisher: createSocialPublisher({ social: socialConfig, fetchImpl, sandboxCollection: col.socialSandbox }), reverifyMarketing, alert, audit });
+
   async function report(now) {
     const by = async (c, field) => Object.fromEntries((await c.aggregate([{ $group: { _id: field, n: { $sum: 1 } } }]).toArray()).map((r) => [String(r._id), r.n]));
     const doc = {
@@ -168,6 +179,15 @@ function createGrowthRuntime({ db, config, secrets = {}, provider, fetchImpl = g
       deliveries: await by(col.deliveries, '$status'), prospects: await col.prospects.countDocuments(), prospectsWithVerifiedContact: await col.prospects.countDocuments({ contactVerified: true }),
       suppressions: await col.suppressions.countDocuments(), openAlerts: await col.alerts.countDocuments({ state: 'open' }),
       provider: provider.name, realDelivery: provider.realDelivery === true,
+      funnel: {
+        prospects: await col.prospects.countDocuments(),
+        approvedContent: await col.drafts.countDocuments({ ownerApproved: true, status: { $in: ['approved', 'published', 'delivered'] } }),
+        publishedPosts: await col.social.countDocuments({ status: 'published', sandbox: { $ne: true } }) + await col.drafts.countDocuments({ kind: 'marketing', status: 'published', publishedManually: true }),
+        sandboxPosts: await col.social.countDocuments({ status: 'published', sandbox: true }),
+        registrations: await col.attribution.countDocuments({ type: 'registration', verified: true, source: 'signed_ingest' }),
+        verifiedPaidEntries: await col.attribution.countDocuments({ type: 'paid_entry', verified: true, source: 'signed_ingest', paymentStatus: 'settled' }),
+        activeAffiliates: await col.affiliates.countDocuments({ status: 'active' }),
+      },
     };
     await col.reports.updateOne({ day: doc.day }, { $set: doc }, { upsert: true });
     return doc;
@@ -188,7 +208,18 @@ function createGrowthRuntime({ db, config, secrets = {}, provider, fetchImpl = g
     return { followupDraftsCreated: created };
   }
 
-  const handlers = { discover, aggregate_report: report, prepare_followup: followups, refresh_marketing: (now) => refreshMarketing(now, { trigger: 'scheduled_refresh' }) };
+  // Optional, read-only: the live site's verified registration counts per campaign tag.
+  async function pullLiveReport(now) {
+    if (!config.liveReport?.configured) return { skipped: 'not_configured' };
+    const r = await fetchImpl(`${config.contestSourceUrl}/api/admin/fan-acquisition/registration-report`, { headers: { Authorization: `Bearer ${secrets.liveReportToken}`, Accept: 'application/json' } });
+    if (!r.ok) throw Error(`live registration report returned ${r.status}`);
+    const j = await r.json();
+    const groups = (j.groups || []).filter((g) => /^combat_fans_(aff|gs)_[a-z0-9_-]{1,50}$/.test(String(g.campaign))).map((g) => ({ campaign: String(g.campaign), registrations: Math.max(0, Number(g.registrations) || 0) }));
+    await col.liveReports.updateOne({ day: dayKey(now) }, { $set: { day: dayKey(now), at: now.toISOString(), groups, paymentAttributionConnected: j.paymentAttributionConnected === true } }, { upsert: true });
+    return { campaigns: groups.length };
+  }
+
+  const handlers = { discover, aggregate_report: report, prepare_followup: followups, refresh_marketing: (now) => refreshMarketing(now, { trigger: 'scheduled_refresh' }), pull_live_report: pullLiveReport };
 
   // ---- delivery of approved drafts -----------------------------------------
   async function dispatch(now) {
@@ -207,6 +238,7 @@ function createGrowthRuntime({ db, config, secrets = {}, provider, fetchImpl = g
       if (result.ok) {
         await col.deliveries.updateOne({ draftId: draft.id }, { $set: { status: 'delivered', providerMessageId: result.receipt.providerMessageId, realDelivery: result.receipt.realDelivery === true } });
         await col.drafts.updateOne({ id: draft.id }, { $set: { status: 'delivered', deliveredAt: now.toISOString(), providerMessageId: result.receipt.providerMessageId, realDelivery: result.receipt.realDelivery === true, sandbox: result.receipt.sandbox === true } });
+        if (draft.kind === 'affiliate' && draft.prospectId && result.receipt.realDelivery === true) await affiliateProgram.transition(draft.prospectId, 'invited', { admin: 'email-delivery', note: 'invitation email delivered', now }).catch(() => null);
         out.delivered++;
       } else {
         await col.deliveries.updateOne({ draftId: draft.id }, { $set: { status: 'failed', reason: result.reason } });
@@ -239,6 +271,7 @@ function createGrowthRuntime({ db, config, secrets = {}, provider, fetchImpl = g
       await store.enqueue({ id: `discover-${day}`, type: 'discover', dueAt: iso });
       await store.enqueue({ id: `followup-${day}`, type: 'prepare_followup', dueAt: iso });
       await store.enqueue({ id: `report-${day}`, type: 'aggregate_report', dueAt: new Date(now.getTime() + 60000).toISOString() });
+      if (config.liveReport?.configured) await store.enqueue({ id: `livereport-${day}`, type: 'pull_live_report', dueAt: new Date(now.getTime() + 3 * 60000).toISOString() });
       // Re-check the published contests every 6 hours: new fights get campaigns,
       // closed or changed ones are withdrawn before they can be approved.
       await store.enqueue({ id: `marketing-${day}-${Math.floor(now.getUTCHours() / 6)}`, type: 'refresh_marketing', dueAt: new Date(now.getTime() + 2 * 60000).toISOString() });
@@ -258,6 +291,7 @@ function createGrowthRuntime({ db, config, secrets = {}, provider, fetchImpl = g
         }
       }
       summary.delivery = await dispatch(now);
+      summary.social = await socialScheduler.dispatch(now);
     } catch (e) {
       summary.errors.push({ id: 'tick', message: clean(e.message) });
       await alert(`run:${runId}`, 'run', runId, e.message, now);
@@ -281,6 +315,7 @@ function createGrowthRuntime({ db, config, secrets = {}, provider, fetchImpl = g
     const r = await col.drafts.findOneAndUpdate({ id: clean(id, 160), status: 'needs_owner_review' }, { $set: { status: 'approved', ownerApproved: true, sendPermitted: true, approvedBy: clean(admin, 120), approvedAt: now.toISOString() } }, { returnDocument: 'after' });
     if (!r) return { ok: false, reason: 'not_found_or_not_awaiting_review' };
     await audit('approve_draft', { id: r.id, admin: clean(admin, 120) });
+    if (r.kind === 'affiliate') await affiliateProgram.fromApprovedInvite(r, { admin, now });
     return { ok: true, draft: publicDraft(r) };
   }
   async function rejectDraft(id, { admin, reason = '', now = new Date() } = {}) {
@@ -330,7 +365,7 @@ function createGrowthRuntime({ db, config, secrets = {}, provider, fetchImpl = g
   }
   async function unsubscribe(token) { return suppression.unsubscribe(token); }
 
-  return { init, tick, dispatch, refreshMarketing, reverifyMarketing, listDrafts, approveDraft, rejectDraft, addVerifiedContact, overview, listAlerts, ackAlert, requeueJob, unsubscribe, suppression, collections: col };
+  return { init, tick, dispatch, refreshMarketing, reverifyMarketing, social: socialScheduler, affiliates: affiliateProgram, listDrafts, approveDraft, rejectDraft, addVerifiedContact, overview, listAlerts, ackAlert, requeueJob, unsubscribe, suppression, collections: col };
 }
 
 module.exports = { createGrowthRuntime };

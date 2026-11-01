@@ -57,3 +57,58 @@ jobs:
           name: console-screenshots
           path: console-screenshots
           if-no-files-found: ignore
+
+  admin-bridge-e2e:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    services:
+      mongodb:
+        image: mongo:7
+        ports:
+          - 27017:27017
+        options: >-
+          --health-cmd "mongosh --quiet --eval 'db.adminCommand({ping:1})'"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 12
+    env:
+      GROWTH_TEST_MONGO_URI: mongodb://127.0.0.1:27017
+      GROWTH_CONSOLE_SCREENSHOTS: ${{ github.workspace }}/console-screenshots
+      BRIDGE_BUNDLE: ${{ github.workspace }}/bridge-dist/bridge.js
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Check out the website admin page (test branch, read-only)
+        uses: actions/checkout@v4
+        with:
+          repository: WajihulHassan944/fmm-ver2
+          ref: test/growth-engine-admin-bridge
+          path: web
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Install backend dependencies
+        run: npm ci --ignore-scripts --no-fund
+      - name: Install only what the admin page needs (versions from the website's package.json)
+        run: |
+          mkdir -p bridge-deps && cd bridge-deps && npm init -y >/dev/null
+          v() { node -p "(require('../web/package.json').dependencies||{})['$1']"; }
+          npm install --no-fund --ignore-scripts "react@$(v react)" "react-dom@$(v react-dom)" "react-icons@$(v react-icons)"
+      - name: Bundle the admin Growth Engine page from the website source
+        run: |
+          mkdir -p bridge-dist console-screenshots
+          NODE_PATH=$PWD/bridge-deps/node_modules npx --yes esbuild@0.25.10 growth-acceptance/bridge-harness/entry.jsx --bundle --outfile=bridge-dist/bridge.js \
+            --alias:@=./web/src --loader:.js=jsx --jsx=automatic \
+            --define:process.env.NEXT_PUBLIC_GROWTH_ENGINE_URL='"http://127.0.0.1:4300"' --define:process.env.NODE_ENV='"production"'
+      - name: Install Playwright + Chromium (test-only)
+        run: |
+          npm install --no-save --no-fund --ignore-scripts playwright@1.56.1
+          npx playwright install --with-deps chromium
+      - name: Browser test — admin back office page against a real Growth Engine
+        run: node --test --test-reporter=spec growth-acceptance/admin-bridge.e2e.test.js
+      - name: Print screenshots
+        if: always()
+        run: |
+          for f in console-screenshots/*.jpg; do [ -f "$f" ] || continue; n=$(basename "$f"); base64 -w 30000 "$f" | sed "s/^/SHOT:$n:/"; done

@@ -16,10 +16,12 @@
     delivery_failed: ['Delivery failed', 'bad', '!'], completed: ['Completed', 'good', '✓'], failed: ['Failed', 'bad', '!'],
     stale: ['Interrupted', 'warn', '!'], claimed: ['Running', 'info', '◔'], running: ['Running', 'info', '◔'], pending: ['Waiting', 'info', '◔'],
     retry: ['Will retry', 'warn', '↻'], open: ['Open', 'bad', '!'], acknowledged: ['Acknowledged', 'good', '✓'],
+    scheduled: ['Scheduled', 'info', '◔'], publishing: ['Publishing…', 'info', '◔'], held: ['Held: channel not connected', 'warn', '⏸'], cancelled: ['Cancelled', '', '✕'],
+    needs_check: ['Check the channel', 'bad', '!'], invite_prepared: ['Invitation approved', 'info', '✉'], invited: ['Invited', 'info', '✉'], active: ['Active affiliate', 'good', '✓'], paused: ['Paused', 'warn', '⏸'], declined: ['Declined', '', '✕'],
   };
   var NAV = [
     ['overview', 'Overview', '⌂'], ['approvals', 'Campaign Approvals', '✓'], ['marketing', 'Marketing', '📣'], ['pr', 'Public Relations', '📰'],
-    ['affiliates', 'Affiliate Recruitment', '🤝'], ['automation', 'Automation', '⚙'], ['analytics', 'Analytics', '📊'], ['revenue', 'Revenue Attribution', '$'],
+    ['affiliates', 'Affiliate Recruitment', '🤝'], ['publishing', 'Publishing', '📅'], ['automation', 'Automation', '⚙'], ['analytics', 'Analytics', '📊'], ['revenue', 'Revenue Attribution', '$'], ['connections', 'Connections', '🔌'],
   ];
   var state = { pendingCount: null, alertCount: null }; var renders = 0;
 
@@ -81,6 +83,10 @@
       kind_must_be_pr_or_affiliate: 'Choose PR or affiliate.', contact_opted_out: 'This contact has opted out and cannot be contacted.',
       invalid_contact: 'That email address is not valid.', verified_contact_required: 'That email address is not valid.', prospect_not_found: 'Prospect not found.', draft_already_exists: 'An outreach draft for this prospect already exists — check Campaign Approvals.',
       valid_email_required: 'Please enter a valid email address.',
+      approve_the_campaign_before_scheduling: 'Approve the campaign first, then schedule it.', time_is_in_the_past: 'Pick a time in the future.', time_is_after_the_fight: 'Pick a time before the fight ends.',
+      channel_needs_a_fight_poster_image: 'needs a fight poster image', choose_at_least_one_valid_channel: 'Choose at least one channel.', confirm_the_post_is_not_already_live: 'First check the channel and confirm the post is not already live.',
+      live_affiliate_id_required: 'Enter the affiliate’s live ID (24 characters, from the live Affiliate back office).', live_affiliate_id_already_linked: 'That live affiliate ID is already linked to another creator.',
+      only_scheduled_held_or_failed_posts_can_be_cancelled: 'This post can no longer be cancelled.',
       edit_failed_safeguard: 'Blocked by the campaign safeguard. A fight post must keep both fighter names and the contest link, and must not mention prizes, money, betting, titles that are not in the contest, or podcast/media names.',
       contest_no_longer_open_or_verified: 'This fight’s contest is no longer open and verified, so the campaign cannot be approved. It will be withdrawn automatically.',
       fight_details_changed_use_the_corrected_campaign: 'The fight details changed since this campaign was prepared. Use the corrected campaign instead.',
@@ -236,6 +242,7 @@
     if (d.status === 'approved') {
       if (d.kind === 'marketing') {
         actions.appendChild(h('button', { class: 'btn small', testid: 'btn-copy', text: 'Copy post text', onclick: function () { var sel = card.querySelector('[data-channel].active'); copyText(sel && d.posts ? d.posts[sel.getAttribute('data-channel')] : (d.text || '')); } }));
+        if (d.contestId) actions.appendChild(h('button', { class: 'btn primary small', testid: 'btn-schedule', text: '📅 Schedule posts', onclick: function () { schedulePosts(d, reload); } }));
         actions.appendChild(h('button', { class: 'btn approve small', testid: 'btn-mark-published', text: 'Mark as published', onclick: function () { markPublished(d, reload); } }));
       } else actions.appendChild(h('span', { class: 'muted small', text: 'Will be sent only when real email delivery is switched on (currently off).' }));
       actions.appendChild(h('button', { class: 'btn danger small', testid: 'btn-withdraw', text: 'Withdraw approval', onclick: function () { reject(d, reload, true); } }));
@@ -293,6 +300,34 @@
       },
     }).then(function (ok) { if (ok) { toast('Changes saved. It is still waiting for your approval.', 'good'); reload(); } }).catch(fail);
   }
+  function localInput(date) { var z = new Date(date.getTime() - date.getTimezoneOffset() * 60000); return z.toISOString().slice(0, 16); }
+  function schedulePosts(d, reload) {
+    return api('GET', '/admin/social').then(function (info) {
+      var boxes = {}; var names = { facebook: 'Facebook', instagram: 'Instagram', x: 'X', tiktok: 'TikTok' };
+      var when = h('input', { type: 'datetime-local', testid: 'schedule-time' }); when.value = localInput(new Date(Date.now() + 10 * 60000));
+      var rows = Object.keys(names).filter(function (ch) { return d.posts && d.posts[ch]; }).map(function (ch) {
+        var c = info.channels[ch] || {}; var noImg = c.needsImage && !(d.contest && d.contest.posterUrl);
+        var box = h('input', { type: 'checkbox', testid: 'schedule-' + ch }); box.checked = !noImg; box.disabled = noImg; boxes[ch] = box;
+        return h('label', { class: 'check-row' }, box, ' ', h('strong', { text: names[ch] }), ' ',
+          noImg ? h('span', { class: 'chip warn', text: 'Needs a fight poster image' }) : c.ready ? h('span', { class: 'chip ' + (c.mode === 'live' ? 'good' : 'info'), text: c.mode === 'live' ? '✓ Connected' : 'Sandbox (simulated)' }) : h('span', { class: 'chip warn', text: 'Not connected: will be held' }),
+          c.note ? h('small', { class: 'muted', text: ' ' + c.note }) : null);
+      });
+      return modal({
+        title: 'Schedule this fight campaign', confirmLabel: 'Schedule',
+        body: h('div', null, h('p', { class: 'small', text: 'Each post is checked again against the live contest list right before it goes out. Channels that are not connected yet hold the post until you connect them and press Retry.' }),
+          h('div', { class: 'field' }, h('span', { text: 'Channels' }), rows), h('label', { class: 'field' }, h('span', { text: 'Post time (your local time)' }), when)),
+        onConfirm: function () {
+          var chosen = Object.keys(boxes).filter(function (k) { return boxes[k].checked; });
+          return api('POST', '/admin/drafts/' + encodeURIComponent(d.id) + '/schedule', { channels: chosen, scheduledAt: new Date(when.value).toISOString() });
+        },
+      });
+    }).then(function (res) {
+      if (!res) return;
+      var okN = (res.results || []).filter(function (r) { return r.ok; }).length; var bad = (res.results || []).filter(function (r) { return !r.ok; });
+      toast(okN + ' post' + (okN === 1 ? '' : 's') + ' scheduled' + (bad.length ? '; not scheduled: ' + bad.map(function (b) { return b.channel + ' (' + friendly(b.reason) + ')'; }).join(', ') : '') + '. See the Publishing page.', bad.length ? 'bad' : 'good');
+      reload();
+    }).catch(fail);
+  }
   function markPublished(d, reload) {
     var url = h('input', { type: 'url', placeholder: 'https://…', testid: 'post-url' });
     return modal({
@@ -341,6 +376,7 @@
           tile('Open alerts', alerts.length, alerts.length ? 'Needs a look' : 'All clear', '#/automation', 'tile-alerts'),
           tile('Delivered', o.delivered, 'Emails actually sent', '#/automation', 'tile-delivered'),
           tile('Opt-outs', o.suppressions, 'People who must never be contacted', '#/automation', 'tile-optouts')),
+        h('div', { id: 'funnel-slot' }),
         h('div', { class: 'grid two' },
           h('section', { class: 'card' }, h('h2', { text: 'Today’s daily report' }),
             rep ? h('div', null, h('p', { class: 'sub', text: 'Saved ' + when(rep.at) }),
@@ -351,8 +387,15 @@
               : h('div', { class: 'empty', text: 'No daily report yet today. It is created by the first automatic run of the day.' })),
           h('section', { class: 'card' }, h('h2', { text: 'Recent automatic runs' }), h('p', { class: 'sub', text: 'The engine wakes up every 15 minutes.' }), runsTable(o.lastRuns.slice(0, 6)))),
       ]);
+      return api('GET', '/admin/funnel').then(function (f) { var slot = document.getElementById('funnel-slot'); if (slot) slot.appendChild(funnelCard(f.funnel)); });
     });
   };
+  function funnelCard(f) {
+    return h('section', { class: 'card', testid: 'funnel' }, h('h2', { text: 'Campaign funnel' }), h('p', { class: 'sub', text: 'Each step is counted from its own evidence. Simulated (sandbox) posts never count as published.' }),
+      h('div', { class: 'funnel' }, f.stages.map(function (st) {
+        return h('div', { class: 'funnel-step' + (st.connected === false ? ' off' : ''), testid: 'funnel-' + st.key }, h('div', { class: 'label', text: st.label }), h('div', { class: 'value', text: st.connected === false && !st.value ? '—' : fmtNum(st.value) }), h('div', { class: 'hint', text: st.source }));
+      })));
+  }
   function tile(label, value, hint, href, testid) {
     return h('a', { class: 'tile', href: href, testid: testid }, h('div', { class: 'label', text: label }), h('div', { class: 'value', text: fmtNum(value) }), h('div', { class: 'hint', text: hint }));
   }
@@ -462,6 +505,7 @@
         h('section', { class: 'card' }, h('h2', { text: 'Personalized ' + cfg.noun + ' emails' }), h('p', { class: 'sub', text: 'Created when you add a verified contact. Approve or reject them here or in Campaign Approvals.' }), list),
       ]);
       draftList(list, { kind: cfg.kind, limit: 200 }, 'None yet. Use “Add verified contact” on a prospect above to create one.');
+      if (cfg.kind === 'affiliate') { var pipe = h('section', { class: 'card', testid: 'onboarding' }, h('h2', { text: 'Onboarding pipeline' }), h('div', { class: 'spinner', text: 'Loading…' })); main.insertBefore(pipe, main.children[3] || null); onboarding(pipe); }
       var w = ws.workstreams.filter(function (x) { return x.genre === g; })[0];
       if (!w) { clear(detail).appendChild(h('div', { class: 'empty', text: 'No ' + cfg.noun + ' workstream has run for ' + sport(g) + ' yet.' })); return; }
       return api('GET', '/admin/workstreams/' + encodeURIComponent(w.runId) + '/' + encodeURIComponent(w.workstreamId)).then(function (dr) {
@@ -491,6 +535,34 @@
           h('div', { class: 'table-wrap' }, h('table', { class: 'data' }, h('thead', null, h('tr', null, h('th', { text: 'Prospect' }), h('th', { text: 'Draft subject' }), h('th', { text: 'Contact' }), h('th', { text: '' }))), tbody))]);
       });
     });
+  }
+  function onboarding(box) {
+    return api('GET', '/admin/affiliates').then(function (r) {
+      while (box.children.length > 1) box.removeChild(box.lastChild);
+      add(box, h('p', { class: 'sub', text: 'Approved invitation → invited → active. A creator becomes active when they have joined the live FANTASY MMADNESS affiliate program and you link their live affiliate ID. From then on the live site credits their players itself.' }));
+      if (!r.affiliates.length) { box.appendChild(h('div', { class: 'empty', testid: 'onboarding-empty', text: 'No one yet. Approve an affiliate invitation below to start.' })); return; }
+      var tbody = h('tbody');
+      r.affiliates.forEach(function (a) {
+        var acts = h('td', { class: 'nowrap' });
+        var step = function (label, status, testid, cls, extra) { acts.appendChild(h('button', { class: 'btn small ' + (cls || ''), testid: testid, text: label, onclick: function () { (extra ? extra() : Promise.resolve({})).then(function (body) { if (!body) return; return api('POST', '/admin/affiliates/' + encodeURIComponent(a.id) + '/status', Object.assign({ status: status }, body)).then(function () { toast('Updated.', 'good'); onboarding(box); }); }).catch(fail); } })); };
+        if (a.status === 'invite_prepared') step('Mark invited (I sent it)', 'invited', 'btn-aff-invited');
+        if (a.status === 'invited' || a.status === 'paused') step('Link live affiliate', 'active', 'btn-aff-activate', 'primary', function () {
+          var id = h('input', { type: 'text', maxlength: '24', testid: 'live-affiliate-id', placeholder: '24-character ID' });
+          var out = null;
+          return modal({ title: 'Link ' + a.name + ' to the live affiliate program', confirmLabel: 'Link and activate', body: h('div', null, h('p', { class: 'small', text: 'After they sign up with the onboarding link, find them in the live Affiliate back office and paste their affiliate ID here.' }), h('label', { class: 'field' }, h('span', { text: 'Live affiliate ID' }), id)),
+            onConfirm: function () { out = { liveAffiliateId: id.value.trim() }; return api('POST', '/admin/affiliates/' + encodeURIComponent(a.id) + '/status', { status: 'active', liveAffiliateId: out.liveAffiliateId }); } }).then(function (ok) { if (ok) { toast(a.name + ' is now an active affiliate.', 'good'); onboarding(box); } return null; });
+        });
+        if (a.status === 'active') step('Pause', 'paused', 'btn-aff-pause', 'danger');
+        if (['invite_prepared', 'invited', 'paused'].indexOf(a.status) >= 0) step('Declined', 'declined', 'btn-aff-decline');
+        tbody.appendChild(h('tr', { testid: 'aff-row', 'data-aff-id': a.id, 'data-status': a.status },
+          h('td', null, h('strong', { text: a.name }), h('div', { class: 'small muted', text: sport(a.genre) + (a.email ? ' · ' + a.email : '') })),
+          h('td', null, chip(a.status)),
+          h('td', { class: 'small' }, h('button', { class: 'btn small link', testid: 'btn-copy-onboarding', text: 'Copy onboarding link', onclick: function () { copyText(a.onboardingLink); } }),
+            a.playerLinks.length ? h('div', null, a.playerLinks.map(function (pl) { return h('div', null, h('button', { class: 'btn small link', testid: 'btn-copy-player-link', text: 'Copy player link: ' + pl.label, onclick: function () { copyText(pl.link); } })); })) : null),
+          acts));
+      });
+      box.appendChild(h('div', { class: 'table-wrap' }, h('table', { class: 'data', testid: 'onboarding-table' }, h('thead', null, h('tr', null, h('th', { text: 'Creator' }), h('th', { text: 'Status' }), h('th', { text: 'Links' }), h('th', { text: '' }))), tbody)));
+    }).catch(fail);
   }
   function addContact(prospectId, name, kind) {
     var email = h('input', { type: 'email', required: true, maxlength: '254', testid: 'contact-email', placeholder: 'name@business.com' });
@@ -583,7 +655,7 @@
     }));
   }
   pages.analytics = function (main) {
-    return api('GET', '/admin/analytics').then(function (r) {
+    return Promise.all([api('GET', '/admin/analytics'), api('GET', '/admin/funnel')]).then(function (rr) { var r = rr[0]; var fun = rr[1].funnel; setTimeout(function () { var slot = document.getElementById('funnel-slot'); if (slot && !slot.firstChild) slot.appendChild(funnelCard(fun)); }, 0); return r; }).then(function (r) {
       var a = r.analytics; clear(main);
       var m = a.workstreams.matrix, vals = [];
       a.workstreams.departments.forEach(function (d) { a.workstreams.genres.forEach(function (g) { if (m[d][g] !== null) vals.push(m[d][g]); }); });
@@ -594,6 +666,7 @@
       var byK = a.drafts.byGenreKind;
       add(main, [
         head('Analytics', 'Computed live from the staging database · ' + when(a.generatedAt)),
+        h('div', { id: 'funnel-slot' }),
         h('div', { class: 'grid tiles' },
           tile('Items prepared', a.drafts.total, 'Posts & emails', '#/approvals?status=', 'an-total'),
           tile('Approval rate', a.drafts.approvalRate === null ? null : a.drafts.approvalRate, a.drafts.approvalRate === null ? 'Nothing decided yet' : '% of decided items approved', '#/approvals?status=', 'an-rate'),
@@ -644,19 +717,79 @@
         h('section', { class: 'card' }, h('h2', { text: 'Revenue by sport' }),
           h('div', { class: 'table-wrap' }, h('table', { class: 'data', testid: 'rev-by-sport' }, h('thead', null, h('tr', null, h('th', { text: 'Sport' }), h('th', { class: 'num', text: 'Paid entries' }), h('th', { class: 'num', text: 'Revenue' }))),
             h('tbody', null, a.byGenre.map(function (x) { return h('tr', null, h('td', { text: sport(x.genre) }), h('td', { class: 'num', text: fmtNum(x.paidEntries) }), h('td', { class: 'num', text: money(x.revenueCents) })); }))))),
-        h('section', { class: 'card' }, h('h2', { text: 'Affiliates and tracked links' }), h('p', { class: 'sub', text: 'An affiliate appears here once you approve their invitation for a verified contact.' }),
+        h('section', { class: 'card' }, h('h2', { text: 'Affiliates and tracked links' }), h('p', { class: 'sub', text: 'Active affiliates (joined the live program). Links use the live site’s own referral code, so the live site credits their players.' }),
           a.affiliates.length ? h('div', { class: 'table-wrap' }, h('table', { class: 'data', testid: 'rev-affiliates' }, h('thead', null, h('tr', null, h('th', { text: 'Affiliate' }), h('th', { text: 'Sport' }), h('th', { text: 'Tracked link' }), h('th', { class: 'num', text: 'Paid entries' }), h('th', { class: 'num', text: 'Revenue' }))),
             h('tbody', null, a.affiliates.map(function (x) {
               return h('tr', { testid: 'rev-affiliate-row' }, h('td', null, h('strong', { text: x.name }), ' ', x.status === 'approved' ? h('span', { class: 'chip good', text: '✓ Approved' }) : h('span', { class: 'chip warn', text: 'Pending' })), h('td', { text: sport(x.genre) }),
                 h('td', null, x.trackingLink ? [h('span', { class: 'mono', text: 'fantasymmadness.com' + x.trackingLink }), ' ', h('button', { class: 'btn small', testid: 'btn-copy-link', text: 'Copy', onclick: function () { copyText('https://fantasymmadness.com' + x.trackingLink); } })] : h('span', { class: 'muted', text: '—' })),
                 h('td', { class: 'num', text: fmtNum(x.paidEntries) }), h('td', { class: 'num', text: money(x.revenueCents) }));
-            })))) : h('div', { class: 'empty', testid: 'rev-affiliates-empty', text: 'No approved affiliates yet. Add a verified contact on the Affiliate Recruitment page and approve the invitation.' })),
+            })))) : h('div', { class: 'empty', testid: 'rev-affiliates-empty', text: 'No active affiliates yet. An affiliate appears here once they join the live affiliate program and you link their live affiliate ID on the Affiliate Recruitment page.' })),
         h('section', { class: 'card' }, h('h2', { text: 'How revenue is credited' }),
           h('ul', { class: 'small' },
             h('li', { text: 'Only payments confirmed by the server as settled count. Browser analytics never count as revenue.' }),
             h('li', { text: 'The paying player must have arrived through that affiliate’s tracked link, for that fight.' }),
             h('li', { text: 'Each paid entry is credited once. Duplicates and payments that have not settled are excluded.' })),
           h('p', { class: 'small muted', testid: 'rev-events', text: fmtNum(a.eventsRecorded) + ' tracking events recorded in staging' + (rejected.length ? ' · not credited: ' + rejected.map(function (k) { return k.replace(/_/g, ' ') + ' (' + a.rejectedEvents[k] + ')'; }).join(', ') : '') + '.' })),
+      ]);
+    });
+  };
+
+  pages.publishing = function (main) {
+    return api('GET', '/admin/social').then(function (r) {
+      clear(main);
+      var names = { facebook: 'Facebook', instagram: 'Instagram', x: 'X', tiktok: 'TikTok' };
+      var paused = r.paused.paused;
+      var toggle = h('button', { class: 'btn ' + (paused ? 'approve' : 'danger'), testid: 'btn-toggle-pause', text: paused ? '▶ Resume publishing' : '⏸ Pause all publishing', onclick: function () {
+        modal({ title: paused ? 'Resume publishing?' : 'Pause all publishing?', confirmLabel: paused ? 'Resume' : 'Pause', confirmClass: paused ? 'approve' : 'danger',
+          body: h('p', { text: paused ? 'Scheduled posts that are due will go out on the next run (every 15 minutes), after their fight is checked again.' : 'Nothing will be posted to any channel until you resume. Scheduled posts stay in the queue.' }),
+          onConfirm: function () { return api('POST', '/admin/social/pause', { paused: !paused }); } }).then(function (ok) { if (ok) { toast(paused ? 'Publishing resumed.' : 'Publishing paused.', 'good'); route(); } }).catch(fail);
+      } });
+      var rows = r.posts.map(function (p) {
+        var acts = h('td', { class: 'nowrap' });
+        if (['scheduled', 'held', 'failed'].indexOf(p.status) >= 0) acts.appendChild(h('button', { class: 'btn small danger', testid: 'btn-cancel-post', text: 'Cancel', onclick: function () { api('POST', '/admin/social/' + encodeURIComponent(p.id) + '/cancel').then(function () { toast('Post cancelled.', 'good'); route(); }).catch(fail); } }));
+        if (['held', 'failed'].indexOf(p.status) >= 0) acts.appendChild(h('button', { class: 'btn small', testid: 'btn-retry-post', text: 'Retry', onclick: function () { api('POST', '/admin/social/' + encodeURIComponent(p.id) + '/retry', {}).then(function () { toast('Queued again for the next run.', 'good'); route(); }).catch(fail); } }));
+        if (p.status === 'needs_check') acts.appendChild(h('button', { class: 'btn small', testid: 'btn-check-post', text: 'I checked: not posted', onclick: function () {
+          var box = h('input', { type: 'checkbox', testid: 'confirm-not-live' });
+          modal({ title: 'Was this post published?', confirmLabel: 'Queue it again', body: h('div', null, h('p', { text: 'Publishing was interrupted, so the post may already be live on ' + (names[p.channel] || p.channel) + '. Open the channel and look for it first.' }), h('label', { class: 'check-row' }, box, ' I checked the channel and this post is NOT there.')),
+            onConfirm: function () { return api('POST', '/admin/social/' + encodeURIComponent(p.id) + '/retry', { confirmNotPublished: box.checked }); } }).then(function (ok) { if (ok) { toast('Queued again.', 'good'); route(); } }).catch(fail);
+        } }));
+        return h('tr', { testid: 'post-row', 'data-post-id': p.id, 'data-status': p.status },
+          h('td', null, h('strong', { text: names[p.channel] || p.channel }), p.sandbox ? h('div', null, h('span', { class: 'chip info', text: 'Sandbox (simulated)' })) : null),
+          h('td', null, h('div', { class: 'small', text: (p.text || '').split('\n')[0] }), h('div', { class: 'small muted', text: sport(p.genre) })),
+          h('td', { class: 'nowrap small', text: when(p.publishedAt || p.scheduledAt) }),
+          h('td', null, chip(p.status), p.heldReason ? h('div', { class: 'small muted', text: p.heldReason }) : null, p.lastError ? h('div', { class: 'small muted', text: p.lastError }) : null, p.cancelReason ? h('div', { class: 'small muted', text: friendly(p.cancelReason) }) : null, p.pending ? h('div', { class: 'small muted', text: p.pending === 'in_tiktok_inbox_as_draft' ? 'In your TikTok inbox as a draft: finish posting in the app.' : 'Processing at TikTok.' }) : null, p.url ? h('a', { href: p.url, target: '_blank', rel: 'noopener noreferrer', text: 'View post' }) : null),
+          acts);
+      });
+      add(main, [
+        head('Publishing', 'Scheduled social posts for approved fight campaigns. Nothing posts without your approval, and every fight is checked again just before posting.', toggle),
+        paused ? h('div', { class: 'banner warn', testid: 'paused-banner' }, h('span', { class: 'ico', text: '⏸' }), h('div', null, h('strong', { text: 'Publishing is paused.' }), 'Nothing will be posted until you resume.' + (r.paused.by ? ' Paused by ' + r.paused.by + '.' : ''))) : null,
+        h('section', { class: 'card' }, h('h2', { text: 'Channels' }), h('p', { class: 'sub', text: 'Mode: ' + (r.provider === 'none' ? 'off (posts are held)' : r.provider === 'sandbox' ? 'sandbox: posting is simulated, nothing reaches the real accounts' : 'live') }),
+          h('div', { class: 'grid tiles' }, Object.keys(names).map(function (ch) { var c = r.channels[ch] || {}; return h('div', { class: 'tile', testid: 'channel-tile-' + ch }, h('div', { class: 'label', text: names[ch] }), h('div', { class: 'value text', text: c.mode === 'live' ? 'Connected' : c.mode === 'sandbox' ? 'Sandbox' : 'Off' }), h('div', { class: 'hint', text: c.ready ? (c.note || 'Ready') : 'See Connections for what is needed' })); }))),
+        h('section', { class: 'card' }, h('h2', { text: 'Queue' }), rows.length ? h('div', { class: 'table-wrap' }, h('table', { class: 'data', testid: 'posts-table' }, h('thead', null, h('tr', null, h('th', { text: 'Channel' }), h('th', { text: 'Post' }), h('th', { text: 'When' }), h('th', { text: 'Status' }), h('th', { text: '' }))), h('tbody', null, rows)))
+          : h('div', { class: 'empty', testid: 'posts-empty', text: 'Nothing scheduled. Approve a fight campaign, then press “Schedule posts”.' })),
+      ]);
+    });
+  };
+
+  pages.connections = function (main) {
+    return Promise.all([api('GET', '/admin/connections'), api('GET', '/admin/email/readiness').catch(function () { return { readiness: null }; })]).then(function (r) {
+      var c = r[0].connections, e = r[1].readiness; clear(main);
+      var names = { facebook: 'Facebook Page', instagram: 'Instagram business account', x: 'X account', tiktok: 'TikTok account' };
+      var list = function (items) { return h('ul', { class: 'checklist' }, items.map(function (it) { return h('li', { class: it.done ? 'done' : 'todo' }, h('span', { 'aria-hidden': 'true', text: it.done ? '✓ ' : '○ ' }), it.text); })); };
+      add(main, [
+        head('Connections', 'What the Growth Engine is connected to, and exactly what is still needed. Nothing here can send or post on its own.'),
+        h('section', { class: 'card', testid: 'conn-social' }, h('h2', { text: 'Social media publishing' }), h('p', { class: 'sub', text: 'Mode: ' + c.social.provider + (c.social.paused.paused ? ' · paused' : '') }),
+          Object.keys(names).map(function (ch) { var x = c.social.channels[ch]; return h('div', { class: 'conn-row' }, h('strong', { text: names[ch] }), ' ', x.mode === 'live' ? h('span', { class: 'chip good', text: '✓ Live' }) : x.mode === 'sandbox' ? h('span', { class: 'chip info', text: 'Sandbox' }) : h('span', { class: 'chip', text: 'Off' }), x.blockers.length ? list(x.blockers.map(function (b) { return { done: false, text: b }; })) : null, x.note ? h('p', { class: 'small muted', text: x.note }) : null); })),
+        h('section', { class: 'card', testid: 'conn-email' }, h('h2', { text: 'Business email (PR and affiliate invitations)' }), h('p', { class: 'sub', text: 'Sender: ' + c.email.sender + ' · real sending: ' + (c.email.realDelivery ? 'ON' : 'OFF') }),
+          e ? list(e.steps) : h('p', { class: 'muted', text: 'Could not run the email check right now.' }),
+          e && e.dns.error ? h('p', { class: 'small muted', text: 'DNS lookup problem: ' + e.dns.error }) : null),
+        h('section', { class: 'card', testid: 'conn-results' }, h('h2', { text: 'Registrations and paying players' }),
+          list([
+            { done: true, text: 'Every Growth Engine link carries the campaign tag the live site already records when someone registers' },
+            { done: c.liveRegistrationReport.configured, text: 'Read-only live registration report connected' + (c.liveRegistrationReport.latest ? ' (last pulled ' + c.liveRegistrationReport.latest.day + ')' : '') },
+            { done: c.verifiedEventIngest.configured, text: 'Signed event channel ready for verified registrations and settled paid entries (' + c.verifiedEventIngest.path + ')' },
+          ])),
+        h('section', { class: 'card' }, h('h2', { text: 'Fight contest list' }), h('p', { class: 'small', text: 'Read-only: ' + c.contestFeed.url }), h('span', { class: 'chip good', text: '✓ Connected' })),
       ]);
     });
   };

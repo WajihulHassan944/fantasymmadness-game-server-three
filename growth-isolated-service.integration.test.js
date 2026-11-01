@@ -176,6 +176,24 @@ test('isolated Growth Engine service', { skip }, async (t) => {
       assert.ok(s.delivery.held >= 1);
       assert.equal(mail.length, before);
     });
+    await t.test('publishing gates: not connected -> held; fight no longer verified -> cancelled', async () => {
+      const d = (await runtime.listDrafts({ kind: 'marketing', status: 'needs_owner_review' }))[0];
+      assert.equal((await runtime.approveDraft(d.id, { admin: 'owner', now: T(40) })).ok, true);
+      const s1 = await runtime.social.schedule(d.id, { channels: ['x', 'facebook'], scheduledAt: T(41).toISOString(), admin: 'owner', now: T(40) });
+      assert.equal(s1.ok, true, JSON.stringify(s1));
+      const out = await runtime.social.dispatch(T(42));
+      assert.equal(out.held, 2); // provider "none": nothing is posted
+      const held = await runtime.social.list({ status: 'held' });
+      assert.ok(held.every((p) => /provider is "none"/.test(p.heldReason)));
+      // Owner retries after "connecting"; the fight has meanwhile disappeared from the contest list
+      for (const p of held) assert.equal((await runtime.social.retry(p.id, { admin: 'owner', now: T(43) })).ok, true);
+      const resolved = resolveGrowthRuntimeConfig({ ...env, GROWTH_SOCIAL_PROVIDER: 'sandbox', GROWTH_DELIVERY_PROVIDER: 'none' });
+      const emptyFeed = async (url) => (url.includes('/api/public/') ? { ok: true, status: 200, json: async () => ({ items: [] }) } : podcastFetch(url));
+      const other = createGrowthRuntime({ db: client.db('fmgrowthtest'), config: resolved.config, secrets: resolved.secrets, provider: createDeliveryProvider({ config: resolved.config }), fetchImpl: emptyFeed });
+      const out2 = await other.social.dispatch(T(50));
+      assert.equal(out2.cancelled, 2); assert.equal(out2.published, 0);
+      assert.ok((await other.social.list({ status: 'cancelled' })).every((p) => p.cancelReason === 'contest_no_longer_open_or_verified'));
+    });
     await t.test('daily report (due one minute after the day starts) aggregates drafts, deliveries, suppressions and alerts', async () => {
       const day = Date.parse('2026-11-04T09:00:00Z');
       await runtime.tick({ now: new Date(day) });

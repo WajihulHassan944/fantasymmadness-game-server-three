@@ -16,6 +16,9 @@ const { createGrowthRuntime } = require('./growth-runtime');
 const fs = require('fs');
 const path = require('path');
 const { createBackoffice, verifyPassword, createLoginLimiter } = require('./growth-backoffice');
+const { verifySignature } = require('./growth-affiliate-program');
+const { checkEmailReadiness } = require('./growth-email-readiness');
+const { BUSINESS_SENDER } = require('./growth-runtime-config');
 
 // Back-office console assets (served only by the isolated project).
 // Literal paths so the Vercel bundler traces and ships these files with the function.
@@ -146,6 +149,16 @@ function registerIsolatedGrowthRoutes({ app, env = process.env, express, transpo
   router.post('/admin/run-now', admin, wrap(async (req, res, rt) => res.json({ ok: true, summary: await rt.tick({ now: new Date() }) })));
 
 
+  // ---- verified events from a trusted server (HMAC-signed; read-only for production) ----
+  app.post('/api/growth/events', express.raw({ type: '*/*', limit: '16kb' }), wrap(async (req, res, rt) => {
+    const raw = typeof req.rawBody === 'string' ? req.rawBody : Buffer.isBuffer(req.body) ? req.body.toString('utf8') : JSON.stringify(req.body || {});
+    const sig = verifySignature({ secret: secrets.ingestSecret, rawBody: raw, timestamp: req.headers['x-growth-timestamp'], signature: req.headers['x-growth-signature'] });
+    if (!sig.ok) return res.status(sig.reason === 'ingest_not_configured' ? 503 : 401).json({ ok: false, reason: sig.reason });
+    let body; try { body = JSON.parse(raw); } catch { return res.status(400).json({ ok: false, reason: 'invalid_json' }); }
+    const r = await rt.affiliates.ingest(body);
+    res.status(r.ok ? 200 : 422).json(r);
+  }));
+
   // ---- console read models + owner actions ----
   let backoffice = null;
   const bo = (rt) => (backoffice ||= createBackoffice({ runtime: rt }));
@@ -164,6 +177,28 @@ function registerIsolatedGrowthRoutes({ app, env = process.env, express, transpo
   router.get('/admin/reports', admin, wrap(async (req, res, rt) => res.json({ ok: true, reports: await bo(rt).reports({ limit: req.query.limit }) })));
   router.get('/admin/audit', admin, wrap(async (req, res, rt) => res.json({ ok: true, entries: await bo(rt).auditLog({ limit: req.query.limit }) })));
   router.get('/admin/suppressions', admin, wrap(async (req, res, rt) => res.json({ ok: true, suppressions: await bo(rt).suppressions({ limit: req.query.limit }) })));
+
+  // ---- publishing (approval-gated) ----
+  router.get('/admin/social', admin, wrap(async (req, res, rt) => res.json({ ok: true, posts: await rt.social.list({ status: req.query.status }), paused: await rt.social.isPaused(), provider: resolved.config.social.provider, channels: resolved.config.social.channels })));
+  router.post('/admin/drafts/:id/schedule', admin, wrap(async (req, res, rt) => { const r = await rt.social.schedule(req.params.id, { channels: req.body?.channels, scheduledAt: req.body?.scheduledAt, admin: who(req) }); res.status(r.ok ? 200 : 409).json(r); }));
+  router.post('/admin/social/pause', admin, wrap(async (req, res, rt) => res.json({ ok: true, paused: await rt.social.setPaused(req.body?.paused === true, { admin: who(req) }) })));
+  router.post('/admin/social/:id/cancel', admin, wrap(async (req, res, rt) => { const r = await rt.social.cancel(req.params.id, { admin: who(req) }); res.status(r.ok ? 200 : 409).json(r); }));
+  router.post('/admin/social/:id/retry', admin, wrap(async (req, res, rt) => { const r = await rt.social.retry(req.params.id, { admin: who(req), confirmNotPublished: req.body?.confirmNotPublished === true }); res.status(r.ok ? 200 : 409).json(r); }));
+
+  // ---- affiliates ----
+  router.get('/admin/affiliates', admin, wrap(async (req, res, rt) => res.json({ ok: true, affiliates: await rt.affiliates.list(await bo(rt).activeContests()) })));
+  router.post('/admin/affiliates/:id/status', admin, wrap(async (req, res, rt) => { const r = await rt.affiliates.transition(req.params.id, String(req.body?.status || ''), { admin: who(req), note: req.body?.note, liveAffiliateId: req.body?.liveAffiliateId }); res.status(r.ok ? 200 : 409).json(r); }));
+
+  // ---- reports + connections ----
+  router.get('/admin/funnel', admin, wrap(async (req, res, rt) => res.json({ ok: true, funnel: await bo(rt).funnel() })));
+  router.get('/admin/email/readiness', admin, wrap(async (req, res) => res.json({ ok: true, readiness: await checkEmailReadiness({ delivery: resolved.config.delivery, sender: BUSINESS_SENDER, apiKey: secrets.resendApiKey, fetchImpl: fetchImpl || globalThis.fetch }) })));
+  router.get('/admin/connections', admin, wrap(async (req, res, rt) => res.json({ ok: true, connections: {
+    contestFeed: { url: resolved.config.contestSourceUrl, readOnly: true },
+    social: { provider: resolved.config.social.provider, approved: resolved.config.social.approved, paused: await rt.social.isPaused(), channels: resolved.config.social.channels },
+    email: { provider: resolved.config.delivery.provider, realDelivery: resolved.config.delivery.realDelivery, blockers: resolved.config.delivery.blockers, sender: BUSINESS_SENDER },
+    liveRegistrationReport: { configured: resolved.config.liveReport.configured, latest: await rt.collections.liveReports.find({}).sort({ day: -1 }).limit(1).next().then((r) => (r ? { day: r.day, campaigns: r.groups.length } : null)) },
+    verifiedEventIngest: { configured: resolved.config.ingest.configured, path: '/api/growth/events' },
+  } })));
 
   app.use('/api/growth', router);
   return { mounted: true, getRuntime };

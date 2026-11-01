@@ -168,3 +168,14 @@ table.data td.num,table.data th.num{text-align:right;font-variant-numeric:tabula
 .facts{display:flex;flex-wrap:wrap;gap:8px 14px;align-items:center;background:#f3f8f3;border:1px solid #cfe6cf;border-radius:8px;padding:8px 12px;margin:6px 0;font-size:13.5px}
 .channel-tabs{display:flex;gap:6px;margin-top:8px;flex-wrap:wrap}
 .channel-tabs .btn.active{background:var(--brand);color:#fff;border-color:var(--brand)}
+
+.funnel{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px}
+.funnel-step{border:1px solid var(--line);border-radius:10px;padding:10px 12px;background:#fff;border-top:4px solid var(--blue-450)}
+.funnel-step.off{border-top-color:#d3d5db;background:#fafafb}
+.funnel-step .label{font-size:12px;font-weight:700;color:var(--ink-3);text-transform:uppercase;letter-spacing:.4px}
+.funnel-step .value{font-size:26px;font-weight:800;font-variant-numeric:tabular-nums}
+.funnel-step .hint{font-size:12px;color:var(--ink-3)}
+.check-row{display:flex;gap:6px;align-items:center;flex-wrap:wrap;margin:6px 0}
+.checklist{list-style:none;padding:0;margin:8px 0}
+.checklist li{padding:4px 0}.checklist li.done{color:var(--good)}.checklist li.todo{color:var(--ink-2)}
+.conn-row{padding:8px 0;border-bottom:1px solid #eef0f2}
