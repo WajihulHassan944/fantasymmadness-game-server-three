@@ -9,5 +9,7 @@ assert.equal(reviewEvidence(all).readyForSandboxIntegration,true);
 assert.equal(reviewEvidence(all.map(x=>x.kind==='business_sender'?{...x,account:'facester1@gmail.com'}:x)).readyForSandboxIntegration,false);
 assert.equal(reviewEvidence(all.map(x=>x.kind==='isolated_database'?{...x,productionShared:true}:x)).readyForSandboxIntegration,false);
 assert.equal(reviewEvidence(all.map(x=>x.kind==='sandbox_mail'?{...x,realExternalDelivery:true}:x)).readyForSandboxIntegration,false);
+assert.equal(reviewEvidence(all.map(x=>x.kind==='isolated_database'?{...x,productionShared:undefined}:x)).readyForSandboxIntegration,false);
+assert.equal(reviewEvidence(all.map(x=>x.kind==='sandbox_mail'?{...x,realExternalDelivery:undefined}:x)).readyForSandboxIntegration,false);
 assert.equal(reviewEvidence(all).realDeliveryPermitted,false);
 console.log('STAGE13_EVIDENCE_LEDGER_DRY_RUN '+JSON.stringify({missingWithoutRealEvidence:none.missing,syntheticAllVerified:true,externalSends:0}));
