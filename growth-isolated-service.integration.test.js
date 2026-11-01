@@ -187,7 +187,7 @@ test('isolated Growth Engine service', { skip }, async (t) => {
       assert.ok(held.every((p) => /provider is "none"/.test(p.heldReason)));
       // Owner retries after "connecting"; the fight has meanwhile disappeared from the contest list
       for (const p of held) assert.equal((await runtime.social.retry(p.id, { admin: 'owner', now: T(43) })).ok, true);
-      const resolved = resolveGrowthRuntimeConfig({ ...env, GROWTH_SOCIAL_PROVIDER: 'sandbox' });
+      const resolved = resolveGrowthRuntimeConfig({ ...env, GROWTH_SOCIAL_PROVIDER: 'sandbox', GROWTH_DELIVERY_PROVIDER: 'none' });
       const emptyFeed = async (url) => (url.includes('/api/public/') ? { ok: true, status: 200, json: async () => ({ items: [] }) } : podcastFetch(url));
       const other = createGrowthRuntime({ db: client.db('fmgrowthtest'), config: resolved.config, secrets: resolved.secrets, provider: createDeliveryProvider({ config: resolved.config }), fetchImpl: emptyFeed });
       const out2 = await other.social.dispatch(T(50));
