@@ -24,9 +24,16 @@ jobs:
           cp package-lock.json /tmp/lock.before.json
           npm install --package-lock-only --ignore-scripts --no-audit --no-fund
           node -e "const a=require('/tmp/lock.before.json').packages,b=require('./package-lock.json').packages;const ch=[];for(const k of new Set([...Object.keys(a),...Object.keys(b)])){const x=a[k]&&a[k].version,y=b[k]&&b[k].version;if(x!==y)ch.push(k+': '+(x||'-')+' -> '+(y||'-'))}console.log(ch.length+' changed entries');console.log(ch.join('\n'))"
+      - name: Apply in-range security updates (npm audit fix, no --force)
+        run: |
+          cp package-lock.json /tmp/lock.synced.json
+          npm audit fix --ignore-scripts --no-fund || true
+          git diff --stat -- package.json
+          node -e "const a=require('/tmp/lock.synced.json').packages,b=require('./package-lock.json').packages;const ch=[];for(const k of new Set([...Object.keys(a),...Object.keys(b)])){const x=a[k]&&a[k].version,y=b[k]&&b[k].version;if(x!==y)ch.push(k+': '+(x||'-')+' -> '+(y||'-'))}console.log(ch.length+' audit-fix changes');console.log(ch.join('\n'))"
       - name: Print the regenerated lock file (gzip + base64)
         run: |
           sha256sum package-lock.json
+          git diff --quiet -- package.json || { echo PKG_CHANGED; gzip -9nc package.json | base64 -w 20000 | sed 's/^/PKG:/'; }
           gzip -9nc package-lock.json | base64 -w 20000 | sed 's/^/LOCK:/'
       - run: node scripts/fight-registry-regression.test.cjs
       - run: npm ci --ignore-scripts
