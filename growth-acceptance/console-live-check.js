@@ -74,6 +74,19 @@ async function main() {
       const pre = await fetch(`${origin}/api/growth/admin/login`, { method: 'OPTIONS', headers: { Origin: 'https://evil.example', 'Access-Control-Request-Method': 'POST' } });
       ok(pre.headers.get('access-control-allow-origin') !== 'https://evil.example', 'preflight leaked');
     });
+    await check('admin back-office connection: only console tokens accepted; preview may frame and call the engine', async () => {
+      // A token signed directly with JWT_SECRET_ADMIN (the live backend's admin token format) is refused.
+      const liveStyle = jwt.sign({ email: LABEL, role: 'growth_owner', pwv }, process.env.JWT_SECRET_ADMIN, { expiresIn: '5m' });
+      ok((await fetch(`${origin}/api/growth/admin/session`, { headers: { Authorization: `Bearer ${liveStyle}`, Origin: STAGING } })).status === 401, 'live-style admin token accepted');
+      const PREVIEW = 'https://fmm-ver2-git-test-growth-e-7c8860-kelly-davis-projects-6c108d0b.vercel.app';
+      const csp = (await fetch(`${origin}/api/growth/console`)).headers.get('content-security-policy') || '';
+      const fa = (csp.split(';').map((x) => x.trim()).find((x) => x.startsWith('frame-ancestors')) || '').split(/\s+/).slice(1);
+      log(`frame-ancestors: ${fa.join(' ')}`);
+      ok(fa.includes(PREVIEW), 'admin preview not allowed to embed the console');
+      ok(fa.every((x) => x === "'self'" || /^https:\/\/[a-z0-9.-]+$/.test(x)), 'wildcard or non-https frame ancestor');
+      const h = await fetch(`${origin}/api/growth/health`, { headers: { Origin: PREVIEW } });
+      ok(h.status === 200 && h.headers.get('access-control-allow-origin') === PREVIEW, `preview health CORS ${h.status} ${h.headers.get('access-control-allow-origin')}`);
+    });
     await check('sessions from before the password change are refused', async () => {
       const stale = signConsoleToken(process.env.JWT_SECRET_ADMIN, { email: LABEL, pwv: 'old-password-ver' }, { expiresIn: '5m' });
       ok((await fetch(`${origin}/api/growth/admin/session`, { headers: { Authorization: `Bearer ${stale}`, Origin: STAGING } })).status === 401, 'stale accepted');
