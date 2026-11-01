@@ -15,6 +15,7 @@ const { prepareOutreachReview } = require('./growth-outreach-review-queue');
 const { renderBusinessEmail } = require('./growth-business-email-templates');
 const { nextFollowup } = require('./growth-followup-reporting');
 const { createSuppression } = require('./growth-suppression');
+const contestCampaigns = require('./growth-contest-campaigns');
 
 const clean = (s, n = 200) => String(s ?? '').replace(/[\r\n\x00-\x1f]/g, ' ').trim().slice(0, n);
 const minuteId = (d) => 'growth_' + d.toISOString().replace(/[^0-9]/g, '').slice(0, 12);
@@ -31,6 +32,7 @@ function createGrowthRuntime({ db, config, secrets = {}, provider, fetchImpl = g
     deliveries: db.collection('growth_delivery_claims'), alerts: db.collection('growth_alerts'), reports: db.collection('growth_reports'),
     suppressions: db.collection('growth_suppressions'), audit: db.collection('growth_audit_log'),
     attribution: db.collection('growth_attribution_events'),
+    coverage: db.collection('growth_marketing_coverage'), gateRejections: db.collection('growth_campaign_rejections'),
   };
   const claims = createIsolatedRunClaims(col.runs, { testMode: true });
   const store = createStore(col.jobs, { testMode: true });
@@ -45,6 +47,8 @@ function createGrowthRuntime({ db, config, secrets = {}, provider, fetchImpl = g
     await col.deliveries.createIndex({ draftId: 1 }, { unique: true });
     await col.alerts.createIndex({ alertKey: 1 }, { unique: true });
     await col.reports.createIndex({ day: 1 }, { unique: true });
+    await col.coverage.createIndex({ day: 1 }, { unique: true });
+    await col.gateRejections.createIndex({ at: -1 });
   }
 
   // ---- alerts: always recorded for the back office; emailed when a sender exists
@@ -69,29 +73,91 @@ function createGrowthRuntime({ db, config, secrets = {}, provider, fetchImpl = g
       const upd = await col.prospects.updateOne({ key }, { $setOnInsert: { key, id: 'p-' + hash(key), genre: r.genre, focus: r.focus, name: r.name, sourceUrl: r.url, source: r.source, verified: true, contact: null, contactVerified: false, consent: false, optedOut: false, firstSeenAt: now.toISOString() }, $set: { lastSeenAt: now.toISOString() } }, { upsert: true });
       newProspects += upd.upsertedCount;
     }
-    // Marketing: one review draft per sport per day from verified public sources.
-    const research = run.results.filter((r) => r.focus === 'fans').map((r) => ({ genre: r.genre, title: `${r.name}: fight-week prediction challenge`, sourceUrl: r.url, verified: true }));
-    // Partner-side prospects (podcasts, creators) are candidates for BOTH public
-    // relations (as media) and affiliate recruitment (as creators). Fan-side
-    // sources feed marketing only.
+    // Marketing comes ONLY from verified, published FANTASY MMADNESS contests.
+    // Podcasts, shows, journalists and creators (both discovery focuses) are
+    // PR and affiliate-recruitment candidates, never fight marketing.
+    const marketing = await refreshMarketing(now, { trigger: 'scheduled_discovery' });
+    const research = marketing.contests.map((c) => ({ genre: c.sport, title: `${c.fighterA} vs ${c.fighterB}`, sourceUrl: c.contestUrl, verified: true }));
     const stored = await col.prospects.find({ verified: true }).toArray();
-    const partnerProspects = stored.filter((p) => p.focus === 'partners').flatMap((p) => [
+    const partnerProspects = stored.flatMap((p) => [
       { ...p, category: 'media' },
       { ...p, id: `${p.id}-affiliate`, category: 'affiliate' },
     ]);
     const adapters = createDraftAdapters({ research, prospects: partnerProspects });
-    let marketingDrafts = 0;
-    for (const genre of GENRES) {
-      const d = (await adapters.marketing({ genre })).drafts[0];
-      if (!d) continue;
-      const id = `mkt-${genre}-${dayKey(now)}`;
-      const upd = await col.drafts.updateOne({ id }, { $setOnInsert: { id, kind: 'marketing', genre, channels: ['instagram', 'facebook', 'x', 'tiktok'], headline: clean(d.title, 180), sourceUrl: d.sourceUrl, text: `${clean(d.title, 180)} — make your picks on FANTASY MMADNESS. fantasymmadness.com #FANTASYMMADNESS`, status: 'needs_owner_review', ownerApproved: false, sendPermitted: false, createdAt: now.toISOString() } }, { upsert: true });
-      marketingDrafts += upd.upsertedCount;
-    }
+    const marketingDrafts = marketing.created;
     // Persist the 25 department workstreams for this run (5 sports x 5 departments).
     const scheduler = createIsolatedWorkstreamScheduler({ collection: col.workstreams, testMode: true, adapters, clock: () => now });
     const execution = await scheduler.tick();
     return { prospectsFound: run.uniqueProspects, newProspects, marketingDrafts, workstreams: execution.completed, discoveryErrors: run.errors.length };
+  }
+
+  // ---- fight marketing from verified contests -------------------------------
+  async function mediaNames() {
+    const rows = await col.prospects.find({}, { projection: { name: 1 } }).toArray();
+    return new Set(rows.map((r) => contestCampaigns.norm(r.name)).filter((n) => n.length >= 4));
+  }
+  async function loadContests(now) {
+    return contestCampaigns.fetchVerifiedContests({ fetchImpl, baseUrl: config.contestSourceUrl, now, horizonDays: config.marketingHorizonDays, mediaNames: await mediaNames() });
+  }
+  async function withdraw(filter, reason, now) {
+    const r = await col.drafts.updateMany({ kind: 'marketing', status: { $in: ['needs_owner_review', 'approved'] }, ...filter }, { $set: { status: 'rejected', ownerApproved: false, sendPermitted: false, rejectedBy: 'system-safeguard', rejectedAt: now.toISOString(), rejectReason: reason } });
+    return r.modifiedCount || 0;
+  }
+  async function refreshMarketing(now = new Date(), { trigger = 'manual' } = {}) {
+    const names = await mediaNames();
+    const feed = await contestCampaigns.fetchVerifiedContests({ fetchImpl, baseUrl: config.contestSourceUrl, now, horizonDays: config.marketingHorizonDays, mediaNames: names });
+    // Safeguard 1: campaigns not tied to a verified contest leave the queue
+    // (this removes the old podcast/media-based "fight" posts).
+    let withdrawn = await withdraw({ contestId: { $exists: false } }, 'Withdrawn automatically: not based on a verified FANTASY MMADNESS fight contest', now);
+    const created = []; const blocked = [];
+    const coverage = {};
+    for (const sport of contestCampaigns.SPORTS) coverage[sport] = { verifiedContests: 0, campaignsCreated: 0, campaignsActive: 0, rejectedContests: 0, rejected: [] };
+    for (const r of feed.rejected) if (r.sport && coverage[r.sport]) { coverage[r.sport].rejectedContests++; if (coverage[r.sport].rejected.length < 8) coverage[r.sport].rejected.push(r); }
+    for (const c of feed.contests) coverage[c.sport].verifiedContests++;
+    if (feed.sourceReachable) {
+      // Safeguard 2: pending/approved campaigns whose contest is no longer verified, or whose
+      // details changed, are withdrawn (never published with stale or wrong details).
+      const live = new Map(feed.contests.map((c) => [c.id, c]));
+      const open = await col.drafts.find({ kind: 'marketing', contestId: { $exists: true }, status: { $in: ['needs_owner_review', 'approved'] } }).toArray();
+      for (const d of open) {
+        const c = live.get(d.contestId);
+        const why = !c ? 'Withdrawn automatically: the contest is no longer open, upcoming and verified'
+          : c.fingerprint !== d.contestFingerprint ? 'Withdrawn automatically: fight details changed (a corrected campaign was prepared)' : null;
+        if (why) withdrawn += await withdraw({ id: d.id }, why, now);
+      }
+      for (const sport of contestCampaigns.SPORTS) {
+        const list = feed.contests.filter((c) => c.sport === sport).slice(0, config.maxCampaignsPerSport);
+        for (const c of list) {
+          const k = contestCampaigns.buildCampaign(c);
+          const id = `mkt-${c.id}-${c.fingerprint}`;
+          const draft = { id, kind: 'marketing', genre: sport, contestId: c.id, contestFingerprint: c.fingerprint, contest: c, channels: ['instagram', 'facebook', 'x', 'tiktok'], headline: k.headline, text: k.text, posts: k.posts, link: k.link, sourceUrl: c.contestUrl, verifiedAt: now.toISOString(), status: 'needs_owner_review', ownerApproved: false, sendPermitted: false, createdAt: now.toISOString() };
+          // Safeguard 3: final gate. A failing campaign is recorded, never queued.
+          const reasons = contestCampaigns.checkCampaign(draft, c, { now, mediaNames: names });
+          if (reasons.length) { blocked.push({ id, reasons }); await col.gateRejections.insertOne({ id, contestId: c.id, sport, reasons, at: now.toISOString(), trigger }); continue; }
+          const upd = await col.drafts.updateOne({ id }, { $setOnInsert: draft }, { upsert: true });
+          if (upd.upsertedCount) { created.push(id); coverage[sport].campaignsCreated++; }
+        }
+        coverage[sport].campaignsActive = await col.drafts.countDocuments({ kind: 'marketing', genre: sport, contestId: { $exists: true }, status: { $in: ['needs_owner_review', 'approved', 'published'] } });
+      }
+    } else {
+      await alert(`contest-source:${dayKey(now)}`, 'marketing', 'contest feed', `could not reach the FANTASY MMADNESS contest feed: ${feed.errors.join('; ')}`, now);
+    }
+    const doc = { day: dayKey(now), checkedAt: now.toISOString(), trigger, sourceReachable: feed.sourceReachable, sourceErrors: feed.errors, contestsChecked: feed.checked, verifiedContests: feed.contests.length, created: created.length, withdrawn, blocked, sports: coverage };
+    await col.coverage.updateOne({ day: doc.day }, { $set: doc }, { upsert: true });
+    if (withdrawn || created.length) await audit('refresh_marketing', { trigger, created: created.length, withdrawn, blocked: blocked.length, admin: 'system' });
+    return { contests: feed.contests, created: created.length, withdrawn, blocked: blocked.length, sourceReachable: feed.sourceReachable };
+  }
+  // Re-verify a campaign's contest right before an owner action.
+  async function reverifyMarketing(draft, now = new Date()) {
+    if (draft.kind !== 'marketing') return { ok: true };
+    if (!draft.contestId) return { ok: false, reason: 'not_based_on_a_verified_contest' };
+    const feed = await loadContests(now);
+    if (!feed.sourceReachable) return { ok: false, reason: 'contest_feed_unreachable_try_again' };
+    const c = feed.contests.find((x) => x.id === draft.contestId);
+    if (!c) return { ok: false, reason: 'contest_no_longer_open_or_verified' };
+    if (c.fingerprint !== draft.contestFingerprint) return { ok: false, reason: 'fight_details_changed_use_the_corrected_campaign' };
+    const reasons = contestCampaigns.checkCampaign(draft, c, { now, mediaNames: await mediaNames() });
+    return reasons.length ? { ok: false, reason: 'campaign_failed_safeguard', details: reasons } : { ok: true, contest: c };
   }
 
   async function report(now) {
@@ -122,7 +188,7 @@ function createGrowthRuntime({ db, config, secrets = {}, provider, fetchImpl = g
     return { followupDraftsCreated: created };
   }
 
-  const handlers = { discover, aggregate_report: report, prepare_followup: followups };
+  const handlers = { discover, aggregate_report: report, prepare_followup: followups, refresh_marketing: (now) => refreshMarketing(now, { trigger: 'scheduled_refresh' }) };
 
   // ---- delivery of approved drafts -----------------------------------------
   async function dispatch(now) {
@@ -173,6 +239,9 @@ function createGrowthRuntime({ db, config, secrets = {}, provider, fetchImpl = g
       await store.enqueue({ id: `discover-${day}`, type: 'discover', dueAt: iso });
       await store.enqueue({ id: `followup-${day}`, type: 'prepare_followup', dueAt: iso });
       await store.enqueue({ id: `report-${day}`, type: 'aggregate_report', dueAt: new Date(now.getTime() + 60000).toISOString() });
+      // Re-check the published contests every 6 hours: new fights get campaigns,
+      // closed or changed ones are withdrawn before they can be approved.
+      await store.enqueue({ id: `marketing-${day}-${Math.floor(now.getUTCHours() / 6)}`, type: 'refresh_marketing', dueAt: new Date(now.getTime() + 2 * 60000).toISOString() });
       for (let i = 0; i < 6; i++) {
         const job = await store.claim(now.getTime());
         if (!job) break;
@@ -204,6 +273,11 @@ function createGrowthRuntime({ db, config, secrets = {}, provider, fetchImpl = g
     return (await col.drafts.find(q).sort({ createdAt: -1 }).limit(Math.min(500, Number(limit) || 100)).toArray()).map(publicDraft);
   }
   async function approveDraft(id, { admin, now = new Date() } = {}) {
+    const current = await col.drafts.findOne({ id: clean(id, 160) });
+    if (current && current.status === 'needs_owner_review' && current.kind === 'marketing') {
+      const v = await reverifyMarketing(current, now);
+      if (!v.ok) return { ok: false, reason: v.reason, details: v.details };
+    }
     const r = await col.drafts.findOneAndUpdate({ id: clean(id, 160), status: 'needs_owner_review' }, { $set: { status: 'approved', ownerApproved: true, sendPermitted: true, approvedBy: clean(admin, 120), approvedAt: now.toISOString() } }, { returnDocument: 'after' });
     if (!r) return { ok: false, reason: 'not_found_or_not_awaiting_review' };
     await audit('approve_draft', { id: r.id, admin: clean(admin, 120) });
@@ -256,7 +330,7 @@ function createGrowthRuntime({ db, config, secrets = {}, provider, fetchImpl = g
   }
   async function unsubscribe(token) { return suppression.unsubscribe(token); }
 
-  return { init, tick, dispatch, listDrafts, approveDraft, rejectDraft, addVerifiedContact, overview, listAlerts, ackAlert, requeueJob, unsubscribe, suppression, collections: col };
+  return { init, tick, dispatch, refreshMarketing, reverifyMarketing, listDrafts, approveDraft, rejectDraft, addVerifiedContact, overview, listAlerts, ackAlert, requeueJob, unsubscribe, suppression, collections: col };
 }
 
 module.exports = { createGrowthRuntime };

@@ -66,6 +66,10 @@ function resolveGrowthRuntimeConfig(env = process.env) {
   } else if (provider !== 'none') errors.push(`Unknown GROWTH_DELIVERY_PROVIDER "${provider}"`);
   if (env.GROWTH_OUTBOUND_ENABLED === 'true' && !delivery.realDelivery) errors.push('GROWTH_OUTBOUND_ENABLED is "true" but real delivery is not fully authorized');
 
+  // Marketing campaigns come only from the published FANTASY MMADNESS contest feeds (read-only).
+  let contestSourceUrl = '';
+  try { contestSourceUrl = require('./growth-contest-campaigns').sourceBase(env); } catch (e) { errors.push(e.message); }
+
   // Hostname only (never credentials), so the operator can confirm the cluster
   // and pin it with GROWTH_TEST_ATLAS_HOST.
   let host = null; try { host = uri ? new URL(uri).hostname : null; } catch {}
@@ -75,6 +79,9 @@ function resolveGrowthRuntimeConfig(env = process.env) {
     discoveryLimitPerWorker: Math.min(25, Math.max(1, Number(env.GROWTH_DISCOVERY_LIMIT || 10))),
     unsubscribeBaseUrl: String(env.GROWTH_UNSUBSCRIBE_BASE_URL || ''),
     staleRunMinutes: Math.max(5, Number(env.GROWTH_STALE_RUN_MINUTES || 30)),
+    contestSourceUrl,
+    marketingHorizonDays: Math.min(45, Math.max(3, Number(env.GROWTH_MARKETING_HORIZON_DAYS || 21))),
+    maxCampaignsPerSport: Math.min(10, Math.max(1, Number(env.GROWTH_MAX_CAMPAIGNS_PER_SPORT || 3))),
   };
   // Secrets are kept out of the returned config object.
   const secrets = { mongoUri: uri, cronSecret: String(env.CRON_SECRET || ''), adminJwtSecret: String(env.JWT_SECRET_ADMIN || ''), unsubscribeSecret: String(env.GROWTH_UNSUBSCRIBE_SECRET || ''), resendApiKey: String(env.GROWTH_RESEND_API_KEY || '') };

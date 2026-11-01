@@ -25,7 +25,10 @@ const env = {
   GROWTH_STAGING_MODE: 'isolated', GROWTH_OUTBOUND_ENABLED: 'false', GROWTH_TEST_MONGO_URI: uri, JWT_SECRET_ADMIN: secret, GROWTH_UNSUBSCRIBE_SECRET: secret,
   CRON_SECRET: 'cron-secret-for-tests-only', GROWTH_DELIVERY_PROVIDER: 'none', GROWTH_ADMIN_PASSWORD_HASH: hashPassword(PASSWORD),
 };
+const { contestFeed } = require('./growth-contest-feed.fixture');
+const feed = contestFeed();
 const podcastFetch = async (url) => {
+  const f = feed(url); if (f) return f;
   const term = new URL(url).searchParams.get('term');
   const slug = term.replace(/[^a-z]+/gi, '-').toLowerCase();
   return { ok: true, status: 200, json: async () => ({ results: [1, 2, 3].map((n) => ({ collectionName: `${term} show ${n}`, collectionViewUrl: `https://podcasts.apple.com/us/podcast/${slug}-${n}/id${n}` })) }) };
@@ -47,6 +50,8 @@ test('Growth Engine back-office console: every screen, button and workflow', { s
   // ---- genuine engine activity: interrupted run, two days of runs, a job that exhausted retries
   const now = Date.now();
   await db.collection('isolated_run_claims').insertOne({ runId: 'growth_202601010000', mode: 'isolated', state: 'claimed', createdAt: new Date(now - 3 * 3600000).toISOString() });
+  // A legacy campaign from the old logic (podcast name used as a fight): must be withdrawn automatically.
+  await db.collection('growth_drafts').insertOne({ id: 'mkt-boxing-legacy', kind: 'marketing', genre: 'boxing', headline: 'Mannix and Mora: fight-week prediction challenge', text: 'Mannix and Mora: fight-week prediction challenge — make your picks on FANTASY MMADNESS.', status: 'needs_owner_review', ownerApproved: false, sendPermitted: false, createdAt: new Date(now - 30 * 3600000).toISOString() });
   await runtime.tick({ now: new Date(now - 26 * 3600000) });
   await runtime.tick({ now: new Date(now - 26 * 3600000 + 2 * 60000) });
   await runtime.tick({ now: new Date(now - 61 * 60000) });
@@ -122,8 +127,13 @@ test('Growth Engine back-office console: every screen, button and workflow', { s
       const first = await page.getAttribute('[data-testid=draft]:nth-of-type(2)', 'data-draft-id') || await page.getAttribute('[data-testid=draft]', 'data-draft-id');
       const card = `[data-draft-id="${first}"]`;
       await page.click(`${card} [data-testid=btn-edit]`);
+      // An edit that drops the fighters / link is blocked by the safeguard
+      await page.fill('[data-testid=edit-text]', 'Win a $500 prize! Make your picks on FANTASY MMADNESS.');
+      await page.click('[data-testid=modal-confirm]');
+      await page.waitForFunction(() => /safeguard|fighter|money/i.test(document.querySelector('[data-testid=modal] .error')?.textContent || ''));
+      const original = (await draft(first)).text;
       await page.fill('[data-testid=edit-title]', 'Fight week: pick every round');
-      await page.fill('[data-testid=edit-text]', 'Make your round-by-round picks for fight week on FANTASY MMADNESS. fantasymmadness.com');
+      await page.fill('[data-testid=edit-text]', original + '\n\nWho are you taking?');
       await confirm();
       assert.match(await toastText(), /saved/i); await clearToasts();
       await page.waitForFunction((sel) => document.querySelector(sel + ' [data-testid=draft-title]')?.textContent === 'Fight week: pick every round', card);
@@ -152,20 +162,34 @@ test('Growth Engine back-office console: every screen, button and workflow', { s
         await page.waitForSelector(`[data-draft-id="${id}"]`, { state: 'detached' });
       }
       assert.equal(await page.textContent('[data-testid=nav-pending]'), '6');
-      // Filters
+      // Filters (rejected = the owner's rejection + the legacy podcast campaign withdrawn by the safeguard)
       await page.selectOption('[data-testid=filter-status]', 'rejected');
-      await page.waitForFunction(() => document.querySelectorAll('[data-testid=draft]').length === 1);
+      await page.waitForFunction(() => document.querySelectorAll('[data-testid=draft]').length === 2);
+      assert.match(await page.textContent('[data-draft-id="mkt-boxing-legacy"]'), /Withdrawn automatically: not based on a verified/);
       await page.selectOption('[data-testid=filter-status]', '');
-      await page.waitForFunction(() => document.querySelectorAll('[data-testid=draft]').length === 10);
+      await page.waitForFunction(() => document.querySelectorAll('[data-testid=draft]').length === 11);
       await page.selectOption('[data-testid=filter-sport]', 'boxing');
-      await page.waitForFunction(() => [...document.querySelectorAll('[data-testid=draft]')].length === 2);
+      await page.waitForFunction(() => [...document.querySelectorAll('[data-testid=draft]')].length === 3);
       await page.selectOption('[data-testid=filter-kind]', 'pr');
       await page.waitForSelector('[data-testid=empty]');
     });
 
     await t.test('Marketing: copy post, mark published (with link validation), withdraw approval', async () => {
       await goto('#/marketing');
-      assert.equal((await page.$$('[data-testid=marketing-workstreams] tbody tr')).length, 5);
+      assert.equal((await page.$$('[data-testid=coverage-row]')).length, 5);
+      for (const sp of ['boxing', 'mma-ufc', 'kickboxing', 'bare-knuckle', 'pro-wrestling']) assert.match(await page.textContent(`[data-testid=coverage-row][data-sport="${sp}"]`), /Covered/);
+      assert.match(await page.textContent('[data-testid=blocked-table]'), /Mannix and Mora vs Budocast/);
+      const facts = await page.$$eval('[data-testid=fight-facts]', (els) => els.map((e) => e.textContent).join(' | '));
+      assert.match(facts, /Naoya Inoue vs Murodjon Akhmadaliev/); assert.doesNotMatch(facts, /podcast|show \d/i);
+      // Channel variants
+      const anyCard = await page.getAttribute('[data-testid=marketing-list] [data-testid=draft]', 'data-draft-id');
+      await page.click(`[data-draft-id="${anyCard}"] [data-testid=channel-x]`);
+      assert.match(await page.textContent(`[data-draft-id="${anyCard}"] [data-testid=draft-text]`), /#FANTASYMMADNESS/);
+      // Check now: idempotent, nothing new
+      await page.click('[data-testid=btn-check-fights]');
+      assert.match(await toastText(), /10 verified fights, 0 new campaigns/); await clearToasts();
+      await page.waitForSelector('[data-testid=coverage-table]');
+      await page.waitForSelector('[data-testid=marketing-list] [data-testid=draft]');
       assert.equal(await page.textContent('[data-testid=mkt-approved] .value'), '3');
       await shot('04-marketing');
       const approved = await page.$$eval('[data-testid=marketing-list] [data-status=approved]', (els) => els.map((e) => e.getAttribute('data-draft-id')));

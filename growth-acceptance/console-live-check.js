@@ -12,13 +12,16 @@
 // Real drafts are never approved, rejected or edited. Nothing is sent: the
 // delivery provider stays "none".
 // Result is reported through the exit code (build logs are not readable here):
-//   77 = all checks passed in the browser
-//   78 = all HTTP checks passed, browser could not start
-//   100+N = check N failed      1 = could not start
+//   160 + mask = all checks passed in the browser; mask bit i (boxing=1, mma-ufc=2,
+//                kickboxing=4, bare-knuckle=8, pro-wrestling=16) = that sport has at
+//                least one verified fight campaign right now
+//   97  = HTTP checks passed, browser could not start
+//   100+N = check N failed      1 = could not start      98/99 = cleanup problem
 const crypto = require('crypto');
 const jwt = require('jsonwebtoken');
 const { MongoClient } = require('mongodb');
 const path = require('path');
+const cc = require(path.join(__dirname, '..', 'growth-contest-campaigns'));
 
 const ISOLATED = 'prj_Hpe9UjGrBBJOm3boxHsL9lHesWLl';
 const LABEL = 'live-check@growth-console';
@@ -97,6 +100,44 @@ async function main() {
       ok((await api('GET', '/admin/runs')).json.runs.length >= 2, 'runs'); ok((await api('GET', '/admin/reports')).json.reports.length >= 1, 'reports');
     });
 
+    // ---- fight marketing correction, on the real staging data ----
+    let sportMask = 0; let realContest = null;
+    await check('marketing refresh runs against the real published contests', async () => {
+      const r = await api('POST', '/admin/marketing/refresh');
+      ok(r.status === 200 && r.json.result.sourceReachable === true, `refresh ${r.status} ${JSON.stringify(r.json)}`);
+      live.refresh = r.json.result;
+    });
+    await check('no marketing campaign in the queue is based on a podcast/media name or an unverified fight', async () => {
+      const legacy = await C.drafts.countDocuments({ kind: 'marketing', contestId: { $exists: false }, status: { $in: ['needs_owner_review', 'approved'] } });
+      ok(legacy === 0, `${legacy} unverified marketing campaigns still in the queue`);
+      const withdrawnLegacy = await C.drafts.countDocuments({ kind: 'marketing', contestId: { $exists: false }, rejectedBy: 'system-safeguard' });
+      ok(withdrawnLegacy >= 1, 'old podcast-based campaigns were not withdrawn');
+    });
+    await check('every queued campaign matches a real open contest in the live FANTASY MMADNESS feed (independent re-check)', async () => {
+      // Independent of the engine: read the feeds directly and compare.
+      const base = cc.DEFAULT_SOURCE;
+      const pf = await (await fetch(`${base}/api/public/prediction-fights?limit=100`)).json();
+      const pw = await (await fetch(`${base}/api/public/pro-wrestling/matches?status=OPEN&limit=50`)).json();
+      const raw = new Map();
+      for (const it of pf.items || []) raw.set(String(it._id), { ...it, __feed: 'prediction' });
+      for (const it of pw.items || []) raw.set(String(it.id), { ...it, __feed: 'pro-wrestling' });
+      const names = new Set((await C.prospects.find({}, { projection: { name: 1 } }).toArray()).map((p) => cc.norm(p.name)).filter((n) => n.length >= 4));
+      const queued = await C.drafts.find({ kind: 'marketing', status: { $in: ['needs_owner_review', 'approved'] } }).toArray();
+      for (const d of queued) {
+        const src = raw.get(String(d.contestId)); ok(src, `${d.id}: contest not in live feed`);
+        const v = cc.verifyContest(src, { now: new Date(), mediaNames: names }); ok(v.ok, `${d.id}: live contest fails verification ${JSON.stringify(v.reasons)}`);
+        ok(v.contest.fighterA === d.contest.fighterA && v.contest.fighterB === d.contest.fighterB && v.contest.dateKey === d.contest.dateKey && v.contest.sport === d.genre, `${d.id}: details differ from live contest`);
+        const reasons = cc.checkCampaign(d, v.contest, { now: new Date(), mediaNames: names }); ok(!reasons.length, `${d.id}: ${reasons.join(',')}`);
+        for (const n of names) ok(!(n.length > 5 && cc.norm(d.text).includes(n) && !cc.norm(`${v.contest.fighterA} ${v.contest.fighterB} ${v.contest.eventName || ''}`).includes(n)), `${d.id}: contains media name "${n}"`);
+        sportMask |= 1 << cc.SPORTS.indexOf(d.genre); globalThis.__sportMask = sportMask;
+        if (!realContest) realContest = v.contest;
+      }
+      const cov = (await api('GET', '/admin/marketing/coverage')).json.coverage;
+      ok(cov.latest && cc.SPORTS.every((sp) => cov.latest.sports[sp]), 'coverage missing a sport');
+      for (const sp of cc.SPORTS) ok((cov.latest.sports[sp].verifiedContests > 0) === Boolean(sportMask & (1 << cc.SPORTS.indexOf(sp))) || cov.latest.sports[sp].campaignsActive > 0, `coverage inconsistent for ${sp}`);
+      log('marketing', JSON.stringify({ refresh: live.refresh, queued: queued.length, sportMask }));
+    });
+
     // ---- browser ----
     let chromium = null; let executablePath; let args = [];
     try {
@@ -159,23 +200,47 @@ async function main() {
         await goto('#/revenue'); ok(/not connected/.test(await page.textContent('[data-testid=payment-banner]')), 'revenue banner');
       });
 
+      await check('browser: Marketing page shows all five sports, facts and safeguard results', async () => {
+        await goto('#/marketing');
+        ok((await page.$$('[data-testid=coverage-row]')).length === 5, 'coverage rows');
+        const txt = await page.textContent('main');
+        ok(!/fight-week prediction challenge/i.test(await page.$$eval('[data-testid=marketing-list] [data-status=needs_owner_review]', (els) => els.map((e) => e.textContent).join(' '))), 'old template still queued');
+        ok(/All five sports/.test(txt), 'coverage card');
+        await page.click('[data-testid=btn-check-fights]'); await page.waitForSelector('[data-testid=toast]');
+        ok(/verified fight/.test(await page.textContent('[data-testid=toast]')), 'check-now toast');
+      });
       // ---- buttons, on labelled fixtures only ----
       const nowIso = new Date().toISOString();
-      await C.drafts.insertMany([FX.mkt1, FX.mkt2].map((id) => ({ id, kind: 'marketing', genre: 'boxing', channels: ['instagram'], headline: `UI TEST ${id}`, text: 'UI test post — will be deleted automatically.', sourceUrl: 'https://example.com/uitest', status: 'needs_owner_review', ownerApproved: false, sendPermitted: false, createdAt: nowIso, uitest: true })));
+      if (realContest) {
+        const k = cc.buildCampaign(realContest);
+        await C.drafts.insertOne({ id: FX.mkt1, kind: 'marketing', genre: realContest.sport, contestId: realContest.id, contestFingerprint: realContest.fingerprint, contest: realContest, channels: ['instagram', 'facebook', 'x', 'tiktok'], headline: `UI TEST ${stamp} ${k.headline}`.slice(0, 180), text: k.text, posts: k.posts, link: k.link, sourceUrl: realContest.contestUrl, status: 'needs_owner_review', ownerApproved: false, sendPermitted: false, createdAt: nowIso, uitest: true });
+      }
+      await C.drafts.insertOne({ id: FX.mkt2, kind: 'marketing', genre: 'boxing', contestId: 'uitest-none', contest: null, headline: `UI TEST ${FX.mkt2}`, text: 'UI test post — will be deleted automatically.', sourceUrl: 'https://example.com/uitest', status: 'needs_owner_review', ownerApproved: false, sendPermitted: false, createdAt: nowIso, uitest: true });
       await C.prospects.insertOne({ key: `partners:uitest:${stamp}`, id: FX.prospect, genre: 'boxing', focus: 'partners', name: `UI Test Show ${stamp}`, sourceUrl: 'https://example.com/uitest-show', source: 'uitest', verified: false, contact: null, contactVerified: false, consent: false, optedOut: false, firstSeenAt: nowIso, uitest: true });
       await C.alerts.insertOne({ alertKey: FX.alert, kind: 'uitest', id: 'ui-test', error: 'UI test alert — will be deleted automatically', state: 'open', createdAt: nowIso, uitest: true });
       await C.jobs.insertOne({ id: FX.job, type: 'uitest_noop', state: 'failed', attempts: 3, dueAt: nowIso, lastError: 'UI test job — will be deleted automatically', createdAt: nowIso, uitest: true });
 
-      await check('browser: Approvals edit, approve, publish, reject (fixtures)', async () => {
+      await check('browser: unverified campaign cannot be approved; reject works (fixture)', async () => {
         await goto('#/approvals?status=needs_owner_review&kind=marketing&sport=boxing');
+        await page.waitForSelector(`[data-draft-id="${FX.mkt2}"]`);
+        await page.click(`[data-draft-id="${FX.mkt2}"] [data-testid=btn-approve]`); await page.click('[data-testid=modal-confirm]');
+        await page.waitForFunction(() => /no longer open|not based on a verified|safety check/i.test(document.querySelector('[data-testid=modal] .error')?.textContent || ''));
+        await page.click('[data-testid=modal-cancel]');
+        ok(await status(FX.mkt2) === 'needs_owner_review', 'unverified was approved');
+        await page.click(`[data-draft-id="${FX.mkt2}"] [data-testid=btn-reject]`); await page.fill('[data-testid=reject-reason]', 'ui test'); await confirm();
+        await page.waitForSelector(`[data-draft-id="${FX.mkt2}"]`, { state: 'detached' }); ok(await status(FX.mkt2) === 'rejected', 'reject');
+      });
+      if (realContest) await check('browser: campaign for a real verified fight - edit (safeguarded), approve, copy, publish (fixture copy)', async () => {
+        await goto(`#/approvals?status=needs_owner_review&kind=marketing&sport=${realContest.sport}`);
         await page.waitForSelector(`[data-draft-id="${FX.mkt1}"]`);
+        await page.click(`[data-draft-id="${FX.mkt1}"] [data-testid=btn-edit]`); await page.fill('[data-testid=edit-text]', 'Win a $500 prize!'); await page.click('[data-testid=modal-confirm]');
+        await page.waitForFunction(() => /safeguard/i.test(document.querySelector('[data-testid=modal] .error')?.textContent || ''));
+        await page.click('[data-testid=modal-cancel]');
         await page.click(`[data-draft-id="${FX.mkt1}"] [data-testid=btn-edit]`); await page.fill('[data-testid=edit-title]', `UI TEST edited ${stamp}`); await confirm();
         await page.waitForFunction(([id, s]) => document.querySelector(`[data-draft-id="${id}"] [data-testid=draft-title]`)?.textContent === `UI TEST edited ${s}`, [FX.mkt1, stamp]);
         await page.click(`[data-draft-id="${FX.mkt1}"] [data-testid=btn-approve]`); await confirm();
         await page.waitForSelector(`[data-draft-id="${FX.mkt1}"]`, { state: 'detached' }); ok(await status(FX.mkt1) === 'approved', 'approve');
-        await page.click(`[data-draft-id="${FX.mkt2}"] [data-testid=btn-reject]`); await page.fill('[data-testid=reject-reason]', 'ui test'); await confirm();
-        await page.waitForSelector(`[data-draft-id="${FX.mkt2}"]`, { state: 'detached' }); ok(await status(FX.mkt2) === 'rejected', 'reject');
-        await goto('#/approvals?status=approved&kind=marketing&sport=boxing');
+        await goto(`#/approvals?status=approved&kind=marketing&sport=${realContest.sport}`);
         await page.click(`[data-draft-id="${FX.mkt1}"] [data-testid=btn-copy]`);
         await page.click(`[data-draft-id="${FX.mkt1}"] [data-testid=btn-mark-published]`); await page.fill('[data-testid=post-url]', 'https://example.com/uitest-post'); await confirm();
         await page.waitForSelector(`[data-draft-id="${FX.mkt1}"]`, { state: 'detached' }); ok(await status(FX.mkt1) === 'published', 'publish');
@@ -235,7 +300,7 @@ async function main() {
     if (browser) await browser.close().catch(() => {});
     await client.close().catch(() => {});
   }
-  if (exitCode === 0) exitCode = browserOk ? 77 : 78;
+  if (exitCode === 0) exitCode = browserOk ? 160 + (globalThis.__sportMask || 0) : 97;
   log('exit', exitCode);
   process.exit(exitCode);
 }

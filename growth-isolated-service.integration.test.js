@@ -19,7 +19,10 @@ const uri = process.env.GROWTH_TEST_MONGO_URI;
 const skip = !uri || !/^mongodb:\/\/(127\.0\.0\.1|localhost)/.test(uri);
 const secret = 's'.repeat(48);
 const env = { GROWTH_STAGING_MODE: 'isolated', GROWTH_OUTBOUND_ENABLED: 'false', GROWTH_TEST_MONGO_URI: uri, JWT_SECRET_ADMIN: secret, GROWTH_UNSUBSCRIBE_SECRET: secret, CRON_SECRET: 'cron-secret-for-tests-only', GROWTH_DELIVERY_PROVIDER: 'sandbox-smtp', GROWTH_UNSUBSCRIBE_BASE_URL: 'https://growth.sandbox.localhost/api/growth/unsubscribe' };
+const { contestFeed } = require('./growth-contest-feed.fixture');
+const feed = contestFeed(() => Date.parse('2026-11-02T12:00:00Z'));
 const podcastFetch = async (url) => {
+  const f = feed(url); if (f) return f;
   const term = new URL(url).searchParams.get('term');
   const slug = term.replace(/[^a-z]+/gi, '-').toLowerCase();
   return { ok: true, status: 200, json: async () => ({ results: [1, 2].map((n) => ({ collectionName: `${term} show ${n}`, collectionViewUrl: `https://podcasts.apple.com/us/podcast/${slug}-${n}/id${n}` })) }) };
@@ -61,7 +64,7 @@ test('isolated Growth Engine service', { skip }, async (t) => {
       const s = await runtime.tick({ now: T(0) });
       const disc = s.jobs.find((j) => j.id.startsWith('discover-'));
       assert.equal(disc.ok, true, JSON.stringify(s));
-      assert.equal(disc.result.marketingDrafts, 5);
+      assert.equal(await runtime.collections.drafts.countDocuments({ kind: 'marketing', contestId: { $exists: true } }), 10); // 2 verified contests x 5 sports (one campaign per contest, not per day); invalid contests rejected
       assert.equal(disc.result.workstreams, 25);
       assert.ok(disc.result.prospectsFound >= 20); // already stored by the earlier cron call, so newProspects may be 0
       assert.ok(await runtime.collections.prospects.countDocuments() >= 20);
@@ -72,6 +75,7 @@ test('isolated Growth Engine service', { skip }, async (t) => {
       }
       const drafts = await runtime.listDrafts({ kind: 'marketing', status: 'needs_owner_review' });
       assert.equal(new Set(drafts.map((d) => d.genre)).size, 5);
+      for (const d of drafts) { assert.ok(d.contestId && d.text.includes(d.contest.fighterA) && d.text.includes(d.contest.fighterB)); assert.doesNotMatch(d.text, /podcast|show \d/i); }
     });
     await t.test('duplicate invocation in the same minute is skipped', async () => {
       assert.equal((await runtime.tick({ now: T(0) })).skipped, 'duplicate_invocation');

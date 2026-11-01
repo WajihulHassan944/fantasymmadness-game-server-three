@@ -80,7 +80,13 @@
       consent_basis_required: 'Please describe how this contact agreed to be contacted (consent basis).',
       kind_must_be_pr_or_affiliate: 'Choose PR or affiliate.', contact_opted_out: 'This contact has opted out and cannot be contacted.',
       invalid_contact: 'That email address is not valid.', verified_contact_required: 'That email address is not valid.', prospect_not_found: 'Prospect not found.', draft_already_exists: 'An outreach draft for this prospect already exists — check Campaign Approvals.',
-      valid_email_required: 'Please enter a valid email address.', headline_required: 'The headline cannot be empty.', text_required: 'The text cannot be empty.', subject_required: 'The subject cannot be empty.',
+      valid_email_required: 'Please enter a valid email address.',
+      edit_failed_safeguard: 'Blocked by the campaign safeguard. A fight post must keep both fighter names and the contest link, and must not mention prizes, money, betting, titles that are not in the contest, or podcast/media names.',
+      contest_no_longer_open_or_verified: 'This fight’s contest is no longer open and verified, so the campaign cannot be approved. It will be withdrawn automatically.',
+      fight_details_changed_use_the_corrected_campaign: 'The fight details changed since this campaign was prepared. Use the corrected campaign instead.',
+      contest_feed_unreachable_try_again: 'Could not reach the FANTASY MMADNESS contest list to re-check this fight. Please try again in a minute.',
+      not_based_on_a_verified_contest: 'This campaign is not based on a verified fight contest and cannot be approved.',
+      campaign_failed_safeguard: 'This campaign failed the safety check and cannot be approved.', headline_required: 'The headline cannot be empty.', text_required: 'The text cannot be empty.', subject_required: 'The subject cannot be empty.',
     };
     return map[reason] || (reason ? String(reason).replace(/_/g, ' ') : 'Something went wrong.');
   }
@@ -102,7 +108,8 @@
         });
       });
   }
-  function fail(e) { if (e && e.silent) return; toast(e && e.reason ? friendly(e.reason) : (e && e.message) || 'Request failed', 'bad'); }
+  function explain(e) { var d = e && e.body && Array.isArray(e.body.details) && e.body.details.length ? ' (' + e.body.details.map(function (x) { return String(x).replace(/_/g, ' '); }).join('; ') + ')' : ''; return (e && e.reason ? friendly(e.reason) : (e && e.message) || 'Request failed') + d; }
+  function fail(e) { if (e && e.silent) return; toast(explain(e), 'bad'); }
 
   // ---------- modal ----------
   function modal(opts) {
@@ -122,7 +129,7 @@
         if (!opts.onConfirm) return close(true);
         confirmBtn.disabled = true; err.textContent = '';
         Promise.resolve().then(opts.onConfirm).then(function (v) { close(v === undefined ? true : v); })
-          .catch(function (e) { confirmBtn.disabled = false; if (!e || !e.silent) err.textContent = e && e.reason ? friendly(e.reason) : (e && e.message) || 'Failed'; });
+          .catch(function (e) { confirmBtn.disabled = false; if (!e || !e.silent) err.textContent = explain(e); });
       });
       document.body.appendChild(back);
       var first = back.querySelector('input,textarea,select'); (first || confirmBtn).focus();
@@ -207,7 +214,8 @@
       h('div', { class: 'draft-top' }, kindChip(d.kind), h('span', { class: 'chip', text: sport(d.genre) }), chip(d.status), d.editCount ? h('span', { class: 'chip info', text: 'Edited' }) : null, h('span', { class: 'when', text: 'Created ' + when(d.createdAt) })),
       h('h3', { testid: 'draft-title', text: isEmail ? (d.subject || '(no subject)') : (d.headline || '(no headline)') }),
       isEmail ? h('div', { class: 'meta' }, h('span', null, 'To: ', h('strong', { text: d.recipient || '—' })), d.relevanceSource ? h('a', { href: d.relevanceSource, target: '_blank', rel: 'noopener noreferrer', text: 'Why this contact' }) : null) : null,
-      h('div', { class: 'body', testid: 'draft-text', text: d.text || '' }),
+      d.kind === 'marketing' && d.contest ? fightFacts(d.contest) : null,
+      d.kind === 'marketing' && d.posts ? channelPosts(d) : h('div', { class: 'body', testid: 'draft-text', text: d.text || '' }),
       h('div', { class: 'meta' },
         !isEmail && d.channels ? h('span', { text: 'For: ' + d.channels.join(', ') }) : null,
         d.sourceUrl ? h('a', { href: d.sourceUrl, target: '_blank', rel: 'noopener noreferrer', text: 'Source' }) : null,
@@ -227,12 +235,33 @@
     }
     if (d.status === 'approved') {
       if (d.kind === 'marketing') {
-        actions.appendChild(h('button', { class: 'btn small', testid: 'btn-copy', text: 'Copy post text', onclick: function () { copyText(d.text || ''); } }));
+        actions.appendChild(h('button', { class: 'btn small', testid: 'btn-copy', text: 'Copy post text', onclick: function () { var sel = card.querySelector('[data-channel].active'); copyText(sel && d.posts ? d.posts[sel.getAttribute('data-channel')] : (d.text || '')); } }));
         actions.appendChild(h('button', { class: 'btn approve small', testid: 'btn-mark-published', text: 'Mark as published', onclick: function () { markPublished(d, reload); } }));
       } else actions.appendChild(h('span', { class: 'muted small', text: 'Will be sent only when real email delivery is switched on (currently off).' }));
       actions.appendChild(h('button', { class: 'btn danger small', testid: 'btn-withdraw', text: 'Withdraw approval', onclick: function () { reject(d, reload, true); } }));
     }
     return card;
+  }
+  function fightFacts(c) {
+    var when = c.dateKey + (c.timeTba || !c.matchTime ? ' (time TBA)' : ' ' + c.matchTime + (c.timeZone ? ' ' + c.timeZone : ''));
+    return h('div', { class: 'facts', testid: 'fight-facts' },
+      h('span', { class: 'chip good', text: '✓ Verified contest' }),
+      h('span', null, h('strong', { text: c.fighterA + ' vs ' + c.fighterB })),
+      h('span', { text: sport(c.sport) }), h('span', { text: when }),
+      c.eventName ? h('span', { text: c.eventName }) : null, c.venue ? h('span', { text: [c.venue, c.city].filter(Boolean).join(', ') }) : null,
+      h('a', { href: c.contestUrl, target: '_blank', rel: 'noopener noreferrer', text: 'Open contest' }));
+  }
+  function channelPosts(d) {
+    var names = { instagram: 'Instagram', facebook: 'Facebook', x: 'X', tiktok: 'TikTok' };
+    var body = h('div', { class: 'body', testid: 'draft-text', text: d.posts.instagram || d.text || '' });
+    var tabs = h('div', { class: 'channel-tabs', role: 'tablist' });
+    Object.keys(names).forEach(function (ch, i) {
+      if (!d.posts[ch]) return;
+      tabs.appendChild(h('button', { type: 'button', class: 'btn small' + (i === 0 ? ' active' : ''), 'data-channel': ch, testid: 'channel-' + ch, text: names[ch], onclick: function (e) {
+        tabs.querySelectorAll('button').forEach(function (b) { b.classList.remove('active'); }); e.target.classList.add('active'); body.textContent = d.posts[ch];
+      } }));
+    });
+    return h('div', null, tabs, body);
   }
   function approve(d, reload) {
     var isEmail = d.kind !== 'marketing';
@@ -257,7 +286,7 @@
     return modal({
       title: 'Edit before approving', confirmLabel: 'Save changes',
       body: h('div', null, h('label', { class: 'field' }, h('span', { text: isEmail ? 'Subject' : 'Headline' }), title),
-        h('label', { class: 'field' }, h('span', { text: isEmail ? 'Email text' : 'Post text' }), text, isEmail ? h('small', { text: 'Saving rebuilds the email from this text.' }) : null)),
+        h('label', { class: 'field' }, h('span', { text: isEmail ? 'Email text' : 'Instagram / Facebook caption' }), text, h('small', { text: isEmail ? 'Saving rebuilds the email from this text.' : 'Keep both fighter names and the contest link. The safeguard checks your edit again.' }))),
       onConfirm: function () {
         var body = { text: text.value }; if (isEmail) body.subject = title.value; else body.headline = title.value;
         return api('POST', '/admin/drafts/' + encodeURIComponent(d.id) + '/edit', body);
@@ -360,36 +389,55 @@
 
   pages.marketing = function (main, params) {
     var g = params.sport || '';
-    return Promise.all([api('GET', '/admin/workstreams?department=marketing'), api('GET', '/admin/drafts?kind=marketing&limit=200'), api('GET', '/admin/prospects?limit=500')]).then(function (r) {
-      var ws = r[0], drafts = r[1].drafts, fans = r[2].prospects.filter(function (p) { return p.focus === 'fans'; });
+    return Promise.all([api('GET', '/admin/marketing/coverage'), api('GET', '/admin/drafts?kind=marketing&limit=300')]).then(function (r) {
+      var cov = r[0].coverage, drafts = r[1].drafts, latest = cov.latest;
       clear(main);
       var counts = {}; drafts.forEach(function (d) { counts[d.status] = (counts[d.status] || 0) + 1; });
       var list = h('div', { testid: 'marketing-list' });
       var sel = sportSelect(g, function (v) { location.hash = '#/marketing' + (v ? '?sport=' + v : ''); }); sel.setAttribute('data-testid', 'filter-sport');
+      var checkNow = h('button', { class: 'btn primary', testid: 'btn-check-fights', text: '↻ Check for new fights now', onclick: function () {
+        checkNow.disabled = true;
+        api('POST', '/admin/marketing/refresh').then(function (res) {
+          var x = res.result;
+          toast(x.sourceReachable ? ('Checked the published contests: ' + x.verifiedContests + ' verified fight' + (x.verifiedContests === 1 ? '' : 's') + ', ' + x.created + ' new campaign' + (x.created === 1 ? '' : 's') + (x.withdrawn ? ', ' + x.withdrawn + ' withdrawn' : '') + '.') : 'Could not reach the FANTASY MMADNESS contest list. Nothing was changed.', x.sourceReachable ? 'good' : 'bad');
+          refreshCounts(); route();
+        }).catch(function (e) { checkNow.disabled = false; fail(e); });
+      } });
+      var rows = cov.sports.map(function (sp) {
+        var c = latest && latest.sports && latest.sports[sp] || null;
+        var state = !latest ? h('span', { class: 'chip', text: 'Not checked yet' })
+          : !latest.sourceReachable ? h('span', { class: 'chip bad', text: '! Contest list unreachable' })
+          : c.verifiedContests ? h('span', { class: 'chip good', text: '✓ Covered' })
+          : h('span', { class: 'chip warn', text: 'No open contest published' });
+        return h('tr', { testid: 'coverage-row', 'data-sport': sp }, h('td', null, h('strong', { text: sport(sp) })), h('td', { class: 'num', text: c ? fmtNum(c.verifiedContests) : '—' }), h('td', { class: 'num', text: c ? fmtNum(c.campaignsActive) : '—' }), h('td', { class: 'num', text: c ? fmtNum(c.rejectedContests) : '—' }), h('td', null, state));
+      });
+      var blocked = (latest && latest.sports ? cov.sports.reduce(function (acc, sp) { return acc.concat((latest.sports[sp].rejected || []).map(function (x) { return Object.assign({ sport: sp }, x); })); }, []) : []);
       add(main, [
-        head('Marketing', 'Daily social posts for each sport, built from verified public sources.'),
+        head('Marketing', 'Social posts for real, upcoming fights that have an open FANTASY MMADNESS contest. Nothing is posted automatically.', checkNow),
+        h('div', { class: 'banner info' }, h('span', { class: 'ico', 'aria-hidden': 'true', text: 'ℹ' }), h('div', null, h('strong', { text: 'Where campaigns come from' }),
+          'Only fights published as open contests on FANTASY MMADNESS. Every fight is checked first: real fighter names, a future date, one of the five sports, entries still open. It is checked again when you approve. Podcasts, shows and creators go to Public Relations and Affiliate Recruitment, never here. No prizes, fees or event details are added that the contest does not show.')),
         h('div', { class: 'grid tiles' },
           tile('Posts awaiting approval', counts.needs_owner_review || 0, 'Review below', '#/approvals?kind=marketing', 'mkt-pending'),
           tile('Approved, not yet posted', counts.approved || 0, 'Copy & post, then mark published', '#/approvals?status=approved&kind=marketing', 'mkt-approved'),
           tile('Published', counts.published || 0, 'Recorded by you', '#/approvals?status=published&kind=marketing', 'mkt-published'),
-          tile('Fan sources found', fans.length, 'Across 5 sports', '#/marketing', 'mkt-sources')),
-        h('section', { class: 'card' }, h('h2', { text: 'Latest marketing run, by sport' }), h('p', { class: 'sub', text: ws.runId ? 'Run ' + ws.runId : 'No run yet' }),
-          h('div', { class: 'table-wrap' }, h('table', { class: 'data', testid: 'marketing-workstreams' },
-            h('thead', null, h('tr', null, h('th', { text: 'Sport' }), h('th', { class: 'num', text: 'Post ideas prepared' }), h('th', { class: 'num', text: 'Fan sources' }), h('th', { text: 'Status' }))),
-            h('tbody', null, SPORTS.map(function (s) {
-              var w = ws.workstreams.filter(function (x) { return x.genre === s; })[0];
-              return h('tr', null, h('td', { text: sport(s) }), h('td', { class: 'num', text: w ? fmtNum(w.draftCount) : '—' }), h('td', { class: 'num', text: fmtNum(fans.filter(function (p) { return p.genre === s; }).length) }), h('td', null, w ? h('span', { class: 'chip good', text: '✓ Ran' }) : h('span', { class: 'chip', text: 'Not run' })));
-            }))))),
-        h('section', { class: 'card' }, h('div', { class: 'card-head' }, h('h2', { text: 'Marketing posts' }), h('div', { class: 'right' }, h('label', { class: 'small muted' }, 'Sport ', sel))), list),
+          tile('Verified fights', latest ? latest.verifiedContests : null, latest ? 'Checked ' + when(latest.checkedAt) : 'Not checked yet', '#/marketing', 'mkt-verified')),
+        h('section', { class: 'card' }, h('h2', { text: 'All five sports' }), h('p', { class: 'sub', text: cov.horizonNote + ' The engine re-checks every 6 hours; a sport with no open contest gets no campaign rather than an invented one.' }),
+          h('div', { class: 'table-wrap' }, h('table', { class: 'data', testid: 'coverage-table' },
+            h('thead', null, h('tr', null, h('th', { text: 'Sport' }), h('th', { class: 'num', text: 'Verified fights' }), h('th', { class: 'num', text: 'Active campaigns' }), h('th', { class: 'num', text: 'Fights not used' }), h('th', { text: 'Status' }))),
+            h('tbody', null, rows)))),
+        h('section', { class: 'card' }, h('div', { class: 'card-head' }, h('h2', { text: 'Fight campaigns' }), h('div', { class: 'right' }, h('label', { class: 'small muted' }, 'Sport ', sel))), list),
+        h('section', { class: 'card' }, h('h2', { text: 'Fights the safeguard did not use' }), h('p', { class: 'sub', text: 'Listings that failed verification (for example a show name instead of fighters, a past date, or a closed contest). No campaign was prepared for these.' }),
+          blocked.length ? h('div', { class: 'table-wrap' }, h('table', { class: 'data', testid: 'blocked-table' }, h('thead', null, h('tr', null, h('th', { text: 'Listing' }), h('th', { text: 'Sport' }), h('th', { text: 'Why it was not used' }))),
+            h('tbody', null, blocked.map(function (b) { return h('tr', { testid: 'blocked-row' }, h('td', { text: b.label || b.id || '—' }), h('td', { text: sport(b.sport) }), h('td', { class: 'small', text: (b.reasons || []).map(function (x) { return String(x).replace(/_/g, ' '); }).join('; ') })); })))) : h('div', { class: 'empty', text: 'Nothing was blocked in the latest check.' })),
       ]);
-      draftList(list, { kind: 'marketing', limit: 200, _genre: g }, 'No marketing posts yet.');
+      draftList(list, { kind: 'marketing', limit: 300, _genre: g }, 'No fight campaigns yet.');
     });
   };
 
   function outreachPage(main, params, cfg) {
     var g = params.sport || SPORTS[0];
     return Promise.all([api('GET', '/admin/workstreams?department=' + cfg.department), api('GET', '/admin/prospects?limit=500'), api('GET', '/admin/drafts?kind=' + cfg.kind + '&limit=200')]).then(function (r) {
-      var ws = r[0], partners = r[1].prospects.filter(function (p) { return p.focus === 'partners'; }), drafts = r[2].drafts;
+      var ws = r[0], partners = r[1].prospects, drafts = r[2].drafts;
       clear(main);
       var prepared = ws.workstreams.reduce(function (n, w) { return n + w.draftCount; }, 0);
       var awaiting = drafts.filter(function (d) { return d.status === 'needs_owner_review'; }).length;
@@ -405,7 +453,7 @@
         head(cfg.title, cfg.subtitle),
         h('div', { class: 'grid tiles' },
           tile('Prepared this run', prepared, 'Template drafts across 5 sports', '#/' + cfg.route, cfg.kind + '-prepared'),
-          tile('Partner prospects', partners.length, 'Podcasts & creators found', '#/' + cfg.route, cfg.kind + '-prospects'),
+          tile('Media & creator prospects', partners.length, 'Podcasts, shows & creators found', '#/' + cfg.route, cfg.kind + '-prospects'),
           tile('Verified contacts', partners.filter(function (p) { return p.contactVerified; }).length, 'Added by you', '#/' + cfg.route, cfg.kind + '-contacts'),
           tile('Awaiting approval', awaiting, 'Personalized emails', '#/approvals?kind=' + cfg.kind, cfg.kind + '-awaiting')),
         h('div', { class: 'banner info' }, h('span', { class: 'ico', 'aria-hidden': 'true', text: 'ℹ' }), h('div', null, h('strong', { text: 'How this works' }),
@@ -561,8 +609,8 @@
             })))),
           h('div', { class: 'legend' }, 'Fewer', ['l0', 'l1', 'l2', 'l3', 'l4'].map(function (l) { return h('i', { class: l }); }), 'More')),
         h('div', { class: 'grid two' },
-          h('section', { class: 'card' }, h('h2', { text: 'Marketing posts prepared, by sport' }), h('p', { class: 'sub', text: 'All time' }), bars(SPORTS.map(function (g) { return [sport(g), (byK[g] || {}).marketing || 0]; }), 'chart-marketing')),
-          h('section', { class: 'card' }, h('h2', { text: 'Partner prospects found, by sport' }), h('p', { class: 'sub', text: 'Podcasts & creators (PR and affiliate candidates)' }), bars(SPORTS.map(function (g) { return [sport(g), (a.prospects.byGenre[g] || {}).partners || 0]; }), 'chart-partners'))),
+          h('section', { class: 'card' }, h('h2', { text: 'Fight campaigns prepared, by sport' }), h('p', { class: 'sub', text: 'All time' }), bars(SPORTS.map(function (g) { return [sport(g), (byK[g] || {}).marketing || 0]; }), 'chart-marketing')),
+          h('section', { class: 'card' }, h('h2', { text: 'Media & creator prospects, by sport' }), h('p', { class: 'sub', text: 'Podcasts, shows & creators (PR and affiliate candidates)' }), bars(SPORTS.map(function (g) { var x = a.prospects.byGenre[g] || {}; return [sport(g), (x.partners || 0) + (x.fans || 0)]; }), 'chart-partners'))),
         h('div', { class: 'grid two' },
           h('section', { class: 'card' }, h('h2', { text: 'Completed runs per day' }), h('p', { class: 'sub', text: 'Last 7 days' }),
             days.length ? h('div', { testid: 'chart-runs' },
