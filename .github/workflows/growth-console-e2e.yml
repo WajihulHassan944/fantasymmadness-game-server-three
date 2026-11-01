@@ -44,7 +44,8 @@ jobs:
         run: node --test --test-reporter=spec growth-console.e2e.test.js
       - name: Print screenshots (base64, for reviewers without artifact access)
         if: always()
-        run: for f in console-screenshots/*.jpg; do echo "SCREENSHOT $(basename $f) $(base64 -w0 $f)"; done
+        run: |
+          for f in console-screenshots/*.jpg; do n=$(basename "$f"); base64 -w 30000 "$f" | sed "s/^/SHOT:$n:/"; done
       - name: Upload screenshots
         if: always()
         uses: actions/upload-artifact@v4
