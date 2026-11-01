@@ -24,10 +24,10 @@ jobs:
           cp package-lock.json /tmp/lock.before.json
           npm install --package-lock-only --ignore-scripts --no-audit --no-fund
           node -e "const a=require('/tmp/lock.before.json').packages,b=require('./package-lock.json').packages;const ch=[];for(const k of new Set([...Object.keys(a),...Object.keys(b)])){const x=a[k]&&a[k].version,y=b[k]&&b[k].version;if(x!==y)ch.push(k+': '+(x||'-')+' -> '+(y||'-'))}console.log(ch.length+' changed entries');console.log(ch.join('\n'))"
-      - uses: actions/upload-artifact@v4
-        with:
-          name: package-lock
-          path: package-lock.json
+      - name: Print the regenerated lock file (gzip + base64)
+        run: |
+          sha256sum package-lock.json
+          gzip -9nc package-lock.json | base64 -w 20000 | sed 's/^/LOCK:/'
       - run: node scripts/fight-registry-regression.test.cjs
       - run: npm ci --ignore-scripts
       - run: npm run lint
