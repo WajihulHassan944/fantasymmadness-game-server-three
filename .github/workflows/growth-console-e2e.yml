@@ -98,13 +98,24 @@ jobs:
         run: npm ci --ignore-scripts --no-fund
       - name: Install website dependencies
         run: cd web && npm install --ignore-scripts --no-fund --no-audit
+      - name: Cut the website server off from production (live backend, live site, staging engine)
+        run: |
+          # The website's own server-side routes forward admin requests to the live backend.
+          # Point every production host at a closed loopback port so nothing can reach it.
+          for h in fantasymmadness-game-server-three-taupe.vercel.app www.fantasymmadness.com fantasymmadness.com fantasymmadness-growth-isolated-tes.vercel.app; do echo "127.0.0.1 $h" | sudo tee -a /etc/hosts; done
+          if curl -s -m 5 -o /dev/null https://fantasymmadness-game-server-three-taupe.vercel.app/; then echo "live backend still reachable"; exit 1; fi
       - name: Build the website (Growth Engine switch = ${{ matrix.v2 }})
         env:
+          NEXT_PUBLIC_API_BASE_URL: http://127.0.0.1:9
+          NEXT_PUBLIC_API_BASE: http://127.0.0.1:9
           NEXT_PUBLIC_GROWTH_ENGINE_URL: http://127.0.0.1:4300
           NEXT_PUBLIC_GROWTH_ENGINE_V2: ${{ matrix.v2 }}
           NEXT_TELEMETRY_DISABLED: '1'
         run: cd web && npm run build
       - name: Start the website
+        env:
+          NEXT_PUBLIC_API_BASE_URL: http://127.0.0.1:9
+          NEXT_PUBLIC_API_BASE: http://127.0.0.1:9
         run: |
           cd web && (npx next start -p 3000 > ../next.log 2>&1 &)
           for i in $(seq 1 60); do curl -sf -o /dev/null http://localhost:3000/administration/login && break; sleep 2; done
