@@ -127,7 +127,12 @@ async function main() {
         const base = (c.cleanUrl || c.idUrl).split('?')[0];
         for (const ch of ['facebook', 'instagram', 'x']) if (d.posts?.[ch]) {
           if (!(d.posts[ch].includes(base))) throw Object.assign(new Error(`${d.id} ${ch}: link does not use the current address`), { diag: 205 });
-          if (!(/utm_source=fan_acquisition&utm_medium=partner_outreach&utm_campaign=combat_fans_gs_/.test(d.posts[ch]))) throw Object.assign(new Error(`${d.id} ${ch}: campaign tags missing`), { diag: 206 });
+          if (!(/utm_source=fan_acquisition&utm_medium=partner_outreach&utm_campaign=combat_fans_gs_/.test(d.posts[ch]))) {
+            // probe: classify the link so the cause is visible from the exit code
+            const t = d.posts[ch];
+            const code = !/utm_/.test(t) ? 210 : /utm_campaign=combat_fans_(?!gs_)/.test(t) ? 211 : /utm_source=(?!fan_acquisition)/.test(t) ? 212 : 213;
+            throw Object.assign(new Error(`${d.id} ${ch}: campaign tags missing`), { diag: (d.editedAt ? 230 : 210) + (code - 210) }); // 210-213 not edited, 230-233 edited by the owner
+          }
         }
       }
       log(`campaign addresses: ${JSON.stringify(counts)}`);
