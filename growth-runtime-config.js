@@ -69,6 +69,8 @@ function resolveGrowthRuntimeConfig(env = process.env) {
   // Social publishing (fails closed; see growth-social-publishing.js).
   const socialResolved = require('./growth-social-publishing').resolveSocialConfig(env);
   errors.push(...socialResolved.errors);
+  // Meta (Facebook Page + Instagram) connection; the app secret stays in `secrets`.
+  const metaResolved = require('./growth-meta-connect').resolveMetaConfig(env);
 
   // Marketing campaigns come only from the published FANTASY MMADNESS contest feeds (read-only).
   let contestSourceUrl = '';
@@ -89,9 +91,10 @@ function resolveGrowthRuntimeConfig(env = process.env) {
     liveReport: { configured: /^.{20,}$/.test(String(env.GROWTH_LIVE_REPORT_TOKEN || '')) },
     ingest: { configured: String(env.GROWTH_ATTRIBUTION_INGEST_SECRET || '').length >= 32 },
     social: { provider: socialResolved.provider, approved: socialResolved.approved, paused: socialResolved.paused, channels: socialResolved.channels },
+    meta: { redirectUri: metaResolved.redirectUri, liveTestApproved: metaResolved.liveTestApproved, expected: metaResolved.expected },
   };
   // Secrets are kept out of the returned config object.
-  const secrets = { mongoUri: uri, cronSecret: String(env.CRON_SECRET || ''), adminJwtSecret: String(env.JWT_SECRET_ADMIN || ''), unsubscribeSecret: String(env.GROWTH_UNSUBSCRIBE_SECRET || ''), resendApiKey: String(env.GROWTH_RESEND_API_KEY || ''), social: socialResolved.secrets, liveReportToken: String(env.GROWTH_LIVE_REPORT_TOKEN || ''), ingestSecret: String(env.GROWTH_ATTRIBUTION_INGEST_SECRET || '') };
+  const secrets = { mongoUri: uri, cronSecret: String(env.CRON_SECRET || ''), adminJwtSecret: String(env.JWT_SECRET_ADMIN || ''), unsubscribeSecret: String(env.GROWTH_UNSUBSCRIBE_SECRET || ''), resendApiKey: String(env.GROWTH_RESEND_API_KEY || ''), social: socialResolved.secrets, meta: metaResolved, tokenEncryptionKey: String(env.GROWTH_TOKEN_ENCRYPTION_KEY || ''), liveReportToken: String(env.GROWTH_LIVE_REPORT_TOKEN || ''), ingestSecret: String(env.GROWTH_ATTRIBUTION_INGEST_SECRET || '') };
   return { ok: errors.length === 0, errors, warnings, config, secrets };
 }
 

@@ -189,3 +189,9 @@ html.embedded .topbar .signout{color:var(--ink-2);border-color:var(--line-2)}
 html.embedded .topbar .signout:hover{background:var(--bg)}
 html.embedded main{padding:16px 18px 40px}
 html.embedded .login-wrap{min-height:100vh}
+/* Facebook & Instagram connection */
+dl.facts{display:grid;grid-template-columns:max-content 1fr;gap:6px 16px;align-items:baseline}
+dl.facts dt{font-weight:600;color:#3b4a3b}
+dl.facts dd{margin:0;overflow-wrap:anywhere}
+code.copy{display:block;padding:8px 10px;border:1px dashed #9ab;border-radius:6px;background:#f6f8fb;user-select:all;overflow-wrap:anywhere;font-size:13px}
+.page-option{padding:8px;border:1px solid #dde3ea;border-radius:8px}

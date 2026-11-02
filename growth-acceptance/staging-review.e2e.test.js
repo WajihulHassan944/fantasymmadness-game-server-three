@@ -91,7 +91,7 @@ test('test back office — staging sign-in (no live admin access)', { skip, time
       for (const s of SECTIONS) {
         await page.click(`[data-testid=ge-tab-${s}]`);
         await frame().locator(`[data-testid=page-${s}]`).waitFor();
-        await frame().locator('main .spinner').waitFor({ state: 'detached' });
+        await frame().locator('main .spinner').first().waitFor({ state: 'detached' }); await frame().locator('main .spinner').last().waitFor({ state: 'detached' });
         assert.equal(await frame().locator('[data-testid=page-error]').count(), 0, `error on ${s}`);
       }
       // A real staging action from inside the test back office

@@ -36,28 +36,33 @@ test('unauthorized channel is refused without any network call', async () => {
 test('sandbox publishing never touches the network and is labelled simulated', async () => {
   const f = recorder([]); const rows = [];
   const r = await createSocialPublisher({ social: resolveSocialConfig({ GROWTH_SOCIAL_PROVIDER: 'sandbox' }), fetchImpl: f, sandboxCollection: { insertOne: async (d) => rows.push(d) } }).publish(post('facebook'));
-  assert.equal(r.ok, true); assert.equal(r.receipt.sandbox, true); assert.equal(f.calls.length, 0); assert.equal(rows.length, 1);
+  assert.equal(r.ok, true); assert.equal(r.receipt.sandbox, true); assert.equal(rows.length, 1);
+  // Only a read-only check of the poster image; nothing is sent to Meta.
+  assert.ok(f.calls.every((c) => c.opts?.method === 'HEAD' && !/facebook\.com|instagram\.com/.test(c.url)), JSON.stringify(f.calls));
+  const off = recorder([]);
+  await createSocialPublisher({ social: resolveSocialConfig({ GROWTH_SOCIAL_PROVIDER: 'sandbox' }), fetchImpl: off, checkImages: false }).publish(post('instagram'));
+  assert.equal(off.calls.length, 0);
 });
 
 test('live adapters send the documented requests', async () => {
   const social = resolveSocialConfig(LIVE);
   let f = recorder([{ status: 200, body: { id: '123_456', post_id: '123_456' } }]);
-  let r = await createSocialPublisher({ social, fetchImpl: f }).publish(post('facebook'));
+  let r = await createSocialPublisher({ social, fetchImpl: f, checkImages: false }).publish(post('facebook'));
   assert.equal(r.ok, true); assert.match(f.calls[0].url, /graph\.facebook\.com\/v21\.0\/1234567890\/photos$/); assert.match(f.calls[0].opts.body, /caption=/);
-  r = await createSocialPublisher({ social, fetchImpl: (f = recorder([{ status: 200, body: { id: '1' } }])) }).publish(post('facebook', { imageUrl: null }));
+  r = await createSocialPublisher({ social, fetchImpl: (f = recorder([{ status: 200, body: { id: '1' } }])), checkImages: false }).publish(post('facebook', { imageUrl: null }));
   assert.match(f.calls[0].url, /\/feed$/); assert.match(f.calls[0].opts.body, /message=/);
 
-  f = recorder([{ status: 200, body: { id: 'container1' } }, { status: 200, body: { id: 'media9' } }]);
-  r = await createSocialPublisher({ social, fetchImpl: f }).publish(post('instagram'));
-  assert.equal(r.receipt.providerPostId, 'media9'); assert.match(f.calls[0].url, /\/media$/); assert.match(f.calls[1].url, /\/media_publish$/); assert.match(f.calls[1].opts.body, /creation_id=container1/);
-  assert.equal((await createSocialPublisher({ social, fetchImpl: recorder([]) }).publish(post('instagram', { imageUrl: null }))).ok, false);
+  f = recorder([{ status: 200, body: { id: 'container1' } }, { status: 200, body: { id: 'media9' } }, { status: 200, body: { permalink: 'https://www.instagram.com/p/abc/' } }]);
+  r = await createSocialPublisher({ social, fetchImpl: f, checkImages: false }).publish(post('instagram'));
+  assert.equal(r.receipt.providerPostId, 'media9'); assert.equal(r.receipt.url, 'https://www.instagram.com/p/abc/'); assert.match(f.calls[0].url, /\/media$/); assert.match(f.calls[1].url, /\/media_publish$/); assert.match(f.calls[1].opts.body, /creation_id=container1/);
+  assert.equal((await createSocialPublisher({ social, fetchImpl: recorder([]), checkImages: false }).publish(post('instagram', { imageUrl: null }))).ok, false);
 
   f = recorder([{ status: 201, body: { data: { id: '99' } } }]);
-  r = await createSocialPublisher({ social, fetchImpl: f }).publish(post('x'));
+  r = await createSocialPublisher({ social, fetchImpl: f, checkImages: false }).publish(post('x'));
   assert.equal(r.receipt.url, 'https://x.com/i/web/status/99'); assert.equal(f.calls[0].url, 'https://api.x.com/2/tweets'); assert.match(f.calls[0].opts.headers.Authorization, /^Bearer /);
 
   f = recorder([{ status: 200, body: { data: { publish_id: 'p_1' }, error: { code: 'ok' } } }]);
-  r = await createSocialPublisher({ social, fetchImpl: f }).publish(post('tiktok'));
+  r = await createSocialPublisher({ social, fetchImpl: f, checkImages: false }).publish(post('tiktok'));
   const body = JSON.parse(f.calls[0].opts.body);
   assert.equal(body.post_mode, 'MEDIA_UPLOAD'); assert.equal(body.source_info.source, 'PULL_FROM_URL'); assert.equal(r.receipt.pending, 'in_tiktok_inbox_as_draft');
 });
