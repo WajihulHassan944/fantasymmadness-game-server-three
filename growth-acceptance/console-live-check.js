@@ -10,7 +10,7 @@
 //   - exercises every button on clearly labelled "uitest-" fixtures it creates,
 //     then deletes every fixture and every audit entry it produced.
 // Real drafts are never approved, rejected or edited. Nothing is sent: the
-// delivery provider stays "none".
+// delivery provider is "sandbox-capture" (messages are built and stored, never sent).
 // Result is reported through the exit code (build logs are not readable here):
 //   160 + mask = all checks passed in the browser; mask bit i (boxing=1, mma-ufc=2,
 //                kickboxing=4, bare-knuckle=8, pro-wrestling=16) = that sport has at
@@ -56,11 +56,17 @@ async function main() {
   let browser = null; let browserOk = false; let exitCode = 0;
   const live = {};
   try {
-    await check('health: isolated, Atlas fmgrowthtest, console sign-in configured, delivery none', async () => {
+    await check('health: isolated, Atlas fmgrowthtest, console sign-in configured, sandbox delivery only', async () => {
       const h = (await api('GET', '/health')).json;
       ok(h.ok && h.database.name === 'fmgrowthtest' && h.database.kind === 'atlas', 'health');
       ok(h.console.signInConfigured === true, 'sign-in not configured');
-      ok(h.delivery.provider === 'none' && h.delivery.realDelivery === false, 'delivery not none');
+      ok(h.delivery.provider === 'sandbox-capture' && h.delivery.realDelivery === false, `delivery ${h.delivery.provider}`);
+    });
+    await check('database host pinned to the isolated test cluster', async () => {
+      const st = (await api('GET', '/admin/status')).json;
+      if (!(st.database.hostPinned === true)) throw Object.assign(new Error('host not pinned'), { diag: 240 });
+      if (!(new URL(process.env.MONGODB_URI).hostname === 'fmgrowthtest.zxhtsfa.mongodb.net')) throw Object.assign(new Error('unexpected Atlas host'), { diag: 241 });
+      if (!(String(process.env.GROWTH_TEST_ATLAS_HOST).trim() === 'fmgrowthtest.zxhtsfa.mongodb.net')) throw Object.assign(new Error('pin value'), { diag: 242 });
     });
     await check('CORS: exact staging origin allowed on sign-in; other origins still refused', async () => {
       const post = (o) => fetch(`${origin}/api/growth/admin/login`, { method: 'POST', headers: { 'Content-Type': 'application/json', Origin: o, 'X-Forwarded-For': '198.51.100.8' }, body: JSON.stringify({ password: 'definitely-not-the-password' }) });
@@ -156,13 +162,60 @@ async function main() {
       ok(st.scheduler.healthy === true && st.scheduler.runsLast24h >= 2, 'scheduler not healthy');
       const ws = (await api('GET', '/admin/workstreams')).json; ok(ws.workstreams.length === 25, `workstreams ${ws.workstreams.length}`);
       const pr = ws.workstreams.filter((w) => w.functionName === 'public-relations'); const af = ws.workstreams.filter((w) => w.functionName === 'affiliate-recruitment');
-      ok(pr.length === 5 && pr.every((w) => w.draftCount > 0), 'pr drafts'); ok(af.length === 5 && af.every((w) => w.draftCount > 0), 'affiliate drafts');
-      const det = (await api('GET', `/admin/workstreams/${pr[0].runId}/${pr[0].workstreamId}`)).json.workstream; ok(det.drafts.length > 0 && det.drafts[0].html && det.drafts[0].prospectName, 'detail');
+      ok(pr.length === 5 && af.length === 5, 'pr/affiliate workstreams');
+      const withDrafts = pr.find((w) => w.draftCount > 0);
+      if (withDrafts) { const det = (await api('GET', `/admin/workstreams/${withDrafts.runId}/${withDrafts.workstreamId}`)).json.workstream; ok(det.drafts.length > 0 && det.drafts[0].html && det.drafts[0].prospectName, 'detail'); }
       const an = (await api('GET', '/admin/analytics')).json.analytics; live.analytics = an;
       ok(Object.values(an.workstreams.matrix).every((row) => Object.values(row).every((v) => v !== null)), 'matrix gaps');
       const at = (await api('GET', '/admin/attribution')).json.attribution; live.attribution = at; ok(at.paymentSource.connected === false, 'payment source');
       for (const p of ['/admin/runs', '/admin/jobs', '/admin/reports', '/admin/audit', '/admin/suppressions', '/admin/alerts?state=all', '/admin/drafts?kind=marketing', '/admin/prospects', '/admin/session']) ok((await api('GET', p)).status === 200, p);
       ok((await api('GET', '/admin/runs')).json.runs.length >= 2, 'runs'); ok((await api('GET', '/admin/reports')).json.reports.length >= 1, 'reports');
+    });
+
+    // ---- Issue #108: research, sandbox outbox, synthetic money path, executive view ----
+    await check('PR & affiliate research: real shows researched, every draft backed by a published contact and evidence', async () => {
+      for (const track of ['pr', 'affiliate']) {
+        const r = (await api('GET', `/admin/research?track=${track}`)).json; live[`research_${track}`] = r.counts;
+        ok(r.ok && Array.isArray(r.shows), `${track} research`);
+        for (const x of r.shows.filter((s) => s.draftId)) {
+          if (!(x.contact && x.contact.email)) throw Object.assign(new Error(`${track} ${x.id}: draft without contact`), { diag: 210 });
+          if (!x.contact.manual && !(x.contact.source && x.contact.basis)) throw Object.assign(new Error(`${track} ${x.id}: contact without source`), { diag: 211 });
+          if (/@(anchor\.fm|libsyn\.com|buzzsprout\.com|example\.com)$/i.test(x.contact.email)) throw Object.assign(new Error(`${track} ${x.id}: platform address`), { diag: 212 });
+        }
+      }
+      const drafts = await C.drafts.find({ kind: { $in: ['pr', 'affiliate'] }, autoResearched: true }).toArray();
+      for (const d of drafts) {
+        if (!(d.recipient && d.contactSource && d.personalization)) throw Object.assign(new Error(`${d.id}: missing research fields`), { diag: 213 });
+        if (/\$\d|\d+\s?%/.test(`${d.subject} ${d.text}`)) throw Object.assign(new Error(`${d.id}: money terms`), { diag: 214 });
+        if (d.status === 'delivered' && d.realDelivery === true) throw Object.assign(new Error(`${d.id}: REAL delivery`), { diag: 215 });
+      }
+      live.autoDrafts = drafts.length;
+    });
+    await check('sandbox outbox: provider sandbox-capture, nothing ever sent over the network', async () => {
+      const r = (await api('GET', '/admin/email/sandbox')).json;
+      ok(r.ok && r.provider === 'sandbox-capture' && r.realDelivery === false, `outbox ${r.provider}`);
+      ok(r.messages.every((m) => m.sent === false && m.network === false), 'a captured message claims to be sent');
+      ok(r.messages.every((m) => /contact@fantasymmadnesscom\.com/.test(m.message.from) && m.message.headers && m.message.headers['List-Unsubscribe']), 'sender/unsubscribe');
+      live.sandboxOutbox = r.count;
+    });
+    await check('synthetic journey: click -> registration -> test payment -> entry -> exactly one affiliate credit; forgeries refused', async () => {
+      const r = await api('POST', '/admin/synthetic/journey');
+      if (r.status === 409) throw Object.assign(new Error('ingest secret not configured'), { diag: 220 });
+      if (!(r.status === 200 && r.json.ok === true)) throw Object.assign(new Error(`journey ${r.status} ${JSON.stringify(r.json).slice(0, 600)}`), { diag: 221 });
+      const lane = r.json.lane; live.synthetic = lane && lane.steps;
+      ok(lane && lane.steps.settledTestPayments >= 1 && lane.steps.affiliateCredits >= 1, 'lane');
+      const at = (await api('GET', '/admin/attribution')).json.attribution;
+      ok(at.paymentSource.connected === false, 'real payments must stay disconnected');
+      ok(!at.affiliates.some((a) => a.id === 'syn-affiliate'), 'synthetic affiliate leaked into the real list');
+    });
+    await check('executive dashboard: six departments with honest status, exceptions and autonomy lists', async () => {
+      const r = (await api('GET', '/admin/executive')).json;
+      ok(r.ok && r.departments.length === 6, 'departments');
+      ok(r.departments.every((d) => ['ok', 'attention', 'blocked', 'off'].includes(d.status) && d.headline), 'status');
+      const rev = r.departments.find((d) => d.key === 'revenue'); ok(rev.status === 'off' && /PASSED/.test(rev.facts.join(' ')), 'revenue honesty / journey');
+      ok(/\(pinned\)/.test(r.departments.find((d) => d.key === 'automation').facts.join(' ')), 'pinned fact');
+      ok(Array.isArray(r.exceptions) && r.autonomy.notConnected.some((x) => /Real email sending/.test(x)), 'autonomy');
+      live.executive = r.departments.map((d) => `${d.key}:${d.status}`).join(',');
     });
 
     // ---- fight marketing correction, on the real staging data ----
@@ -212,7 +265,7 @@ async function main() {
       ok(e && Array.isArray(e.steps) && e.steps.length === 5 && e.realDelivery === false, 'email readiness');
       live.email = e;
       const f = (await api('GET', '/admin/funnel')).json.funnel;
-      ok(f.stages.length === 6 && f.stages.find((x) => x.key === 'paying').connected === false, 'funnel');
+      ok(f.stages.length === 8 && ['researched', 'drafted'].every((k) => f.stages.some((x) => x.key === k)) && f.stages.find((x) => x.key === 'paying').connected === false, 'funnel');
       const ing = await fetch(`${origin}/api/growth/events`, { method: 'POST', headers: { 'Content-Type': 'application/json', Origin: STAGING }, body: '{}' });
       ok([401, 503].includes(ing.status), `unsigned event accepted (${ing.status})`);
     });
@@ -398,13 +451,14 @@ async function main() {
       await C.social.deleteMany({ draftId: { $in: [FX.mkt1, FX.mkt2] } });
       await C.sandbox.deleteMany({ postId: { $regex: `^uitest-` } });
       await C.affiliates.deleteMany({ id: FX.prospect2 });
+      await gdb.collection('growth_sandbox_mail').deleteMany({ draftId: { $in: [`pr-${FX.prospect}`, `affiliate-${FX.prospect2}`] } });
       await gdb.collection('growth_settings').updateOne({ key: 'social' }, { $set: { paused: false } });
       await C.alerts.deleteMany({ alertKey: FX.alert, uitest: true });
       await C.jobs.deleteMany({ id: FX.job });
       await C.suppressions.deleteMany({ address: { $in: [FX.optout, `pr-${stamp}@example.invalid`, `aff-${stamp}@example.invalid`] } });
       await C.audit.deleteMany({ admin: LABEL });
       await C.audit.deleteMany({ id: { $regex: '^uitest-' } });
-      const left = await C.drafts.countDocuments({ id: { $regex: `^(uitest-|pr-uitest-)` } }) + await C.prospects.countDocuments({ uitest: true }) + await C.alerts.countDocuments({ uitest: true }) + await C.jobs.countDocuments({ uitest: true }) + await C.suppressions.countDocuments({ address: { $regex: 'example\\.invalid$' } }) + await C.audit.countDocuments({ admin: LABEL }) + await C.social.countDocuments({ draftId: { $regex: '^uitest-' } }) + await C.affiliates.countDocuments({ id: { $regex: '^uitest-' } });
+      const left = await C.drafts.countDocuments({ id: { $regex: `^(uitest-|pr-uitest-)` } }) + await C.prospects.countDocuments({ uitest: true }) + await C.alerts.countDocuments({ uitest: true }) + await C.jobs.countDocuments({ uitest: true }) + await C.suppressions.countDocuments({ address: { $regex: 'example\\.invalid$' } }) + await C.audit.countDocuments({ admin: LABEL }) + await C.social.countDocuments({ draftId: { $regex: '^uitest-' } }) + await C.affiliates.countDocuments({ id: { $regex: '^uitest-' } }) + await gdb.collection('growth_sandbox_mail').countDocuments({ draftId: { $regex: '-uitest-' } });
       log('cleanup leftovers:', left);
       if (left !== 0 && exitCode === 0) exitCode = 99;
     } catch (e) { log('cleanup failed', e.message); if (exitCode === 0) exitCode = 98; }
