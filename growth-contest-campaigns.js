@@ -101,6 +101,9 @@ function verifyContest(item, { now = new Date(), horizonDays = 21, mediaNames = 
     source: wrestling ? 'fmm-public-pro-wrestling-feed' : 'fmm-public-prediction-feed',
     status: status || 'ongoing',
     posterUrl: [item.fightPosterImage, item.featuredFightBackgroundImage, item.promotionBackground, item.bannerImage].map((u) => clean(u, 500)).find((u) => /^https:\/\/[^\s"'<>]+$/i.test(u)) || null,
+    // If the public feed itself names the website's canonical fight address, offer it to the
+    // URL resolver (growth-fight-urls.js), which uses it only after the website serves it.
+    canonicalFromFeed: clean(item.canonicalUrl || item.canonicalPath, 300) || null,
   };
   contest.fingerprint = hash([contest.id, contest.sport, contest.fighterA, contest.fighterB, contest.dateKey, contest.matchTime, contest.eventName].join('|')).slice(0, 10);
   return { ok: true, contest };
@@ -181,7 +184,8 @@ function buildCampaign(c) {
     `Make your picks 👉 ${link(c, ch)}`, tags(c),
   ].filter(Boolean).join('\n\n');
   const x = [`${e} ${vs} | ${when}`, `${play}`, `Picks open on FANTASY MMADNESS 👇`, link(c, 'x'), tags(c)].join('\n');
-  const tiktok = `${e} ${vs} — ${when}. ${play} Link in bio → FANTASY MMADNESS contest is open. ${tags(c)}`;
+  // TikTok captions are not clickable: when the website has a fighter-name address, show it readably.
+  const tiktok = require('./growth-fight-urls').tiktokLine(`${e} ${vs} — ${when}. ${play} Link in bio → FANTASY MMADNESS contest is open. ${tags(c)}`, c);
   return {
     headline: clean(headline, 180),
     posts: { instagram: long('instagram'), facebook: long('facebook'), x, tiktok },
@@ -202,7 +206,9 @@ function checkCampaign(draft, contest, { now = new Date(), mediaNames = new Set(
     const s = String(t || '');
     if (!s.trim()) { reasons.push(`${ch}_empty`); continue; }
     if (!s.includes(contest.fighterA) || !s.includes(contest.fighterB)) reasons.push(`${ch}_missing_fighter_names`);
-    if (ch !== 'tiktok' && !s.includes(contest.contestUrl.split('?')[0])) reasons.push(`${ch}_missing_contest_link`);
+    // Either form of this fight's address is accepted: the fighter-name address or the ID address (fallback).
+    const bases = [contest.contestUrl, contest.idUrl, contest.cleanUrl].filter(Boolean).map((u) => u.split('?')[0]);
+    if (ch !== 'tiktok' && !bases.some((b) => s.includes(b))) reasons.push(`${ch}_missing_contest_link`);
     if (MONEY_WORDS.test(s)) reasons.push(`${ch}_mentions_money_or_prizes`);
     if (HYPE_CLAIMS.test(s) && !(contest.eventName && HYPE_CLAIMS.test(contest.eventName))) reasons.push(`${ch}_claims_title_or_main_event_not_in_contest`);
     if (/\bpodcast\b/i.test(s)) reasons.push(`${ch}_mentions_podcast`);

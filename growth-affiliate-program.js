@@ -9,7 +9,8 @@
 //                    credits their players; nothing here touches it or payments)
 // Links use the live site's existing mechanisms only:
 //   - onboarding:  /affiliate-create-account  + fan_acquisition campaign tags
-//   - player link: /fight/<id>?ref=<live affiliate id> + fan_acquisition campaign tags
+//   - player link: the fight's address (fighter-name address from the website, else /fight/<id>)
+//                  + ?play=1&ref=<live affiliate id> + fan_acquisition campaign tags
 // Verified results arrive two ways, both read-only for production:
 //   - signed events (HMAC) posted to /api/growth/events by a trusted server
 //   - optional daily pull of the live registration report (read-only token)
@@ -30,7 +31,9 @@ function tags(code, content) {
 function onboardingLink(a) { return `${SITE}/affiliate-create-account?${tags(a.code, 'onboarding')}`; }
 function playerLink(a, contest) {
   if (a.status !== 'active' || !/^[a-f0-9]{24}$/.test(String(a.liveAffiliateId || ''))) return null;
-  const base = contest.sport === 'pro-wrestling' ? `${SITE}/pro-wrestling/play/${encodeURIComponent(contest.id)}?` : `${SITE}/fight/${encodeURIComponent(contest.id)}?play=1&`;
+  // The website's fighter-name address when it has one (growth-fight-urls.js), else the ID address.
+  const path = contest.cleanUrl || (contest.sport === 'pro-wrestling' ? `${SITE}/pro-wrestling/play/${encodeURIComponent(contest.id)}` : `${SITE}/fight/${encodeURIComponent(contest.id)}`);
+  const base = contest.sport === 'pro-wrestling' ? `${path}?` : `${path}?play=1&`;
   return `${base}ref=${a.liveAffiliateId}&${tags(a.code, contest.sport)}`;
 }
 

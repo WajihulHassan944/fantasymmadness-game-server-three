@@ -21,6 +21,7 @@ const { createSocialScheduler } = require('./growth-social-scheduler');
 const { createAffiliateProgram } = require('./growth-affiliate-program');
 const { createMetaConnect, resolveMetaConfig } = require('./growth-meta-connect');
 const { createTokenVault } = require('./growth-token-vault');
+const fightUrls = require('./growth-fight-urls');
 
 const clean = (s, n = 200) => String(s ?? '').replace(/[\r\n\x00-\x1f]/g, ' ').trim().slice(0, n);
 const minuteId = (d) => 'growth_' + d.toISOString().replace(/[^0-9]/g, '').slice(0, 12);
@@ -40,7 +41,7 @@ function createGrowthRuntime({ db, config, secrets = {}, provider, fetchImpl = g
     coverage: db.collection('growth_marketing_coverage'), gateRejections: db.collection('growth_campaign_rejections'),
     affiliates: db.collection('growth_affiliates'), liveReports: db.collection('growth_live_reports'),
     social: db.collection('growth_social_posts'), settings: db.collection('growth_settings'), socialSandbox: db.collection('growth_social_sandbox'),
-    connections: db.collection('growth_connections'), oauthStates: db.collection('growth_oauth_states'),
+    connections: db.collection('growth_connections'), oauthStates: db.collection('growth_oauth_states'), fightUrls: db.collection('growth_fight_urls'),
   };
   const claims = createIsolatedRunClaims(col.runs, { testMode: true });
   const store = createStore(col.jobs, { testMode: true });
@@ -50,7 +51,7 @@ function createGrowthRuntime({ db, config, secrets = {}, provider, fetchImpl = g
   let socialScheduler = null; // created below once reverifyMarketing exists
   const affiliateProgram = createAffiliateProgram({ col, audit });
   async function init() {
-    await claims.init(); await store.init(); await suppression.init(); await socialScheduler.init(); await affiliateProgram.init(); await meta.init();
+    await claims.init(); await store.init(); await suppression.init(); await socialScheduler.init(); await affiliateProgram.init(); await meta.init(); await urlResolver.init();
     await col.liveReports.createIndex({ day: 1 }, { unique: true });
     await col.drafts.createIndex({ id: 1 }, { unique: true });
     await col.drafts.createIndex({ status: 1, kind: 1 });
@@ -107,8 +108,11 @@ function createGrowthRuntime({ db, config, secrets = {}, provider, fetchImpl = g
     const rows = await col.prospects.find({}, { projection: { name: 1 } }).toArray();
     return new Set(rows.map((r) => contestCampaigns.norm(r.name)).filter((n) => n.length >= 4));
   }
+  // Fight addresses come from the website: fighter-name address when it has one, else the ID address.
+  const urlResolver = fightUrls.createFightUrlResolver({ col: col.fightUrls, fetchImpl, enabled: config.fightUrlDiscovery !== false });
+  async function withAddresses(feed, now) { if (feed.sourceReachable) feed.contests = await urlResolver.enrich(feed.contests, now); return feed; }
   async function loadContests(now) {
-    return contestCampaigns.fetchVerifiedContests({ fetchImpl, baseUrl: config.contestSourceUrl, now, horizonDays: config.marketingHorizonDays, mediaNames: await mediaNames() });
+    return withAddresses(await contestCampaigns.fetchVerifiedContests({ fetchImpl, baseUrl: config.contestSourceUrl, now, horizonDays: config.marketingHorizonDays, mediaNames: await mediaNames() }), now);
   }
   async function withdraw(filter, reason, now) {
     const r = await col.drafts.updateMany({ kind: 'marketing', status: { $in: ['needs_owner_review', 'approved'] }, ...filter }, { $set: { status: 'rejected', ownerApproved: false, sendPermitted: false, rejectedBy: 'system-safeguard', rejectedAt: now.toISOString(), rejectReason: reason } });
@@ -116,7 +120,7 @@ function createGrowthRuntime({ db, config, secrets = {}, provider, fetchImpl = g
   }
   async function refreshMarketing(now = new Date(), { trigger = 'manual' } = {}) {
     const names = await mediaNames();
-    const feed = await contestCampaigns.fetchVerifiedContests({ fetchImpl, baseUrl: config.contestSourceUrl, now, horizonDays: config.marketingHorizonDays, mediaNames: names });
+    const feed = await withAddresses(await contestCampaigns.fetchVerifiedContests({ fetchImpl, baseUrl: config.contestSourceUrl, now, horizonDays: config.marketingHorizonDays, mediaNames: names }), now);
     // Safeguard 1: campaigns not tied to a verified contest leave the queue
     // (this removes the old podcast/media-based "fight" posts).
     let withdrawn = await withdraw({ contestId: { $exists: false } }, 'Withdrawn automatically: not based on a verified FANTASY MMADNESS fight contest', now);
@@ -134,7 +138,18 @@ function createGrowthRuntime({ db, config, secrets = {}, provider, fetchImpl = g
         const c = live.get(d.contestId);
         const why = !c ? 'Withdrawn automatically: the contest is no longer open, upcoming and verified'
           : c.fingerprint !== d.contestFingerprint ? 'Withdrawn automatically: fight details changed (a corrected campaign was prepared)' : null;
-        if (why) withdrawn += await withdraw({ id: d.id }, why, now);
+        if (why) { withdrawn += await withdraw({ id: d.id }, why, now); continue; }
+        // The website's address for this fight changed (e.g. a fighter-name address appeared, or
+        // it stopped working and the ID address is used again): update the campaign's links.
+        // Same fight, same text; only the address path changes and every tag is kept.
+        if ((d.contest?.contestUrl || '') !== c.contestUrl || (d.contest?.cleanUrl || null) !== (c.cleanUrl || null)) {
+          const k2 = fightUrls.relinkCampaign(d, c);
+          const next = { ...d, ...k2, contest: { ...d.contest, idBase: c.idBase, idUrl: c.idUrl, cleanUrl: c.cleanUrl, urlSource: c.urlSource, contestUrl: c.contestUrl } };
+          if (contestCampaigns.checkCampaign(next, c, { now, mediaNames: names }).length === 0) {
+            await col.drafts.updateOne({ id: d.id, status: d.status }, { $set: { text: next.text, posts: next.posts, link: next.link, sourceUrl: c.contestUrl, contest: next.contest }, $push: { linkHistory: { at: now.toISOString(), from: d.contest?.contestUrl || null, to: c.contestUrl, source: c.urlSource } } });
+            await audit('campaign_link_updated', { id: d.id, to: c.urlSource, admin: 'system' });
+          }
+        }
       }
       for (const sport of contestCampaigns.SPORTS) {
         const list = feed.contests.filter((c) => c.sport === sport).slice(0, config.maxCampaignsPerSport);
