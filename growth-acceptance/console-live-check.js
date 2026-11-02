@@ -31,7 +31,7 @@ const stamp = Date.now().toString(36);
 const FX = { mkt1: `uitest-mkt-a-${stamp}`, mkt2: `uitest-mkt-b-${stamp}`, prospect: `uitest-p-${stamp}`, prospect2: `uitest-q-${stamp}`, alert: `uitest:alert-${stamp}`, job: `uitest-job-${stamp}`, optout: `uitest-${stamp}@example.invalid` };
 const log = (...a) => console.log('[console-live-check]', ...a);
 let step = 0;
-const check = async (name, fn) => { step++; try { await fn(); log(`PASS ${step} ${name}`); } catch (e) { log(`FAIL ${step} ${name}: ${e && e.stack || e}`); throw Object.assign(new Error('check failed'), { code: (e && e.diag) || 100 + step }); } };
+const check = async (name, fn) => { step++; try { await fn(); log(`PASS ${step} ${name}`); } catch (e) { log(`FAIL ${step} ${name}: ${e && e.stack || e}`); globalThis.__failure = { step, name, error: String((e && e.message) || e).slice(0, 600) }; throw Object.assign(new Error('check failed'), { code: (e && e.diag) || 100 + step }); } };
 const ok = (v, msg) => { if (!v) throw new Error(msg || 'assertion failed'); };
 
 async function main() {
@@ -571,7 +571,7 @@ async function main() {
     // ---- public, non-sensitive acceptance evidence (read by the GitHub acceptance report) ----
     try {
       await gdb.collection('growth_acceptance_evidence').insertOne({ id: `live-check-${stamp}`, at: new Date().toISOString(), public: {
-        result: exitCode === 0 ? 'PASS' : `FAIL (code ${exitCode})`, commit: process.env.VERCEL_GIT_COMMIT_SHA || null, branch: process.env.VERCEL_GIT_COMMIT_REF || null,
+        result: exitCode === 0 ? 'PASS' : `FAIL (code ${exitCode})`, failure: globalThis.__failure || null, commit: process.env.VERCEL_GIT_COMMIT_SHA || null, branch: process.env.VERCEL_GIT_COMMIT_REF || null,
         stepsPassed: exitCode === 0 ? step : step - 1, realPosters: live.realPosters || [], posterSummary: live.posters || null, sandbox: live.sandbox || null, embed: live.embed || null,
         executive: live.executive || null, research: { pr: live.research_pr || null, affiliate: live.research_affiliate || null }, synthetic: live.synthetic || null, sandboxOutbox: live.sandboxOutbox ?? null,
         note: 'Staging only. Sandbox receipts: nothing was posted to Facebook, Instagram, TikTok or X, and no email was sent.' } });
