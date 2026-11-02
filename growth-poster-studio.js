@@ -34,7 +34,7 @@ const SPORT_LABEL = { boxing: 'BOXING', 'mma-ufc': 'MMA / UFC', kickboxing: 'KIC
 const ART_TYPES = /^image\/(jpeg|png|webp)$/i;
 const MAX_ART_BYTES = 12 * 1024 * 1024;
 const MIN_ART_SIDE = 300;
-const RENDER_VERSION = 'p3';
+const RENDER_VERSION = 'p4';
 
 const sha = (b) => crypto.createHash('sha256').update(b).digest('hex');
 const esc = (s) => String(s ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
@@ -94,7 +94,7 @@ function posterFacts(c, qrUrl) {
     event: c.eventName || null, date: dayText(c), time: timeText(c),
     where: [c.venue, c.city].filter(Boolean).join(' · ') || null,
     detail: [c.weightClass, c.maxRounds ? `${c.maxRounds} ROUNDS` : null, c.promotion].filter(Boolean).join(' · ') || null,
-    qrUrl, shownUrl: shown.length > 58 ? 'www.fantasymmadness.com' : shown,
+    qrUrl, shownUrl: shown.length > 72 ? 'www.fantasymmadness.com' : shown,
   };
 }
 // The QR destination: the campaign's contest link, tagged as the poster QR.
@@ -158,14 +158,18 @@ async function renderPoster({ contest, format = 'portrait', art = null, logo = n
   layers.push({ input: rect(chipW, chipH, COLORS.red, chipH / 2), top: y, left: Math.round((W - chipW) / 2) });
   layers.push({ input: chip.buffer, top: y + 8, left: Math.round((W - chip.width) / 2) }); y += chipH + 22;
   // bottom block sizes first, so the artwork gets whatever is left
-  const names = await fitText(`${esc(facts.fighterA)}  <span foreground="${COLORS.red}">VS</span>  ${esc(facts.fighterB)}`, { width: inner, max: format === 'story' ? 76 : 68, min: 36, lines: 2 });
+  // With artwork the names sit under it; a text poster carries them large inside the panel instead.
+  const names = art ? await fitText(`${esc(facts.fighterA)}  <span foreground="${COLORS.red}">VS</span>  ${esc(facts.fighterB)}`, { width: inner, max: format === 'story' ? 76 : 68, min: 36, lines: 2 }) : null;
   const lines = [facts.event, [facts.date, facts.time].filter(Boolean).join(' · '), facts.where, facts.detail].filter(Boolean);
   const info = [];
-  for (const [i, l] of lines.entries()) info.push(await fitText(esc(l), { width: inner, max: i === 1 || (!facts.event && i === 0) ? 34 : 28, min: 20, bold: i <= 1, color: i <= 1 ? COLORS.white : COLORS.grey }));
+  for (const l of lines) {
+    const kind = l === facts.event ? 'event' : l === lines[facts.event ? 1 : 0] ? 'date' : 'detail';
+    info.push(await fitText(esc(l), { width: inner, max: kind === 'detail' ? 28 : 36, min: 20, bold: kind !== 'detail', color: kind === 'event' ? COLORS.gold : kind === 'date' ? COLORS.white : COLORS.grey }));
+  }
   const qrTarget = format === 'story' ? 300 : 236;
   const qr = await qrImage(qrUrl, qrTarget);
   const infoH = info.reduce((s, t) => s + t.height + 6, 0);
-  const bottomH = names.height + 18 + infoH + 24 + qr.px + 20;
+  const bottomH = (names ? names.height + 18 : 0) + infoH + 24 + qr.px + 20;
   const artTop = y; const artBottom = H - pad - bottomH; const artH = Math.max(200, artBottom - artTop);
   layout.artBox = { top: artTop, left: pad, width: inner, height: artH };
   layers.push({ input: rect(inner, artH, COLORS.panel, 18), top: artTop, left: pad });
@@ -178,16 +182,17 @@ async function renderPoster({ contest, format = 'portrait', art = null, logo = n
     layout.art = { top, left, width: sm.width, height: sm.height, sourceWidth: art.width, sourceHeight: art.height, sha256: art.sha256 };
   } else {
     // No approved artwork: typographic panel only (no fighter imagery of any kind).
-    const a = await fitText(esc(facts.fighterA), { width: inner - 80, max: 92, min: 40 });
-    const v = await textImage('VS', { width: inner - 80, size: 64, color: COLORS.red });
-    const b = await fitText(esc(facts.fighterB), { width: inner - 80, max: 92, min: 40 });
+    const big = format === 'story' ? 118 : 100;
+    const a = await fitText(esc(facts.fighterA.toUpperCase()), { width: inner - 80, max: big, min: 44, lines: 2 });
+    const v = await textImage('VS', { width: inner - 80, size: Math.round(big * 0.8), color: COLORS.red });
+    const b = await fitText(esc(facts.fighterB.toUpperCase()), { width: inner - 80, max: big, min: 44, lines: 2 });
     const total = a.height + v.height + b.height + 24; let ty = artTop + Math.round((artH - total) / 2);
     for (const t of [a, v, b]) { layers.push({ input: t.buffer, top: ty, left: Math.round((W - t.width) / 2) }); ty += t.height + 12; }
     layout.art = null;
   }
   // names + facts
   y = artBottom + 18;
-  layers.push({ input: names.buffer, top: y, left: Math.round((W - names.width) / 2) }); y += names.height + 18;
+  if (names) { layers.push({ input: names.buffer, top: y, left: Math.round((W - names.width) / 2) }); y += names.height + 18; }
   for (const t of info) { layers.push({ input: t.buffer, top: y, left: Math.round((W - t.width) / 2) }); y += t.height + 6; }
   y += 24;
   // QR + call to action
