@@ -220,4 +220,31 @@ function checkCampaign(draft, contest, { now = new Date(), mediaNames = new Set(
   return reasons;
 }
 
-module.exports = { SPORTS, SPORT_LABEL, DEFAULT_SOURCE, sourceBase, sportOf, verifyContest, fetchVerifiedContests, buildCampaign, checkCampaign, norm, MONEY_WORDS };
+
+// Keeps campaign attribution on this fight's links after an owner edit or relink: any link
+// to the fight (fighter-name or ID address) gets play=1 (fights) and the Growth Engine
+// campaign tags back if they were removed. Other parameters (affiliate ref=, an affiliate
+// campaign tag) are kept as they are. Links to other pages are left untouched.
+function tagCampaignLinks(text, c, channel) {
+  const norm = (u) => String(u || '').split('?')[0].replace(/\/+$/, '');
+  const bases = new Set([c.cleanUrl, c.idBase, c.contestUrl, c.idUrl].filter(Boolean).map(norm));
+  return String(text || '').replace(/https:\/\/(?:www\.)?fantasymmadness\.com\/[^\s<>"')\]]+/g, (raw) => {
+    const m = raw.match(/^(.*?)([.,!?;:]*)$/); const u0 = m[1]; const tail = m[2];
+    let url; try { url = new URL(u0); } catch { return raw; }
+    const base = `${SITE}${url.pathname}`.replace(/\/+$/, '');
+    if (!bases.has(base)) return raw;
+    const q = new URLSearchParams();
+    if (c.sport !== 'pro-wrestling') q.set('play', url.searchParams.get('play') || '1');
+    for (const [k, v] of url.searchParams) if (k !== 'play' && !k.startsWith('utm_')) q.set(k, v);
+    const camp = url.searchParams.get('utm_campaign') || '';
+    const ours = /^combat_fans_/.test(camp);
+    q.set('utm_source', ours ? (url.searchParams.get('utm_source') || 'fan_acquisition') : 'fan_acquisition');
+    q.set('utm_medium', ours ? (url.searchParams.get('utm_medium') || 'partner_outreach') : 'partner_outreach');
+    q.set('utm_campaign', ours ? camp : `combat_fans_gs_${c.sport.replace(/[^a-z0-9]+/g, '_')}`);
+    q.set('utm_content', /^combat_fans_gs_/.test(q.get('utm_campaign')) ? channel : (url.searchParams.get('utm_content') || channel));
+    for (const [k, v] of url.searchParams) if (k.startsWith('utm_') && !q.has(k)) q.set(k, v);
+    return `${base}?${q.toString()}${tail}`;
+  });
+}
+
+module.exports = { tagCampaignLinks, SPORTS, SPORT_LABEL, DEFAULT_SOURCE, sourceBase, sportOf, verifyContest, fetchVerifiedContests, buildCampaign, checkCampaign, norm, MONEY_WORDS };

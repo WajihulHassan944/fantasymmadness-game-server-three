@@ -142,10 +142,14 @@ function createGrowthRuntime({ db, config, secrets = {}, provider, fetchImpl = g
         // The website's address for this fight changed (e.g. a fighter-name address appeared, or
         // it stopped working and the ID address is used again): update the campaign's links.
         // Same fight, same text; only the address path changes and every tag is kept.
-        if (!d.contest?.urlSource || (d.contest?.contestUrl || '') !== c.contestUrl || (d.contest?.cleanUrl || null) !== (c.cleanUrl || null)) { // also records the address source on campaigns made before this existed
+        const untagged = ['facebook', 'instagram', 'x'].some((ch) => d.posts?.[ch] && contestCampaigns.tagCampaignLinks(d.posts[ch], c, ch) !== d.posts[ch]);
+        if (untagged || !d.contest?.urlSource || (d.contest?.contestUrl || '') !== c.contestUrl || (d.contest?.cleanUrl || null) !== (c.cleanUrl || null)) { // also records the address source on campaigns made before this existed
           const k2 = fightUrls.relinkCampaign(d, c);
+          // keep (or restore) campaign attribution on every channel's fight link
+          for (const ch of ['facebook', 'instagram', 'x']) if (k2.posts[ch]) k2.posts[ch] = contestCampaigns.tagCampaignLinks(k2.posts[ch], c, ch);
+          if (k2.text) k2.text = contestCampaigns.tagCampaignLinks(k2.text, c, 'instagram');
           const next = { ...d, ...k2, contest: { ...d.contest, idBase: c.idBase, idUrl: c.idUrl, cleanUrl: c.cleanUrl, urlSource: c.urlSource, contestUrl: c.contestUrl } };
-          const moved = (d.contest?.contestUrl || '') !== c.contestUrl || next.posts?.tiktok !== d.posts?.tiktok;
+          const moved = (d.contest?.contestUrl || '') !== c.contestUrl || ['facebook', 'instagram', 'x', 'tiktok'].some((ch) => (next.posts?.[ch] || '') !== (d.posts?.[ch] || '')) || next.text !== d.text;
           if (!moved) await col.drafts.updateOne({ id: d.id, status: d.status }, { $set: { contest: next.contest } }); // metadata only, text unchanged
           else if (contestCampaigns.checkCampaign(next, c, { now, mediaNames: names }).length === 0) {
             await col.drafts.updateOne({ id: d.id, status: d.status }, { $set: { text: next.text, posts: next.posts, link: next.link, sourceUrl: c.contestUrl, contest: next.contest }, ...(moved ? { $push: { linkHistory: { at: now.toISOString(), from: d.contest?.contestUrl || null, to: c.contestUrl, source: c.urlSource } } } : {}) });

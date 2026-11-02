@@ -132,7 +132,11 @@ function createBackoffice({ runtime }) {
     // prizes/money, no media names. The caption edit applies to Instagram and Facebook.
     if (current.kind === 'marketing') {
       if (!current.contestId || !current.contest) return { ok: false, reason: 'not_based_on_a_verified_contest' };
-      if (set.text) set.posts = { ...(current.posts || {}), instagram: set.text, facebook: set.text };
+      // The edited caption is used for Instagram and Facebook; each keeps its own campaign tags.
+      if (set.text) {
+        set.posts = { ...(current.posts || {}), instagram: contestCampaigns.tagCampaignLinks(set.text, current.contest, 'instagram'), facebook: contestCampaigns.tagCampaignLinks(set.text, current.contest, 'facebook') };
+        set.text = set.posts.instagram;
+      }
       const rows = await col.prospects.find({}, { projection: { name: 1 } }).toArray();
       const mediaNames = new Set(rows.map((r) => contestCampaigns.norm(r.name)).filter((n) => n.length >= 4));
       const reasons = contestCampaigns.checkCampaign({ ...current, ...set }, current.contest, { now, mediaNames });
