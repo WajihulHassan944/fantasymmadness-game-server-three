@@ -67,7 +67,6 @@ test('Growth Engine back-office console: every screen, button and workflow', { s
   await runtime.tick({ now: new Date(now - 26 * 3600000 + 2 * 60000) });
   await runtime.tick({ now: new Date(now - 61 * 60000) });
   await runtime.tick({ now: new Date(now - 60 * 60000) });
-  await runtime.researchBatch(new Date(), { limit: 20 }); // research every discovered show (normally 4 per 15-minute run)
   await db.collection('unattended_jobs').insertOne({ id: 'discover-20260101', type: 'discover', state: 'failed', attempts: 3, dueAt: new Date(now - 5 * 86400000).toISOString(), lastError: 'upstream 503 (seeded for requeue test)', createdAt: new Date(now - 5 * 86400000).toISOString() });
 
   const browser = await chromium.launch();
@@ -227,6 +226,7 @@ test('Growth Engine back-office console: every screen, button and workflow', { s
     });
 
     await t.test('Public Relations: researched shows, evidence, auto-drafted pitch, manual contact fallback, approve', async () => {
+      await runtime.researchBatch(new Date(), { limit: 20 }); // research every discovered show (normally 4 per 15-minute run)
       await goto('#/pr?sport=mma-ufc');
       await page.waitForSelector('[data-testid=prepared-row]');
       assert.ok(Number(await page.textContent('[data-testid=pr-researched] .value')) >= 3);
@@ -451,9 +451,9 @@ test('Growth Engine back-office console: every screen, button and workflow', { s
     });
 
     await t.test('opted-out contact cannot be given an outreach email', async () => {
-      await goto('#/pr?sport=kickboxing');
-      await page.waitForSelector('[data-testid=prepared-row]');
-      await page.click('[data-testid=prepared-row] [data-testid=btn-add-contact]');
+      await goto('#/pr?sport=mma-ufc');
+      await page.waitForSelector('[data-testid=prepared-row][data-outcome=no_verified_contact_route] [data-testid=btn-add-contact]');
+      await page.click('[data-testid=prepared-row][data-outcome=no_verified_contact_route] [data-testid=btn-add-contact] >> nth=0');
       await page.fill('[data-testid=contact-email]', 'stop.contacting@example.com');
       await page.fill('[data-testid=contact-consent]', 'Website');
       await page.click('[data-testid=modal-confirm]');
