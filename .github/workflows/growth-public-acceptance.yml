@@ -1,0 +1,24 @@
+name: Growth Engine public staging acceptance (read-only)
+on:
+  push:
+    branches: [test/growth-acceptance-report]
+permissions:
+  contents: read
+jobs:
+  report:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with: { persist-credentials: false }
+      - uses: actions/setup-node@v4
+        with: { node-version: '22', cache: npm }
+      - run: npm ci --ignore-scripts --no-fund
+      - run: |
+          npm install --no-save --no-fund --ignore-scripts playwright@1.56.1
+          npx playwright install --with-deps chromium
+      - name: Independent acceptance against the public staging address
+        run: node growth-acceptance/public-report.js acceptance-report
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with: { name: acceptance-report, path: acceptance-report }
