@@ -86,6 +86,17 @@ async function main() {
       ok(fa.every((x) => x === "'self'" || /^https:\/\/[a-z0-9.-]+$/.test(x)), 'wildcard or non-https frame ancestor');
       const h = await fetch(`${origin}/api/growth/health`, { headers: { Origin: PREVIEW } });
       ok(h.status === 200 && h.headers.get('access-control-allow-origin') === PREVIEW, `preview health CORS ${h.status} ${h.headers.get('access-control-allow-origin')}`);
+      // Test back office sign-in (staging review mode) from the real preview address
+      const pre = await fetch(`${origin}/api/growth/admin/login`, { method: 'OPTIONS', headers: { Origin: PREVIEW, 'Access-Control-Request-Method': 'POST', 'Access-Control-Request-Headers': 'content-type' } });
+      ok(pre.status < 300 && pre.headers.get('access-control-allow-origin') === PREVIEW && /content-type/i.test(pre.headers.get('access-control-allow-headers') || ''), `preview sign-in preflight ${pre.status}`);
+      const bad = await fetch(`${origin}/api/growth/admin/login`, { method: 'POST', headers: { 'Content-Type': 'application/json', Origin: PREVIEW, 'X-Forwarded-For': '198.51.100.9' }, body: JSON.stringify({ password: 'definitely not the password' }) });
+      ok(bad.status === 401 && bad.headers.get('access-control-allow-origin') === PREVIEW, `preview wrong-password ${bad.status}`);
+      const hj = await (await fetch(`${origin}/api/growth/health`)).json();
+      ok((hj.console.embedOrigins || []).includes(PREVIEW), 'preview not on the console embed list (session hand-over would be ignored)');
+      ok(/fmm-growth-session/.test(await (await fetch(`${origin}/api/growth/console/app.js`)).text()), 'console without session hand-over');
+      // A real console token works from the preview origin (what the test back office sends after sign-in)
+      const sess = await fetch(`${origin}/api/growth/admin/session`, { headers: { Authorization: `Bearer ${token}`, Origin: PREVIEW } });
+      ok(sess.status === 200 && sess.headers.get('access-control-allow-origin') === PREVIEW, `preview session ${sess.status}`);
     });
     await check('sessions from before the password change are refused', async () => {
       const stale = signConsoleToken(process.env.JWT_SECRET_ADMIN, { email: LABEL, pwv: 'old-password-ver' }, { expiresIn: '5m' });
