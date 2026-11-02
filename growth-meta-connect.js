@@ -43,7 +43,7 @@ function resolveMetaConfig(env = {}) {
     dialogBase: okBase(env.GROWTH_META_DIALOG_BASE, 'dialog') || 'https://www.facebook.com',
     version: /^v\d{2}\.\d$/.test(String(env.GROWTH_META_GRAPH_VERSION || '')) ? env.GROWTH_META_GRAPH_VERSION : GRAPH_VERSION,
     redirectUri: `${origin}/api/growth/meta/callback`,
-    envApp: { appId: String(env.GROWTH_META_APP_ID || '').trim(), appSecret: String(env.GROWTH_META_APP_SECRET || '').trim() },
+    envApp: { appId: String(env.GROWTH_META_APP_ID || '').trim(), appSecret: String(env.GROWTH_META_APP_SECRET || '').trim(), loginConfigId: /^\d{6,25}$/.test(String(env.GROWTH_META_LOGIN_CONFIG_ID || '').trim()) ? String(env.GROWTH_META_LOGIN_CONFIG_ID).trim() : null },
     expected: { pageId: String(env.GROWTH_META_EXPECTED_PAGE_ID || '').trim() || null, igUsername: String(env.GROWTH_META_EXPECTED_IG_USERNAME || '').trim().replace(/^@/, '').toLowerCase() || null },
     liveTestApproved: env.GROWTH_SOCIAL_LIVE_TEST_APPROVED === 'true',
   };
@@ -70,19 +70,21 @@ function createMetaConnect({ col, config, vault, fetchImpl = globalThis.fetch, a
 
   // ---- app credentials ----
   async function app(doc) {
-    if (config.envApp.appId && config.envApp.appSecret) return { appId: config.envApp.appId, appSecret: config.envApp.appSecret, source: 'environment' };
+    if (config.envApp.appId && config.envApp.appSecret) return { appId: config.envApp.appId, appSecret: config.envApp.appSecret, loginConfigId: config.envApp.loginConfigId, source: 'environment' };
     const d = doc || await load();
     if (!d?.app?.appId || !d.app.appSecretSealed || !vault.configured) return null;
-    try { return { appId: d.app.appId, appSecret: vault.open(d.app.appSecretSealed, 'meta:app_secret'), source: 'connections screen' }; } catch { return null; }
+    try { return { appId: d.app.appId, appSecret: vault.open(d.app.appSecretSealed, 'meta:app_secret'), loginConfigId: d.app.loginConfigId || null, source: 'connections screen' }; } catch { return null; }
   }
-  async function setApp({ appId, appSecret, admin, now = new Date() }) {
+  async function setApp({ appId, appSecret, loginConfigId, admin, now = new Date() }) {
     if (!vault.configured) return { ok: false, reason: 'encryption_key_not_configured' };
     const id = String(appId || '').trim(); const secret = String(appSecret || '').trim();
     if (!/^\d{6,25}$/.test(id)) return { ok: false, reason: 'app_id_must_be_digits' };
     if (!/^[a-f0-9]{32}$/i.test(secret)) return { ok: false, reason: 'app_secret_must_be_32_characters' };
+    const cfg = String(loginConfigId || '').trim();
+    if (cfg && !/^\d{6,25}$/.test(cfg)) return { ok: false, reason: 'login_configuration_id_must_be_digits' };
     const r = await call(graph(`/${id}`, { fields: 'id,name', access_token: `${id}|${secret}` }));
     if (r.error) return { ok: false, reason: r.network ? 'meta_unreachable_try_again' : 'meta_rejected_app_id_or_secret', detail: r.error };
-    await save({ app: { appId: id, appSecretSealed: vault.seal(secret, 'meta:app_secret'), name: clean(r.body?.name, 120) || null, validatedAt: now.toISOString(), savedBy: clean(admin, 120) } });
+    await save({ app: { appId: id, loginConfigId: cfg || null, appSecretSealed: vault.seal(secret, 'meta:app_secret'), name: clean(r.body?.name, 120) || null, validatedAt: now.toISOString(), savedBy: clean(admin, 120) } });
     await audit('meta_app_saved', { admin: clean(admin, 120), appId: id });
     return { ok: true, appName: clean(r.body?.name, 120) || null };
   }
@@ -97,7 +99,10 @@ function createMetaConnect({ col, config, vault, fetchImpl = globalThis.fetch, a
     await col.oauthStates.insertOne({ stateHash: sha(state), admin: clean(admin, 120), createdAt: now.toISOString(), expiresAt: expires.toISOString(), expiresAtDate: expires, used: false });
     const u = new URL(`${config.dialogBase}/${config.version}/dialog/oauth`);
     u.searchParams.set('client_id', a.appId); u.searchParams.set('redirect_uri', config.redirectUri); u.searchParams.set('state', state);
-    u.searchParams.set('response_type', 'code'); u.searchParams.set('scope', SCOPES.join(',')); u.searchParams.set('auth_type', 'rerequest');
+    u.searchParams.set('response_type', 'code'); u.searchParams.set('auth_type', 'rerequest');
+    // Facebook Login for Business with a saved login configuration uses config_id
+    // (its permissions are chosen in the configuration); otherwise the permission list.
+    if (a.loginConfigId) u.searchParams.set('config_id', a.loginConfigId); else u.searchParams.set('scope', SCOPES.join(','));
     await audit('meta_authorization_started', { admin: clean(admin, 120) });
     return { ok: true, authorizeUrl: u.toString(), redirectUri: config.redirectUri, expiresAt: expires.toISOString() };
   }
@@ -250,7 +255,7 @@ function createMetaConnect({ col, config, vault, fetchImpl = globalThis.fetch, a
     let state = 'not_set_up';
     if (vault.configured && a) state = !d?.userTokenSealed ? 'authorization_needed' : (d.missingPermissions || []).length ? 'authorization_needed' : !d.selected ? 'selection_needed' : d.health && !d.health.ok ? 'authorization_needed' : 'connected';
     return {
-      state, setup, redirectUri: config.redirectUri, scopes: SCOPES, appId: a?.appId || null, appSource: a?.source || null,
+      state, setup, redirectUri: config.redirectUri, scopes: SCOPES, appId: a?.appId || null, appSource: a?.source || null, loginConfigId: a?.loginConfigId || null,
       user: d?.user || null, authorizedAt: d?.authorizedAt || null, granted: d?.granted || [], missingPermissions: d?.missingPermissions || [],
       pages: (d?.pages || []).map(({ tokenSealed, ...p }) => p), selected: d?.selected || null,
       userTokenExpiresAt: d?.userTokenExpiresAt || null, dataAccessExpiresAt: d?.dataAccessExpiresAt || null, pageTokensRenewedAt: d?.pageTokensRenewedAt || null,
