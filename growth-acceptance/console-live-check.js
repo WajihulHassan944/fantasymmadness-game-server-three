@@ -324,9 +324,14 @@ async function main() {
           await page.click(`[data-testid=nav-${n}]`); await page.waitForSelector(`[data-testid=page-${n}]`); await page.waitForSelector('main .spinner', { state: 'detached' });
           ok(!(await page.$('[data-testid=page-error]')), `error on ${n}`);
         }
-        await goto('#/pr?sport=boxing'); await page.waitForSelector('[data-testid=prepared-row]');
-        await page.click('[data-testid=prepared-row] [data-testid=btn-view-template]'); await page.waitForSelector('[data-testid=prepared-list] [data-testid=email-preview]');
-        await goto('#/affiliates?sport=pro-wrestling'); await page.waitForSelector('[data-testid=prepared-row]');
+        // research rows (or the honest "not researched yet" state) on every sport tab; open a drafted email where one exists
+        let viewed = false;
+        for (const [route, g] of [['pr', 'boxing'], ['pr', 'mma-ufc'], ['affiliates', 'boxing'], ['affiliates', 'pro-wrestling']]) {
+          await goto(`#/${route}?sport=${g}`); await page.waitForSelector('[data-testid=prepared-row], [data-testid=research-empty]');
+          const btn = await page.$('[data-testid=prepared-row][data-outcome=drafted] [data-testid=btn-view-template]');
+          if (btn && !viewed) { await btn.click(); await page.waitForSelector('[data-testid=prepared-list] [data-testid=email-preview]'); viewed = true; }
+        }
+        globalThis.__viewedResearchEmail = viewed;
         await goto('#/analytics');
         const cells = await page.$$eval('[data-testid=workstream-matrix] td.cell', (els) => els.map((e) => e.textContent));
         ok(cells.length === 25 && cells.every((c) => c !== '—'), 'matrix');
