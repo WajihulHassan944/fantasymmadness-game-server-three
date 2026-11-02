@@ -51,6 +51,7 @@ function createSocialScheduler({ col, social, publisher, reverifyMarketing, aler
     if (!d) return { ok: false, reason: 'not_found' };
     if (d.kind !== 'marketing' || !d.contestId || !d.contest) return { ok: false, reason: 'only_verified_fight_campaigns_can_be_scheduled' };
     if (d.status !== 'approved') return { ok: false, reason: 'approve_the_campaign_before_scheduling' };
+    if (d.poster && d.poster.status === 'hold') return { ok: false, reason: 'poster_on_hold', details: d.poster.holdReasons || [] };
     const list = [...new Set((Array.isArray(channels) ? channels : []).map((c) => String(c).toLowerCase()))];
     if (!list.length || list.some((c) => !CHANNELS.includes(c))) return { ok: false, reason: 'choose_at_least_one_valid_channel' };
     const when = new Date(scheduledAt);
@@ -136,6 +137,10 @@ function createSocialScheduler({ col, social, publisher, reverifyMarketing, aler
       if (!draft || !['approved', 'published'].includes(draft.status)) {
         await col.social.updateOne({ id: p.id, status: 'scheduled' }, { $set: { status: 'cancelled', cancelReason: 'campaign is no longer approved' }, $push: { history: { at: now.toISOString(), status: 'cancelled', note: 'campaign no longer approved' } } });
         out.cancelled++; continue;
+      }
+      if (draft.poster && (draft.poster.status === 'hold' || (p.imageUrl && ![draft.poster.portrait?.url, draft.poster.story?.url].includes(p.imageUrl) && p.imageUrl !== draft.contest?.posterUrl))) {
+        await col.social.updateOne({ id: p.id, status: 'scheduled' }, { $set: { status: 'held', heldReason: draft.poster.status === 'hold' ? `poster on hold: ${(draft.poster.holdReasons || []).join('; ')}` : 'the poster changed since this post was scheduled' }, $push: { history: { at: now.toISOString(), status: 'held' } } });
+        out.held++; continue;
       }
       if (!verified.has(draft.id)) verified.set(draft.id, await reverifyMarketing({ ...draft, status: 'needs_owner_review' }, now));
       const v = verified.get(draft.id);

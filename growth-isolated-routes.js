@@ -97,6 +97,12 @@ function registerIsolatedGrowthRoutes({ app, env = process.env, express, transpo
     res.end(img.buffer);
   }));
 
+  // ---- staging acceptance evidence (public, read-only, non-sensitive summary written by the live check) ----
+  router.get('/acceptance', wrap(async (req, res, rt) => {
+    const rows = await rt.collections.acceptance.find({}, { projection: { _id: 0, id: 1, at: 1, public: 1 } }).sort({ at: -1 }).limit(5).toArray();
+    res.set('Cache-Control', 'no-store').json({ ok: true, service: 'growth-engine-isolated', note: 'Staging acceptance evidence. Sandbox only: nothing here was posted or sent for real.', runs: rows });
+  }));
+
   // ---- unsubscribe ----
   const unsubscribe = wrap(async (req, res, runtime) => {
     const token = String(req.query.token || req.body?.token || '');
@@ -153,7 +159,7 @@ function registerIsolatedGrowthRoutes({ app, env = process.env, express, transpo
   const who = (req) => String(req.admin?.email || req.admin?.id || 'admin');
   router.get('/admin/overview', admin, wrap(async (req, res, rt) => res.json({ ok: true, overview: await rt.overview() })));
   router.get('/admin/drafts', admin, wrap(async (req, res, rt) => res.json({ ok: true, drafts: await rt.listDrafts({ status: req.query.status, kind: req.query.kind, limit: req.query.limit }) })));
-  router.post('/admin/drafts/:id/approve', admin, wrap(async (req, res, rt) => { const r = await rt.approveDraft(req.params.id, { admin: who(req) }); res.status(r.ok ? 200 : 409).json(r); }));
+  router.post('/admin/drafts/:id/approve', admin, wrap(async (req, res, rt) => { const r = await rt.approveDraft(req.params.id, { admin: who(req), acceptTextPoster: req.body?.acceptTextPoster === true }); res.status(r.ok ? 200 : 409).json(r); }));
   router.post('/admin/drafts/:id/reject', admin, wrap(async (req, res, rt) => { const r = await rt.rejectDraft(req.params.id, { admin: who(req), reason: req.body?.reason }); res.status(r.ok ? 200 : 409).json(r); }));
   router.post('/admin/prospects/:id/contact', admin, wrap(async (req, res, rt) => { const r = await rt.addVerifiedContact(req.params.id, { contact: req.body?.contact, kind: req.body?.kind, consentNote: req.body?.consentNote, admin: who(req) }); res.status(r.ok ? 201 : 422).json(r); }));
   // Research results for one department (PR or affiliate): one row per show, with evidence,
@@ -339,6 +345,29 @@ function registerIsolatedGrowthRoutes({ app, env = process.env, express, transpo
       }
     }
     res.status(r.ok ? 200 : 422).json(r);
+  }));
+  // Approved fighter photo library (owner-approved originals of exact named fighters) + blocks.
+  const regenerateFor = async (rt, names = null) => {
+    const { norm } = require('./growth-fighter-artwork');
+    const q = { kind: 'marketing', contestId: { $exists: true }, status: { $in: ['needs_owner_review', 'approved'] } };
+    const ds = (await rt.collections.drafts.find(q).toArray()).filter((d) => !names || names.some((n) => [d.contest?.fighterA, d.contest?.fighterB].map(norm).includes(norm(n))));
+    return ds.length ? rt.ensurePosters(new Date(), { ids: ds.map((d) => d.id), limit: 20 }) : { generated: 0 };
+  };
+  router.get('/admin/fighter-assets', admin, wrap(async (req, res, rt) => res.json({ ok: true, assets: await rt.posters.library.list() })));
+  router.post('/admin/fighter-assets', admin, wrap(async (req, res, rt) => {
+    const r = await rt.posters.library.approve({ fighterName: req.body?.fighterName, imageUrl: req.body?.imageUrl, rightsNote: req.body?.rightsNote, admin: who(req) });
+    if (r.ok) { await rt.collections.audit.insertOne({ action: 'approve_fighter_photo', fighter: r.asset.fighterName, sha256: r.asset.sha256, admin: who(req), at: new Date().toISOString() }); r.posters = await regenerateFor(rt, [r.asset.fighterName]); }
+    res.status(r.ok ? 201 : 422).json(r);
+  }));
+  router.post('/admin/fighter-assets/block', admin, wrap(async (req, res, rt) => {
+    const r = await rt.posters.library.block({ url: req.body?.url, note: req.body?.note, admin: who(req) });
+    if (r.ok) { await rt.collections.audit.insertOne({ action: 'block_fighter_photo', url: String(req.body?.url).slice(0, 300), admin: who(req), at: new Date().toISOString() }); r.posters = await regenerateFor(rt); }
+    res.status(r.ok ? 200 : 422).json(r);
+  }));
+  router.post('/admin/fighter-assets/:id/revoke', admin, wrap(async (req, res, rt) => {
+    const r = await rt.posters.library.revoke(req.params.id, { admin: who(req) });
+    if (r.ok) { await rt.collections.audit.insertOne({ action: 'revoke_fighter_photo', id: String(req.params.id).slice(0, 40), admin: who(req), at: new Date().toISOString() }); r.posters = await regenerateFor(rt); }
+    res.status(r.ok ? 200 : 404).json(r);
   }));
   router.get('/admin/social/capabilities', admin, wrap(async (req, res, rt) => res.json({ ok: true, capabilities: require('./growth-social-publishing').PLATFORM_CAPABILITIES, channels: await liveChannels(rt), provider: resolved.config.social.provider })));
   router.post('/admin/social/pause', admin, wrap(async (req, res, rt) => res.json({ ok: true, paused: await rt.social.setPaused(req.body?.paused === true, { admin: who(req) }) })));

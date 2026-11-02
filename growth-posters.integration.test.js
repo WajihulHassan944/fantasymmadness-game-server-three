@@ -24,8 +24,21 @@ const PASSWORD_HASH = hashPassword('poster integration test password');
 
 test('fight posters and platform campaigns, sandbox only', { skip, timeout: 180000 }, async (t) => {
   // Synthetic test artwork (never a real fighter image).
-  const art = await sharp(Buffer.from('<svg xmlns="http://www.w3.org/2000/svg" width="900" height="1100"><rect width="900" height="1100" fill="#1d4ed8"/><rect y="500" width="900" height="100" fill="#f5c518"/></svg>')).jpeg({ quality: 95 }).toBuffer();
-  const feed = contestFeed();
+  const synth = (w, h, a, b) => sharp(Buffer.from(`<svg xmlns="http://www.w3.org/2000/svg" width="${w}" height="${h}"><rect width="${w}" height="${h}" fill="${a}"/><rect y="${h * 0.45}" width="${w}" height="${h * 0.1}" fill="${b}"/></svg>`)).jpeg({ quality: 95 }).toBuffer();
+  const art = await synth(900, 1100, '#1d4ed8', '#f5c518');      // official matchup artwork (synthetic)
+  const photoA = await synth(700, 1000, '#0f766e', '#fde68a');   // synthetic stand-ins for approved fighter photos
+  const photoB = await synth(760, 980, '#7c2d12', '#e5e7eb');
+  const photoC = await synth(720, 990, '#312e81', '#fca5a5');
+  const photoD = await synth(740, 1010, '#3f6212', '#fef08a');
+  const PHOTOS = { 'https://res.cloudinary.com/daflot6fo/image/upload/v1/fighters/inoue.jpg': photoA, 'https://res.cloudinary.com/daflot6fo/image/upload/v1/fighters/akhmadaliev.jpg': photoB,
+    'https://res.cloudinary.com/daflot6fo/image/upload/v1/fighters/dvalishvili.jpg': photoC, 'https://res.cloudinary.com/daflot6fo/image/upload/v1/fighters/yan.jpg': photoD };
+  // The fixture feed, with photos FANTASY MMADNESS attached to one contest (both fighters).
+  const baseFeed = contestFeed();
+  const feed = (u) => {
+    const f = baseFeed(u); if (!f || !u.includes('/api/public/prediction-fights')) return f;
+    return { ...f, json: async () => { const j = await f.json(); for (const it of j.items) if (it._id === 'bx0000000001') Object.assign(it, { fighterAImage: 'https://res.cloudinary.com/daflot6fo/image/upload/v1/fighters/inoue.jpg', fighterAImageOverride: true, fighterBImage: 'https://res.cloudinary.com/daflot6fo/image/upload/v1/fighters/akhmadaliev.jpg', fighterBImageOverride: true }); return j; } };
+  };
+  let brokenFightPage = null; const siteHits = [];
   const artFetches = [];
   let origin = null;
   const PUBLIC = 'https://growth-staging.test';
@@ -34,7 +47,9 @@ test('fight posters and platform campaigns, sandbox only', { skip, timeout: 1800
     const u = String(url);
     if (u.startsWith(PUBLIC)) return fetch(local(u), opts); // our own public poster address (https, as on staging)
     const f = feed(u); if (f) return f;
+    if (PHOTOS[u]) { artFetches.push(u); return { ok: true, status: 200, headers: new Headers({ 'content-type': 'image/jpeg' }), arrayBuffer: async () => PHOTOS[u] }; }
     if (/^https:\/\/res\.cloudinary\.com\/demo\/image\/upload\//.test(u)) { artFetches.push(u); return { ok: true, status: 200, headers: new Headers({ 'content-type': 'image/jpeg' }), arrayBuffer: async () => art }; }
+    if (u.startsWith('https://www.fantasymmadness.com/fight/') || u.startsWith('https://www.fantasymmadness.com/pro-wrestling/')) { siteHits.push(u); const path = u.split('?')[0]; return brokenFightPage && path.includes(brokenFightPage) ? { ok: false, status: 404, url: path } : { ok: true, status: 200, url: path }; }
     if (u.startsWith('https://www.fantasymmadness.com/images/brand/')) return { ok: false, status: 404, headers: new Headers() }; // logo unavailable: wordmark is used
     const term = (() => { try { return new URL(u).searchParams.get('term') || 'x'; } catch { return 'x'; } })();
     return { ok: true, status: 200, headers: new Headers({ 'content-type': 'application/json' }), json: async () => ({ results: [{ collectionName: `${term} show`, collectionViewUrl: `https://podcasts.apple.com/us/podcast/x/id${term.length}` }] }) };
@@ -45,7 +60,7 @@ test('fight posters and platform campaigns, sandbox only', { skip, timeout: 1800
   const server = app.listen(0, '127.0.0.1'); await new Promise((r) => server.once('listening', r));
   origin = `http://127.0.0.1:${server.address().port}`;
   const env = { GROWTH_STAGING_MODE: 'isolated', GROWTH_OUTBOUND_ENABLED: 'false', GROWTH_TEST_MONGO_URI: uri, JWT_SECRET_ADMIN: SECRET, GROWTH_UNSUBSCRIBE_SECRET: SECRET, CRON_SECRET: 'cron-secret-for-tests-only',
-    GROWTH_DELIVERY_PROVIDER: 'none', GROWTH_ADMIN_PASSWORD_HASH: PASSWORD_HASH, GROWTH_SOCIAL_PROVIDER: 'sandbox', GROWTH_POSTERS: 'on', GROWTH_POSTERS_PER_RUN: '20', GROWTH_PUBLIC_ORIGIN: PUBLIC, GROWTH_RESEARCH_PER_RUN: '0' };
+    GROWTH_DELIVERY_PROVIDER: 'none', GROWTH_ADMIN_PASSWORD_HASH: PASSWORD_HASH, GROWTH_SOCIAL_PROVIDER: 'sandbox', GROWTH_POSTERS: 'on', GROWTH_POSTERS_PER_RUN: '20', GROWTH_PUBLIC_ORIGIN: PUBLIC, GROWTH_RESEARCH_PER_RUN: '0', GROWTH_ART_CLOUDINARY_CLOUDS: 'daflot6fo,demo' };
   const m = registerIsolatedGrowthRoutes({ app, env, express, fetchImpl, connect: async () => client });
   assert.equal(m.mounted, true, JSON.stringify(m.errors));
   const rt = await m.getRuntime();
@@ -78,20 +93,56 @@ test('fight posters and platform campaigns, sandbox only', { skip, timeout: 1800
     });
 
     let boxing; let noArt;
-    await t.test('official contest artwork is used unaltered; contests without it get a text poster', async () => {
+    await t.test('artwork: approved photos of both fighters, else official contest artwork, else NEEDS ARTWORK; full provenance', async () => {
       boxing = await drafts.findOne({ contestId: 'bx0000000001' });
-      noArt = await drafts.findOne({ contestId: 'mm0000000002' }); // fixture contest published without artwork
-      const wrestling = await drafts.findOne({ contestId: 'pw0000000001' }); // wrestling feed has no artwork field
-      assert.equal(boxing.poster.art.used, true); assert.match(boxing.poster.art.basis, /Official artwork published by FANTASY MMADNESS on this contest \(fightPosterImage\)/);
-      assert.equal(noArt.poster.art.used, false); assert.equal(noArt.poster.art.reason, 'no_official_artwork_on_this_contest');
-      assert.equal(wrestling.poster.art.used, false);
-      assert.ok(artFetches.every((u) => u.startsWith('https://res.cloudinary.com/demo/image/upload/')), 'only official artwork addresses are fetched');
+      noArt = await drafts.findOne({ contestId: 'mm0000000002' }); // fixture contest published without any artwork
+      const contestArt = await drafts.findOne({ contestId: 'bx0000000002' });
+      assert.equal(boxing.poster.art.mode, 'fighter_photos', JSON.stringify(boxing.poster.art.problems));
+      assert.deepEqual(boxing.poster.art.fighters.map((f) => [f.side, f.name, f.source]), [['a', 'Naoya Inoue', 'contest_upload'], ['b', 'Murodjon Akhmadaliev', 'contest_upload']]);
+      for (const f of boxing.poster.art.fighters) { assert.match(f.sha256, /^[a-f0-9]{64}$/); assert.match(f.basis, /attached to this contest/); }
+      assert.equal(contestArt.poster.art.mode, 'contest_artwork'); assert.deepEqual(contestArt.poster.art.missing, ['Shakur Stevenson', 'William Zepeda']);
+      assert.equal(noArt.poster.art.mode, 'text'); assert.equal(noArt.poster.needsArtwork, true); assert.deepEqual(noArt.poster.art.missing, ['Alexandre Pantoja', 'Joshua Van']);
+      for (const d of [boxing, contestArt, noArt]) { assert.equal(d.poster.status, 'ready', JSON.stringify(d.poster.holdReasons)); assert.equal(d.poster.qr.decodedPortrait, d.poster.qrUrl); assert.equal(d.poster.qr.decodedStory, d.poster.qrUrl); assert.equal(d.poster.qr.destination.ok, true); }
+      assert.ok(artFetches.every((u) => /^https:\/\/res\.cloudinary\.com\/(daflot6fo|demo)\/image\/upload\//.test(u)), 'only FMM asset addresses are fetched');
       const meta = (await call('GET', `/admin/posters?draftId=${encodeURIComponent(boxing.id)}`)).json.posters;
       assert.equal(meta.length, 2);
       const p = meta.find((x) => x.format === 'portrait');
-      assert.equal(p.facts.fighterA, 'Naoya Inoue'); assert.equal(p.facts.fighterB, 'Murodjon Akhmadaliev'); assert.equal(p.facts.where, 'Ariake Arena · Tokyo'); assert.equal(p.facts.detail, 'Super Bantamweight · 12 ROUNDS');
+      assert.equal(p.facts.fighterA, 'Naoya Inoue'); assert.equal(p.facts.fighterB, 'Murodjon Akhmadaliev'); assert.equal(p.facts.where, 'Ariake Arena · Tokyo');
       assert.ok(!('bytes' in p), 'admin metadata never includes the image bytes');
-      assert.ok(Math.abs(p.layout.art.width / p.layout.art.height - 900 / 1100) < 0.01, 'artwork aspect ratio kept');
+      assert.equal(p.layout.images.length, 2);
+      for (const im of p.layout.images) assert.ok(Math.abs(im.width / im.height - im.sourceWidth / im.sourceHeight) < 0.01, 'photo aspect ratio kept');
+    });
+
+    await t.test('owner photo library: exact fighter, rights note, one image per fighter, regenerates the poster', async () => {
+      const mm1 = await drafts.findOne({ contestId: 'mm0000000001' });
+      assert.equal(mm1.poster.art.mode, 'contest_artwork');
+      assert.equal((await call('POST', '/admin/fighter-assets', { fighterName: 'Merab Dvalishvili', imageUrl: 'https://res.cloudinary.com/daflot6fo/image/upload/v1/fighters/dvalishvili.jpg', rightsNote: '' })).json.reason, 'rights_note_required');
+      assert.equal((await call('POST', '/admin/fighter-assets', { fighterName: 'Merab Dvalishvili', imageUrl: 'https://images.example.com/merab.jpg', rightsNote: 'x' })).json.reason, 'artwork_host_not_a_fantasy_mmadness_asset_host');
+      assert.equal((await call('POST', '/admin/fighter-assets', { fighterName: 'Merab Dvalishvili', imageUrl: 'https://res.cloudinary.com/daflot6fo/image/upload/v1/fighters/dvalishvili.jpg', rightsNote: 'Official UFC promotion photo supplied to FMM' })).status, 201);
+      assert.equal((await call('POST', '/admin/fighter-assets', { fighterName: 'Petr Yan', imageUrl: 'https://res.cloudinary.com/daflot6fo/image/upload/v1/fighters/dvalishvili.jpg', rightsNote: 'x' })).json.reason, 'this_image_is_already_approved_for_another_fighter');
+      assert.equal((await drafts.findOne({ id: mm1.id })).poster.art.mode, 'contest_artwork', 'one approved photo is not enough for a photo poster');
+      const r = await call('POST', '/admin/fighter-assets', { fighterName: 'Petr Yan', imageUrl: 'https://res.cloudinary.com/daflot6fo/image/upload/v1/fighters/yan.jpg', rightsNote: 'Official UFC promotion photo supplied to FMM' });
+      assert.equal(r.status, 201); assert.ok(r.json.posters.generated >= 1);
+      const after = await drafts.findOne({ id: mm1.id });
+      assert.equal(after.poster.art.mode, 'fighter_photos');
+      assert.deepEqual(after.poster.art.fighters.map((f) => [f.name, f.source]), [['Merab Dvalishvili', 'owner_library'], ['Petr Yan', 'owner_library']]);
+      assert.ok(after.poster.art.fighters.every((f) => f.approvedBy && f.rightsNote && /^[a-f0-9]{64}$/.test(f.sha256)), 'provenance recorded');
+      const lib = (await call('GET', '/admin/fighter-assets')).json.assets;
+      assert.equal(lib.length, 2);
+      // revoking a photo drops the poster back to the matchup artwork
+      assert.equal((await call('POST', `/admin/fighter-assets/${lib.find((a) => a.fighterName === 'Petr Yan').id}/revoke`)).status, 200);
+      assert.equal((await drafts.findOne({ id: mm1.id })).poster.art.mode, 'contest_artwork');
+    });
+
+    await t.test('NEEDS ARTWORK needs an explicit text-poster approval; a fight page that does not open puts the poster ON HOLD', async () => {
+      const r1 = await call('POST', `/admin/drafts/${encodeURIComponent(noArt.id)}/approve`);
+      assert.equal(r1.status, 409); assert.equal(r1.json.reason, 'needs_artwork_confirm_text_poster');
+      assert.equal((await call('POST', `/admin/drafts/${encodeURIComponent(noArt.id)}/approve`, { acceptTextPoster: true })).status, 200);
+      brokenFightPage = 'kb0000000002';
+      const kb2 = await drafts.findOne({ contestId: 'kb0000000002' });
+      const r2 = await call('POST', `/admin/drafts/${encodeURIComponent(kb2.id)}/approve`);
+      assert.equal(r2.status, 409); assert.equal(r2.json.reason, 'poster_on_hold'); assert.deepEqual(r2.json.details, ['destination_http_404']);
+      brokenFightPage = null;
     });
 
     await t.test('posters are served publicly with the headers platforms need; QR scans to the campaign link', async () => {

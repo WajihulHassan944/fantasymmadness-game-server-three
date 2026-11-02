@@ -104,6 +104,8 @@ function verifyContest(item, { now = new Date(), horizonDays = 21, mediaNames = 
       const f = ['fightPosterImage', 'featuredFightBackgroundImage', 'promotionBackground', 'bannerImage'].find((k) => /^https:\/\/[^\s"'<>]+$/i.test(clean(item[k], 500)));
       return { posterUrl: f ? clean(item[f], 500) : null, posterField: f || null };
     })(),
+    // Per-fighter photos published on this contest (selection and rights checks: growth-fighter-artwork.js).
+    fighterPhotos: require('./growth-fighter-artwork').contestPhotoCandidates(item, a, b, wrestling),
     // If the public feed itself names the website's canonical fight address, offer it to the
     // URL resolver (growth-fight-urls.js), which uses it only after the website serves it.
     canonicalFromFeed: clean(item.canonicalUrl || item.canonicalPath, 300) || null,

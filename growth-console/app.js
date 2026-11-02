@@ -270,13 +270,22 @@
   function posterPanel(d, reload) {
     var p = d.poster; var art = p.art || {};
     var thumb = function (fmt, label) { var x = p[fmt]; return x ? h('a', { href: x.url, target: '_blank', rel: 'noopener noreferrer', class: 'poster-thumb', testid: 'poster-' + fmt, title: 'Open full size' }, h('img', { src: x.url, alt: label + ' poster for ' + (d.contest ? d.contest.fighterA + ' vs ' + d.contest.fighterB : 'this fight'), loading: 'lazy', width: '120' }), h('small', { text: label })) : null; };
-    var artChip = art.used ? h('span', { class: 'chip good', testid: 'poster-art', 'data-art': 'official', text: '✓ Official FANTASY MMADNESS artwork (unaltered)' })
-      : h('span', { class: 'chip warn', testid: 'poster-art', 'data-art': 'typographic', text: 'Text poster: ' + String(art.reason || 'no approved artwork').replace(/_/g, ' ') });
-    var rights = d.contestId && (d.status === 'needs_owner_review' || d.status === 'approved') ? (art.used
+    var mode = art.mode || (art.used ? 'contest_artwork' : 'text');
+    var artChip = mode === 'fighter_photos' ? h('span', { class: 'chip good', testid: 'poster-art', 'data-art': 'fighter_photos', text: '✓ Approved photos of both fighters (unaltered)' })
+      : mode === 'contest_artwork' ? h('span', { class: 'chip good', testid: 'poster-art', 'data-art': 'official', text: '✓ Official contest artwork (unaltered)' })
+      : h('span', { class: 'chip warn', testid: 'poster-art', 'data-art': 'needs_artwork', text: art.reason === 'artwork_blocked_by_owner' ? 'Artwork blocked: text poster' : 'NEEDS ARTWORK: text poster' + (art.missing && art.missing.length ? ' (no approved photo of ' + art.missing.join(' / ') + ')' : '') });
+    var status = p.status === 'hold' ? h('span', { class: 'chip bad', testid: 'poster-status', 'data-status': 'hold', text: 'ON HOLD: ' + (p.holdReasons || []).join('; ').replace(/_/g, ' ') })
+      : p.status === 'ready' ? h('span', { class: 'chip good', testid: 'poster-status', 'data-status': 'ready', text: '✓ Poster checked' }) : null;
+    var prov = (art.fighters || []).map(function (f) { return h('li', { testid: 'poster-provenance' }, h('strong', { text: f.name + ': ' }), (f.basis || f.source) + (f.approvedBy ? ' (approved by ' + f.approvedBy + ')' : '') + ' · ', h('a', { href: f.url, target: '_blank', rel: 'noopener noreferrer', text: 'original' }), h('span', { class: 'muted small', text: ' · sha ' + String(f.sha256 || '').slice(0, 10) })); });
+    if (art.contestArt) prov.push(h('li', { testid: 'poster-provenance' }, h('strong', { text: 'Matchup artwork: ' }), art.contestArt.basis + ' · ', h('a', { href: art.contestArt.url, target: '_blank', rel: 'noopener noreferrer', text: 'original' })));
+    var q = p.qr || {};
+    var qrLine = h('span', { class: 'small muted', testid: 'poster-qr', text: 'QR opens: ' + (p.qrUrl || '').replace(/^https:\/\//, '').replace(/\?.*$/, '') + (q.decodedMatches ? ' · ✓ decoded from the poster' : '') + (q.destination && q.destination.ok ? ' · ✓ opens this fight on the website' : (q.destination ? ' · ✗ ' + String(q.destination.reason || '').replace(/_/g, ' ') : '')) });
+    var rights = d.contestId && (d.status === 'needs_owner_review' || d.status === 'approved') ? (mode !== 'text'
       ? h('button', { class: 'btn small danger', testid: 'btn-block-art', text: 'Block this artwork', onclick: function () { artRights(d, 'blocked', reload); } })
-      : (art.reason === 'artwork_blocked_by_owner' ? h('button', { class: 'btn small', testid: 'btn-allow-art', text: 'Allow artwork again', onclick: function () { artRights(d, 'allowed', reload); } }) : null)) : null;
-    return h('div', { class: 'posters', testid: 'posters' }, h('div', { class: 'poster-row' }, thumb('portrait', 'Feed 4:5'), thumb('story', 'TikTok 9:16')),
-      h('div', { class: 'meta' }, artChip, h('span', { class: 'small muted', testid: 'poster-qr', text: 'QR opens: ' + (p.qrUrl || '').replace(/^https:\/\//, '').replace(/\?.*$/, '') }), rights));
+      : (art.reason === 'artwork_blocked_by_owner' ? h('button', { class: 'btn small', testid: 'btn-allow-art', text: 'Allow artwork again', onclick: function () { artRights(d, 'allowed', reload); } })
+        : h('a', { class: 'btn small', href: '#/marketing', testid: 'btn-add-photos', text: 'Add approved fighter photos' }))) : null;
+    return h('div', { class: 'posters', testid: 'posters', 'data-mode': mode, 'data-status': p.status || '' }, h('div', { class: 'poster-row' }, thumb('portrait', 'Feed 4:5'), thumb('story', 'TikTok 9:16')),
+      h('div', { class: 'meta' }, artChip, status, qrLine, rights), prov.length ? h('ul', { class: 'small provenance' }, prov) : null);
   }
   function artRights(d, status, reload) {
     var note = h('input', { type: 'text', maxlength: '300', testid: 'art-note' });
@@ -312,8 +321,14 @@
     var isEmail = d.kind !== 'marketing';
     return modal({
       title: 'Approve this ' + (KIND_NAMES[d.kind] || 'item').toLowerCase() + '?', confirmLabel: 'Approve', confirmClass: 'approve',
-      body: h('p', { text: isEmail ? 'Approving queues this email. Real email delivery is OFF in staging, so it will NOT be sent until you switch delivery on.' : 'Approving marks this post ready to publish. Nothing is posted automatically: copy it into your social accounts, then mark it as published.' }),
-      onConfirm: function () { return api('POST', '/admin/drafts/' + encodeURIComponent(d.id) + '/approve'); },
+      body: (function () {
+        var p = h('p', { text: isEmail ? 'Approving queues this email. Real email delivery is OFF in staging, so it will NOT be sent until you switch delivery on.' : 'Approving marks this post ready to publish. Nothing is posted automatically.' });
+        if (isEmail || !d.poster || !d.poster.needsArtwork) return p;
+        approve.textBox = h('input', { type: 'checkbox', testid: 'accept-text-poster' });
+        return h('div', null, p, h('div', { class: 'banner warn' }, h('div', null, h('strong', { text: 'This fight has no approved photos yet.' }), ' The poster shows the names only. Add approved photos on the Marketing page to get the photo poster, or approve with the text poster.')),
+          h('label', { class: 'check-row' }, approve.textBox, ' Approve with the text poster'));
+      })(),
+      onConfirm: function () { return api('POST', '/admin/drafts/' + encodeURIComponent(d.id) + '/approve', d.poster && d.poster.needsArtwork ? { acceptTextPoster: Boolean(approve.textBox && approve.textBox.checked) } : undefined); },
     }).then(function (ok) { if (ok) { toast('Approved.', 'good'); reload(); refreshCounts(); } }).catch(fail);
   }
   function reject(d, reload, withdraw) {
@@ -565,8 +580,42 @@
             h('tbody', null, blocked.map(function (b) { return h('tr', { testid: 'blocked-row' }, h('td', { text: b.label || b.id || '—' }), h('td', { text: sport(b.sport) }), h('td', { class: 'small', text: (b.reasons || []).map(function (x) { return String(x).replace(/_/g, ' '); }).join('; ') })); })))) : h('div', { class: 'empty', text: 'Nothing was blocked in the latest check.' })),
       ]);
       draftList(list, { kind: 'marketing', limit: 300, _genre: g }, 'No fight campaigns yet.');
+      main.appendChild(photoLibrary());
     });
   };
+  // Approved fighter photos: originals of the exact named fighter, approved by the owner.
+  function photoLibrary() {
+    var card = h('section', { class: 'card', testid: 'photo-library' }, h('h2', { text: 'Approved fighter photos' }),
+      h('p', { class: 'sub', text: 'Posters use a fighter photo only when it is the photo FANTASY MMADNESS attached to the contest, or a photo you approve here for that exact fighter. Photos are never cropped or changed. Without approved photos of both fighters the poster uses the contest artwork, or names only (NEEDS ARTWORK).' }));
+    var body = h('div', null, h('div', { class: 'spinner', text: 'Loading…' })); card.appendChild(body);
+    var name = h('input', { type: 'text', maxlength: '80', testid: 'photo-name', placeholder: 'Fighter name exactly as on the contest' });
+    var url = h('input', { type: 'url', maxlength: '500', testid: 'photo-url', placeholder: 'https://res.cloudinary.com/… (your FANTASY MMADNESS upload)' });
+    var note = h('input', { type: 'text', maxlength: '300', testid: 'photo-note', placeholder: 'Rights: e.g. Official promotion photo, licensed for promotion' });
+    var add = h('button', { class: 'btn primary small', testid: 'btn-approve-photo', text: 'Approve this photo', onclick: function () {
+      add.disabled = true;
+      api('POST', '/admin/fighter-assets', { fighterName: name.value, imageUrl: url.value, rightsNote: note.value }).then(function (r) {
+        toast('Photo approved for ' + r.asset.fighterName + '. Posters updated: ' + ((r.posters && r.posters.generated) || 0) + '.', 'good'); name.value = url.value = note.value = ''; load();
+      }).catch(fail).then(function () { add.disabled = false; });
+    } });
+    card.appendChild(h('div', { class: 'form-row', testid: 'photo-form' }, name, url, note, add));
+    function load() {
+      api('GET', '/admin/fighter-assets').then(function (r) {
+        clear(body);
+        if (!r.assets.length) { body.appendChild(h('p', { class: 'muted small', testid: 'photo-empty', text: 'No photos approved here yet.' })); return; }
+        body.appendChild(h('div', { class: 'table-wrap' }, h('table', { class: 'data', testid: 'photo-table' }, h('thead', null, h('tr', null, h('th', { text: 'Fighter' }), h('th', { text: 'Photo' }), h('th', { text: 'Rights / reason' }), h('th', { text: 'By' }), h('th', { text: '' }))),
+          h('tbody', null, r.assets.map(function (a) {
+            return h('tr', { testid: 'photo-row', 'data-asset-id': a.id, 'data-kind': a.kind },
+              h('td', { text: a.kind === 'block' ? 'BLOCKED photo' : a.fighterName }), h('td', null, h('a', { href: a.url, target: '_blank', rel: 'noopener noreferrer' }, h('img', { src: a.url, alt: a.fighterName || 'blocked photo', width: '56', loading: 'lazy' }))),
+              h('td', { class: 'small', text: a.rightsNote || a.note || '' }), h('td', { class: 'small', text: (a.approvedBy || a.by || '') + ' ' + when(a.approvedAt || a.at) }),
+              h('td', null, h('button', { class: 'btn small danger', testid: 'btn-revoke-photo', text: a.kind === 'block' ? 'Unblock' : 'Revoke', onclick: function () {
+                api('POST', '/admin/fighter-assets/' + encodeURIComponent(a.id) + '/revoke').then(function () { toast('Done. Posters updated.', 'good'); load(); }).catch(fail);
+              } })));
+          })))));
+      }).catch(function (e) { clear(body); body.appendChild(h('p', { class: 'error', text: explain(e) })); });
+    }
+    load();
+    return card;
+  }
 
   var OUTCOME = {
     drafted: ['Personalized email drafted', 'good'], already_has_outreach: ['Already contacted / drafted', 'info'],

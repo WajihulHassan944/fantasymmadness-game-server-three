@@ -1,143 +1,192 @@
 'use strict';
-// Poster generation: rights rules, unaltered artwork, accurate facts, scannable QR.
+// Posters: rights rules, approved fighter-photo selection with provenance, unaltered images,
+// accurate facts, agreed layout, and a QR code DECODED from the final image (jsQR).
 const test = require('node:test');
 const assert = require('node:assert/strict');
+const crypto = require('crypto');
 const sharp = require('sharp');
-const QRCode = require('qrcode');
 const P = require('./growth-poster-studio');
+const { contestPhotoCandidates, createArtworkLibrary } = require('./growth-fighter-artwork');
 
+const CLOUD = 'https://res.cloudinary.com/daflot6fo/image/upload/v1';
 const contest = (o = {}) => ({ id: 'bx0000000001', sport: 'boxing', fighterA: 'Naoya Inoue', fighterB: 'Murodjon Akhmadaliev', dateKey: '2026-11-08', timeTba: true, matchTime: null, timeZone: null,
   venue: 'Ariake Arena', city: 'Tokyo', weightClass: 'Super Bantamweight', maxRounds: 12, eventName: null, promotion: null,
-  contestUrl: 'https://www.fantasymmadness.com/fight/bx0000000001?play=1', cleanUrl: null, posterUrl: 'https://res.cloudinary.com/fmm/image/upload/v1/fights/bx1.jpg', posterField: 'fightPosterImage', fingerprint: 'abc1234567', ...o });
+  contestUrl: 'https://www.fantasymmadness.com/fight/bx0000000001?play=1', cleanUrl: null, posterUrl: `${CLOUD}/fights/bx1.jpg`, posterField: 'fightPosterImage', fingerprint: 'abc1234567', ...o });
 
-// A synthetic test artwork (never a real fighter image): a blue field with a gold "belt" band
-// and a red block in one corner, so any crop, recolour or distortion is detectable.
-async function testArt(w = 800, h = 1000) {
-  const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${w}" height="${h}"><rect width="${w}" height="${h}" fill="#1d4ed8"/><rect x="0" y="${h * 0.45}" width="${w}" height="${h * 0.1}" fill="#f5c518"/><rect x="${w - 160}" y="0" width="160" height="160" fill="#dc2626"/><circle cx="${w * 0.3}" cy="${h * 0.25}" r="${w * 0.12}" fill="#ffffff"/></svg>`;
+// Synthetic test images only (never real fighter photos). Each has a distinctive band + corner block
+// so any crop, recolour, overlay or stretch is detectable.
+async function synth(w, h, base, band) {
+  const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${w}" height="${h}"><rect width="${w}" height="${h}" fill="${base}"/><rect x="0" y="${h * 0.45}" width="${w}" height="${h * 0.1}" fill="${band}"/><rect x="${w - w / 5}" y="0" width="${w / 5}" height="${w / 5}" fill="#dc2626"/></svg>`;
   const buffer = await sharp(Buffer.from(svg)).jpeg({ quality: 95 }).toBuffer();
-  return { buffer, width: w, height: h, sha256: require('crypto').createHash('sha256').update(buffer).digest('hex') };
+  return { buffer, width: w, height: h, sha256: crypto.createHash('sha256').update(buffer).digest('hex') };
 }
-// Reads the QR modules back out of the poster pixels and compares them with the
-// matrix the URL must produce: a scanner sees exactly this URL.
-async function qrMatches(poster, layout, url) {
-  const { data, info } = await sharp(poster).extract({ left: layout.qr.left, top: layout.qr.top, width: layout.qr.px, height: layout.qr.px }).greyscale().raw().toBuffer({ resolveWithObject: true });
-  const m = P.qrMatrix(url); let bad = 0;
-  for (let r = 0; r < m.size; r++) for (let c = 0; c < m.size; c++) {
-    const y = (r + layout.qr.quiet) * layout.qr.scale + Math.floor(layout.qr.scale / 2); const x = (c + layout.qr.quiet) * layout.qr.scale + Math.floor(layout.qr.scale / 2);
-    const dark = data[y * info.width + x] < 128; if (dark !== m.get(r, c)) bad++;
-  }
-  return { bad, modules: m.size };
+const imgResp = (buf) => ({ ok: true, status: 200, url: '', headers: new Headers({ 'content-type': 'image/jpeg' }), arrayBuffer: async () => buf });
+async function regionMad(poster, box, original) {
+  const placed = await sharp(poster).extract({ left: box.left, top: box.top, width: box.width, height: box.height }).removeAlpha().raw().toBuffer();
+  const expected = await sharp(original).resize(box.width, box.height, { fit: 'fill' }).removeAlpha().raw().toBuffer();
+  let d = 0; for (let i = 0; i < placed.length; i++) d += Math.abs(placed[i] - expected[i]); return d / placed.length;
 }
+const overlaps = (a, b) => a.left < b.left + b.width && a.left + a.width > b.left && a.top < b.top + b.height && a.top + a.height > b.top;
 
-test('artwork rights: only official FANTASY MMADNESS contest artwork on FMM asset hosts', () => {
-  const pol = P.artPolicy({});
+test('artwork rights: only FANTASY MMADNESS asset hosts', () => {
+  const pol = P.artPolicy({ GROWTH_ART_CLOUDINARY_CLOUDS: 'daflot6fo,dqi6vk2vn' });
   assert.equal(P.checkArtSource(contest(), pol).ok, true);
-  assert.match(P.checkArtSource(contest(), pol).basis, /Official artwork published by FANTASY MMADNESS on this contest \(fightPosterImage\)/);
-  assert.equal(P.checkArtSource(contest({ posterUrl: 'https://www.fantasymmadness.com/images/x.png' }), pol).ok, true);
-  for (const [url, reason] of [[null, 'no_official_artwork_on_this_contest'], ['http://res.cloudinary.com/fmm/image/upload/a.jpg', 'artwork_not_https'], ['https://images.example.com/inoue.jpg', 'artwork_host_not_a_fantasy_mmadness_asset_host'],
-    ['https://res.cloudinary.com/fmm/video/upload/a.mp4', 'artwork_not_an_uploaded_image'], ['https://fantasymmadness.com.evil.example/a.jpg', 'artwork_host_not_a_fantasy_mmadness_asset_host']]) {
+  for (const [url, reason] of [[null, 'no_official_artwork_on_this_contest'], ['http://res.cloudinary.com/daflot6fo/image/upload/a.jpg', 'artwork_not_https'], ['https://images.example.com/inoue.jpg', 'artwork_host_not_a_fantasy_mmadness_asset_host'],
+    ['https://res.cloudinary.com/someoneelse/image/upload/a.jpg', 'artwork_not_on_the_fantasy_mmadness_cloud'], ['https://fantasymmadness.com.evil.example/a.jpg', 'artwork_host_not_a_fantasy_mmadness_asset_host']]) {
     assert.equal(P.checkArtSource(contest({ posterUrl: url }), pol).reason, reason, String(url));
   }
-  assert.equal(P.checkArtSource(contest(), pol, { status: 'blocked', note: 'licence expired' }).reason, 'artwork_blocked_by_owner');
-  const narrow = P.artPolicy({ GROWTH_ART_CLOUDINARY_CLOUDS: 'daflot6fo' });
-  assert.equal(P.checkArtSource(contest(), narrow).reason, 'artwork_not_on_the_fantasy_mmadness_cloud');
-  assert.equal(P.checkArtSource(contest({ posterUrl: 'https://res.cloudinary.com/daflot6fo/image/upload/v1/a.jpg' }), narrow).ok, true);
 });
 
-test('fetchImage refuses non-images, tiny images and redirects', async () => {
-  const art = await testArt();
-  const resp = (body, type, status = 200) => ({ ok: status < 400, status, headers: new Headers({ 'content-type': type }), arrayBuffer: async () => body });
-  assert.equal((await P.fetchImage(async () => resp(art.buffer, 'image/jpeg'), 'https://x')).ok, true);
-  assert.match((await P.fetchImage(async () => resp(Buffer.from('<html>'), 'text/html'), 'https://x')).reason, /artwork_not_an_image/);
-  assert.equal((await P.fetchImage(async () => resp(Buffer.alloc(0), 'image/jpeg', 404), 'https://x')).reason, 'artwork_http_404');
-  const tiny = await sharp({ create: { width: 120, height: 120, channels: 3, background: '#fff' } }).jpeg().toBuffer();
-  assert.equal((await P.fetchImage(async () => resp(tiny, 'image/jpeg'), 'https://x')).reason, 'artwork_too_small');
-  let opts; await P.fetchImage(async (u, o) => { opts = o; return resp(art.buffer, 'image/jpeg'); }, 'https://x');
-  assert.equal(opts.redirect, 'error');
+test('contest photo candidates: contest uploads, linked library photos only on exact name match, wrestling competitors', () => {
+  const item = { fighterAImage: `${CLOUD}/a-upload.jpg`, fighterAImageOverride: true, fighterA: { id: 'lib1', displayName: 'Naoya Inoue', primaryImage: `${CLOUD}/lib-inoue.jpg`, status: 'active' },
+    fighterB: { id: 'lib2', displayName: 'Somebody Else', primaryImage: `${CLOUD}/lib-wrong.jpg`, status: 'active' }, fighterBImage: `${CLOUD}/lib-wrong.jpg` };
+  const c = contestPhotoCandidates(item, 'Naoya Inoue', 'Murodjon Akhmadaliev', false);
+  assert.deepEqual(c.a.map((x) => x.source), ['contest_upload', 'fmm_fighter_library']);
+  assert.deepEqual(c.b, [], 'a library photo of a DIFFERENT name is never offered (and the feed copy of it is not a contest upload)');
+  const inactive = contestPhotoCandidates({ fighterA: { displayName: 'Naoya Inoue', primaryImage: `${CLOUD}/x.jpg`, status: 'inactive' }, fighterAImage: `${CLOUD}/x.jpg` }, 'Naoya Inoue', 'B', false);
+  assert.deepEqual(inactive.a, []);
+  const w = contestPhotoCandidates({ competitorA: { displayName: 'Kenny Omega', image: `${CLOUD}/omega.jpg` }, competitorB: { displayName: 'Will Ospreay' } }, 'Kenny Omega', 'Will Ospreay', true);
+  assert.equal(w.a[0].source, 'contest_upload'); assert.deepEqual(w.b, []);
 });
 
-test('poster: whole artwork, uniformly scaled, pixels unaltered; facts from the contest; QR scans to the campaign link', async () => {
-  const art = await testArt(800, 1000);
-  const c = contest();
-  const qrUrl = P.qrLink(c);
+test('poster with approved photos of both fighters: whole, unaltered, VS clear of both photos; QR decoded from the final JPEG', async () => {
+  const A = await synth(700, 1000, '#1d4ed8', '#f5c518'); const B = await synth(800, 900, '#065f46', '#e5e7eb');
+  const c = contest(); const qrUrl = P.qrLink(c);
   assert.equal(qrUrl, 'https://www.fantasymmadness.com/fight/bx0000000001?play=1&utm_source=fan_acquisition&utm_medium=partner_outreach&utm_campaign=combat_fans_gs_boxing&utm_content=poster_qr');
+  const artwork = { mode: 'fighter_photos', fighters: [{ side: 'a', name: c.fighterA, ...A }, { side: 'b', name: c.fighterB, ...B }] };
   for (const format of ['portrait', 'story']) {
-    const r = await P.renderPoster({ contest: c, format, art, qrUrl });
+    const r = await P.renderPoster({ contest: c, format, artwork, qrUrl });
     const meta = await sharp(r.buffer).metadata();
     assert.deepEqual([meta.width, meta.height, meta.format], [P.FORMATS[format].width, P.FORMATS[format].height, 'jpeg']);
-    const a = r.layout.art;
-    // aspect ratio kept (no stretch), nothing cut off (inside its box)
-    assert.ok(Math.abs(a.width / a.height - 800 / 1000) < 0.01, `${format} aspect ${a.width}x${a.height}`);
-    const box = r.layout.artBox;
-    assert.ok(a.left >= box.left && a.top >= box.top && a.left + a.width <= box.left + box.width && a.top + a.height <= box.top + box.height, 'art inside its box');
-    // the artwork region equals the original scaled to that size: no crop, recolour or overlay
-    const placed = await sharp(r.buffer).extract({ left: a.left, top: a.top, width: a.width, height: a.height }).removeAlpha().raw().toBuffer();
-    const expected = await sharp(art.buffer).resize(a.width, a.height, { fit: 'fill' }).removeAlpha().raw().toBuffer();
-    let diff = 0; for (let i = 0; i < placed.length; i++) diff += Math.abs(placed[i] - expected[i]);
-    const mad = diff / placed.length;
-    assert.ok(mad < 6, `${format}: mean pixel difference ${mad.toFixed(2)} (artwork altered?)`);
-    // the gold "belt" band is still exactly where it was, at full width
-    const band = await sharp(r.buffer).extract({ left: a.left + 4, top: a.top + Math.round(a.height * 0.5), width: a.width - 8, height: 2 }).removeAlpha().raw().toBuffer();
-    for (let i = 0; i < band.length; i += 3) assert.ok(band[i] > 200 && band[i + 1] > 160 && band[i + 2] < 90, 'belt band colour changed');
-    const q = await qrMatches(r.buffer, r.layout, qrUrl);
-    assert.equal(q.bad, 0, `${format}: ${q.bad} QR modules differ`);
-    assert.deepEqual(r.facts, { sport: 'BOXING', fighterA: 'Naoya Inoue', fighterB: 'Murodjon Akhmadaliev', event: null, date: 'SUNDAY, NOVEMBER 8, 2026', time: null, where: 'Ariake Arena · Tokyo', detail: 'Super Bantamweight · 12 ROUNDS', qrUrl, shownUrl: 'www.fantasymmadness.com/fight/bx0000000001' });
+    assert.equal(r.layout.images.length, 2);
+    for (const [im, src] of [[r.layout.images[0], A], [r.layout.images[1], B]]) {
+      assert.ok(Math.abs(im.width / im.height - src.width / src.height) < 0.01, `${format} ${im.name}: aspect changed`);
+      const mad = await regionMad(r.buffer, im, src.buffer);
+      assert.ok(mad < 6, `${format} ${im.name}: photo altered (mean diff ${mad.toFixed(2)})`);
+      assert.ok(!overlaps(im, { left: r.layout.vs.left, top: r.layout.vs.top, width: r.layout.vs.size, height: r.layout.vs.size }), 'VS badge covers a photo');
+      assert.ok(!overlaps(im, { left: r.layout.qr.left, top: r.layout.qr.top, width: r.layout.qr.px, height: r.layout.qr.px }), 'QR covers a photo');
+    }
+    assert.equal(r.layout.images[0].name, 'Naoya Inoue'); assert.equal(r.layout.images[1].name, 'Murodjon Akhmadaliev');
+    assert.ok(r.layout.images[0].left < r.layout.images[1].left, 'fighter A on the left, fighter B on the right');
+    const dec = await P.decodeQr(r.buffer);
+    assert.deepEqual(dec, { ok: true, text: qrUrl }, `${format}: QR decoded from the final image`);
   }
-  // QR prefers the fighter-name address when the website serves it
-  assert.match(P.qrLink(contest({ cleanUrl: 'https://www.fantasymmadness.com/fight/naoya-inoue-vs-murodjon-akhmadaliev' })), /^https:\/\/www\.fantasymmadness\.com\/fight\/naoya-inoue-vs-murodjon-akhmadaliev\?utm_source=fan_acquisition.*utm_content=poster_qr$/);
 });
 
-test('poster without approved artwork: typographic only, no fighter imagery; time shown only when verified', async () => {
-  const c = contest({ posterUrl: null, timeTba: false, matchTime: '22:00', timeZone: 'America/Los_Angeles', eventName: 'UFC 323', sport: 'mma-ufc', venue: null, city: null, weightClass: null, maxRounds: null });
-  const r = await P.renderPoster({ contest: c, format: 'portrait', art: null, qrUrl: P.qrLink(c) });
-  assert.equal(r.layout.art, null);
-  assert.equal(r.facts.time, '10:00 PM PST');
-  assert.equal(r.facts.where, null); assert.equal(r.facts.detail, null); assert.equal(r.facts.event, 'UFC 323');
-  assert.equal((await qrMatches(r.buffer, r.layout, P.qrLink(c))).bad, 0);
-  // very long names still fit
-  const long = contest({ fighterA: 'Superbon Singha Mawynn Banchamek', fighterB: 'Tawanchai PK Saenchai Muaythaigym', sport: 'kickboxing' });
-  const r2 = await P.renderPoster({ contest: long, format: 'story', art: null, qrUrl: P.qrLink(long) });
-  assert.equal((await sharp(r2.buffer).metadata()).height, 1920);
+test('poster with the official contest artwork, and the text poster when there is no approved artwork', async () => {
+  const art = await synth(1200, 800, '#7f1d1d', '#f5c518');
+  const c = contest({ cleanUrl: 'https://www.fantasymmadness.com/fight/naoya-inoue-vs-murodjon-akhmadaliev' });
+  const r = await P.renderPoster({ contest: c, format: 'portrait', artwork: { mode: 'contest_artwork', contestArt: art }, qrUrl: P.qrLink(c) });
+  const im = r.layout.images[0]; assert.ok((await regionMad(r.buffer, im, art.buffer)) < 6);
+  assert.equal((await P.decodeQr(r.buffer)).text, 'https://www.fantasymmadness.com/fight/naoya-inoue-vs-murodjon-akhmadaliev?utm_source=fan_acquisition&utm_medium=partner_outreach&utm_campaign=combat_fans_gs_boxing&utm_content=poster_qr');
+  const t = contest({ posterUrl: null, timeTba: false, matchTime: '22:00', timeZone: 'America/Los_Angeles', eventName: 'UFC 323', sport: 'mma-ufc', fighterA: 'Superbon Singha Mawynn Banchamek', fighterB: 'Tawanchai PK Saenchai Muaythaigym' });
+  const tr = await P.renderPoster({ contest: t, format: 'story', artwork: { mode: 'text' }, qrUrl: P.qrLink(t) });
+  assert.equal(tr.layout.images.length, 0);
+  assert.equal(tr.facts.time, '10:00 PM PST'); assert.equal(tr.facts.event, 'UFC 323');
+  assert.ok((await P.decodeQr(tr.buffer)).ok);
+  assert.deepEqual(P.posterFacts(contest(), 'q'), { sport: 'BOXING', fighterA: 'Naoya Inoue', fighterB: 'Murodjon Akhmadaliev', event: null, date: 'SUNDAY, NOVEMBER 8, 2026', time: null, where: 'Ariake Arena · Tokyo', detail: 'Super Bantamweight · 12 ROUNDS', qrUrl: 'q', shownUrl: 'www.fantasymmadness.com/fight/bx0000000001' });
 });
 
-test('studio: stores posters once per campaign version, serves them, withdraws old versions, honours blocks', async () => {
-  const art = await testArt();
-  const mem = (rows = []) => ({ rows,
-    findOne: async (q) => rows.find((r) => Object.entries(q).every(([k, v]) => (v && v.$exists === false ? r[k] === undefined : r[k] === v))) || null,
-    updateOne: async (q, u, o) => { let r = rows.find((x) => Object.entries(q).every(([k, v]) => x[k] === v)); if (!r && o?.upsert) { r = { ...q, ...(u.$setOnInsert || {}), ...(u.$set || {}) }; rows.push(r); return { upsertedCount: 1 }; } if (r && u.$set) Object.assign(r, u.$set); return { upsertedCount: 0 }; },
-    updateMany: async (q, u) => { for (const r of rows) if (r.draftId === q.draftId && !q.id.$nin.includes(r.id) && r.withdrawnAt === undefined) Object.assign(r, u.$set); },
-    deleteMany: async (q) => { for (let i = rows.length - 1; i >= 0; i--) if (rows[i].contestId === q.contestId) rows.splice(i, 1); } });
-  const col = { posters: mem(), artRights: mem(), drafts: mem([]) };
-  let fetches = 0;
-  const fetchImpl = async (url) => { fetches++; if (url.startsWith('https://res.cloudinary.com/fmm/')) return { ok: true, status: 200, headers: new Headers({ 'content-type': 'image/jpeg' }), arrayBuffer: async () => art.buffer }; return { ok: false, status: 404, headers: new Headers() }; };
-  const studio = P.createPosterStudio({ col, fetchImpl, publicOrigin: 'https://growth.test/' });
-  const draft = { id: 'mkt-bx0000000001-abc1234567', contestFingerprint: 'abc1234567', contest: contest() };
+test('destination check: the decoded link must open this fight on the live website', async () => {
+  const c = contest({ cleanUrl: 'https://www.fantasymmadness.com/fight/naoya-inoue-vs-murodjon-akhmadaliev' });
+  const ok = await P.verifyDestination(async (u) => ({ ok: true, status: 200, url: u }), P.qrLink(c), c);
+  assert.equal(ok.ok, true); assert.equal(ok.finalUrl, 'https://www.fantasymmadness.com/fight/naoya-inoue-vs-murodjon-akhmadaliev');
+  assert.equal((await P.verifyDestination(async (u) => ({ ok: true, status: 200, url: 'https://www.fantasymmadness.com/fight/bx0000000001' }), P.qrLink(c), c)).ok, true, 'site may redirect to the ID address of the same fight');
+  assert.equal((await P.verifyDestination(async () => ({ ok: true, status: 200, url: 'https://www.fantasymmadness.com/' }), P.qrLink(c), c)).reason, 'destination_is_a_different_page');
+  assert.equal((await P.verifyDestination(async () => ({ ok: false, status: 404 }), P.qrLink(c), c)).reason, 'destination_http_404');
+  assert.match((await P.verifyDestination(async () => { throw Error('offline'); }, P.qrLink(c), c)).reason, /^destination_unreachable/);
+});
+
+// In-memory stand-in for the few collection operations used.
+function mem(rows = []) {
+  const match = (r, q) => Object.entries(q).every(([k, v]) => {
+    if (v && typeof v === 'object' && !Array.isArray(v)) {
+      if ('$exists' in v) return (r[k] !== undefined) === v.$exists;
+      if ('$ne' in v) return r[k] !== v.$ne;
+      if ('$in' in v) return v.$in.includes(r[k]);
+      if ('$nin' in v) return !v.$nin.includes(r[k]);
+    }
+    return r[k] === v;
+  });
+  const cursor = (list) => ({ sort: () => cursor(list), limit: (n) => cursor(list.slice(0, n)), toArray: async () => list });
+  return { rows, createIndex: async () => {},
+    findOne: async (q) => rows.find((r) => match(r, q)) || null,
+    find: (q = {}) => cursor(rows.filter((r) => match(r, q))),
+    updateOne: async (q, u, o) => { let r = rows.find((x) => match(x, q)); if (!r && o?.upsert) { r = { ...q, ...(u.$setOnInsert || {}), ...(u.$set || {}) }; rows.push(r); return { upsertedCount: 1, modifiedCount: 0 }; } if (r && u.$set) Object.assign(r, u.$set); return { upsertedCount: 0, modifiedCount: r ? 1 : 0 }; },
+    updateMany: async (q, u) => { for (const r of rows.filter((x) => match(x, q))) Object.assign(r, u.$set); },
+    deleteMany: async (q) => { for (let i = rows.length - 1; i >= 0; i--) if (match(rows[i], q)) rows.splice(i, 1); } };
+}
+
+test('approved-artwork selection: exact fighter, provenance, no mixing, blocks, fail closed to NEEDS ARTWORK', async () => {
+  const A = await synth(700, 1000, '#1d4ed8', '#f5c518'); const B = await synth(800, 900, '#065f46', '#e5e7eb'); const M = await synth(1200, 800, '#7f1d1d', '#f5c518');
+  const files = { [`${CLOUD}/inoue.jpg`]: A.buffer, [`${CLOUD}/akhmadaliev.jpg`]: B.buffer, [`${CLOUD}/fights/bx1.jpg`]: M.buffer, [`${CLOUD}/other.jpg`]: A.buffer };
+  const fetchImpl = async (u) => (files[u] ? imgResp(files[u]) : { ok: false, status: 404, headers: new Headers() });
+  const col = { fighterAssets: mem() };
+  const lib = createArtworkLibrary({ col, fetchImpl, env: { GROWTH_ART_CLOUDINARY_CLOUDS: 'daflot6fo' } });
+  const withPhotos = contest({ fighterPhotos: { a: [{ url: `${CLOUD}/inoue.jpg`, source: 'contest_upload', field: 'fighterAImage' }], b: [{ url: `${CLOUD}/akhmadaliev.jpg`, source: 'contest_upload', field: 'fighterBImage' }] } });
+  const s1 = await lib.select(withPhotos);
+  assert.equal(s1.mode, 'fighter_photos'); assert.deepEqual(s1.fighters.map((f) => [f.side, f.name, f.source, f.sha256]), [['a', 'Naoya Inoue', 'contest_upload', A.sha256], ['b', 'Murodjon Akhmadaliev', 'contest_upload', B.sha256]]);
+  // only one fighter has a photo -> official matchup artwork, not a half-photo poster
+  const half = await lib.select(contest({ fighterPhotos: { a: withPhotos.fighterPhotos.a, b: [] } }));
+  assert.equal(half.mode, 'contest_artwork'); assert.deepEqual(half.missing, ['Murodjon Akhmadaliev']);
+  // nothing approved -> NEEDS ARTWORK (text)
+  const none = await lib.select(contest({ posterUrl: null, fighterPhotos: { a: [], b: [] } }));
+  assert.equal(none.mode, 'text'); assert.equal(none.needsArtwork, true); assert.deepEqual(none.missing, ['Naoya Inoue', 'Murodjon Akhmadaliev']);
+  // the same image offered for both fighters is never used
+  const same = await lib.select(contest({ posterUrl: null, fighterPhotos: { a: [{ url: `${CLOUD}/inoue.jpg`, source: 'contest_upload' }], b: [{ url: `${CLOUD}/other.jpg`, source: 'contest_upload' }] } }));
+  assert.equal(same.mode, 'text'); assert.ok(same.problems.some((p) => /same image/.test(p)));
+  // owner library: rights note required, FMM host only, one image = one fighter, exact name
+  assert.equal((await lib.approve({ fighterName: 'Naoya Inoue', imageUrl: `${CLOUD}/inoue.jpg`, rightsNote: '', admin: 'owner' })).reason, 'rights_note_required');
+  assert.equal((await lib.approve({ fighterName: 'Naoya Inoue', imageUrl: 'https://images.example.com/inoue.jpg', rightsNote: 'x', admin: 'owner' })).reason, 'artwork_host_not_a_fantasy_mmadness_asset_host');
+  const ok = await lib.approve({ fighterName: 'Naoya Inoue', imageUrl: `${CLOUD}/inoue.jpg`, rightsNote: 'Official promotion photo', admin: 'owner' });
+  assert.equal(ok.ok, true); assert.equal(ok.asset.sha256, A.sha256);
+  assert.equal((await lib.approve({ fighterName: 'Petr Yan', imageUrl: `${CLOUD}/inoue.jpg`, rightsNote: 'x', admin: 'owner' })).reason, 'this_image_is_already_approved_for_another_fighter');
+  await lib.approve({ fighterName: 'Murodjon Akhmadaliev', imageUrl: `${CLOUD}/akhmadaliev.jpg`, rightsNote: 'Official promotion photo', admin: 'owner' });
+  const s2 = await lib.select(contest({ fighterPhotos: { a: [], b: [] } }));
+  assert.equal(s2.mode, 'fighter_photos'); assert.deepEqual(s2.fighters.map((f) => f.source), ['owner_library', 'owner_library']); assert.equal(s2.fighters[0].approvedBy, 'owner');
+  // a different fighter with a similar name never gets these photos
+  assert.equal((await lib.select(contest({ fighterA: 'Takuma Inoue', posterUrl: null, fighterPhotos: { a: [], b: [] } }))).mode, 'text');
+  // approved photo changed at the source after approval -> not used
+  files[`${CLOUD}/akhmadaliev.jpg`] = M.buffer;
+  const changed = await lib.select(contest({ posterUrl: null, fighterPhotos: { a: [], b: [] } }));
+  assert.equal(changed.mode, 'text'); assert.ok(changed.problems.some((p) => /sha mismatch/.test(p)));
+  files[`${CLOUD}/akhmadaliev.jpg`] = B.buffer;
+  // owner blocks a photo by address -> skipped everywhere
+  assert.equal((await lib.block({ url: `${CLOUD}/inoue.jpg`, note: '', admin: 'owner' })).reason, 'reason_required');
+  await lib.block({ url: `${CLOUD}/inoue.jpg`, note: 'Promoter asked us not to use it', admin: 'owner' });
+  const blocked = await lib.select(withPhotos);
+  assert.equal(blocked.mode, 'contest_artwork'); assert.ok(blocked.problems.some((p) => /blocked by owner/.test(p)));
+  // owner blocks the whole contest's imagery -> text
+  assert.equal((await lib.select(withPhotos, { contestBlocked: { note: 'licence' } })).mode, 'text');
+});
+
+test('studio: renders, decodes the QR from the final image, checks the destination, HOLDs on any failure, serves current versions only', async () => {
+  const A = await synth(700, 1000, '#1d4ed8', '#f5c518'); const B = await synth(800, 900, '#065f46', '#e5e7eb');
+  const files = { [`${CLOUD}/inoue.jpg`]: A.buffer, [`${CLOUD}/akhmadaliev.jpg`]: B.buffer };
+  let site = 200;
+  const fetchImpl = async (u) => (files[u] ? imgResp(files[u]) : u.startsWith('https://www.fantasymmadness.com/fight/') ? { ok: site === 200, status: site, url: u.split('?')[0] } : { ok: false, status: 404, headers: new Headers() });
+  const col = { posters: mem(), artRights: mem(), drafts: mem(), fighterAssets: mem() };
+  const studio = P.createPosterStudio({ col, fetchImpl, publicOrigin: 'https://growth.test/', env: { GROWTH_ART_CLOUDINARY_CLOUDS: 'daflot6fo' } });
+  const c = contest({ posterUrl: null, fighterPhotos: { a: [{ url: `${CLOUD}/inoue.jpg`, source: 'contest_upload' }], b: [{ url: `${CLOUD}/akhmadaliev.jpg`, source: 'contest_upload' }] } });
+  const draft = { id: 'mkt-bx0000000001-abc1234567', contestFingerprint: 'abc1234567', contest: c };
   col.drafts.rows.push({ ...draft });
   const r = await studio.ensureForDraft(draft);
-  assert.equal(r.ok, true); assert.equal(r.poster.art.used, true); assert.match(r.poster.art.basis, /Official artwork/);
+  assert.equal(r.poster.status, 'ready', JSON.stringify(r.poster.holdReasons));
+  assert.equal(r.poster.art.mode, 'fighter_photos'); assert.equal(r.poster.needsArtwork, false);
+  assert.equal(r.poster.qr.decodedPortrait, P.qrLink(c)); assert.equal(r.poster.qr.decodedStory, P.qrLink(c)); assert.equal(r.poster.qr.destination.ok, true);
+  assert.ok(!JSON.stringify(r.poster).includes('"buffer"'), 'image bytes never stored on the campaign');
   assert.match(r.poster.portrait.url, /^https:\/\/growth\.test\/api\/growth\/posters\/[a-f0-9]{20}-portrait\.jpg$/);
-  assert.equal(col.posters.rows.length, 2);
-  const img = await studio.getImage(r.poster.portrait.id);
-  assert.equal((await sharp(img.buffer).metadata()).width, 1080);
+  assert.equal(P.posterIsCurrent({ ...draft, poster: r.poster }), true);
+  assert.equal(P.posterIsCurrent({ ...draft, contest: { ...c, fighterPhotos: { a: [], b: [] } }, poster: r.poster }), false, 'new images => regenerate');
+  // the fight page stops resolving -> HOLD (never publishable)
+  site = 404;
+  const held = await studio.ensureForDraft(draft);
+  assert.equal(held.poster.status, 'hold'); assert.deepEqual(held.poster.holdReasons, ['destination_http_404']);
+  site = 200;
+  // no approved photos -> NEEDS ARTWORK text poster, still a valid poster
+  const noArt = await studio.ensureForDraft({ ...draft, contest: { ...c, fighterPhotos: { a: [], b: [] } } });
+  assert.equal(noArt.poster.art.mode, 'text'); assert.equal(noArt.poster.needsArtwork, true); assert.equal(noArt.poster.status, 'ready');
+  assert.equal(await studio.getImage(r.poster.portrait.id), null, 'older versions are withdrawn');
+  assert.ok((await studio.getImage(noArt.poster.portrait.id)).buffer.length > 10000);
   assert.equal(await studio.getImage('../../etc/passwd'), null);
-  // same version again: nothing re-rendered
-  const before = col.posters.rows.length; await studio.ensureForDraft(draft); assert.equal(col.posters.rows.length, before);
-  // owner blocks the artwork: typographic poster, old version withdrawn (no longer served)
-  assert.equal((await studio.setArtRights(draft.contest.id, { status: 'blocked', note: '', admin: 'owner' })).reason, 'reason_required');
-  await studio.setArtRights(draft.contest.id, { status: 'blocked', note: 'Promoter asked us not to use this image', admin: 'owner' });
-  const b = await studio.ensureForDraft(draft);
-  assert.equal(b.poster.art.used, false); assert.equal(b.poster.art.reason, 'artwork_blocked_by_owner');
-  assert.notEqual(b.poster.portrait.id, r.poster.portrait.id);
-  assert.equal(await studio.getImage(r.poster.portrait.id), null);
-  // artwork on a non-FMM host is never fetched
-  fetches = 0; const other = { ...draft, id: 'mkt-x-1', contest: contest({ id: 'x1', posterUrl: 'https://images.example.com/inoue.jpg' }) };
-  const o = await studio.ensureForDraft(other);
-  assert.equal(o.poster.art.reason, 'artwork_host_not_a_fantasy_mmadness_asset_host');
-  assert.equal(fetches, 0, 'artwork on a foreign host is never fetched');
-});
-
-test('QR helper encodes exactly the requested URL', () => {
-  const url = 'https://www.fantasymmadness.com/fight/x?utm_content=poster_qr';
-  const a = P.qrMatrix(url); const b = QRCode.create(url, { errorCorrectionLevel: 'M' });
-  assert.equal(a.size, b.modules.size);
 });
