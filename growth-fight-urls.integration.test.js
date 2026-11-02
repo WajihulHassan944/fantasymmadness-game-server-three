@@ -63,6 +63,15 @@ test('fighter-name URLs in every campaign, with the ID address as fallback', { s
       assert.ok(siteCalls.some((c) => c.url === `${SITE}/fight/${BX}`), 'the website was asked');
     });
 
+    await t.test('campaigns made before this change get their address source recorded (text unchanged)', async () => {
+      const d = await drafts.findOne({ contestId: 'kb0000000001' });
+      await drafts.updateOne({ id: d.id }, { $unset: { 'contest.urlSource': '', 'contest.idUrl': '', 'contest.idBase': '', 'contest.cleanUrl': '' } });
+      await rt.refreshMarketing(new Date());
+      const after = await drafts.findOne({ id: d.id });
+      assert.equal(after.contest.urlSource, 'id'); assert.ok(after.contest.idUrl.endsWith('/fight/kb0000000001?play=1'));
+      assert.equal(after.posts.facebook, d.posts.facebook); assert.equal((after.linkHistory || []).length, 0);
+    });
+
     let approvedId; let scheduledPostId;
     await t.test('an approved campaign is scheduled while only the ID address exists', async () => {
       const d = await drafts.findOne({ contestId: BX });
