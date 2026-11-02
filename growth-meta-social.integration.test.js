@@ -44,12 +44,13 @@ test('Facebook & Instagram connection and publishing (sandbox first)', { skip, t
   const servers = [];
   const mount = async (envOverrides = {}) => {
     const app = express();
-    const env = { ...baseEnv, ...envOverrides };
-    const m = registerIsolatedGrowthRoutes({ app, env, express, fetchImpl, connect: async () => client });
-    assert.equal(m.mounted, true);
     const server = app.listen(0, '127.0.0.1'); servers.push(server);
     await new Promise((r) => server.once('listening', r));
     const origin = `http://127.0.0.1:${server.address().port}`;
+    // Meta must send the browser back to THIS test server (never to the real staging address).
+    const env = { ...baseEnv, GROWTH_PUBLIC_ORIGIN: origin, ...envOverrides };
+    const m = registerIsolatedGrowthRoutes({ app, env, express, fetchImpl, connect: async () => client });
+    assert.equal(m.mounted, true);
     const rt = await m.getRuntime();
     const token = signConsoleToken(SECRET, { pwv: consolePasswordVersion(PASSWORD_HASH) });
     const call = async (method, path, body) => {
@@ -66,6 +67,7 @@ test('Facebook & Instagram connection and publishing (sandbox first)', { skip, t
     assert.equal(c.status, 200, c.text);
     const d = await fetch(`${c.json.authorizeUrl}&auto=1`, { redirect: 'manual' });
     const cb = d.headers.get('location');
+    assert.match(String(cb), /^http:\/\/127\.0\.0\.1:\d+\/api\/growth\/meta\/callback\?/, 'callback must stay on the test machine');
     return { connect: c.json, callbackUrl: cb, page: await fetch(cb, { redirect: 'manual' }) };
   };
 

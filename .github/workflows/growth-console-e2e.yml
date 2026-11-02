@@ -39,13 +39,13 @@ jobs:
           npx --yes @vercel/nft@0.29.4 print growth-isolated-routes.js > nft.txt
           for f in growth-console/index.html growth-console/app.js growth-console/app.css; do grep -qx "$f" nft.txt || { echo "missing $f"; exit 1; }; echo "traced $f"; done
       - name: Full Growth Engine suite (regression; browser test skipped here)
-        run: node --test growth-*.test.js growth-*.integration.test.js
+        run: node --test --test-concurrency=1 growth-*.test.js growth-*.integration.test.js  # one file at a time: several share the fmgrowthtest database
       - name: Install Playwright + Chromium (test-only, not saved to package.json)
         run: |
           npm install --no-save --no-fund --ignore-scripts playwright@1.56.1
           npx playwright install --with-deps chromium
       - name: Browser E2E — every screen, button and workflow
-        run: node --test --test-reporter=spec growth-console.e2e.test.js growth-meta-connect.e2e.test.js
+        run: node --test --test-concurrency=1 --test-reporter=spec growth-console.e2e.test.js growth-meta-connect.e2e.test.js
       - name: Print screenshots (base64, for reviewers without artifact access)
         if: always()
         run: |
@@ -127,7 +127,7 @@ jobs:
           npm install --no-save --no-fund --ignore-scripts playwright@1.56.1
           npx playwright install --with-deps chromium
       - name: Browser test — back office navigation, auth, permissions, responsiveness, rollback
-        run: node --test --test-reporter=spec growth-acceptance/admin-replacement.e2e.test.js growth-acceptance/staging-review.e2e.test.js
+        run: node --test --test-concurrency=1 --test-reporter=spec growth-acceptance/admin-replacement.e2e.test.js growth-acceptance/staging-review.e2e.test.js
       - name: Website log (on failure)
         if: failure()
         run: tail -60 next.log || true

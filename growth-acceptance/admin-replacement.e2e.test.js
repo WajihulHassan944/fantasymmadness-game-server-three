@@ -135,7 +135,7 @@ test(`admin back office — Growth Engine ${V2 ? 'replacement' : 'rollback'}`, {
         for (const s of SECTIONS) {
           await page.click(`[data-testid=ge-tab-${s}]`);
           await frame.locator(`[data-testid=page-${s}]`).waitFor();
-          await frame.locator('main .spinner').waitFor({ state: 'detached' });
+          await frame.locator('main .spinner').first().waitFor({ state: 'detached' }); await frame.locator('main .spinner').last().waitFor({ state: 'detached' });
           assert.equal(await frame.locator('[data-testid=page-error]').count(), 0, `error on ${s}`);
           assert.equal(await page.getAttribute(`[data-testid=ge-tab-${s}]`, 'aria-current'), 'page');
         }
