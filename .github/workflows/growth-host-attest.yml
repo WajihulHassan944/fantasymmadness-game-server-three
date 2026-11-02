@@ -1,0 +1,13 @@
+name: Growth Engine isolated DB host (read-only public health)
+on:
+  push:
+    branches: [test/growth-host-attest]
+permissions:
+  contents: read
+jobs:
+  attest:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Read the isolated engine's public health report (hostname only, no credentials)
+        run: |
+          curl -s https://fantasymmadness-growth-isolated-tes.vercel.app/api/growth/health | python3 -c "import sys,json;h=json.load(sys.stdin);print('HEALTH_DB', json.dumps(h.get('database')));print('HEALTH_WARN', json.dumps(h.get('warnings')))"
