@@ -21,7 +21,7 @@ const skip = !uri || !/^mongodb:\/\/(127\.0\.0\.1|localhost)/.test(uri) || !chro
 const PASSWORD = 'correct horse battery staple (test only)';
 const secret = 's'.repeat(48);
 const SHOTS = process.env.GROWTH_CONSOLE_SCREENSHOTS || path.join(__dirname, 'growth-console-screenshots');
-const env = {
+const env = { GROWTH_RESEARCH_PER_RUN: '0', /* research runs explicitly before the PR step */
   GROWTH_STAGING_MODE: 'isolated', GROWTH_OUTBOUND_ENABLED: 'false', GROWTH_TEST_MONGO_URI: uri, JWT_SECRET_ADMIN: secret, GROWTH_UNSUBSCRIBE_SECRET: secret,
   CRON_SECRET: 'cron-secret-for-tests-only', GROWTH_DELIVERY_PROVIDER: 'none', GROWTH_ADMIN_PASSWORD_HASH: hashPassword(PASSWORD),
   GROWTH_SOCIAL_PROVIDER: 'sandbox', GROWTH_ATTRIBUTION_INGEST_SECRET: 'i'.repeat(40),
