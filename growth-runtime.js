@@ -19,6 +19,8 @@ const contestCampaigns = require('./growth-contest-campaigns');
 const { createSocialPublisher } = require('./growth-social-publishing');
 const { createSocialScheduler } = require('./growth-social-scheduler');
 const { createAffiliateProgram } = require('./growth-affiliate-program');
+const { createMetaConnect, resolveMetaConfig } = require('./growth-meta-connect');
+const { createTokenVault } = require('./growth-token-vault');
 
 const clean = (s, n = 200) => String(s ?? '').replace(/[\r\n\x00-\x1f]/g, ' ').trim().slice(0, n);
 const minuteId = (d) => 'growth_' + d.toISOString().replace(/[^0-9]/g, '').slice(0, 12);
@@ -38,6 +40,7 @@ function createGrowthRuntime({ db, config, secrets = {}, provider, fetchImpl = g
     coverage: db.collection('growth_marketing_coverage'), gateRejections: db.collection('growth_campaign_rejections'),
     affiliates: db.collection('growth_affiliates'), liveReports: db.collection('growth_live_reports'),
     social: db.collection('growth_social_posts'), settings: db.collection('growth_settings'), socialSandbox: db.collection('growth_social_sandbox'),
+    connections: db.collection('growth_connections'), oauthStates: db.collection('growth_oauth_states'),
   };
   const claims = createIsolatedRunClaims(col.runs, { testMode: true });
   const store = createStore(col.jobs, { testMode: true });
@@ -47,7 +50,7 @@ function createGrowthRuntime({ db, config, secrets = {}, provider, fetchImpl = g
   let socialScheduler = null; // created below once reverifyMarketing exists
   const affiliateProgram = createAffiliateProgram({ col, audit });
   async function init() {
-    await claims.init(); await store.init(); await suppression.init(); await socialScheduler.init(); await affiliateProgram.init();
+    await claims.init(); await store.init(); await suppression.init(); await socialScheduler.init(); await affiliateProgram.init(); await meta.init();
     await col.liveReports.createIndex({ day: 1 }, { unique: true });
     await col.drafts.createIndex({ id: 1 }, { unique: true });
     await col.drafts.createIndex({ status: 1, kind: 1 });
@@ -169,7 +172,10 @@ function createGrowthRuntime({ db, config, secrets = {}, provider, fetchImpl = g
   }
 
   const socialConfig = { ...(config.social || { provider: 'none', channels: {} }), secrets: secrets.social || {} };
-  socialScheduler = createSocialScheduler({ col, social: socialConfig, publisher: createSocialPublisher({ social: socialConfig, fetchImpl, sandboxCollection: col.socialSandbox }), reverifyMarketing, alert, audit });
+  const vault = createTokenVault(secrets.tokenEncryptionKey);
+  const meta = createMetaConnect({ col, config: secrets.meta || resolveMetaConfig({}), vault, fetchImpl, alert, audit });
+  const publisher = createSocialPublisher({ social: socialConfig, fetchImpl, sandboxCollection: col.socialSandbox, meta, graphUrl: meta.graphUrl });
+  socialScheduler = createSocialScheduler({ col, social: socialConfig, publisher, reverifyMarketing, alert, audit, liveTestApproved: Boolean(secrets.meta?.liveTestApproved) });
 
   async function report(now) {
     const by = async (c, field) => Object.fromEntries((await c.aggregate([{ $group: { _id: field, n: { $sum: 1 } } }]).toArray()).map((r) => [String(r._id), r.n]));
@@ -291,6 +297,7 @@ function createGrowthRuntime({ db, config, secrets = {}, provider, fetchImpl = g
         }
       }
       summary.delivery = await dispatch(now);
+      try { summary.meta = await meta.healthCheck({ now }); } catch (e) { summary.errors.push({ id: 'meta-health', message: clean(e.message) }); }
       summary.social = await socialScheduler.dispatch(now);
     } catch (e) {
       summary.errors.push({ id: 'tick', message: clean(e.message) });
@@ -365,7 +372,7 @@ function createGrowthRuntime({ db, config, secrets = {}, provider, fetchImpl = g
   }
   async function unsubscribe(token) { return suppression.unsubscribe(token); }
 
-  return { init, tick, dispatch, refreshMarketing, reverifyMarketing, social: socialScheduler, affiliates: affiliateProgram, listDrafts, approveDraft, rejectDraft, addVerifiedContact, overview, listAlerts, ackAlert, requeueJob, unsubscribe, suppression, collections: col };
+  return { init, tick, dispatch, refreshMarketing, reverifyMarketing, social: socialScheduler, publisher, meta, affiliates: affiliateProgram, listDrafts, approveDraft, rejectDraft, addVerifiedContact, overview, listAlerts, ackAlert, requeueJob, unsubscribe, suppression, collections: col };
 }
 
 module.exports = { createGrowthRuntime };

@@ -186,8 +186,46 @@ function registerIsolatedGrowthRoutes({ app, env = process.env, express, transpo
   router.get('/admin/suppressions', admin, wrap(async (req, res, rt) => res.json({ ok: true, suppressions: await bo(rt).suppressions({ limit: req.query.limit }) })));
 
   // ---- publishing (approval-gated) ----
-  router.get('/admin/social', admin, wrap(async (req, res, rt) => res.json({ ok: true, posts: await rt.social.list({ status: req.query.status }), paused: await rt.social.isPaused(), provider: resolved.config.social.provider, channels: resolved.config.social.channels })));
-  router.post('/admin/drafts/:id/schedule', admin, wrap(async (req, res, rt) => { const r = await rt.social.schedule(req.params.id, { channels: req.body?.channels, scheduledAt: req.body?.scheduledAt, admin: who(req) }); res.status(r.ok ? 200 : 409).json(r); }));
+  // Channel readiness is evaluated live (the Meta connection can change at any time).
+  const liveChannels = async (rt) => Object.fromEntries(await Promise.all(Object.keys(resolved.config.social.channels).map(async (ch) => [ch, await rt.publisher.channelState(ch)])));
+  router.get('/admin/social', admin, wrap(async (req, res, rt) => res.json({ ok: true, posts: await rt.social.list({ status: req.query.status }), paused: await rt.social.isPaused(), provider: resolved.config.social.provider, channels: await liveChannels(rt), liveTestApproved: resolved.config.meta.liveTestApproved })));
+  router.post('/admin/drafts/:id/schedule', admin, wrap(async (req, res, rt) => { const r = await rt.social.schedule(req.params.id, { channels: req.body?.channels, scheduledAt: req.body?.scheduledAt, affiliateId: req.body?.affiliateId || null, admin: who(req) }); res.status(r.ok ? 200 : 409).json(r); }));
+  router.post('/admin/social/live-test', admin, wrap(async (req, res, rt) => { const r = await rt.social.liveTest(req.body?.draftId, { channel: req.body?.channel, confirmText: req.body?.confirmText, admin: who(req) }); res.status(r.ok ? 200 : 409).json(r); }));
+
+  // ---- Meta (Facebook Page + Instagram) connection ----
+  const metaView = async (rt) => {
+    const st = await rt.meta.status(); const ch = await liveChannels(rt);
+    const mode = (c) => (c.mode === 'live' ? 'live' : c.mode === 'sandbox' ? 'sandbox' : 'off');
+    return { ...st, connectionLabel: st.state === 'connected' ? 'Connected' : st.state === 'not_set_up' ? 'Not set up' : st.state === 'selection_needed' ? 'Choose your Page' : 'Authorization needed', publishing: { provider: resolved.config.social.provider, facebook: mode(ch.facebook), instagram: mode(ch.instagram), liveTestApproved: resolved.config.meta.liveTestApproved } };
+  };
+  router.get('/admin/meta', admin, wrap(async (req, res, rt) => res.json({ ok: true, meta: await metaView(rt) })));
+  router.post('/admin/meta/app', admin, wrap(async (req, res, rt) => { const r = await rt.meta.setApp({ appId: req.body?.appId, appSecret: req.body?.appSecret, admin: who(req) }); res.status(r.ok ? 200 : 422).json(r); }));
+  router.post('/admin/meta/connect', admin, wrap(async (req, res, rt) => { const r = await rt.meta.startAuthorization({ admin: who(req) }); res.status(r.ok ? 200 : 409).json(r); }));
+  router.post('/admin/meta/select', admin, wrap(async (req, res, rt) => { const r = await rt.meta.selectPage({ pageId: req.body?.pageId, confirm: req.body?.confirm === true, admin: who(req) }); res.status(r.ok ? 200 : 409).json(r.ok ? { ok: true, meta: await metaView(rt) } : r); }));
+  router.post('/admin/meta/check', admin, wrap(async (req, res, rt) => { const r = await rt.meta.healthCheck({ force: true }); res.json({ ok: true, check: r, meta: await metaView(rt) }); }));
+  router.post('/admin/meta/disconnect', admin, wrap(async (req, res, rt) => { await rt.meta.disconnect({ admin: who(req) }); res.json({ ok: true, meta: await metaView(rt) }); }));
+
+  // Meta sends the owner's browser back here after sign-in (state-protected, single use).
+  const CALLBACK_TEXT = {
+    ok_select: ['Facebook & Instagram authorized', 'Go back to the Growth Engine tab and choose your FANTASY MMADNESS Page. This tab will close.'],
+    ok_connected: ['Facebook & Instagram connected', 'You can close this tab and go back to the Growth Engine.'],
+    you_cancelled_on_meta: ['Nothing was connected', 'You cancelled on Meta. Go back to the Growth Engine and press "Connect Facebook & Instagram" to try again.'],
+    link_expired_or_already_used_start_again: ['This sign-in link has expired', 'Go back to the Growth Engine and press "Connect Facebook & Instagram" again.'],
+    default: ['Facebook & Instagram could not be connected', 'Go back to the Growth Engine: the Connections screen shows what happened and what to do next.'],
+  };
+  const esc = (t) => String(t).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+  router.get('/meta/callback', wrap(async (req, res, rt) => {
+    const q = req.query || {};
+    let r; try { r = await rt.meta.handleCallback({ code: typeof q.code === 'string' ? q.code : '', state: typeof q.state === 'string' ? q.state : '', error: typeof q.error === 'string' ? q.error : '', errorReason: typeof q.error_reason === 'string' ? q.error_reason : '' }); }
+    catch (e) { r = { ok: false, reason: 'default' }; }
+    const [title, body] = CALLBACK_TEXT[r.ok ? (r.needsSelection ? 'ok_select' : 'ok_connected') : r.reason] || CALLBACK_TEXT.default;
+    res.set({ 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-store', 'Referrer-Policy': 'no-referrer', 'X-Content-Type-Options': 'nosniff', 'X-Frame-Options': 'DENY', 'Content-Security-Policy': "default-src 'none'; script-src 'self'; style-src 'unsafe-inline'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'" });
+    res.status(r.ok ? 200 : 400).send(`<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${esc(title)} · FANTASY MMADNESS Growth Engine</title><style>body{font:17px/1.5 system-ui,sans-serif;background:#0d0f14;color:#eef1f6;display:grid;place-items:center;min-height:100vh;margin:0}main{max-width:480px;padding:28px;border:1px solid #2a3040;border-radius:14px;background:#151924}h1{font-size:22px;margin:0 0 10px}</style></head><body data-ok="${r.ok ? 1 : 0}" data-testid="meta-callback"><main><h1>${esc(title)}</h1><p>${esc(body)}</p></main><script src="/api/growth/meta/callback.js"></script></body></html>`);
+  }));
+  router.get('/meta/callback.js', (req, res) => {
+    res.set({ 'Content-Type': 'application/javascript; charset=utf-8', 'Cache-Control': 'no-store', 'X-Content-Type-Options': 'nosniff' });
+    res.send("(function(){try{history.replaceState(null,'',location.pathname);}catch(e){}var ok=document.body.getAttribute('data-ok')==='1';try{if(window.opener&&window.opener!==window)window.opener.postMessage({type:'fmm-meta-connect',ok:ok},location.origin);}catch(e){}if(ok)setTimeout(function(){try{window.close();}catch(e){}},2500);})();");
+  });
   router.post('/admin/social/pause', admin, wrap(async (req, res, rt) => res.json({ ok: true, paused: await rt.social.setPaused(req.body?.paused === true, { admin: who(req) }) })));
   router.post('/admin/social/:id/cancel', admin, wrap(async (req, res, rt) => { const r = await rt.social.cancel(req.params.id, { admin: who(req) }); res.status(r.ok ? 200 : 409).json(r); }));
   router.post('/admin/social/:id/retry', admin, wrap(async (req, res, rt) => { const r = await rt.social.retry(req.params.id, { admin: who(req), confirmNotPublished: req.body?.confirmNotPublished === true }); res.status(r.ok ? 200 : 409).json(r); }));
@@ -201,7 +239,8 @@ function registerIsolatedGrowthRoutes({ app, env = process.env, express, transpo
   router.get('/admin/email/readiness', admin, wrap(async (req, res) => res.json({ ok: true, readiness: await checkEmailReadiness({ delivery: resolved.config.delivery, sender: BUSINESS_SENDER, apiKey: secrets.resendApiKey, fetchImpl: fetchImpl || globalThis.fetch }) })));
   router.get('/admin/connections', admin, wrap(async (req, res, rt) => res.json({ ok: true, connections: {
     contestFeed: { url: resolved.config.contestSourceUrl, readOnly: true },
-    social: { provider: resolved.config.social.provider, approved: resolved.config.social.approved, paused: await rt.social.isPaused(), channels: resolved.config.social.channels },
+    social: { provider: resolved.config.social.provider, approved: resolved.config.social.approved, paused: await rt.social.isPaused(), channels: await liveChannels(rt) },
+    meta: await metaView(rt),
     email: { provider: resolved.config.delivery.provider, realDelivery: resolved.config.delivery.realDelivery, blockers: resolved.config.delivery.blockers, sender: BUSINESS_SENDER },
     liveRegistrationReport: { configured: resolved.config.liveReport.configured, latest: await rt.collections.liveReports.find({}).sort({ day: -1 }).limit(1).next().then((r) => (r ? { day: r.day, campaigns: r.groups.length } : null)) },
     verifiedEventIngest: { configured: resolved.config.ingest.configured, path: '/api/growth/events' },

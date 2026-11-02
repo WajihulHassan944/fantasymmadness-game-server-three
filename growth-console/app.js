@@ -78,7 +78,18 @@
     setTimeout(function () { t.remove(); }, 5000);
   }
   function friendly(reason) {
+    if (/^duplicate_of_/.test(String(reason || ''))) return 'The same post (same text and image) is already scheduled or was posted in the last 7 days.';
     var map = {
+      affiliate_not_found: 'That affiliate was not found.', affiliate_is_not_active_with_a_live_affiliate_id: 'Only active affiliates with a linked live affiliate ID can be credited.', this_channel_has_no_link_to_credit: 'this channel has no link to credit',
+      live_test_not_authorized_by_owner: 'The controlled live test has not been authorized yet.', type_POST_LIVE_to_confirm: 'Type POST LIVE to confirm.', live_test_is_for_facebook_or_instagram: 'The live test is for Facebook or Instagram.',
+      the_live_test_for_this_channel_was_already_used: 'The live test for this channel has already been used.', approve_the_campaign_first: 'Approve the campaign first.', only_verified_fight_campaigns: 'Only verified fight campaigns can be posted.',
+      meta_did_not_publish: 'Meta did not publish the post. Nothing went live; see the details.', publishing_is_paused: 'Publishing is paused.', no_post_for_this_channel: 'There is no post for this channel.',
+      encryption_key_not_configured: 'Stored sign-in encryption is not set up yet.', app_id_must_be_digits: 'The App ID is a number (digits only).', app_secret_must_be_32_characters: 'The App Secret is 32 letters and numbers.',
+      meta_rejected_app_id_or_secret: 'Meta did not accept that App ID and App Secret. Copy them again from the Meta app’s Basic settings.', meta_unreachable_try_again: 'Meta could not be reached. Try again in a minute.',
+      meta_app_not_set_up: 'Enter the Meta app’s App ID and App Secret first.', authorize_with_meta_first: 'Connect with Meta first.', confirm_this_is_the_business_page: 'Tick the box to confirm this is the FANTASY MMADNESS business Page.',
+      page_not_in_your_authorized_list: 'That Page is not in the list Meta authorized.', you_cannot_post_on_this_page: 'Your Facebook account cannot post on this Page.', no_instagram_professional_account_is_linked_to_this_page: 'No Instagram professional account is linked to this Page.',
+      not_the_expected_business_page: 'This is not the expected FANTASY MMADNESS Page.', not_the_expected_instagram_account: 'This is not the expected FANTASY MMADNESS Instagram account.', meta_could_not_confirm_the_page: 'Meta could not confirm the Page right now. Try again.',
+      instagram_link_changed_reconnect: 'The Instagram account linked to this Page changed. Connect again.', reconnect_required: 'Please connect again.',
       not_found_or_not_awaiting_review: 'This item is no longer waiting for approval (it may have been handled already). The list has been refreshed.',
       not_found_or_already_sent: 'This item can no longer be rejected (it may already be delivered). The list has been refreshed.',
       only_drafts_awaiting_review_can_be_edited: 'Only items awaiting approval can be edited.',
@@ -307,23 +318,26 @@
   }
   function localInput(date) { var z = new Date(date.getTime() - date.getTimezoneOffset() * 60000); return z.toISOString().slice(0, 16); }
   function schedulePosts(d, reload) {
-    return api('GET', '/admin/social').then(function (info) {
+    return Promise.all([api('GET', '/admin/social'), api('GET', '/admin/affiliates').catch(function () { return { affiliates: [] }; })]).then(function (both) {
+      var info = both[0]; var affs = (both[1].affiliates || []).filter(function (a) { return a.status === 'active' && a.liveAffiliateId && (!a.genre || a.genre === d.genre); });
+      var affSel = h('select', { testid: 'schedule-affiliate', 'aria-label': 'Credit an affiliate' }, [h('option', { value: '', text: 'No: use the standard FANTASY MMADNESS link' })].concat(affs.map(function (a) { return h('option', { value: a.id, text: a.name + ' (' + a.code + ')' }); })));
       var boxes = {}; var names = { facebook: 'Facebook', instagram: 'Instagram', x: 'X', tiktok: 'TikTok' };
       var when = h('input', { type: 'datetime-local', testid: 'schedule-time' }); when.value = localInput(new Date(Date.now() + 10 * 60000));
       var rows = Object.keys(names).filter(function (ch) { return d.posts && d.posts[ch]; }).map(function (ch) {
         var c = info.channels[ch] || {}; var noImg = c.needsImage && !(d.contest && d.contest.posterUrl);
         var box = h('input', { type: 'checkbox', testid: 'schedule-' + ch }); box.checked = !noImg; box.disabled = noImg; boxes[ch] = box;
         return h('label', { class: 'check-row' }, box, ' ', h('strong', { text: names[ch] }), ' ',
-          noImg ? h('span', { class: 'chip warn', text: 'Needs a fight poster image' }) : c.ready ? h('span', { class: 'chip ' + (c.mode === 'live' ? 'good' : 'info'), text: c.mode === 'live' ? '✓ Connected' : 'Sandbox (simulated)' }) : h('span', { class: 'chip warn', text: 'Not connected: will be held' }),
+          noImg ? h('span', { class: 'chip warn', text: 'Needs a fight poster image' }) : c.ready ? h('span', { class: 'chip ' + (c.mode === 'live' ? 'good' : 'info'), text: c.mode === 'live' ? '✓ Live' : 'Sandbox (simulated)' }) : h('span', { class: 'chip warn', text: 'Authorization needed: will be held' }),
           c.note ? h('small', { class: 'muted', text: ' ' + c.note }) : null);
       });
       return modal({
         title: 'Schedule this fight campaign', confirmLabel: 'Schedule',
         body: h('div', null, h('p', { class: 'small', text: 'Each post is checked again against the live contest list right before it goes out. Channels that are not connected yet hold the post until you connect them and press Retry.' }),
-          h('div', { class: 'field' }, h('span', { text: 'Channels' }), rows), h('label', { class: 'field' }, h('span', { text: 'Post time (your local time)' }), when)),
+          h('div', { class: 'field' }, h('span', { text: 'Channels' }), rows), h('label', { class: 'field' }, h('span', { text: 'Post time (your local time)' }), when),
+          h('label', { class: 'field' }, h('span', { text: 'Credit an affiliate (optional)' }), affSel, h('small', { text: affs.length ? 'The fight link becomes this affiliate’s player link, so the live site credits their players.' : 'No active affiliates with a linked live ID yet.' }))),
         onConfirm: function () {
           var chosen = Object.keys(boxes).filter(function (k) { return boxes[k].checked; });
-          return api('POST', '/admin/drafts/' + encodeURIComponent(d.id) + '/schedule', { channels: chosen, scheduledAt: new Date(when.value).toISOString() });
+          return api('POST', '/admin/drafts/' + encodeURIComponent(d.id) + '/schedule', { channels: chosen, scheduledAt: new Date(when.value).toISOString(), affiliateId: affSel.value || null });
         },
       });
     }).then(function (res) {
@@ -739,6 +753,124 @@
     });
   };
 
+  // Controlled live test (owner-authorized, one real post per channel).
+  function liveTestCard(r) {
+    var card = h('section', { class: 'card', testid: 'live-test' }, h('h2', { text: 'Controlled live test (Facebook & Instagram)' }));
+    if (!r.liveTestApproved) {
+      add(card, [h('p', { text: 'Real posting is OFF. All posts are simulated (sandbox) until you explicitly authorize one controlled live test.' }), h('p', { class: 'small muted', text: 'When you authorize it, this panel lets you publish ONE approved fight post to Facebook and ONE to Instagram through your connected accounts, after a final check.' })]);
+      return card;
+    }
+    var pick = h('select', { testid: 'live-test-draft', 'aria-label': 'Approved fight campaign' }, h('option', { value: '', text: 'Loading approved campaigns…' }));
+    var ch = h('select', { testid: 'live-test-channel', 'aria-label': 'Channel' }, [['facebook', 'Facebook Page'], ['instagram', 'Instagram']].map(function (o) { return h('option', { value: o[0], text: o[1] }); }));
+    var confirm = h('input', { type: 'text', testid: 'live-test-confirm', placeholder: 'Type POST LIVE', autocomplete: 'off' });
+    var btn = h('button', { class: 'btn danger', testid: 'btn-live-test', text: 'Publish one live test post', onclick: function () {
+      btn.disabled = true;
+      api('POST', '/admin/social/live-test', { draftId: pick.value, channel: ch.value, confirmText: confirm.value }).then(function (x) { toast('Published live' + (x.post && x.post.url ? ': ' + x.post.url : '.'), 'good'); route(); })
+        .catch(function (e) { btn.disabled = false; fail(e); });
+    } });
+    api('GET', '/admin/drafts?kind=marketing&status=approved&limit=50').then(function (x) {
+      clear(pick); (x.drafts || []).forEach(function (d) { pick.appendChild(h('option', { value: d.id, text: (d.headline || d.id).slice(0, 90) })); });
+      if (!pick.children.length) pick.appendChild(h('option', { value: '', text: 'No approved fight campaigns yet' }));
+    }).catch(function () { /* shown empty */ });
+    add(card, [h('div', { class: 'banner warn' }, h('span', { class: 'ico', text: '!' }), h('div', null, h('strong', { text: 'Live test authorized.' }), 'This posts publicly on your real account. One test per channel.')),
+      h('label', { class: 'field' }, h('span', { text: 'Approved fight campaign' }), pick), h('label', { class: 'field' }, h('span', { text: 'Channel' }), ch), h('label', { class: 'field' }, h('span', { text: 'Type POST LIVE to confirm' }), confirm), btn]);
+    return card;
+  }
+
+  // Facebook Page + Instagram connection (Meta sign-in; tokens stay on the server).
+  function metaModeChip(label, mode) { return h('span', { class: 'chip ' + (mode === 'live' ? 'good' : mode === 'sandbox' ? 'info' : ''), testid: 'meta-mode-' + label.toLowerCase(), text: label + ': ' + (mode === 'live' ? 'Live' : mode === 'sandbox' ? 'Sandbox' : 'Off') }); }
+  function metaCard(m) {
+    var card = h('section', { class: 'card', testid: 'conn-meta', 'data-state': m.state });
+    var list = function (items) { return h('ul', { class: 'checklist' }, items.map(function (it) { return h('li', { class: it.done ? 'done' : 'todo' }, h('span', { 'aria-hidden': 'true', text: it.done ? '✓ ' : '○ ' }), it.text); })); };
+    var stateChip = h('span', { class: 'chip ' + (m.state === 'connected' ? 'good' : 'warn'), testid: 'meta-state', text: (m.state === 'connected' ? '✓ ' : '') + m.connectionLabel });
+    add(card, [h('h2', { text: 'Facebook & Instagram' }), h('div', { class: 'conn-row' }, stateChip, ' ', metaModeChip('Facebook', m.publishing.facebook), ' ', metaModeChip('Instagram', m.publishing.instagram))]);
+    card.appendChild(h('p', { class: 'small muted', text: m.publishing.provider === 'live' ? 'Publishing mode: live (only owner-approved fight posts).' : 'Publishing mode: sandbox. Posts are checked and simulated; nothing reaches your accounts until you authorize a controlled live test.' }));
+    var connectBtn = function (label) { return h('button', { class: 'btn primary', testid: 'btn-meta-connect', text: label || 'Connect Facebook & Instagram', onclick: function () { metaConnect(); } }); };
+    if (m.state === 'not_set_up') {
+      card.appendChild(list(m.setup));
+      if (m.setup[0].done && !m.setup[1].done) {
+        var appId = h('input', { type: 'text', inputmode: 'numeric', autocomplete: 'off', testid: 'meta-app-id' });
+        var appSecret = h('input', { type: 'password', autocomplete: 'off', testid: 'meta-app-secret' });
+        add(card, [h('p', { text: 'Enter your Meta app’s App ID and App Secret (Meta for Developers → your app → App settings → Basic). They are stored encrypted and never shown again.' }),
+          h('label', { class: 'field' }, h('span', { text: 'App ID' }), appId), h('label', { class: 'field' }, h('span', { text: 'App Secret' }), appSecret),
+          h('button', { class: 'btn primary', testid: 'btn-meta-app-save', text: 'Save and check with Meta', onclick: function () {
+            api('POST', '/admin/meta/app', { appId: appId.value, appSecret: appSecret.value }).then(function (x) { appSecret.value = ''; toast('Meta app saved' + (x.appName ? ': ' + x.appName : '') + '.', 'good'); route(); }).catch(fail);
+          } })]);
+      }
+      add(card, [h('p', { class: 'small', text: 'In the Meta app, add this exact address under Facebook Login → Settings → Valid OAuth Redirect URIs:' }), h('code', { class: 'copy', testid: 'meta-redirect-uri', text: m.redirectUri })]);
+      return card;
+    }
+    if (m.state === 'authorization_needed') {
+      var why = [].concat(m.missingPermissions.length ? ['Permissions not granted: ' + m.missingPermissions.join(', ')] : [], (m.health && m.health.problems) || [], m.lastError ? ['Last attempt: ' + m.lastError.reason] : []);
+      add(card, [h('p', { text: m.authorizedAt ? 'Meta needs you to sign in again.' : 'Sign in with Meta to let the Growth Engine post your approved fight campaigns to your Facebook Page and Instagram account. You choose the Page in the next step.' }),
+        why.length ? list(why.map(function (t) { return { done: false, text: t }; })) : null, connectBtn(m.authorizedAt ? 'Connect again' : null)]);
+      return card;
+    }
+    if (m.state === 'selection_needed' || m.choosing) return pageChooser(card, m);
+    // connected
+    var s = m.selected; var hl = m.health || {};
+    add(card, [
+      h('dl', { class: 'facts', testid: 'meta-connected' },
+        h('dt', { text: 'Facebook Page' }), h('dd', { testid: 'meta-page', text: s.pageName + ' (ID ' + s.pageId + ')' }),
+        h('dt', { text: 'Instagram account' }), h('dd', { testid: 'meta-ig', text: '@' + s.igUsername + ' (ID ' + s.igUserId + ')' }),
+        h('dt', { text: 'Signed in to Meta as' }), h('dd', { text: (m.user && m.user.name) || '—' }),
+        h('dt', { text: 'Confirmed by' }), h('dd', { text: s.confirmedBy + ', ' + when(s.confirmedAt) }),
+        h('dt', { text: 'Last health check' }), h('dd', { testid: 'meta-health', text: hl.checkedAt ? (hl.ok ? '✓ OK, ' : '✕ Problem, ') + when(hl.checkedAt) : 'not yet' }),
+        h('dt', { text: 'Page access renewed' }), h('dd', { text: m.pageTokensRenewedAt ? when(m.pageTokensRenewedAt) : '—' }),
+        h('dt', { text: 'Sign in again by' }), h('dd', { text: m.dataAccessExpiresAt || m.userTokenExpiresAt ? (m.dataAccessExpiresAt || m.userTokenExpiresAt).slice(0, 10) : 'not set by Meta' })),
+      (hl.warnings || []).length ? list(hl.warnings.map(function (t) { return { done: false, text: t }; })) : null,
+      h('div', { class: 'actions' },
+        h('button', { class: 'btn small', testid: 'btn-meta-check', text: 'Check now', onclick: function () { api('POST', '/admin/meta/check').then(function (x) { toast(x.check.ok ? 'Connection is healthy.' : 'Problem: ' + (x.check.problems || [])[0], x.check.ok ? 'good' : 'bad'); route(); }).catch(fail); } }),
+        h('button', { class: 'btn small', testid: 'btn-meta-change', text: 'Change Page', onclick: function () { clear(card); m.choosing = true; card.replaceWith(metaCard(m)); } }),
+        connectBtn('Reconnect'),
+        h('button', { class: 'btn small danger', testid: 'btn-meta-disconnect', text: 'Disconnect', onclick: function () {
+          modal({ title: 'Disconnect Facebook & Instagram?', confirmLabel: 'Disconnect', confirmClass: 'danger', body: h('p', { text: 'The Growth Engine forgets the sign-in and asks Meta to remove its access. Scheduled posts are held until you connect again.' }),
+            onConfirm: function () { return api('POST', '/admin/meta/disconnect'); } }).then(function (ok) { if (ok) { toast('Disconnected.', 'good'); route(); } }).catch(fail);
+        } })),
+    ]);
+    return card;
+  }
+  function pageChooser(card, m) {
+    var chosen = null; var radios = [];
+    var rows = (m.pages || []).map(function (p) {
+      var ok = p.canPost && p.ig; var r = h('input', { type: 'radio', name: 'meta-page', value: p.id, disabled: !ok, testid: 'meta-page-option' }); radios.push(r);
+      r.addEventListener('change', function () { chosen = p.id; });
+      if (m.selected && m.selected.pageId === p.id && ok) { r.checked = true; chosen = p.id; }
+      return h('label', { class: 'check-row page-option', 'data-page-id': p.id }, r, ' ', h('strong', { text: p.name }), ' ',
+        p.ig ? h('span', { class: 'chip info', text: 'Instagram: @' + (p.ig.username || p.ig.id) }) : h('span', { class: 'chip warn', text: 'No Instagram professional account linked' }),
+        !p.canPost ? h('span', { class: 'chip warn', text: 'You cannot post on this Page' }) : null);
+    });
+    var confirm = h('input', { type: 'checkbox', testid: 'meta-confirm' });
+    add(card, [h('p', { text: 'Choose the FANTASY MMADNESS business Page. Its linked Instagram professional account is used for Instagram.' }),
+      rows.length ? h('div', { class: 'field', testid: 'meta-pages' }, rows) : h('div', { class: 'empty', text: 'Meta returned no Pages. Connect again and select the FANTASY MMADNESS Page on Meta’s screen.' }),
+      h('label', { class: 'check-row' }, confirm, ' This is the FANTASY MMADNESS business Facebook Page and its Instagram account.'),
+      h('div', { class: 'actions' }, h('button', { class: 'btn primary', testid: 'btn-meta-select', text: 'Use this Page', onclick: function () {
+        if (!chosen) return toast('Choose a Page first.', 'bad');
+        api('POST', '/admin/meta/select', { pageId: chosen, confirm: confirm.checked }).then(function () { toast('Facebook & Instagram connected.', 'good'); route(); }).catch(fail);
+      } }), h('button', { class: 'btn small', testid: 'btn-meta-connect', text: 'Connect again', onclick: function () { metaConnect(); } }))]);
+    return card;
+  }
+  var metaPoll = null;
+  function metaConnect() {
+    // Open the window first (inside the click) so pop-up blockers allow it, then send it to Meta.
+    var w = null; try { w = window.open('', 'fmm-meta-connect', 'popup=yes,width=620,height=760'); } catch (e) { w = null; }
+    api('POST', '/admin/meta/connect').then(function (x) {
+      if (w && !w.closed) { try { w.opener = window; } catch (e) { /* ignore */ } w.location.href = x.authorizeUrl; }
+      else modal({ title: 'Open Meta sign-in', confirmLabel: 'Done', body: h('p', null, 'Your browser blocked the sign-in window. ', h('a', { href: x.authorizeUrl, target: '_blank', rel: 'opener', testid: 'meta-authorize-link', text: 'Open Meta sign-in' }), ', then come back here.'), onConfirm: function () { return Promise.resolve(true); } }).then(function () { route(); });
+      var start = Date.now(); var before = null;
+      clearInterval(metaPoll);
+      api('GET', '/admin/meta').then(function (y) { before = y.meta.authorizedAt; });
+      metaPoll = setInterval(function () {
+        if (Date.now() - start > 5 * 60000) return clearInterval(metaPoll);
+        api('GET', '/admin/meta').then(function (y) { if (y.meta.authorizedAt && y.meta.authorizedAt !== before) { clearInterval(metaPoll); toast('Meta sign-in received.', 'good'); if (/^#\/connections/.test(location.hash)) route(); } }).catch(function () {});
+      }, 3000);
+    }).catch(function (e) { if (w && !w.closed) w.close(); fail(e); });
+  }
+  window.addEventListener('message', function (event) {
+    if (event.origin !== location.origin || !event.data || event.data.type !== 'fmm-meta-connect') return;
+    clearInterval(metaPoll); if (/^#\/connections/.test(location.hash)) route();
+  });
+
   pages.publishing = function (main) {
     return api('GET', '/admin/social').then(function (r) {
       clear(main);
@@ -759,17 +891,18 @@
             onConfirm: function () { return api('POST', '/admin/social/' + encodeURIComponent(p.id) + '/retry', { confirmNotPublished: box.checked }); } }).then(function (ok) { if (ok) { toast('Queued again.', 'good'); route(); } }).catch(fail);
         } }));
         return h('tr', { testid: 'post-row', 'data-post-id': p.id, 'data-status': p.status },
-          h('td', null, h('strong', { text: names[p.channel] || p.channel }), p.sandbox ? h('div', null, h('span', { class: 'chip info', text: 'Sandbox (simulated)' })) : null),
+          h('td', null, h('strong', { text: names[p.channel] || p.channel }), p.sandbox ? h('div', null, h('span', { class: 'chip info', text: 'Sandbox (simulated)' })) : p.status === 'published' ? h('div', null, h('span', { class: 'chip good', text: p.liveTest ? 'Live test' : 'Live' })) : null, p.affiliate ? h('div', { class: 'small muted', testid: 'post-affiliate', text: 'Credits ' + p.affiliate.name }) : null),
           h('td', null, h('div', { class: 'small', text: (p.text || '').split('\n')[0] }), h('div', { class: 'small muted', text: sport(p.genre) })),
           h('td', { class: 'nowrap small', text: when(p.publishedAt || p.scheduledAt) }),
-          h('td', null, chip(p.status), p.heldReason ? h('div', { class: 'small muted', text: p.heldReason }) : null, p.lastError ? h('div', { class: 'small muted', text: p.lastError }) : null, p.cancelReason ? h('div', { class: 'small muted', text: friendly(p.cancelReason) }) : null, p.pending ? h('div', { class: 'small muted', text: p.pending === 'in_tiktok_inbox_as_draft' ? 'In your TikTok inbox as a draft: finish posting in the app.' : 'Processing at TikTok.' }) : null, p.url ? h('a', { href: p.url, target: '_blank', rel: 'noopener noreferrer', text: 'View post' }) : null),
+          h('td', null, chip(p.status), p.heldReason ? h('div', { class: 'small muted', text: p.heldReason }) : null, p.lastError ? h('div', { class: 'small muted', text: p.lastError }) : null, p.cancelReason ? h('div', { class: 'small muted', text: friendly(p.cancelReason) }) : null, p.preflight && p.preflight.length ? h('div', { class: 'small muted', text: 'Checked: ' + p.preflight.join('; ') }) : null, p.history ? h('details', { class: 'small' }, h('summary', { text: 'Log' }), h('ul', null, p.history.map(function (x) { return h('li', { text: when(x.at) + ' · ' + x.status + (x.by ? ' · ' + x.by : '') + (x.note ? ' · ' + x.note : '') }); }))) : null, p.pending ? h('div', { class: 'small muted', text: p.pending === 'in_tiktok_inbox_as_draft' ? 'In your TikTok inbox as a draft: finish posting in the app.' : 'Processing at TikTok.' }) : null, p.url ? h('a', { href: p.url, target: '_blank', rel: 'noopener noreferrer', text: 'View post' }) : null),
           acts);
       });
       add(main, [
         head('Publishing', 'Scheduled social posts for approved fight campaigns. Nothing posts without your approval, and every fight is checked again just before posting.', toggle),
         paused ? h('div', { class: 'banner warn', testid: 'paused-banner' }, h('span', { class: 'ico', text: '⏸' }), h('div', null, h('strong', { text: 'Publishing is paused.' }), 'Nothing will be posted until you resume.' + (r.paused.by ? ' Paused by ' + r.paused.by + '.' : ''))) : null,
         h('section', { class: 'card' }, h('h2', { text: 'Channels' }), h('p', { class: 'sub', text: 'Mode: ' + (r.provider === 'none' ? 'off (posts are held)' : r.provider === 'sandbox' ? 'sandbox: posting is simulated, nothing reaches the real accounts' : 'live') }),
-          h('div', { class: 'grid tiles' }, Object.keys(names).map(function (ch) { var c = r.channels[ch] || {}; return h('div', { class: 'tile', testid: 'channel-tile-' + ch }, h('div', { class: 'label', text: names[ch] }), h('div', { class: 'value text', text: c.mode === 'live' ? 'Connected' : c.mode === 'sandbox' ? 'Sandbox' : 'Off' }), h('div', { class: 'hint', text: c.ready ? (c.note || 'Ready') : 'See Connections for what is needed' })); }))),
+          h('div', { class: 'grid tiles' }, Object.keys(names).map(function (ch) { var c = r.channels[ch] || {}; return h('div', { class: 'tile', testid: 'channel-tile-' + ch }, h('div', { class: 'label', text: names[ch] }), h('div', { class: 'value text', text: c.mode === 'live' ? 'Live' : c.mode === 'sandbox' ? 'Sandbox' : 'Off' }), h('div', { class: 'hint', text: c.ready ? (c.note || (c.mode === 'sandbox' ? 'Simulated: nothing reaches the account' : 'Ready')) : 'Authorization needed: see Connections' })); }))),
+        liveTestCard(r),
         h('section', { class: 'card' }, h('h2', { text: 'Queue' }), rows.length ? h('div', { class: 'table-wrap' }, h('table', { class: 'data', testid: 'posts-table' }, h('thead', null, h('tr', null, h('th', { text: 'Channel' }), h('th', { text: 'Post' }), h('th', { text: 'When' }), h('th', { text: 'Status' }), h('th', { text: '' }))), h('tbody', null, rows)))
           : h('div', { class: 'empty', testid: 'posts-empty', text: 'Nothing scheduled. Approve a fight campaign, then press “Schedule posts”.' })),
       ]);
@@ -783,8 +916,9 @@
       var list = function (items) { return h('ul', { class: 'checklist' }, items.map(function (it) { return h('li', { class: it.done ? 'done' : 'todo' }, h('span', { 'aria-hidden': 'true', text: it.done ? '✓ ' : '○ ' }), it.text); })); };
       add(main, [
         head('Connections', 'What the Growth Engine is connected to, and exactly what is still needed. Nothing here can send or post on its own.'),
-        h('section', { class: 'card', testid: 'conn-social' }, h('h2', { text: 'Social media publishing' }), h('p', { class: 'sub', text: 'Mode: ' + c.social.provider + (c.social.paused.paused ? ' · paused' : '') }),
-          Object.keys(names).map(function (ch) { var x = c.social.channels[ch]; return h('div', { class: 'conn-row' }, h('strong', { text: names[ch] }), ' ', x.mode === 'live' ? h('span', { class: 'chip good', text: '✓ Live' }) : x.mode === 'sandbox' ? h('span', { class: 'chip info', text: 'Sandbox' }) : h('span', { class: 'chip', text: 'Off' }), x.blockers.length ? list(x.blockers.map(function (b) { return { done: false, text: b }; })) : null, x.note ? h('p', { class: 'small muted', text: x.note }) : null); })),
+        metaCard(c.meta),
+        h('section', { class: 'card', testid: 'conn-social' }, h('h2', { text: 'Other social channels' }), h('p', { class: 'sub', text: 'Mode: ' + c.social.provider + (c.social.paused.paused ? ' · paused' : '') }),
+          ['x', 'tiktok'].map(function (ch) { var x = c.social.channels[ch]; return h('div', { class: 'conn-row' }, h('strong', { text: names[ch] }), ' ', x.mode === 'live' ? h('span', { class: 'chip good', text: '✓ Live' }) : x.mode === 'sandbox' ? h('span', { class: 'chip info', text: 'Sandbox' }) : h('span', { class: 'chip', text: 'Off' }), x.blockers.length ? list(x.blockers.map(function (b) { return { done: false, text: b }; })) : null, x.note ? h('p', { class: 'small muted', text: x.note }) : null); })),
         h('section', { class: 'card', testid: 'conn-email' }, h('h2', { text: 'Business email (PR and affiliate invitations)' }), h('p', { class: 'sub', text: 'Sender: ' + c.email.sender + ' · real sending: ' + (c.email.realDelivery ? 'ON' : 'OFF') }),
           e ? list(e.steps) : h('p', { class: 'muted', text: 'Could not run the email check right now.' }),
           e && e.dns.error ? h('p', { class: 'small muted', text: 'DNS lookup problem: ' + e.dns.error }) : null),

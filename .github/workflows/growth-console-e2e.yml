@@ -45,7 +45,7 @@ jobs:
           npm install --no-save --no-fund --ignore-scripts playwright@1.56.1
           npx playwright install --with-deps chromium
       - name: Browser E2E — every screen, button and workflow
-        run: node --test --test-reporter=spec growth-console.e2e.test.js
+        run: node --test --test-reporter=spec growth-console.e2e.test.js growth-meta-connect.e2e.test.js
       - name: Print screenshots (base64, for reviewers without artifact access)
         if: always()
         run: |
