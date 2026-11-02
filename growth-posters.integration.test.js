@@ -28,9 +28,11 @@ test('fight posters and platform campaigns, sandbox only', { skip, timeout: 1800
   const feed = contestFeed();
   const artFetches = [];
   let origin = null;
+  const PUBLIC = 'https://growth-staging.test';
+  const local = (u) => u.replace(PUBLIC, origin);
   const fetchImpl = async (url, opts) => {
     const u = String(url);
-    if (origin && u.startsWith(origin)) return fetch(u, opts); // our own public poster address
+    if (u.startsWith(PUBLIC)) return fetch(local(u), opts); // our own public poster address (https, as on staging)
     const f = feed(u); if (f) return f;
     if (/^https:\/\/res\.cloudinary\.com\/demo\/image\/upload\//.test(u)) { artFetches.push(u); return { ok: true, status: 200, headers: new Headers({ 'content-type': 'image/jpeg' }), arrayBuffer: async () => art }; }
     if (u.startsWith('https://www.fantasymmadness.com/images/brand/')) return { ok: false, status: 404, headers: new Headers() }; // logo unavailable: wordmark is used
@@ -43,7 +45,7 @@ test('fight posters and platform campaigns, sandbox only', { skip, timeout: 1800
   const server = app.listen(0, '127.0.0.1'); await new Promise((r) => server.once('listening', r));
   origin = `http://127.0.0.1:${server.address().port}`;
   const env = { GROWTH_STAGING_MODE: 'isolated', GROWTH_OUTBOUND_ENABLED: 'false', GROWTH_TEST_MONGO_URI: uri, JWT_SECRET_ADMIN: SECRET, GROWTH_UNSUBSCRIBE_SECRET: SECRET, CRON_SECRET: 'cron-secret-for-tests-only',
-    GROWTH_DELIVERY_PROVIDER: 'none', GROWTH_ADMIN_PASSWORD_HASH: PASSWORD_HASH, GROWTH_SOCIAL_PROVIDER: 'sandbox', GROWTH_POSTERS: 'on', GROWTH_POSTERS_PER_RUN: '20', GROWTH_PUBLIC_ORIGIN: origin, GROWTH_RESEARCH_PER_RUN: '0' };
+    GROWTH_DELIVERY_PROVIDER: 'none', GROWTH_ADMIN_PASSWORD_HASH: PASSWORD_HASH, GROWTH_SOCIAL_PROVIDER: 'sandbox', GROWTH_POSTERS: 'on', GROWTH_POSTERS_PER_RUN: '20', GROWTH_PUBLIC_ORIGIN: PUBLIC, GROWTH_RESEARCH_PER_RUN: '0' };
   const m = registerIsolatedGrowthRoutes({ app, env, express, fetchImpl, connect: async () => client });
   assert.equal(m.mounted, true, JSON.stringify(m.errors));
   const rt = await m.getRuntime();
@@ -69,7 +71,7 @@ test('fight posters and platform campaigns, sandbox only', { skip, timeout: 1800
       assert.equal(open.length, refresh.contests.length);
       for (const d of open) {
         assert.ok(d.poster?.portrait?.url && d.poster?.story?.url, `${d.id} has no poster`);
-        assert.ok(d.poster.portrait.url.startsWith(`${origin}/api/growth/posters/`));
+        assert.ok(d.poster.portrait.url.startsWith(`${PUBLIC}/api/growth/posters/`));
         assert.ok(['facebook', 'instagram', 'x', 'tiktok'].every((ch) => d.posts[ch]), `${d.id}: missing a platform caption`);
         assert.match(d.posts.instagram, /#FANTASYMMADNESS/); assert.match(d.posts.x, /#FANTASYMMADNESS/);
       }
@@ -95,10 +97,10 @@ test('fight posters and platform campaigns, sandbox only', { skip, timeout: 1800
     await t.test('posters are served publicly with the headers platforms need; QR scans to the campaign link', async () => {
       for (const fmt of ['portrait', 'story']) {
         const url = boxing.poster[fmt].url;
-        const head = await fetch(url, { method: 'HEAD' });
+        const head = await fetch(local(url), { method: 'HEAD' });
         assert.equal(head.status, 200); assert.equal(head.headers.get('content-type'), 'image/jpeg');
         assert.equal(head.headers.get('x-image-width'), '1080'); assert.equal(head.headers.get('x-image-height'), fmt === 'portrait' ? '1350' : '1920');
-        const body = Buffer.from(await (await fetch(url)).arrayBuffer());
+        const body = Buffer.from(await (await fetch(local(url))).arrayBuffer());
         const md = await sharp(body).metadata(); assert.deepEqual([md.width, md.height], [1080, fmt === 'portrait' ? 1350 : 1920]);
         const doc = await db.collection('growth_posters').findOne({ id: boxing.poster[fmt].id });
         const L = doc.layout.qr;
@@ -129,7 +131,7 @@ test('fight posters and platform campaigns, sandbox only', { skip, timeout: 1800
       const again = await call('POST', `/admin/drafts/${encodeURIComponent(boxing.id)}/schedule`, { channels: ['instagram'], scheduledAt: when });
       assert.match(again.json.results[0].reason, /^already_scheduled/);
       const out = await rt.social.dispatch(new Date(Date.now() + 5 * 60000));
-      assert.equal(out.published, 4, JSON.stringify(out));
+      if (out.published !== 4) assert.fail(JSON.stringify((await db.collection('growth_social_posts').find({ draftId: boxing.id }).toArray()).map((p) => [p.channel, p.status, p.lastError])));
       const posts = await db.collection('growth_social_posts').find({ draftId: boxing.id }).toArray();
       const by = Object.fromEntries(posts.map((p) => [p.channel, p]));
       assert.equal(by.instagram.imageUrl, boxing.poster.portrait.url); assert.equal(by.facebook.imageUrl, boxing.poster.portrait.url);
@@ -153,7 +155,7 @@ test('fight posters and platform campaigns, sandbox only', { skip, timeout: 1800
       assert.equal((await call('POST', '/admin/art-rights/bx0000000002', { status: 'blocked', note: 'Owner test: image licence not confirmed' })).status, 200);
       const after = await drafts.findOne({ id: d2.id });
       assert.equal(after.status, 'needs_owner_review'); assert.equal(after.poster.art.used, false); assert.equal(after.poster.art.reason, 'artwork_blocked_by_owner');
-      assert.equal((await fetch(d2.poster.portrait.url)).status, 404, 'the old poster is no longer served');
+      assert.equal((await fetch(local(d2.poster.portrait.url))).status, 404, 'the old poster is no longer served');
       const queued = await db.collection('growth_social_posts').find({ draftId: d2.id }).toArray();
       assert.ok(queued.length === 2 && queued.every((p) => p.status === 'cancelled'));
       assert.equal((await call('POST', '/admin/art-rights/bx0000000002', { status: 'allowed' })).status, 200);

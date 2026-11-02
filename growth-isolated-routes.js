@@ -115,7 +115,7 @@ function registerIsolatedGrowthRoutes({ app, env = process.env, express, transpo
     if (!body) return res.status(404).end();
     const origins = embedOrigins(env);
     res.set({ 'Content-Type': CONSOLE_FILES[file], 'Cache-Control': 'no-store', 'Content-Security-Policy': consoleCsp(origins), 'X-Content-Type-Options': 'nosniff', 'Referrer-Policy': 'no-referrer' });
-    if (!origins.length) res.set('X-Frame-Options', 'DENY');
+    if (!origins.length) res.set('X-Frame-Options', 'DENY'); else res.removeHeader('X-Frame-Options'); // CSP frame-ancestors is the single source of truth
     res.send(body);
   };
   router.get('/console', sendConsole('index.html'));
