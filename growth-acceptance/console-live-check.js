@@ -256,6 +256,56 @@ async function main() {
       log('marketing', JSON.stringify({ refresh: live.refresh, queued: queued.length, sportMask }));
     });
 
+    await check('posters: every queued fight campaign has a poster from verified facts; approved artwork only (with provenance); QR DECODED from the final image = canonical fight link; link opens that fight', async () => {
+      const sharp = require('sharp'); const ps = require('../growth-poster-studio'); const jsQR = require('jsqr');
+      const g = await api('POST', '/admin/posters/generate', {});
+      if (!(g.status === 200 && g.json.ok)) throw Object.assign(new Error(`generate ${g.status} ${JSON.stringify(g.json).slice(0, 300)}`), { diag: 250 });
+      const queued = await C.drafts.find({ kind: 'marketing', contestId: { $exists: true }, status: { $in: ['needs_owner_review', 'approved'] } }).toArray();
+      const modes = {}; live.realPosters = [];
+      const policy = ps.artPolicy(process.env);
+      for (const d of queued) {
+        const P = d.poster;
+        if (!(P && P.portrait && P.story && P.renderVersion === ps.RENDER_VERSION)) throw Object.assign(new Error(`${d.id}: no current poster`), { diag: 251 });
+        modes[P.art.mode] = (modes[P.art.mode] || 0) + 1;
+        for (const f of P.art.fighters || []) {
+          if (!ps.checkArtSource({ posterUrl: f.url }, policy).ok || !/^[a-f0-9]{64}$/.test(f.sha256 || '') || !f.source) throw Object.assign(new Error(`${d.id}: photo provenance`), { diag: 252 });
+          if (![d.contest.fighterA, d.contest.fighterB].includes(f.name)) throw Object.assign(new Error(`${d.id}: photo for a different fighter (${f.name})`), { diag: 252 });
+        }
+        if (P.art.mode === 'contest_artwork' && !ps.checkArtSource({ posterUrl: P.art.contestArt.url }, policy).ok) throw Object.assign(new Error(`${d.id}: artwork host`), { diag: 252 });
+        if (P.art.mode === 'text' && !P.needsArtwork && P.art.reason !== 'artwork_blocked_by_owner') throw Object.assign(new Error(`${d.id}: text poster not flagged NEEDS ARTWORK`), { diag: 252 });
+        if (P.qrUrl !== ps.qrLink(d.contest)) throw Object.assign(new Error(`${d.id}: QR link`), { diag: 253 });
+        for (const fmt of ['portrait', 'story']) {
+          const u = new URL(P[fmt].url);
+          if (u.origin !== STAGING) throw Object.assign(new Error(`${d.id}: poster served from ${u.origin}`), { diag: 254 });
+          const r = await fetch(`${origin}${u.pathname}`); ok(r.status === 200 && r.headers.get('content-type') === 'image/jpeg', `${d.id} ${fmt} ${r.status}`);
+          const body = Buffer.from(await r.arrayBuffer()); const md = await sharp(body).metadata();
+          ok(md.width === 1080 && md.height === (fmt === 'portrait' ? 1350 : 1920), `${d.id} ${fmt} size`);
+          // independent decode of the FINAL image here (not trusting the engine's own record)
+          const { data, info } = await sharp(body).ensureAlpha().raw().toBuffer({ resolveWithObject: true });
+          const q = jsQR(new Uint8ClampedArray(data.buffer, data.byteOffset, data.length), info.width, info.height);
+          if (!q || q.data !== P.qrUrl) throw Object.assign(new Error(`${d.id} ${fmt}: QR decodes to ${q && q.data}`), { diag: 255 });
+          const doc = await gdb.collection('growth_posters').findOne({ id: P[fmt].id }, { projection: { bytes: 0 } });
+          ok(doc.facts.fighterA === d.contest.fighterA && doc.facts.fighterB === d.contest.fighterB && !/\$\s?\d/.test(JSON.stringify(doc.facts)), `${d.id}: poster facts`);
+          for (const im of doc.layout.images || []) ok(Math.abs(im.width / im.height - im.sourceWidth / im.sourceHeight) < 0.01, `${d.id}: image aspect changed`);
+        }
+        // the decoded link really opens this fight on the live website (independent request)
+        const dest = await fetch(P.qrUrl, { redirect: 'follow' });
+        const fin = new URL(dest.url);
+        if (!(dest.status === 200 && fin.hostname === 'www.fantasymmadness.com' && [new URL(ps.canonicalUrl(d.contest)).pathname, new URL(d.contest.contestUrl).pathname].includes(fin.pathname))) throw Object.assign(new Error(`${d.id}: QR link -> ${dest.status} ${dest.url}`), { diag: 256 });
+        if (P.status !== 'ready') throw Object.assign(new Error(`${d.id}: poster on hold ${JSON.stringify(P.holdReasons)}`), { diag: 257 });
+        live.realPosters.push({ campaign: d.id, contestId: d.contestId, sport: d.genre, fight: `${d.contest.fighterA} vs ${d.contest.fighterB}`, date: d.contest.dateKey, mode: P.art.mode, needsArtwork: P.needsArtwork, missing: P.art.missing,
+          fighters: (P.art.fighters || []).map((f) => ({ name: f.name, source: f.source, sha256: f.sha256, url: f.url })), portrait: P.portrait.url, story: P.story.url, qrEncoded: P.qrUrl, qrDecodedIndependently: P.qrUrl, destination: { status: dest.status, finalUrl: `${fin.origin}${fin.pathname}` }, status: P.status });
+      }
+      live.posters = { campaigns: queued.length, modes };
+      log('posters', JSON.stringify(live.posters));
+    });
+    await check('isolated gate: the legacy game server is unreachable here; only /api/growth answers', async () => {
+      for (const pth of ['/', '/api/cron-job', '/api/public/prediction-fights', '/api/users/login']) {
+        const r = await fetch(`${origin}${pth}`);
+        if (!(r.status === 404 && (await r.json().catch(() => ({}))).service === 'growth-engine-isolated')) throw Object.assign(new Error(`${pth} -> ${r.status}`), { diag: 260 });
+      }
+      ok((await fetch(`${origin}/api/growth/health`)).status === 200, 'health');
+    });
     await check('connections, email readiness and funnel endpoints work on staging', async () => {
       const c = (await api('GET', '/admin/connections')).json.connections;
       ok(c.social.provider === 'sandbox', `social provider ${c.social.provider}`);
@@ -347,12 +397,20 @@ async function main() {
         await page.click('[data-testid=btn-check-fights]'); await page.waitForSelector('[data-testid=toast]');
         ok(/verified fight/.test(await page.textContent('[data-testid=toast]')), 'check-now toast');
       });
+      await check('browser: campaign cards show the generated posters (feed + TikTok) with the artwork source', async () => {
+        await goto('#/approvals');
+        await page.waitForSelector('[data-testid=posters] [data-testid=poster-portrait] img');
+        const loaded = await page.$$eval('[data-testid=posters] img', (imgs) => imgs.slice(0, 6).map((i) => i.complete && i.naturalWidth));
+        ok(loaded.length >= 2 && loaded.every((w) => w === 1080), `poster images ${JSON.stringify(loaded)}`);
+        ok((await page.$$('[data-testid=poster-art]')).length >= 1, 'artwork chip');
+      });
       // ---- buttons, on labelled fixtures only ----
       const nowIso = new Date().toISOString();
       if (realContest) {
         const k = cc.buildCampaign(realContest);
         await C.drafts.insertOne({ id: FX.mkt1, kind: 'marketing', genre: realContest.sport, contestId: realContest.id, contestFingerprint: realContest.fingerprint, contest: realContest, channels: ['instagram', 'facebook', 'x', 'tiktok'], headline: `UI TEST ${stamp} ${k.headline}`.slice(0, 180), text: k.text, posts: k.posts, link: k.link, sourceUrl: realContest.contestUrl, status: 'needs_owner_review', ownerApproved: false, sendPermitted: false, createdAt: nowIso, uitest: true });
       }
+      if (realContest) { const gp = await api('POST', '/admin/posters/generate', { draftIds: [FX.mkt1] }); ok(gp.status === 200 && gp.json.generated === 1, `fixture poster ${JSON.stringify(gp.json).slice(0, 200)}`); }
       await C.drafts.insertOne({ id: FX.mkt2, kind: 'marketing', genre: 'boxing', contestId: 'uitest-none', contest: null, headline: `UI TEST ${FX.mkt2}`, text: 'UI test post — will be deleted automatically.', sourceUrl: 'https://example.com/uitest', status: 'needs_owner_review', ownerApproved: false, sendPermitted: false, createdAt: nowIso, uitest: true });
       await C.prospects.insertOne({ key: `partners:uitest:${stamp}`, id: FX.prospect, genre: 'boxing', focus: 'partners', name: `UI Test Show ${stamp}`, sourceUrl: 'https://example.com/uitest-show', source: 'uitest', verified: false, contact: null, contactVerified: false, consent: false, optedOut: false, firstSeenAt: nowIso, uitest: true });
       await C.alerts.insertOne({ alertKey: FX.alert, kind: 'uitest', id: 'ui-test', error: 'UI test alert — will be deleted automatically', state: 'open', createdAt: nowIso, uitest: true });
@@ -371,32 +429,65 @@ async function main() {
       if (realContest) await check('browser: campaign for a real verified fight - edit (safeguarded), approve, copy, publish (fixture copy)', async () => {
         await goto(`#/approvals?status=needs_owner_review&kind=marketing&sport=${realContest.sport}`);
         await page.waitForSelector(`[data-draft-id="${FX.mkt1}"]`);
+        // the poster preview, its artwork status and the QR check are on the card before approval
+        await page.waitForSelector(`[data-draft-id="${FX.mkt1}"] [data-testid=posters][data-status=ready] [data-testid=poster-portrait] img`);
+        ok(/decoded from the poster/.test(await page.textContent(`[data-draft-id="${FX.mkt1}"] [data-testid=poster-qr]`)), 'QR check shown');
         await page.click(`[data-draft-id="${FX.mkt1}"] [data-testid=btn-edit]`); await page.fill('[data-testid=edit-text]', 'Win a $500 prize!'); await page.click('[data-testid=modal-confirm]');
         await page.waitForFunction(() => /safeguard/i.test(document.querySelector('[data-testid=modal] .error')?.textContent || ''));
         await page.click('[data-testid=modal-cancel]');
         await page.click(`[data-draft-id="${FX.mkt1}"] [data-testid=btn-edit]`); await page.fill('[data-testid=edit-title]', `UI TEST edited ${stamp}`); await confirm();
         await page.waitForFunction(([id, s]) => document.querySelector(`[data-draft-id="${id}"] [data-testid=draft-title]`)?.textContent === `UI TEST edited ${s}`, [FX.mkt1, stamp]);
-        await page.click(`[data-draft-id="${FX.mkt1}"] [data-testid=btn-approve]`); await confirm();
+        await page.click(`[data-draft-id="${FX.mkt1}"] [data-testid=btn-approve]`);
+        if (await page.$('[data-testid=accept-text-poster]')) {
+          // NEEDS ARTWORK: approval without the explicit text-poster choice is refused
+          await page.click('[data-testid=modal-confirm]'); await page.waitForFunction(() => (document.querySelector('[data-testid=modal] .error')?.textContent || '').length > 0);
+          await page.check('[data-testid=accept-text-poster]');
+        }
+        await confirm();
         await page.waitForSelector(`[data-draft-id="${FX.mkt1}"]`, { state: 'detached' }); ok(await status(FX.mkt1) === 'approved', 'approve');
         await goto(`#/approvals?status=approved&kind=marketing&sport=${realContest.sport}`);
         await page.click(`[data-draft-id="${FX.mkt1}"] [data-testid=btn-copy]`);
         await page.click(`[data-draft-id="${FX.mkt1}"] [data-testid=btn-mark-published]`); await page.fill('[data-testid=post-url]', 'https://example.com/uitest-post'); await confirm();
         await page.waitForSelector(`[data-draft-id="${FX.mkt1}"]`, { state: 'detached' }); ok(await status(FX.mkt1) === 'published', 'publish');
       });
-      if (realContest) await check('Publishing on staging: schedule approved fixture campaign, sandbox-publish on the run, pause/resume, cancel', async () => {
-        await C.drafts.updateOne({ id: FX.mkt1 }, { $set: { status: 'approved', ownerApproved: true } }); // re-approve the fixture copy (it was published above)
-        const r = await api('POST', `/admin/drafts/${FX.mkt1}/schedule`, { channels: ['x', 'facebook'], scheduledAt: new Date(Date.now() - 20000).toISOString() });
-        ok(r.status === 200 && r.json.results.some((x) => x.ok), `schedule ${JSON.stringify(r.json)}`);
+      if (realContest) await check('Facebook + Instagram sandbox acceptance: approved poster + per-channel caption -> scheduled -> paused gate -> sandbox receipts; TikTok/X limits; no duplicate dispatch; analytics', async () => {
+        await C.drafts.updateOne({ id: FX.mkt1 }, { $set: { status: 'approved', ownerApproved: true } }); // re-approve the fixture copy (it was marked published above)
+        const d = await C.drafts.findOne({ id: FX.mkt1 });
+        const sandboxCount = async () => Number((((await api('GET', '/admin/executive')).json.departments.find((x) => x.key === 'marketing').facts.join(' ')).match(/(\d+) sandbox post/) || [])[1]);
+        const n0 = await sandboxCount();
+        const r = await api('POST', `/admin/drafts/${FX.mkt1}/schedule`, { channels: ['facebook', 'instagram', 'tiktok', 'x'], scheduledAt: new Date(Date.now() - 20000).toISOString() });
+        if (!(r.status === 200 && r.json.results.filter((x) => x.ok).length === 4)) throw Object.assign(new Error(`schedule ${JSON.stringify(r.json)}`), { diag: 280 });
+        ok(String((await api('POST', `/admin/drafts/${FX.mkt1}/schedule`, { channels: ['instagram'], scheduledAt: new Date().toISOString() })).json.results[0].reason).startsWith('already_'), 'double schedule');
         ok((await api('POST', '/admin/social/pause', { paused: true })).json.paused.paused === true, 'pause');
         await api('POST', '/admin/run-now');
         ok(await C.social.countDocuments({ draftId: FX.mkt1, status: 'published' }) === 0, 'published while paused');
         await api('POST', '/admin/social/pause', { paused: false });
         await new Promise((res) => setTimeout(res, 61000 - (Date.now() % 60000) + 500)); // next minute: a new run id
         await api('POST', '/admin/run-now');
-        const pub = await C.social.find({ draftId: FX.mkt1, status: 'published' }).toArray();
-        ok(pub.length >= 1 && pub.every((p) => p.sandbox === true), 'sandbox publish');
-        ok((await C.drafts.findOne({ id: FX.mkt1 })).status === 'approved', 'sandbox counted as real');
+        const posts = await C.social.find({ draftId: FX.mkt1 }).toArray();
+        const by = Object.fromEntries(posts.map((p) => [p.channel, p]));
+        for (const ch of ['facebook', 'instagram', 'tiktok', 'x']) if (!(by[ch] && by[ch].status === 'published' && by[ch].sandbox === true)) throw Object.assign(new Error(`${ch}: ${by[ch] && by[ch].status} ${by[ch] && (by[ch].lastError || by[ch].heldReason)}`), { diag: 281 });
+        ok(by.facebook.imageUrl === d.poster.portrait.url && by.instagram.imageUrl === d.poster.portrait.url && by.tiktok.imageUrl === d.poster.story.url, 'poster per platform');
+        ok(by.facebook.text.includes(d.contest.fighterA) && by.instagram.text.includes(d.contest.fighterA) && by.x.text.length < by.facebook.text.length, 'per-channel captions');
+        const receipts = await C.sandbox.find({ postId: { $in: posts.map((p) => p.id) } }).toArray();
+        const rc = Object.fromEntries(receipts.map((x) => [x.channel, x]));
+        if (receipts.length !== 4) throw Object.assign(new Error(`receipts ${receipts.length}`), { diag: 282 });
+        ok(rc.instagram.preflight.problems.length === 0 && rc.instagram.preflight.notes.some((n) => /image checked \(image\/jpeg/.test(n)), `IG preflight ${JSON.stringify(rc.instagram.preflight)}`);
+        ok(rc.facebook.preflight.problems.length === 0, 'FB preflight');
+        ok(rc.x.preflight.notes.some((n) => /poster is not attached/.test(n)), 'X limitation');
+        ok(rc.tiktok.preflight.notes.some((n) => /not clickable/.test(n)), 'TikTok limitation');
+        const cap = (await api('GET', '/admin/social/capabilities')).json.capabilities;
+        ok(/text and link only/.test(cap.x.media) && cap.tiktok.requires.some((x) => /audit/i.test(x)) && cap.tiktok.requires.some((x) => /domain verified/.test(x)), 'capabilities');
+        // no duplicate dispatch: another run publishes nothing new for this campaign
+        await new Promise((res) => setTimeout(res, 61000 - (Date.now() % 60000) + 500)); await api('POST', '/admin/run-now');
+        ok(await C.sandbox.countDocuments({ postId: { $in: posts.map((p) => p.id) } }) === 4, 'duplicate dispatch');
+        ok(await C.social.countDocuments({ draftId: FX.mkt1, sandbox: { $ne: true }, status: 'published' }) === 0, 'a real post');
+        const n1 = await sandboxCount();
+        ok(n1 >= n0 + 4, `analytics sandbox posts ${n0} -> ${n1}`);
         await goto('#/publishing'); await page.waitForSelector('[data-testid=post-row][data-status=published]');
+        live.sandbox = { campaign: FX.mkt1, contestId: d.contestId, posterMode: d.poster.art.mode, needsArtwork: d.poster.needsArtwork, portrait: d.poster.portrait.url, story: d.poster.story.url, qrEncoded: d.poster.qrUrl,
+          receipts: ['facebook', 'instagram', 'tiktok', 'x'].map((ch) => ({ channel: ch, postId: by[ch].id, receiptId: by[ch].providerPostId, imageUrl: by[ch].imageUrl || null, problems: rc[ch].preflight.problems, notes: rc[ch].preflight.notes, connectedAccount: rc[ch].connectedAccount ?? null })),
+          pausedGateHeld: true, duplicateDispatchBlocked: true, analyticsSandboxPosts: { before: n0, after: n1 }, realPosts: 0 };
       });
       await check('Affiliate onboarding on staging (fixture): approve invite -> invited -> active with live ID', async () => {
         await C.prospects.insertOne({ key: `partners:uitest2:${stamp}`, id: FX.prospect2, genre: 'boxing', focus: 'partners', name: `UI Test Creator ${stamp}`, sourceUrl: 'https://example.com/uitest-creator', source: 'uitest', verified: false, contact: null, contactVerified: false, consent: false, optedOut: false, firstSeenAt: new Date().toISOString(), uitest: true });
@@ -445,10 +536,46 @@ async function main() {
         }
       });
       await check('no browser errors and no CORS refusals', async () => { ok(problems.length === 0, problems.join(' | ')); ok(corsErrors.length === 0, corsErrors.join(' ')); });
+      // ---- REAL network: the deployed public staging address, embedded by the website preview origin ----
+      await check('real staging address is public (no Vercel sign-in wall), console embeddable only by the admin site', async () => {
+        const WEB = 'https://fmm-ver2-git-test-growth-e-7c8860-kelly-davis-projects-6c108d0b.vercel.app';
+        const h = await fetch(`${STAGING}/api/growth/health`, { redirect: 'manual' });
+        if (h.status !== 200) throw Object.assign(new Error(`public staging health -> ${h.status} ${h.headers.get('location') || ''}`), { diag: 270 });
+        const con = await fetch(`${STAGING}/api/growth/console?embed=1`, { redirect: 'manual' });
+        const csp = con.headers.get('content-security-policy') || '';
+        if (!(con.status === 200 && csp.includes(`frame-ancestors`) && csp.includes(WEB) && !con.headers.get('x-frame-options'))) throw Object.assign(new Error(`console ${con.status} xfo=${con.headers.get('x-frame-options')} csp=${csp}`), { diag: 271 });
+        const legacy = await fetch(`${STAGING}/api/cron-job`, { redirect: 'manual' });
+        if (legacy.status !== 404) throw Object.assign(new Error(`legacy route on the public staging address -> ${legacy.status}`), { diag: 272 });
+        const ctx = await browser.newContext({ viewport: { width: 1360, height: 900 } });
+        const host = async (pageOrigin) => {
+          const pg = await ctx.newPage(); pg.setDefaultTimeout(30000);
+          await ctx.route(`${pageOrigin}/__embed-check`, (rt) => rt.fulfill({ status: 200, contentType: 'text/html', body: `<!doctype html><title>embed</title><iframe id="ge" style="width:1200px;height:800px" src="${STAGING}/api/growth/console?embed=1#/overview" referrerpolicy="no-referrer"></iframe>` }));
+          await pg.goto(`${pageOrigin}/__embed-check`); await pg.waitForTimeout(500);
+          const deadline = Date.now() + 25000; let fr = null;
+          while (Date.now() < deadline) { fr = pg.frames().find((f) => f !== pg.mainFrame()); if (fr && fr.url() !== 'about:blank') break; await pg.waitForTimeout(250); }
+          let login = false; try { await fr.waitForSelector('[data-testid=login]', { timeout: 15000 }); login = true; } catch {}
+          const res = { url: fr ? fr.url() : null, login }; await pg.close(); return res;
+        };
+        const good = await host(WEB);
+        if (!good.login) throw Object.assign(new Error(`admin site could not embed the console: ${JSON.stringify(good)}`), { diag: 273 });
+        const bad = await host('https://not-the-admin-site.example');
+        if (bad.login) throw Object.assign(new Error('a foreign site could embed the console'), { diag: 274 });
+        await ctx.close();
+        live.embed = { admin: good, foreign: bad };
+        log('embed', JSON.stringify(live.embed));
+      });
     }
   } catch (e) {
     exitCode = e.code || 1;
   } finally {
+    // ---- public, non-sensitive acceptance evidence (read by the GitHub acceptance report) ----
+    try {
+      await gdb.collection('growth_acceptance_evidence').insertOne({ id: `live-check-${stamp}`, at: new Date().toISOString(), public: {
+        result: exitCode === 0 ? 'PASS' : `FAIL (code ${exitCode})`, commit: process.env.VERCEL_GIT_COMMIT_SHA || null, branch: process.env.VERCEL_GIT_COMMIT_REF || null,
+        stepsPassed: exitCode === 0 ? step : step - 1, realPosters: live.realPosters || [], posterSummary: live.posters || null, sandbox: live.sandbox || null, embed: live.embed || null,
+        executive: live.executive || null, research: { pr: live.research_pr || null, affiliate: live.research_affiliate || null }, synthetic: live.synthetic || null, sandboxOutbox: live.sandboxOutbox ?? null,
+        note: 'Staging only. Sandbox receipts: nothing was posted to Facebook, Instagram, TikTok or X, and no email was sent.' } });
+    } catch (e) { log('evidence not recorded', e.message); }
     // ---- cleanup: every fixture and every audit entry from this check ----
     try {
       await C.drafts.deleteMany({ id: { $in: [FX.mkt1, FX.mkt2, `pr-${FX.prospect}`, `affiliate-${FX.prospect2}`] } });
