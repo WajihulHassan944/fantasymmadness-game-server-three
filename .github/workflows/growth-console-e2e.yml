@@ -47,7 +47,7 @@ jobs:
         run: node growth-acceptance/render-poster-samples.js poster-samples
       - name: Print sample posters (base64, for reviewers without artifact access)
         run: |
-          for f in poster-samples/*-portrait.jpg poster-samples/photos-ufc-story.jpg; do n=$(basename "$f"); node -e 'require("sharp")(process.argv[1]).resize({width:540}).jpeg({quality:80}).toBuffer().then(b=>process.stdout.write(b.toString("base64")))' "$f" | fold -w 30000 | sed "s/^/POSTER:$n:/"; echo; done
+          for f in poster-samples/*.jpg; do n=$(basename "$f"); node -e 'require("sharp")(process.argv[1]).resize({width:540}).jpeg({quality:80}).toBuffer().then(b=>process.stdout.write(b.toString("base64")))' "$f" | fold -w 30000 | sed "s/^/POSTER:$n:/"; echo; done
       - name: Upload sample posters
         uses: actions/upload-artifact@v4
         with:

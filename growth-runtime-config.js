@@ -97,7 +97,7 @@ function resolveGrowthRuntimeConfig(env = process.env) {
     fightUrlDiscovery: env.GROWTH_FIGHT_URL_DISCOVERY !== 'off',
     researchPerRun: Math.min(10, Math.max(0, Number(env.GROWTH_RESEARCH_PER_RUN ?? 4))), // shows researched per 15-minute run (0 = off) // fighter-name addresses from the website (growth-fight-urls.js)
     // Posters: generated from verified contests; served publicly from this service for the platforms to fetch.
-    posters: { enabled: env.GROWTH_POSTERS === 'on', perRun: Math.min(20, Math.max(1, Number(env.GROWTH_POSTERS_PER_RUN || 6))), publicOrigin: String(env.GROWTH_PUBLIC_ORIGIN || 'https://fantasymmadness-growth-isolated-tes.vercel.app').replace(/\/+$/, ''), artEnv: { GROWTH_ART_CLOUDINARY_CLOUDS: String(env.GROWTH_ART_CLOUDINARY_CLOUDS || ''), GROWTH_ART_HOSTS: String(env.GROWTH_ART_HOSTS || '') } },
+    posters: { enabled: env.GROWTH_POSTERS === 'on', perRun: Math.min(20, Math.max(1, Number(env.GROWTH_POSTERS_PER_RUN || 3))), publicOrigin: String(env.GROWTH_PUBLIC_ORIGIN || 'https://fantasymmadness-growth-isolated-tes.vercel.app').replace(/\/+$/, ''), artEnv: { GROWTH_ART_CLOUDINARY_CLOUDS: String(env.GROWTH_ART_CLOUDINARY_CLOUDS || ''), GROWTH_ART_HOSTS: String(env.GROWTH_ART_HOSTS || '') } },
     meta: { redirectUri: metaResolved.redirectUri, liveTestApproved: metaResolved.liveTestApproved, expected: metaResolved.expected },
   };
   // Secrets are kept out of the returned config object.

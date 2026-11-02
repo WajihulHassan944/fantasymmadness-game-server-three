@@ -190,3 +190,60 @@ test('studio: renders, decodes the QR from the final image, checks the destinati
   assert.ok((await studio.getImage(noArt.poster.portrait.id)).buffer.length > 10000);
   assert.equal(await studio.getImage('../../etc/passwd'), null);
 });
+
+// ---- premium genre design system -------------------------------------------------------------
+const { prepareFighter, STYLES } = require('./growth-poster-premium');
+// synthetic standing figure (never a real person); bg=null => transparent cut-out
+const figure = async (bg = null, w = 600, h = 1000) => {
+  const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${w}" height="${h}">${bg ? `<rect width="${w}" height="${h}" fill="${bg}"/>` : ''}<ellipse cx="300" cy="140" rx="80" ry="100" fill="#b07a5a"/><path d="M120 300 Q300 230 480 300 L500 640 L100 640 Z" fill="#a46c4c"/><rect x="110" y="640" width="380" height="200" fill="#151515"/><rect x="150" y="840" width="110" height="160" fill="#a46c4c"/><rect x="340" y="840" width="110" height="160" fill="#a46c4c"/></svg>`;
+  const buffer = await sharp(Buffer.from(svg)).png().toBuffer();
+  return { buffer, width: w, height: h, sha256: crypto.createHash('sha256').update(buffer).digest('hex') };
+};
+
+test('fighter photos: transparent cut-outs kept, plain studio backgrounds removed (fighter pixels untouched), anything else framed', async () => {
+  const cut = await prepareFighter({ ...(await figure()), side: 'a', name: 'A' });
+  assert.equal(cut.method, 'cutout_transparent');
+  const studio = await figure('#f4f4f4');
+  const removed = await prepareFighter({ ...studio, side: 'b', name: 'B' });
+  assert.equal(removed.method, 'cutout_background_removed');
+  assert.ok(removed.removed > 0.3 && removed.removed < 0.8, `removed ${removed.removed}`);
+  // every remaining (opaque) pixel is exactly the original pixel at the same place
+  const orig = await sharp(studio.buffer).ensureAlpha().raw().toBuffer({ resolveWithObject: true });
+  const got = await sharp(removed.png).ensureAlpha().raw().toBuffer({ resolveWithObject: true });
+  const t = removed.trimmed; let changed = 0; let opaque = 0;
+  for (let y = 0; y < got.info.height; y++) for (let x = 0; x < got.info.width; x++) {
+    const i = (y * got.info.width + x) * 4; if (got.data[i + 3] === 0) continue; opaque++;
+    const j = ((y + t.top) * orig.info.width + (x + t.left)) * 4;
+    if (got.data[i] !== orig.data[j] || got.data[i + 1] !== orig.data[j + 1] || got.data[i + 2] !== orig.data[j + 2]) changed++;
+  }
+  assert.ok(opaque > 100000); assert.equal(changed, 0, 'fighter pixels must not change');
+  // the figure itself (legs touching the bottom edge) is not removed
+  assert.ok(got.data[((got.info.height - 2) * got.info.width + Math.round(200 - t.left)) * 4 + 3] === 255, 'legs kept');
+  const busy = await synth(800, 1000, '#1d4ed8', '#f5c518');
+  assert.equal((await prepareFighter({ ...busy, side: 'a', name: 'A' })).method, 'framed');
+});
+
+test('premium posters: all five genres, both sizes, cut-outs and text fallback — QC passes, nothing over a fighter, QR decodes', async () => {
+  const A = await figure(); const B = await figure('#f4f4f4');
+  assert.deepEqual(Object.keys(STYLES).sort(), ['bare-knuckle', 'boxing', 'kickboxing', 'mma-ufc', 'pro-wrestling']);
+  const seenVariants = new Set();
+  for (const sport of Object.keys(STYLES)) {
+    const c = contest({ sport, id: `${sport.slice(0, 2)}0000000001`, eventName: 'SAMPLE EVENT', timeTba: false, matchTime: '22:00', timeZone: 'America/New_York' });
+    for (const [mode, artwork] of [['photos', { mode: 'fighter_photos', fighters: [{ side: 'a', name: c.fighterA, ...A }, { side: 'b', name: c.fighterB, ...B }] }], ['text', { mode: 'text' }]]) {
+      for (const format of ['portrait', 'story']) {
+        const r = await P.renderPoster({ contest: c, format, artwork, qrUrl: P.qrLink(c) });
+        const md = await sharp(r.buffer).metadata();
+        assert.deepEqual([md.width, md.height], [1080, format === 'portrait' ? 1350 : 1920]);
+        assert.equal(r.layout.style, sport);
+        assert.deepEqual(r.layout.qc.problems, [], `${sport} ${mode} ${format}`);
+        const kinds = r.layout.text.map((x) => x.kind);
+        for (const k of ['headline-predict', 'headline-thefight', 'cta', 'tagline', 'event', 'date']) assert.ok(kinds.includes(k), `${sport} ${format}: missing ${k}`);
+        assert.ok(kinds.includes('name-a') && kinds.includes('name-b'), 'both names');
+        for (const im of r.layout.images) for (const tx of r.layout.text) assert.ok(!(im.left < tx.left + tx.width && im.left + im.width > tx.left && im.top < tx.top + tx.height && im.top + im.height > tx.top), `${tx.kind} over ${im.name}`);
+        if (mode === 'photos') { assert.deepEqual(r.layout.images.map((i) => i.method), ['cutout_transparent', 'cutout_background_removed']); seenVariants.add(r.layout.variant); }
+        assert.equal((await P.decodeQr(r.buffer)).text, P.qrLink(c), `${sport} ${format}: QR`);
+      }
+    }
+  }
+  assert.ok(seenVariants.size >= 1);
+});
