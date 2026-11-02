@@ -47,6 +47,7 @@ function resolveGrowthRuntimeConfig(env = process.env) {
   // ---- delivery -------------------------------------------------------------
   // none (default): drafts are prepared and approved, nothing is sent.
   // sandbox-smtp:   loopback SMTP sandbox only (CI / local verification).
+  // sandbox-capture: exact message built and stored for review; never sent (staging).
   // resend:         REAL email; every approval flag + credential required.
   const provider = String(env.GROWTH_DELIVERY_PROVIDER || 'none');
   const delivery = { provider, realDelivery: false, sender: '', blockers: [] };
@@ -54,6 +55,8 @@ function resolveGrowthRuntimeConfig(env = process.env) {
     const host = String(env.GROWTH_SANDBOX_SMTP_HOST || '127.0.0.1');
     if (!['127.0.0.1', 'localhost'].includes(host)) errors.push('Sandbox SMTP must be loopback');
     delivery.smtp = { host, port: Number(env.GROWTH_SANDBOX_SMTP_PORT || 1025) };
+  } else if (provider === 'sandbox-capture') {
+    delivery.sender = BUSINESS_SENDER; // the message is built exactly as it would be sent, then stored; never sent
   } else if (provider === 'resend') {
     const need = (ok, why) => { if (!ok) delivery.blockers.push(why); };
     need(env.GROWTH_OUTBOUND_ENABLED === 'true', 'GROWTH_OUTBOUND_ENABLED must be "true"');
@@ -91,7 +94,8 @@ function resolveGrowthRuntimeConfig(env = process.env) {
     liveReport: { configured: /^.{20,}$/.test(String(env.GROWTH_LIVE_REPORT_TOKEN || '')) },
     ingest: { configured: String(env.GROWTH_ATTRIBUTION_INGEST_SECRET || '').length >= 32 },
     social: { provider: socialResolved.provider, approved: socialResolved.approved, paused: socialResolved.paused, channels: socialResolved.channels },
-    fightUrlDiscovery: env.GROWTH_FIGHT_URL_DISCOVERY !== 'off', // fighter-name addresses from the website (growth-fight-urls.js)
+    fightUrlDiscovery: env.GROWTH_FIGHT_URL_DISCOVERY !== 'off',
+    researchPerRun: Math.min(10, Math.max(0, Number(env.GROWTH_RESEARCH_PER_RUN ?? 4))), // shows researched per 15-minute run (0 = off) // fighter-name addresses from the website (growth-fight-urls.js)
     meta: { redirectUri: metaResolved.redirectUri, liveTestApproved: metaResolved.liveTestApproved, expected: metaResolved.expected },
   };
   // Secrets are kept out of the returned config object.

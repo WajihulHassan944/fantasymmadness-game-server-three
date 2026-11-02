@@ -208,9 +208,10 @@ function createBackoffice({ runtime }) {
   // in the isolated database. Nothing here reads or writes the live payment
   // system; no events means $0 credited, never an estimate.
   async function attribution() {
-    const events = (await col.attribution.find({}).sort({ at: 1 }).limit(5000).toArray()).map(strip);
+    const all = (await col.attribution.find({}).sort({ at: 1 }).limit(5000).toArray()).map(strip);
+    const events = all.filter((e) => e.synthetic !== true); // real lane only
     // Only affiliates who joined the live program (owner-linked live affiliate ID) earn credit.
-    const rows = await col.affiliates.find({ status: { $in: ['active', 'paused'] } }).toArray();
+    const rows = await col.affiliates.find({ status: { $in: ['active', 'paused'] }, synthetic: { $ne: true } }).toArray();
     const affiliates = new Map();
     for (const a of rows) { try { affiliates.set(a.id, { ...createRecruit({ id: a.id, name: a.name, consent: true, approved: true }), genre: a.genre, code: a.code, liveAffiliateId: a.liveAffiliateId, lifecycle: a.status }); } catch { /* skip */ } }
     const entries = new Map(); const rejected = {};
@@ -236,6 +237,30 @@ function createBackoffice({ runtime }) {
       creditedEntries: entries.size,
       payingPlayers: new Set([...entries.values()].map((e) => e.playerId)).size,
       rejectedEvents: rejected,
+      synthetic: await syntheticLane(all.filter((e) => e.synthetic === true)),
+    };
+  }
+
+  // Synthetic test lane (staging): click -> registration -> settled TEST payment -> accepted
+  // entry -> one affiliate credit. Same verification rules as real credit, plus the entry must
+  // have been accepted. Never mixed into real totals.
+  async function syntheticLane(events) {
+    const synAff = new Map();
+    for (const a of await col.affiliates.find({ synthetic: true }).toArray()) synAff.set(a.id, { ...createRecruit({ id: a.id, name: a.name, consent: true, approved: true }), code: a.code });
+    const accepted = new Set(events.filter((e) => e.type === 'entry_accepted').map((e) => e.entryId));
+    const entries = new Map(); const rejected = {};
+    for (const e of events.filter((x) => x.type === 'paid_entry')) {
+      if (e.paymentMode !== 'test') { rejected.not_a_test_payment = (rejected.not_a_test_payment || 0) + 1; continue; }
+      const r = verifyPaidEntry(e, { affiliates: synAff, entries });
+      if (!r.credited) { rejected[r.reason] = (rejected[r.reason] || 0) + 1; continue; }
+      if (!accepted.has(e.entryId)) { entries.delete(e.entryId); rejected.entry_not_accepted = (rejected.entry_not_accepted || 0) + 1; }
+    }
+    const n = (t) => events.filter((e) => e.type === t).length;
+    return {
+      note: 'Synthetic staging test journeys only (event IDs syn_…). Not real players, payments or affiliate credit; excluded from every real total.',
+      steps: { clicks: n('click'), registrations: n('registration'), settledTestPayments: events.filter((e) => e.type === 'paid_entry' && e.paymentStatus === 'settled' && e.paymentMode === 'test').length, acceptedEntries: accepted.size, affiliateCredits: entries.size },
+      credits: [...entries.values()].map((e) => ({ entryId: e.entryId, affiliateId: e.affiliateId, playerId: e.playerId, fightId: e.fightId, amountCents: e.amountCents })),
+      rejected,
     };
   }
 
@@ -254,17 +279,19 @@ function createBackoffice({ runtime }) {
     const socialReal = await count(col.social, { status: 'published', sandbox: { $ne: true } });
     const socialSandbox = await count(col.social, { status: 'published', sandbox: true });
     const manual = await count(col.drafts, { kind: 'marketing', status: 'published', publishedManually: true });
-    const regEvents = await count(col.attribution, { type: 'registration', verified: true, source: 'signed_ingest' });
+    const regEvents = await count(col.attribution, { type: 'registration', verified: true, source: 'signed_ingest', synthetic: { $ne: true } });
     const live = await col.liveReports.find({}).sort({ day: -1 }).limit(1).next();
     const liveRegs = live ? live.groups.reduce((n, g) => n + g.registrations, 0) : 0;
     const att = await attribution();
-    const aff = {}; for (const st of ['invite_prepared', 'invited', 'active', 'paused', 'declined']) aff[st] = await count(col.affiliates, { status: st });
+    const aff = {}; for (const st of ['invite_prepared', 'invited', 'active', 'paused', 'declined']) aff[st] = await count(col.affiliates, { status: st, synthetic: { $ne: true } });
     return {
       stages: [
         { key: 'prospects', label: 'Discovered prospects', value: await count(col.prospects, {}), source: 'Public discovery (podcasts, shows, creators)' },
+        { key: 'researched', label: 'Researched shows', value: await count(col.prospects, { researchedAt: { $exists: true } }), detail: { verifiedPublishedContacts: await count(col.prospects, { contactSource: { $exists: true } }) }, source: 'Each show’s own public feed (Apple Podcasts lookup + RSS)' },
+        { key: 'drafted', label: 'Personalized drafts', value: await count(col.drafts, { autoResearched: true }), detail: { pr: await count(col.drafts, { autoResearched: true, kind: 'pr' }), affiliate: await count(col.drafts, { autoResearched: true, kind: 'affiliate' }), awaitingApproval: await count(col.drafts, { kind: { $in: ['pr', 'affiliate'] }, status: 'needs_owner_review' }) }, source: 'Research-backed drafts (verified contact + evidence)' },
         { key: 'approved', label: 'Approved content', value: approved.marketing + approved.pr + approved.affiliate, detail: approved, source: 'Owner approvals in this console' },
         { key: 'published', label: 'Published posts', value: socialReal + manual, detail: { scheduler: socialReal, markedByOwner: manual, sandboxSimulated: socialSandbox }, source: socialReal ? 'Channel receipts + owner records' : 'Owner records (simulated sandbox posts are not counted)' },
-        { key: 'emails', label: 'Outreach emails delivered', value: await count(col.deliveries, { status: 'delivered', realDelivery: true }), source: 'Email provider receipts (real sending is off)' },
+        { key: 'emails', label: 'Outreach emails delivered', value: await count(col.deliveries, { status: 'delivered', realDelivery: true }), detail: { sandboxCaptured: await count(col.deliveries, { status: 'delivered', realDelivery: { $ne: true } }) }, source: 'Email provider receipts (real sending is off; sandbox captures are not counted)' },
         { key: 'registrations', label: 'Registrations', value: regEvents + liveRegs, detail: { signedEvents: regEvents, liveSiteReport: liveRegs }, source: regEvents || live ? 'Verified by the live site' : 'Not connected yet' , connected: Boolean(regEvents || live) },
         { key: 'paying', label: 'Verified paying players', value: att.payingPlayers, detail: { creditedEntries: att.creditedEntries, revenueCents: att.totalRevenueCents }, source: att.paymentSource.connected ? 'Server-verified settled payments' : 'Not connected yet', connected: att.paymentSource.connected },
       ],
