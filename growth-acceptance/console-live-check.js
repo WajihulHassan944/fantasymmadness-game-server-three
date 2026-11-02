@@ -98,6 +98,21 @@ async function main() {
       const sess = await fetch(`${origin}/api/growth/admin/session`, { headers: { Authorization: `Bearer ${token}`, Origin: PREVIEW } });
       ok(sess.status === 200 && sess.headers.get('access-control-allow-origin') === PREVIEW, `preview session ${sess.status}`);
     });
+    await check('Facebook & Instagram: encryption ready, exact redirect, sandbox statuses, protected callback, live test off', async () => {
+      const m = (await api('GET', '/admin/meta')).json.meta;
+      log(`meta state: ${m.state} (${m.connectionLabel}); facebook=${m.publishing.facebook}; instagram=${m.publishing.instagram}`);
+      ok(m.setup[0].done === true, 'GROWTH_TOKEN_ENCRYPTION_KEY not active');
+      ok(m.redirectUri === `${STAGING}/api/growth/meta/callback`, `redirect ${m.redirectUri}`);
+      ok(['not_set_up', 'authorization_needed', 'selection_needed', 'connected'].includes(m.state), 'state');
+      ok(m.publishing.facebook === 'sandbox' && m.publishing.instagram === 'sandbox', 'publishing must stay sandbox');
+      ok(m.publishing.liveTestApproved === false, 'live test must be off');
+      ok(!/EAA[A-Za-z0-9]{10,}/.test(JSON.stringify(m)), 'token-like value in status');
+      const cb = await fetch(`${origin}/api/growth/meta/callback?code=x&state=forged-by-live-check`);
+      ok(cb.status === 400, `forged callback ${cb.status}`);
+      ok(cb.headers.get('cache-control') === 'no-store' && cb.headers.get('referrer-policy') === 'no-referrer' && /frame-ancestors 'none'/.test(cb.headers.get('content-security-policy') || ''), 'callback headers');
+      const lt = await api('POST', '/admin/social/live-test', { draftId: 'none', channel: 'facebook', confirmText: 'POST LIVE' });
+      ok(lt.status === 409 && lt.json.reason === 'live_test_not_authorized_by_owner', `live test ${lt.status} ${JSON.stringify(lt.json)}`);
+    });
     await check('sessions from before the password change are refused', async () => {
       const stale = signConsoleToken(process.env.JWT_SECRET_ADMIN, { email: LABEL, pwv: 'old-password-ver' }, { expiresIn: '5m' });
       ok((await fetch(`${origin}/api/growth/admin/session`, { headers: { Authorization: `Bearer ${stale}`, Origin: STAGING } })).status === 401, 'stale accepted');
