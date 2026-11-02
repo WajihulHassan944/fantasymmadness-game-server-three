@@ -28,6 +28,7 @@ const printImage = async (name, buf) => { const b = await sharp(buf).resize({ wi
   const ev = await (await fetch(`${STAGING}/api/growth/acceptance`)).json();
   const run = (ev.runs || [])[0];
   row('Latest staging live-check evidence', Boolean(run) && run.public.result === 'PASS', run ? `${run.id} at ${run.at}: ${run.public.result}, ${run.public.stepsPassed} checks, commit ${String(run.public.commit).slice(0, 7)}` : 'none');
+  if (run && run.public.failure) console.log('LIVE-CHECK FAILURE:', JSON.stringify(run.public.failure));
   const posters = [];
   if (run) {
     for (const p of run.public.realPosters || []) posters.push({ label: `real campaign ${p.fight} (${p.date})`, ...p });
