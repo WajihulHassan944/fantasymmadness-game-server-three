@@ -1,4 +1,5 @@
 'use strict';
+const { renderBusinessEmail: renderBusinessEmailForFixture } = require('../growth-business-email-templates');
 // FANTASY MMADNESS Growth Engine — seven acceptance checks (isolated CI staging).
 // Real services used: MongoDB 7 replica set (loopback), Mailpit sandbox SMTP +
 // API (loopback), Apple Podcasts public search (read-only, real HTTP), and the
@@ -192,7 +193,8 @@ async function checkPR(client, discovery) {
 async function checkRecruitment(client, discovery) {
   const C = '4 Affiliate recruitment';
   const partners = discovery.results.filter((r) => r.focus === 'partners');
-  const prospects = partners.map((r, i) => ({ id: `aff-${i}`, genre: r.genre, name: r.name, sourceUrl: r.url, category: 'affiliate', verified: true }));
+  // Researched prospects carry their personalized message (growth-outreach-composer); unresearched ones are not listed.
+  const prospects = partners.map((r, i) => ({ id: `aff-${i}`, genre: r.genre, name: r.name, sourceUrl: r.url, category: 'affiliate', verified: true, outreach: renderBusinessEmailForFixture({ type: 'affiliate', recipientName: r.name }) }));
   pass(C, 'Affiliate prospects discovered from real public creator sources in all sports', GENRES.every((g) => prospects.some((p) => p.genre === g)), `${prospects.length} prospects`);
   const adapters = createDraftAdapters({ prospects });
   const perGenre = {};

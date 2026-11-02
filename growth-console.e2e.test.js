@@ -21,7 +21,7 @@ const skip = !uri || !/^mongodb:\/\/(127\.0\.0\.1|localhost)/.test(uri) || !chro
 const PASSWORD = 'correct horse battery staple (test only)';
 const secret = 's'.repeat(48);
 const SHOTS = process.env.GROWTH_CONSOLE_SCREENSHOTS || path.join(__dirname, 'growth-console-screenshots');
-const env = {
+const env = { GROWTH_RESEARCH_PER_RUN: '0', /* research runs explicitly before the PR step */
   GROWTH_STAGING_MODE: 'isolated', GROWTH_OUTBOUND_ENABLED: 'false', GROWTH_TEST_MONGO_URI: uri, JWT_SECRET_ADMIN: secret, GROWTH_UNSUBSCRIBE_SECRET: secret,
   CRON_SECRET: 'cron-secret-for-tests-only', GROWTH_DELIVERY_PROVIDER: 'none', GROWTH_ADMIN_PASSWORD_HASH: hashPassword(PASSWORD),
   GROWTH_SOCIAL_PROVIDER: 'sandbox', GROWTH_ATTRIBUTION_INGEST_SECRET: 'i'.repeat(40),
@@ -35,8 +35,11 @@ const signedPost = async (origin, event, { secretOverride, ts = Date.now() } = {
 };
 const { contestFeed } = require('./growth-contest-feed.fixture');
 const feed = contestFeed();
-const podcastFetch = async (url) => {
+const { researchWeb } = require('./growth-podcast-research.fixture');
+const web = researchWeb();
+const podcastFetch = async (url, opts) => {
   const f = feed(url); if (f) return f;
+  const w = await web(url, opts); if (w) return w;
   const term = new URL(url).searchParams.get('term');
   const slug = term.replace(/[^a-z]+/gi, '-').toLowerCase();
   return { ok: true, status: 200, json: async () => ({ results: [1, 2, 3].map((n) => ({ collectionName: `${term} show ${n}`, collectionViewUrl: `https://podcasts.apple.com/us/podcast/${slug}-${n}/id${n}` })) }) };
@@ -222,25 +225,37 @@ test('Growth Engine back-office console: every screen, button and workflow', { s
       await page.waitForSelector('[data-testid=marketing-list] [data-testid=draft], [data-testid=marketing-list] [data-testid=empty]');
     });
 
-    await t.test('Public Relations: sport tabs, prepared drafts, add verified contact, approve personalized email', async () => {
-      await goto('#/pr');
+    await t.test('Public Relations: researched shows, evidence, auto-drafted pitch, manual contact fallback, approve', async () => {
+      await runtime.researchBatch(new Date(), { limit: 20 }); // research every discovered show (normally 4 per 15-minute run)
+      await goto('#/pr?sport=mma-ufc');
       await page.waitForSelector('[data-testid=prepared-row]');
-      assert.ok(Number(await page.textContent('[data-testid=pr-prepared] .value')) >= 15);
-      await page.click('[data-testid=tab-mma-ufc]');
+      assert.ok(Number(await page.textContent('[data-testid=pr-researched] .value')) >= 3);
+      assert.ok(Number(await page.textContent('[data-testid=pr-drafted] .value')) >= 1);
       await page.waitForFunction(() => document.querySelector('[data-testid=prepared-count]')?.textContent.includes('MMA'));
-      await page.click('[data-testid=prepared-row] [data-testid=btn-view-template]');
+      // the show that published a business contact and discussed an upcoming fight got a personalized pitch
+      const drafted = '[data-testid=prepared-row][data-outcome=drafted]';
+      await page.waitForSelector(drafted);
+      assert.match(await page.textContent(`${drafted} [data-testid=research-contact]`), /bookings@mma-ufc-podcast-1\.example/);
+      assert.match(await page.textContent(drafted), /Mentioned Merab Dvalishvili/);
+      await page.click(`${drafted} [data-testid=btn-view-template]`);
       await page.waitForSelector('[data-testid=prepared-list] [data-testid=email-preview]');
       assert.equal(await page.getAttribute('[data-testid=email-preview]', 'sandbox'), '');
       await shot('05-public-relations');
-      await page.click('[data-testid=prepared-row] [data-testid=btn-view-template]');
-      const prospectId = await page.getAttribute('[data-testid=prepared-row]', 'data-prospect-id');
-      await page.click('[data-testid=prepared-row] [data-testid=btn-add-contact]');
+      const autoId = `pr-${await page.getAttribute(drafted, 'data-prospect-id')}`;
+      const auto = await draft(autoId);
+      assert.equal(auto.status, 'needs_owner_review'); assert.match(auto.subject, /round-by-round angle on Merab Dvalishvili vs Petr Yan/);
+      // a hosting-platform address is never used
+      assert.match(await page.textContent('[data-testid=prepared-list]'), /hosting platform \(anchor\.fm\)/);
+      // manual fallback for a show that publishes no contact
+      const noContact = '[data-testid=prepared-row][data-outcome=no_verified_contact_route]';
+      const prospectId = await page.getAttribute(`${noContact} >> nth=-1`, 'data-prospect-id');
+      await page.click(`[data-testid=prepared-row][data-prospect-id="${prospectId}"] [data-testid=btn-add-contact]`);
       await page.fill('[data-testid=contact-email]', 'bookings@mma-show.example');
       await page.click('[data-testid=modal-confirm]'); // consent missing
       await page.waitForFunction(() => document.querySelector('[data-testid=modal] .error')?.textContent.includes('consent'));
       await page.fill('[data-testid=contact-consent]', 'Listed as the booking contact on the show’s official website');
       await confirm(); assert.match(await toastText(), /Personalized email created/); await clearToasts();
-      await page.waitForSelector('[data-testid=pr-draft-list] [data-testid=draft]');
+      await page.waitForSelector(`[data-draft-id="pr-${prospectId}"]`);
       const prDraft = await draft(`pr-${prospectId}`);
       assert.equal(prDraft.status, 'needs_owner_review'); assert.equal(prDraft.recipient, 'bookings@mma-show.example');
       await page.click(`[data-draft-id="pr-${prospectId}"] [data-testid=btn-preview]`);
@@ -252,31 +267,31 @@ test('Growth Engine back-office console: every screen, button and workflow', { s
       await page.waitForSelector(`[data-draft-id="pr-${prospectId}"][data-status=approved]`);
       const after = await draft(`pr-${prospectId}`);
       assert.equal(after.status, 'approved'); assert.equal(after.subject, 'Round-by-round predictions for your MMA audience');
-      // Same prospect again -> clear duplicate message
+      // the show now shows the contact you added, and no second "add contact" button
+      await goto('#/pr?sport=mma-ufc');
       await page.waitForSelector(`[data-testid=prepared-row][data-prospect-id="${prospectId}"] .chip.good`);
-      await page.click(`[data-testid=prepared-row][data-prospect-id="${prospectId}"] [data-testid=btn-add-contact]`);
-      await page.fill('[data-testid=contact-email]', 'bookings@mma-show.example');
-      await page.fill('[data-testid=contact-consent]', 'Official website');
-      await page.click('[data-testid=modal-confirm]');
-      await page.waitForFunction(() => document.querySelector('[data-testid=modal] .error')?.textContent.includes('already exists'));
-      await page.click('[data-testid=modal-cancel]');
+      assert.equal(await page.locator(`[data-testid=prepared-row][data-prospect-id="${prospectId}"] [data-testid=btn-add-contact]`).count(), 0);
     });
 
     let affiliateProspect;
-    await t.test('Affiliate Recruitment: add contact, approve invitation', async () => {
+    await t.test('Affiliate Recruitment: auto-drafted proposal approved; manual contact validation', async () => {
       await goto('#/affiliates?sport=boxing');
       await page.waitForSelector('[data-testid=prepared-row]');
-      assert.ok(Number(await page.textContent('[data-testid=affiliate-prepared] .value')) >= 15);
+      assert.ok(Number(await page.textContent('[data-testid=affiliate-drafted] .value')) >= 4);
       await shot('06-affiliate-recruitment');
-      affiliateProspect = await page.getAttribute('[data-testid=prepared-row]', 'data-prospect-id');
-      await page.click('[data-testid=prepared-row] [data-testid=btn-add-contact]');
+      const drafted = '[data-testid=prepared-row][data-outcome=drafted]';
+      affiliateProspect = await page.getAttribute(drafted, 'data-prospect-id');
+      const proposal = await draft(`affiliate-${affiliateProspect}`);
+      assert.match(proposal.subject, /fan league for Naoya Inoue vs Murodjon Akhmadaliev/);
+      assert.match(proposal.text, /affiliate program terms are shown on the sign-up page/);
+      // manual contact form still validates addresses
+      await page.click('[data-testid=prepared-row][data-outcome=no_verified_contact_route] [data-testid=btn-add-contact]');
       assert.equal(await page.inputValue('[data-testid=contact-kind]'), 'affiliate');
       await page.fill('[data-testid=contact-email]', 'not-an-email');
       await page.fill('[data-testid=contact-consent]', 'Creator applied through our affiliate interest form');
       await page.click('[data-testid=modal-confirm]');
       await page.waitForFunction(() => document.querySelector('[data-testid=modal] .error')?.textContent.length > 0);
-      await page.fill('[data-testid=contact-email]', 'partners@boxing-creator.example');
-      await confirm(); await clearToasts();
+      await page.click('[data-testid=modal-cancel]');
       await page.waitForSelector(`[data-draft-id="affiliate-${affiliateProspect}"]`);
       await page.click(`[data-draft-id="affiliate-${affiliateProspect}"] [data-testid=btn-approve]`); await confirm(); await clearToasts();
       await page.waitForSelector(`[data-draft-id="affiliate-${affiliateProspect}"][data-status=approved]`);
@@ -436,9 +451,9 @@ test('Growth Engine back-office console: every screen, button and workflow', { s
     });
 
     await t.test('opted-out contact cannot be given an outreach email', async () => {
-      await goto('#/pr?sport=kickboxing');
-      await page.waitForSelector('[data-testid=prepared-row]');
-      await page.click('[data-testid=prepared-row] [data-testid=btn-add-contact]');
+      await goto('#/pr?sport=mma-ufc');
+      await page.waitForSelector('[data-testid=prepared-row][data-outcome=no_verified_contact_route] [data-testid=btn-add-contact]');
+      await page.click('[data-testid=prepared-row][data-outcome=no_verified_contact_route] [data-testid=btn-add-contact] >> nth=0');
       await page.fill('[data-testid=contact-email]', 'stop.contacting@example.com');
       await page.fill('[data-testid=contact-consent]', 'Website');
       await page.click('[data-testid=modal-confirm]');

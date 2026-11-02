@@ -17,6 +17,7 @@ const fs = require('fs');
 const path = require('path');
 const { createBackoffice, verifyPassword, createLoginLimiter } = require('./growth-backoffice');
 const { verifySignature } = require('./growth-affiliate-program');
+const { runSyntheticJourney } = require('./growth-synthetic-journey');
 const { checkEmailReadiness } = require('./growth-email-readiness');
 const { BUSINESS_SENDER } = require('./growth-runtime-config');
 
@@ -58,7 +59,9 @@ function registerIsolatedGrowthRoutes({ app, env = process.env, express, transpo
       runtimePromise = (async () => {
         const client = connect ? await connect(secrets.mongoUri) : await new MongoClient(secrets.mongoUri, { serverSelectionTimeoutMS: 10000, maxPoolSize: 3 }).connect();
         const db = client.db(config.database.name);
-        const provider = createDeliveryProvider({ config, secrets, transport, fetchImpl });
+        const captureCollection = db.collection('growth_sandbox_mail');
+        if (config.delivery.provider === 'sandbox-capture') await captureCollection.createIndex({ id: 1 }, { unique: true });
+        const provider = createDeliveryProvider({ config, secrets, transport, fetchImpl, captureCollection });
         const alertTo = env.GROWTH_ALERT_EMAIL;
         const alertSender = provider.name === 'sandbox-smtp' && transport
           ? (m) => transport.sendMail({ from: 'growth-alerts@localhost', to: 'growth-owner@sandbox.localhost', ...m })
@@ -142,6 +145,75 @@ function registerIsolatedGrowthRoutes({ app, env = process.env, express, transpo
   router.post('/admin/drafts/:id/approve', admin, wrap(async (req, res, rt) => { const r = await rt.approveDraft(req.params.id, { admin: who(req) }); res.status(r.ok ? 200 : 409).json(r); }));
   router.post('/admin/drafts/:id/reject', admin, wrap(async (req, res, rt) => { const r = await rt.rejectDraft(req.params.id, { admin: who(req), reason: req.body?.reason }); res.status(r.ok ? 200 : 409).json(r); }));
   router.post('/admin/prospects/:id/contact', admin, wrap(async (req, res, rt) => { const r = await rt.addVerifiedContact(req.params.id, { contact: req.body?.contact, kind: req.body?.kind, consentNote: req.body?.consentNote, admin: who(req) }); res.status(r.ok ? 201 : 422).json(r); }));
+  // Research results for one department (PR or affiliate): one row per show, with evidence,
+  // published contact, outcome, and the draft it produced. No secrets; read-only.
+  router.get('/admin/research', admin, wrap(async (req, res, rt) => {
+    const track = req.query.track === 'affiliate' ? 'affiliate' : 'pr';
+    const focus = track === 'pr' ? 'partners' : 'fans';
+    const rows = await rt.collections.prospects.find({ track }).sort({ score: -1 }).limit(600).toArray();
+    const seen = new Set(); const shows = [];
+    for (const p of rows.sort((a, b) => (a.focus === focus ? -1 : 1) - (b.focus === focus ? -1 : 1) || (b.score || 0) - (a.score || 0))) {
+      if (seen.has(p.sourceUrl)) continue; seen.add(p.sourceUrl);
+      const r = p.research || {};
+      shows.push({ id: p.id, name: p.name, genre: p.genre, sourceUrl: p.sourceUrl, score: p.score ?? null, outcome: p.researchOutcome || null, researchedAt: p.researchedAt || null, optedOut: p.optedOut === true,
+        show: r.show || null, active: r.active === true, recentEpisode: (r.recentEpisodes || [])[0] || null, evidence: (r.evidence || []).slice(0, 3), feed: r.source?.feed || null,
+        contact: r.contact ? { email: r.contact.email, name: r.contact.name || null, source: r.contact.source, field: r.contact.field, basis: r.contact.basis } : (p.contactVerified ? { email: p.contact, manual: true, basis: p.consentNote || null } : null),
+        contactProblems: r.contactProblems || [], angle: p.outreach?.angle || null, draftId: p.outreach ? `${track}-${p.id}` : null, error: r.error || null });
+    }
+    shows.sort((a, b) => (b.score || 0) - (a.score || 0));
+    const pending = await rt.collections.prospects.countDocuments({ verified: true, optedOut: { $ne: true }, researchedAt: { $exists: false } });
+    const count = (o) => shows.filter((x) => x.outcome === o).length;
+    res.json({ ok: true, track, shows: req.query.genre ? shows.filter((x) => x.genre === req.query.genre) : shows,
+      counts: { researched: shows.length, drafted: shows.filter((x) => x.draftId).length, publishedContacts: shows.filter((x) => x.contact && !x.contact.manual).length, noContact: count('no_verified_contact_route'), noAngle: count('no_evidence_based_angle'), failed: count('research_failed'), waitingForResearch: pending },
+      bySport: Object.fromEntries(['boxing', 'mma-ufc', 'kickboxing', 'bare-knuckle', 'pro-wrestling'].map((g) => [g, shows.filter((x) => x.genre === g).length])) });
+  }));
+  // Sandbox outbox: emails built exactly as they would be sent, never sent.
+  router.get('/admin/email/sandbox', admin, wrap(async (req, res) => {
+    const rt = await getRuntime();
+    const rows = await rt.collections.sandboxMail.find({}).sort({ capturedAt: -1 }).limit(Math.min(100, Number(req.query.limit) || 30)).toArray();
+    res.json({ ok: true, provider: resolved.config.delivery.provider, realDelivery: resolved.config.delivery.realDelivery, count: await rt.collections.sandboxMail.countDocuments(), messages: rows.map(({ _id, ...m }) => m) });
+  }));
+  // Synthetic money-path journey (staging test lane; no payment system is contacted).
+  router.post('/admin/synthetic/journey', admin, wrap(async (req, res, rt) => {
+    const contests = await bo(rt).activeContests();
+    const r = await runSyntheticJourney({ col: rt.collections, signedIngest: (raw, h) => signedIngest(rt, raw, h), secret: secrets.ingestSecret, contest: contests[0] || null });
+    if (r.ok !== undefined) await rt.collections.audit.insertOne({ action: 'synthetic_journey', admin: who(req), run: r.run || null, passed: r.ok === true, at: new Date().toISOString() });
+    const lane = (await bo(rt).attribution()).synthetic;
+    res.status(r.reason === 'ingest_not_configured' ? 409 : 200).json({ ...r, lane });
+  }));
+  // Executive summary: one honest status per department + actionable exceptions.
+  router.get('/admin/executive', admin, wrap(async (req, res, rt) => {
+    const c = rt.collections; const n = (col, q) => col.countDocuments(q);
+    const sched = await bo(rt).schedulerStatus(); const meta = await rt.meta.status(); const ch = await liveChannels(rt);
+    const att = await bo(rt).attribution(); const lastJourney = await c.audit.find({ action: 'synthetic_journey' }).sort({ at: -1 }).limit(1).next();
+    const openAlerts = await c.alerts.find({ state: 'open' }).sort({ createdAt: -1 }).limit(20).toArray();
+    const held = await n(c.social, { status: 'held' }); const failedPosts = await n(c.social, { status: 'failed' }); const needsCheck = await n(c.social, { status: 'needs_check' });
+    const failedMail = await n(c.drafts, { status: 'delivery_failed' });
+    const k = { mk: { open: await n(c.drafts, { kind: 'marketing', status: { $in: ['needs_owner_review', 'approved'] } }), waiting: await n(c.drafts, { kind: 'marketing', status: 'needs_owner_review' }), scheduled: await n(c.social, { status: 'scheduled' }), sandboxPosts: await n(c.social, { status: 'published', sandbox: true }), livePosts: await n(c.social, { status: 'published', sandbox: { $ne: true } }) } };
+    for (const t of ['pr', 'affiliate']) k[t] = { researched: await n(c.prospects, { track: t }), contacts: await n(c.prospects, { track: t, contactSource: { $exists: true } }), drafted: await n(c.drafts, { kind: t, autoResearched: true }), waiting: await n(c.drafts, { kind: t, status: 'needs_owner_review' }), approved: await n(c.drafts, { kind: t, status: { $in: ['approved', 'delivered'] } }), sandboxSent: await n(c.drafts, { kind: t, status: 'delivered', realDelivery: { $ne: true } }), realSent: await n(c.drafts, { kind: t, status: 'delivered', realDelivery: true }) };
+    const mode = (x) => (x.mode === 'live' ? 'Live' : x.mode === 'sandbox' ? 'Sandbox' : 'Off');
+    const dep = (key, label, status, headline, facts, next) => ({ key, label, status, headline, facts, next });
+    const departments = [
+      dep('marketing', 'Fight marketing', k.mk.open ? 'ok' : 'attention', `${k.mk.open} verified fight campaign(s) open, ${k.mk.waiting} awaiting your approval`, [`${k.mk.scheduled} post(s) scheduled`, `${k.mk.sandboxPosts} sandbox post(s), ${k.mk.livePosts} live post(s)`], k.mk.waiting ? 'Review fight campaigns in Campaign Approvals' : null),
+      dep('pr', 'Public relations', k.pr.drafted ? 'ok' : k.pr.researched ? 'attention' : 'off', `${k.pr.researched} show(s) researched, ${k.pr.contacts} published business contact(s), ${k.pr.drafted} personalized pitch(es)`, [`${k.pr.waiting} awaiting approval`, `${k.pr.sandboxSent} built in the sandbox outbox (not sent)`, `${k.pr.realSent} really sent`], k.pr.waiting ? 'Approve or reject PR pitches' : null),
+      dep('affiliates', 'Affiliate recruitment', k.affiliate.drafted ? 'ok' : k.affiliate.researched ? 'attention' : 'off', `${k.affiliate.researched} show(s) researched, ${k.affiliate.drafted} personalized proposal(s)`, [`${k.affiliate.waiting} awaiting approval`, `${k.affiliate.sandboxSent} in the sandbox outbox (not sent)`, `${att.affiliates.filter((a) => a.status === 'approved').length} active affiliate(s) in the live program`], k.affiliate.waiting ? 'Approve or reject affiliate proposals' : null),
+      dep('publishing', 'Publishing', meta.state === 'connected' ? (held || failedPosts || needsCheck ? 'attention' : 'ok') : 'blocked', `Facebook ${mode(ch.facebook)} · Instagram ${mode(ch.instagram)} · X ${mode(ch.x)} · TikTok ${mode(ch.tiktok)}`, [`Meta connection: ${meta.state.replace(/_/g, ' ')}`, `${held} held, ${failedPosts} failed, ${needsCheck} to check`], meta.state !== 'connected' ? 'Connect Facebook & Instagram in Connections' : (needsCheck ? 'Check interrupted posts in Publishing' : null)),
+      dep('automation', 'Automation', sched.healthy && !openAlerts.length ? 'ok' : 'attention', sched.healthy ? `Running every 15 minutes (${sched.runsLast24h} runs in 24h)` : 'No automatic run recently', [`${openAlerts.length} open alert(s)`, `Database ${resolved.config.database.name} on ${resolved.config.database.host || 'unknown host'} ${resolved.config.database.hostPinned ? '(pinned)' : '(NOT pinned)'}`], openAlerts.length ? 'Review alerts in Automation' : null),
+      dep('revenue', 'Revenue & attribution', att.paymentSource.connected ? 'ok' : 'off', att.paymentSource.connected ? `${att.payingPlayers} verified paying player(s)` : 'Real payments are not connected to staging (by design)', [`Synthetic test lane: ${att.synthetic.steps.affiliateCredits} credit(s) from ${att.synthetic.steps.settledTestPayments} settled test payment(s)`, lastJourney ? `Last synthetic journey ${lastJourney.passed ? 'PASSED' : 'FAILED'} (${lastJourney.at.slice(0, 16).replace('T', ' ')} UTC)` : 'Synthetic journey not run yet'], lastJourney?.passed ? null : 'Run the synthetic journey in Revenue Attribution'),
+    ];
+    const exceptions = [
+      ...openAlerts.map((a) => ({ kind: 'alert', text: `${a.kind}: ${a.error}`, id: a.alertKey, at: a.createdAt, route: 'automation' })),
+      ...(needsCheck ? [{ kind: 'post', text: `${needsCheck} post(s) were interrupted while publishing: check the channel before retrying`, route: 'publishing' }] : []),
+      ...(failedPosts ? [{ kind: 'post', text: `${failedPosts} post(s) failed`, route: 'publishing' }] : []),
+      ...(failedMail ? [{ kind: 'email', text: `${failedMail} email(s) failed in the sandbox/provider`, route: 'approvals' }] : []),
+    ];
+    const autonomy = {
+      automatic: ['Finding verified fights and preparing fight campaigns', 'Researching shows, finding published business contacts, writing personalized PR and affiliate drafts', 'Re-checking fights before posting, scheduling, retries, duplicate prevention', 'Connection health checks and interrupted-run recovery', 'Building approved emails in the sandbox outbox'],
+      needsOwner: ['Approving every campaign, pitch and proposal', 'Authorizing any real post (controlled live test) or real email sending', 'Connecting Meta and choosing the Page', 'Linking an affiliate’s live affiliate ID after they join'],
+      notConnected: [att.paymentSource.connected ? null : 'Real payments and registrations (staging uses signed test events only)', resolved.config.delivery.realDelivery ? null : 'Real email sending'].filter(Boolean),
+    };
+    res.json({ ok: true, generatedAt: new Date().toISOString(), departments, exceptions, autonomy });
+  }));
   router.get('/admin/prospects', admin, wrap(async (req, res, rt) => res.json({ ok: true, prospects: (await rt.collections.prospects.find(req.query.genre ? { genre: String(req.query.genre) } : {}).sort({ firstSeenAt: -1 }).limit(Math.min(500, Number(req.query.limit) || 100)).toArray()).map(({ _id, ...p }) => p) })));
   router.get('/admin/alerts', admin, wrap(async (req, res, rt) => res.json({ ok: true, alerts: await rt.listAlerts({ state: req.query.state === 'all' ? '' : (req.query.state || 'open') }) })));
   router.post('/admin/alerts/:key/ack', admin, wrap(async (req, res, rt) => res.json(await rt.ackAlert(req.params.key, { admin: who(req) }))));
@@ -157,13 +229,18 @@ function registerIsolatedGrowthRoutes({ app, env = process.env, express, transpo
 
 
   // ---- verified events from a trusted server (HMAC-signed; read-only for production) ----
+  // Shared by the public signed-events route and the synthetic journey (same verification).
+  const signedIngest = async (rt, raw, { timestamp, signature }) => {
+    const sig = verifySignature({ secret: secrets.ingestSecret, rawBody: raw, timestamp, signature });
+    if (!sig.ok) return { status: sig.reason === 'ingest_not_configured' ? 503 : 401, body: { ok: false, reason: sig.reason } };
+    let body; try { body = JSON.parse(raw); } catch { return { status: 400, body: { ok: false, reason: 'invalid_json' } }; }
+    const r = await rt.affiliates.ingest(body);
+    return { status: r.ok ? 200 : 422, body: r };
+  };
   app.post('/api/growth/events', express.raw({ type: '*/*', limit: '16kb' }), wrap(async (req, res, rt) => {
     const raw = typeof req.rawBody === 'string' ? req.rawBody : Buffer.isBuffer(req.body) ? req.body.toString('utf8') : JSON.stringify(req.body || {});
-    const sig = verifySignature({ secret: secrets.ingestSecret, rawBody: raw, timestamp: req.headers['x-growth-timestamp'], signature: req.headers['x-growth-signature'] });
-    if (!sig.ok) return res.status(sig.reason === 'ingest_not_configured' ? 503 : 401).json({ ok: false, reason: sig.reason });
-    let body; try { body = JSON.parse(raw); } catch { return res.status(400).json({ ok: false, reason: 'invalid_json' }); }
-    const r = await rt.affiliates.ingest(body);
-    res.status(r.ok ? 200 : 422).json(r);
+    const r = await signedIngest(rt, raw, { timestamp: req.headers['x-growth-timestamp'], signature: req.headers['x-growth-signature'] });
+    res.status(r.status).json(r.body);
   }));
 
   // ---- console read models + owner actions ----

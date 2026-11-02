@@ -22,6 +22,8 @@ const { createAffiliateProgram } = require('./growth-affiliate-program');
 const { createMetaConnect, resolveMetaConfig } = require('./growth-meta-connect');
 const { createTokenVault } = require('./growth-token-vault');
 const fightUrls = require('./growth-fight-urls');
+const { createProspectResearch } = require('./growth-prospect-research');
+const outreachComposer = require('./growth-outreach-composer');
 
 const clean = (s, n = 200) => String(s ?? '').replace(/[\r\n\x00-\x1f]/g, ' ').trim().slice(0, n);
 const minuteId = (d) => 'growth_' + d.toISOString().replace(/[^0-9]/g, '').slice(0, 12);
@@ -41,7 +43,7 @@ function createGrowthRuntime({ db, config, secrets = {}, provider, fetchImpl = g
     coverage: db.collection('growth_marketing_coverage'), gateRejections: db.collection('growth_campaign_rejections'),
     affiliates: db.collection('growth_affiliates'), liveReports: db.collection('growth_live_reports'),
     social: db.collection('growth_social_posts'), settings: db.collection('growth_settings'), socialSandbox: db.collection('growth_social_sandbox'),
-    connections: db.collection('growth_connections'), oauthStates: db.collection('growth_oauth_states'), fightUrls: db.collection('growth_fight_urls'),
+    connections: db.collection('growth_connections'), oauthStates: db.collection('growth_oauth_states'), fightUrls: db.collection('growth_fight_urls'), sandboxMail: db.collection('growth_sandbox_mail'),
   };
   const claims = createIsolatedRunClaims(col.runs, { testMode: true });
   const store = createStore(col.jobs, { testMode: true });
@@ -91,10 +93,8 @@ function createGrowthRuntime({ db, config, secrets = {}, provider, fetchImpl = g
     const marketing = await refreshMarketing(now, { trigger: 'scheduled_discovery' });
     const research = marketing.contests.map((c) => ({ genre: c.sport, title: `${c.fighterA} vs ${c.fighterB}`, sourceUrl: c.contestUrl, verified: true }));
     const stored = await col.prospects.find({ verified: true }).toArray();
-    const partnerProspects = stored.flatMap((p) => [
-      { ...p, category: 'media' },
-      { ...p, id: `${p.id}-affiliate`, category: 'affiliate' },
-    ]);
+    // One department per show: researched prospects go to PR or affiliate recruitment (never both).
+    const partnerProspects = stored.filter((p) => p.track && p.outreach).map((p) => (p.track === 'pr' ? { ...p, category: 'media' } : { ...p, id: `${p.id}-affiliate`, category: 'affiliate' }));
     const adapters = createDraftAdapters({ research, prospects: partnerProspects });
     const marketingDrafts = marketing.created;
     // Persist the 25 department workstreams for this run (5 sports x 5 departments).
@@ -114,6 +114,50 @@ function createGrowthRuntime({ db, config, secrets = {}, provider, fetchImpl = g
   async function loadContests(now) {
     return withAddresses(await contestCampaigns.fetchVerifiedContests({ fetchImpl, baseUrl: config.contestSourceUrl, now, horizonDays: config.marketingHorizonDays, mediaNames: await mediaNames() }), now);
   }
+  // ---- PR + affiliate research (public sources; drafts need owner approval) ----
+  const researcher = createProspectResearch({ fetchImpl, isSuppressed: (a) => suppression.isSuppressed(a) });
+  let contestCache = { at: 0, contests: [] };
+  async function researchBatch(now, { limit = config.researchPerRun ?? 4 } = {}) {
+    const out = { researched: 0, drafted: 0, noContact: 0, duplicates: 0, noAngle: 0, errors: 0 };
+    if (!limit) return out;
+    if (now.getTime() - contestCache.at > 30 * 60000) { const f = await loadContests(now); if (f.sourceReachable) contestCache = { at: now.getTime(), contests: f.contests }; }
+    const stale = new Date(now.getTime() - 14 * 86400000).toISOString();
+    const todo = await col.prospects.find({ verified: true, optedOut: { $ne: true }, $or: [{ researchedAt: { $exists: false } }, { researchedAt: { $lt: stale } }] }).sort({ firstSeenAt: 1 }).limit(limit * 3).toArray();
+    const done = new Set();
+    for (const p of todo) {
+      if (out.researched >= limit) break;
+      const showKey = String(p.sourceUrl || '').match(/\/id(\d+)/)?.[1] || p.sourceUrl;
+      if (done.has(showKey)) continue; done.add(showKey);
+      const siblings = await col.prospects.find({ sourceUrl: p.sourceUrl }).toArray(); // same show, both discovery lists
+      const r = await researcher.research(p, { contests: contestCache.contests, now });
+      out.researched++;
+      if (!r.ok) out.errors++;
+      const track = outreachComposer.assignTrack({ focuses: siblings.map((x) => x.focus), research: r });
+      const lead = siblings.find((x) => x.focus === (track === 'pr' ? 'partners' : 'fans')) || p;
+      let outreach = null; let outcome = r.ok ? null : 'research_failed';
+      if (r.ok && !r.contact) { outcome = 'no_verified_contact_route'; out.noContact++; }
+      if (r.ok && r.contact) {
+        const clash = await col.drafts.findOne({ recipient: r.contact.email, kind: { $in: ['pr', 'affiliate'] } });
+        const sameShow = await col.drafts.findOne({ prospectId: { $in: siblings.map((x) => x.id) }, kind: { $in: ['pr', 'affiliate'] } });
+        if (clash || sameShow) { outcome = 'already_has_outreach'; out.duplicates++; }
+        else {
+          const m = outreachComposer.compose({ prospect: lead, research: r, contests: contestCache.contests, track });
+          if (!m.ok) { outcome = m.reason; if (m.reason === 'no_evidence_based_angle') out.noAngle++; }
+          else {
+            outreach = { subject: m.subject, html: m.html, text: m.text, track, angle: m.angle };
+            const draft = { id: `${track}-${lead.id}`, kind: track, genre: lead.genre, prospectId: lead.id, recipient: r.contact.email, subject: m.subject, html: m.html, text: m.text, relevanceSource: r.source.feed, contactSource: r.contact.source, consentBasis: r.contact.basis, personalization: { angle: m.angle, evidence: m.evidence, recentEpisode: m.recentEpisode, show: r.show.title }, autoResearched: true, score: r.score, status: 'needs_owner_review', ownerApproved: false, sendPermitted: false, createdAt: now.toISOString() };
+            const ins = await col.drafts.updateOne({ id: draft.id }, { $setOnInsert: draft }, { upsert: true });
+            if (ins.upsertedCount) { out.drafted++; outcome = 'drafted'; await audit('research_drafted', { id: draft.id, prospectId: lead.id, track, admin: 'system' }); }
+          }
+        }
+      }
+      const set = { researchedAt: now.toISOString(), research: r, track, researchOutcome: outcome, score: r.score, ...(outreach ? { outreach } : {}),
+        ...(r.contact ? { contact: r.contact.email, contactVerified: true, consent: true, consentNote: r.contact.basis, contactSource: r.contact.source } : {}) };
+      await col.prospects.updateMany({ id: { $in: siblings.map((x) => x.id) } }, { $set: set });
+    }
+    return out;
+  }
+
   async function withdraw(filter, reason, now) {
     const r = await col.drafts.updateMany({ kind: 'marketing', status: { $in: ['needs_owner_review', 'approved'] }, ...filter }, { $set: { status: 'rejected', ownerApproved: false, sendPermitted: false, rejectedBy: 'system-safeguard', rejectedAt: now.toISOString(), rejectReason: reason } });
     return r.modifiedCount || 0;
@@ -277,6 +321,35 @@ function createGrowthRuntime({ db, config, secrets = {}, provider, fetchImpl = g
     return out;
   }
 
+  // ---- interrupted-run reconciliation ----------------------------------------
+  // A stale (interrupted) run is closed automatically only when it is provably harmless:
+  // every job leased during it has since finished (expired leases are re-run by later
+  // runs), and nothing it started is in an uncertain send/publish state. Otherwise the
+  // alert stays open and says exactly what to check.
+  async function reconcileStaleRuns(now) {
+    const out = { closed: 0, waiting: 0, needsCheck: 0 };
+    const settled = new Date(now.getTime() - 20 * 60000).toISOString(); // give expired job leases time to be re-run
+    for (const run of await col.runs.find({ state: 'stale', staleDetectedAt: { $lte: settled } }).limit(20).toArray()) {
+      const from = run.createdAt; const to = new Date(Date.parse(run.createdAt) + 30 * 60000).toISOString();
+      const running = await col.jobs.countDocuments({ state: 'running', startedAt: { $gte: from, $lte: to } });
+      const halfSent = await col.deliveries.countDocuments({ status: 'attempted', createdAt: { $gte: from, $lte: to } });
+      const halfPosted = await col.social.countDocuments({ status: { $in: ['publishing', 'needs_check'] }, claimedAt: { $gte: from, $lte: to } });
+      const key = `stale:${run.runId}`;
+      if (halfSent || halfPosted) {
+        out.needsCheck++;
+        await col.alerts.updateOne({ alertKey: key, state: 'open' }, { $set: { detail: `${halfSent} email(s) and ${halfPosted} post(s) from this run are in an uncertain state: check before retrying (nothing is re-sent automatically).` } });
+        continue;
+      }
+      if (running) { out.waiting++; continue; }
+      const jobs = await col.jobs.find({ startedAt: { $gte: from, $lte: to } }, { projection: { id: 1, state: 1 } }).toArray();
+      await col.runs.updateOne({ runId: run.runId, state: 'stale' }, { $set: { state: 'recovered', recoveredAt: now.toISOString(), recovery: { jobs: jobs.map((j) => `${j.id}:${j.state}`), duplicateSends: 0 } } });
+      await col.alerts.updateOne({ alertKey: key, state: 'open' }, { $set: { state: 'acknowledged', ackBy: 'auto-recovery', ackAt: now.toISOString(), resolution: `Recovered automatically: ${jobs.length} job(s) from this run finished in later runs; no email or post was left half-sent, nothing was sent twice.` } });
+      await audit('stale_run_recovered', { runId: run.runId, jobs: jobs.length, admin: 'system' });
+      out.closed++;
+    }
+    return out;
+  }
+
   // ---- one scheduled tick ---------------------------------------------------
   async function tick({ now = new Date() } = {}) {
     if (!(now instanceof Date) || !Number.isFinite(now.getTime())) throw Error('Invalid clock');
@@ -292,6 +365,7 @@ function createGrowthRuntime({ db, config, secrets = {}, provider, fetchImpl = g
         await alert(`stale:${s.runId}`, 'run', s.runId, 'run was interrupted before completion; inspect and requeue if needed', now);
       }
       summary.recoveredStaleRuns = stale.length;
+      summary.reconciledStaleRuns = await reconcileStaleRuns(now);
       // Recurring work for today (idempotent job IDs).
       const day = dayKey(now);
       const iso = now.toISOString();
@@ -318,6 +392,7 @@ function createGrowthRuntime({ db, config, secrets = {}, provider, fetchImpl = g
         }
       }
       summary.delivery = await dispatch(now);
+      try { summary.research = await researchBatch(now); } catch (e) { summary.errors.push({ id: 'research', message: clean(e.message) }); }
       try { summary.meta = await meta.healthCheck({ now }); } catch (e) { summary.errors.push({ id: 'meta-health', message: clean(e.message) }); }
       summary.social = await socialScheduler.dispatch(now);
     } catch (e) {
@@ -393,7 +468,7 @@ function createGrowthRuntime({ db, config, secrets = {}, provider, fetchImpl = g
   }
   async function unsubscribe(token) { return suppression.unsubscribe(token); }
 
-  return { init, tick, dispatch, refreshMarketing, reverifyMarketing, social: socialScheduler, publisher, meta, affiliates: affiliateProgram, listDrafts, approveDraft, rejectDraft, addVerifiedContact, overview, listAlerts, ackAlert, requeueJob, unsubscribe, suppression, collections: col };
+  return { init, tick, dispatch, researchBatch, refreshMarketing, reverifyMarketing, social: socialScheduler, publisher, meta, affiliates: affiliateProgram, listDrafts, approveDraft, rejectDraft, addVerifiedContact, overview, listAlerts, ackAlert, requeueJob, unsubscribe, suppression, collections: col };
 }
 
 module.exports = { createGrowthRuntime };

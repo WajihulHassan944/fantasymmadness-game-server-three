@@ -18,3 +18,20 @@ function renderBusinessEmail({type='media',recipientName='Partner',personalizati
  return {subject:t.subject,html,text:plain,sendPermitted:false,templateType:type};
 }
 module.exports={renderBusinessEmail};
+
+// Personalized letterhead email (PR / partnership proposals). Every value is escaped.
+// paragraphs: plain-text paragraphs; cta: { label, url } (https only). Draft only; no sending.
+const LOGO = 'https://www.fantasymmadness.com/images/brand/fantasy-mmadness-main-logo-v23.jpg';
+function renderPersonalEmail({ eyebrow = 'FANTASY MMADNESS', subject, greeting, paragraphs = [], cta = null, signature = ['Kelly Davis', 'Founder, FANTASY MMADNESS', 'contact@fantasymmadnesscom.com', 'www.fantasymmadness.com'] } = {}) {
+  if (!subject || !greeting || !paragraphs.length) throw Error('subject_greeting_and_paragraphs_required');
+  const p = (t) => '<p style="margin:0 0 16px;color:#30333a;font-size:15px;line-height:1.6">' + escapeHtml(t) + '</p>';
+  const button = cta && /^https:\/\//i.test(cta.url) ? '<p style="margin:22px 0"><a href="' + escapeHtml(cta.url) + '" style="background:#c8102e;color:#ffffff;text-decoration:none;font-weight:700;padding:12px 20px;border-radius:6px;display:inline-block">' + escapeHtml(cta.label) + '</a></p>' : '';
+  const html = '<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>' + escapeHtml(subject) + '</title></head><body style="margin:0;padding:24px 12px;background:#f3f4f6;font-family:Arial,Helvetica,sans-serif"><div style="max-width:600px;margin:0 auto;background:#ffffff;border-radius:10px;overflow:hidden;border:1px solid #e3e5e8">'
+    + '<div style="background:#0d0f14;padding:18px 24px"><img src="' + LOGO + '" alt="FANTASY MMADNESS" width="150" style="max-width:150px;height:auto;border:0;display:block"><div style="color:#f5c518;font-size:11px;letter-spacing:2px;margin-top:8px">' + escapeHtml(eyebrow) + '</div></div>'
+    + '<div style="padding:26px 24px 8px">' + p(greeting) + paragraphs.map(p).join('') + button
+    + '<p style="margin:20px 0 4px;color:#30333a;font-size:15px;line-height:1.5">' + signature.map(escapeHtml).join('<br>') + '</p></div>'
+    + '<div style="padding:12px 24px 18px;border-top:1px solid #eef0f2;color:#69707b;font-size:11px;line-height:1.5">You are receiving this one-time business message because this address is published as the contact for your show. Reply “no thanks” and we will not contact you again.</div></div></body></html>';
+  const text = [greeting, ...paragraphs, cta ? `${cta.label}: ${cta.url}` : null, signature.join('\n'), '—', 'You are receiving this one-time business message because this address is published as the contact for your show. Reply "no thanks" and we will not contact you again.'].filter(Boolean).join('\n\n');
+  return { subject: String(subject).slice(0, 200), html, text, sendPermitted: false, templateType: 'personal' };
+}
+module.exports.renderPersonalEmail = renderPersonalEmail;

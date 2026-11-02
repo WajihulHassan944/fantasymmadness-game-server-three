@@ -375,15 +375,65 @@
   // ---------- pages ----------
   var pages = {};
 
+  // Executive summary: department status, actionable exceptions, and an honest autonomy statement.
+  var DEP_ROUTE = { marketing: 'marketing', pr: 'pr', affiliates: 'affiliates', publishing: 'publishing', automation: 'automation', revenue: 'revenue' };
+  var DEP_CHIP = { ok: ['good', '✓ On track'], attention: ['warn', '! Needs attention'], blocked: ['bad', '✕ Blocked'], off: ['', '○ Not active'] };
+  function executiveCard(ex) {
+    if (!ex) return null;
+    var card = h('section', { class: 'card exec', testid: 'executive' }, h('h2', { text: 'Executive summary' }));
+    var grid = h('div', { class: 'exec-grid' });
+    ex.departments.forEach(function (d) {
+      var c = DEP_CHIP[d.status] || DEP_CHIP.off;
+      grid.appendChild(h('a', { class: 'exec-dept', href: '#/' + (DEP_ROUTE[d.key] || 'overview'), testid: 'exec-' + d.key, 'data-status': d.status },
+        h('div', { class: 'exec-head' }, h('strong', { text: d.label }), h('span', { class: 'chip ' + c[0], text: c[1] })),
+        h('div', { class: 'exec-headline', text: d.headline }),
+        h('ul', { class: 'small muted' }, d.facts.map(function (f) { return h('li', { text: f }); })),
+        d.next ? h('div', { class: 'small exec-next', text: '→ ' + d.next }) : null));
+    });
+    card.appendChild(grid);
+    card.appendChild(h('h3', { text: 'Needs action (' + ex.exceptions.length + ')' }));
+    card.appendChild(ex.exceptions.length ? h('ul', { class: 'exceptions', testid: 'exec-exceptions' }, ex.exceptions.slice(0, 8).map(function (x) { return h('li', null, h('a', { href: '#/' + x.route, text: x.text })); }))
+      : h('p', { class: 'muted small', testid: 'exec-exceptions', text: 'Nothing needs your action right now.' }));
+    card.appendChild(h('details', { class: 'small', testid: 'exec-autonomy' }, h('summary', { text: 'What runs on its own, and what needs you' }),
+      h('div', { class: 'exec-auto' },
+        h('div', null, h('strong', { text: 'Automatic' }), h('ul', null, ex.autonomy.automatic.map(function (t) { return h('li', { text: t }); }))),
+        h('div', null, h('strong', { text: 'Needs your approval' }), h('ul', null, ex.autonomy.needsOwner.map(function (t) { return h('li', { text: t }); }))),
+        ex.autonomy.notConnected.length ? h('div', null, h('strong', { text: 'Not connected (by design)' }), h('ul', null, ex.autonomy.notConnected.map(function (t) { return h('li', { text: t }); }))) : null)));
+    return card;
+  }
+
+  // Synthetic money-path test (staging): click -> registration -> settled test payment -> accepted entry -> one credit.
+  function syntheticCard(lane) {
+    var card = h('section', { class: 'card', testid: 'synthetic-lane' }, h('h2', { text: 'Synthetic end-to-end test (not real money)' }), h('p', { class: 'sub', text: lane.note }));
+    var s = lane.steps;
+    card.appendChild(h('div', { class: 'grid tiles' },
+      tile('Clicks', s.clicks, 'From campaign links', null, 'syn-clicks'), tile('Registrations', s.registrations, 'Synthetic players', null, 'syn-regs'),
+      tile('Settled test payments', s.settledTestPayments, 'Signed test events', null, 'syn-pay'), tile('Accepted entries', s.acceptedEntries, 'Required for credit', null, 'syn-acc'),
+      tile('Affiliate credits', s.affiliateCredits, 'One per entry, never duplicated', null, 'syn-credits')));
+    var rej = Object.keys(lane.rejected || {});
+    if (rej.length) card.appendChild(h('p', { class: 'small muted', testid: 'syn-rejected', text: 'Correctly refused: ' + rej.map(function (k) { return k.replace(/_/g, ' ') + ' ×' + lane.rejected[k]; }).join(', ') }));
+    var out = h('div', { testid: 'syn-result' });
+    card.appendChild(h('button', { class: 'btn primary', testid: 'btn-synthetic-journey', text: 'Run the synthetic journey', onclick: function (e) {
+      e.target.disabled = true;
+      api('POST', '/admin/synthetic/journey').then(function (x) {
+        clear(out).appendChild(h('ul', { class: 'checklist' }, x.steps.map(function (st) { return h('li', { class: st.pass ? 'done' : 'todo' }, h('span', { text: st.pass ? '✓ ' : '✕ ' }), st.step); })));
+        toast(x.ok ? 'Synthetic journey passed: one credit, no duplicates.' : 'Synthetic journey found a problem.', x.ok ? 'good' : 'bad'); setTimeout(route, 1200);
+      }).catch(function (err) { e.target.disabled = false; fail(err); });
+    } }));
+    card.appendChild(out);
+    return card;
+  }
+
   pages.overview = function (main) {
-    return Promise.all([api('GET', '/admin/overview'), api('GET', '/admin/status'), api('GET', '/admin/alerts')]).then(function (r) {
-      var o = r[0].overview, st = r[1], alerts = r[2].alerts, sc = st.scheduler;
+    return Promise.all([api('GET', '/admin/overview'), api('GET', '/admin/status'), api('GET', '/admin/alerts'), api('GET', '/admin/executive').catch(function () { return null; })]).then(function (r) {
+      var o = r[0].overview, st = r[1], alerts = r[2].alerts, sc = st.scheduler, ex = r[3];
       state.pendingCount = o.draftsAwaitingReview; state.alertCount = alerts.length;
       clear(main);
       var rep = o.latestReport;
       add(main, [
         head('Overview', 'Live results from the isolated Growth Engine (database: ' + st.database.name + ').',
           h('button', { class: 'btn', testid: 'btn-refresh', text: '↻ Refresh', onclick: function () { route(); } })),
+        executiveCard(ex),
         sc.healthy
           ? h('div', { class: 'banner good', testid: 'scheduler-banner' }, h('span', { class: 'ico', 'aria-hidden': 'true', text: '✓' }), h('div', null, h('strong', { text: 'The Growth Engine is running automatically.' }), 'Last automatic run ' + when(sc.lastRunAt) + ' · ' + fmtNum(sc.runsLast24h) + ' runs in the last 24 hours · schedule: ' + sc.schedule + '.'))
           : h('div', { class: 'banner warn', testid: 'scheduler-banner' }, h('span', { class: 'ico', 'aria-hidden': 'true', text: '!' }), h('div', null, h('strong', { text: 'No automatic run in the last 35 minutes.' }), 'Last run: ' + when(sc.lastRunAt) + '. Check the Automation page.')),
@@ -496,63 +546,67 @@
     });
   };
 
+  var OUTCOME = {
+    drafted: ['Personalized email drafted', 'good'], already_has_outreach: ['Already contacted / drafted', 'info'],
+    no_verified_contact_route: ['No published business contact', 'warn'], no_evidence_based_angle: ['No evidence-based angle yet', 'warn'],
+    research_failed: ['Research failed (will retry)', 'bad'], composer_safeguard: ['Blocked by the safety check', 'bad'],
+  };
   function outreachPage(main, params, cfg) {
     var g = params.sport || SPORTS[0];
-    return Promise.all([api('GET', '/admin/workstreams?department=' + cfg.department), api('GET', '/admin/prospects?limit=500'), api('GET', '/admin/drafts?kind=' + cfg.kind + '&limit=200')]).then(function (r) {
-      var ws = r[0], partners = r[1].prospects, drafts = r[2].drafts;
+    return Promise.all([api('GET', '/admin/research?track=' + cfg.kind), api('GET', '/admin/drafts?kind=' + cfg.kind + '&limit=200')]).then(function (r) {
+      var res = r[0], drafts = r[1].drafts, c = res.counts;
       clear(main);
-      var prepared = ws.workstreams.reduce(function (n, w) { return n + w.draftCount; }, 0);
       var awaiting = drafts.filter(function (d) { return d.status === 'needs_owner_review'; }).length;
+      var byDraft = {}; drafts.forEach(function (d) { byDraft[d.id] = d; });
       var tabs = h('div', { class: 'tabs', role: 'tablist', testid: 'sport-tabs' });
       SPORTS.forEach(function (s) {
-        var w = ws.workstreams.filter(function (x) { return x.genre === s; })[0];
         tabs.appendChild(h('button', { role: 'tab', class: s === g ? 'active' : '', 'aria-selected': String(s === g), testid: 'tab-' + s, onclick: function () { location.hash = '#/' + cfg.route + '?sport=' + s; } },
-          sport(s), h('span', { class: 'badge zero', text: w ? String(w.draftCount) : '0' })));
+          sport(s), h('span', { class: 'badge zero', text: String(res.bySport[s] || 0) })));
       });
-      var detail = h('div', { testid: 'prepared-list' }, h('div', { class: 'spinner', text: 'Loading prepared outreach…' }));
+      var detail = h('div', { testid: 'prepared-list' });
       var list = h('div', { testid: cfg.kind + '-draft-list' });
       add(main, [
         head(cfg.title, cfg.subtitle),
         h('div', { class: 'grid tiles' },
-          tile('Prepared this run', prepared, 'Template drafts across 5 sports', '#/' + cfg.route, cfg.kind + '-prepared'),
-          tile('Media & creator prospects', partners.length, 'Podcasts, shows & creators found', '#/' + cfg.route, cfg.kind + '-prospects'),
-          tile('Verified contacts', partners.filter(function (p) { return p.contactVerified; }).length, 'Added by you', '#/' + cfg.route, cfg.kind + '-contacts'),
-          tile('Awaiting approval', awaiting, 'Personalized emails', '#/approvals?kind=' + cfg.kind, cfg.kind + '-awaiting')),
+          tile('Shows researched', c.researched, c.waitingForResearch + ' more waiting for research', '#/' + cfg.route, cfg.kind + '-researched'),
+          tile('Published business contacts', c.publishedContacts, 'Found in each show’s own public feed', '#/' + cfg.route, cfg.kind + '-contacts'),
+          tile('Personalized emails', c.drafted, 'Evidence-based, one per show', '#/' + cfg.route, cfg.kind + '-drafted'),
+          tile('Awaiting approval', awaiting, 'Nothing is sent without you', '#/approvals?kind=' + cfg.kind, cfg.kind + '-awaiting')),
         h('div', { class: 'banner info' }, h('span', { class: 'ico', 'aria-hidden': 'true', text: 'ℹ' }), h('div', null, h('strong', { text: 'How this works' }),
-          'The engine finds prospects and prepares a draft for each one. Public discovery never finds a private email address, so a draft can only become a real email after you add a verified business contact and how they agreed to hear from you. That creates a personalized email in Campaign Approvals.')),
-        h('section', { class: 'card' }, h('h2', { text: 'Prepared ' + cfg.noun + ' (latest run' + (ws.runId ? ' ' + ws.runId : '') + ')' }), tabs, detail),
-        h('section', { class: 'card' }, h('h2', { text: 'Personalized ' + cfg.noun + ' emails' }), h('p', { class: 'sub', text: 'Created when you add a verified contact. Approve or reject them here or in Campaign Approvals.' }), list),
+          'Every 15 minutes the engine researches a few shows: their own public podcast feed, recent episodes, and the business contact the show publishes. When there is a verified contact and real evidence (for example the show discussed an upcoming fight), it writes a personalized email for your approval. Nothing is guessed and nothing is sent. Shows with no published contact are listed so you can add one you have verified yourself.')),
+        h('section', { class: 'card' }, h('h2', { text: 'Researched ' + cfg.noun }), tabs, detail),
+        h('section', { class: 'card' }, h('h2', { text: 'Personalized ' + cfg.noun + ' emails' }), h('p', { class: 'sub', text: 'Approve or reject them here or in Campaign Approvals. Approved emails go to the sandbox only until real sending is authorized.' }), list),
       ]);
-      draftList(list, { kind: cfg.kind, limit: 200 }, 'None yet. Use “Add verified contact” on a prospect above to create one.');
+      draftList(list, { kind: cfg.kind, limit: 200 }, 'None yet. They appear as research finds shows with a published contact and a real reason to write.');
       if (cfg.kind === 'affiliate') { var pipe = h('section', { class: 'card', testid: 'onboarding' }, h('h2', { text: 'Onboarding pipeline' }), h('div', { class: 'spinner', text: 'Loading…' })); main.insertBefore(pipe, main.children[3] || null); onboarding(pipe); }
-      var w = ws.workstreams.filter(function (x) { return x.genre === g; })[0];
-      if (!w) { clear(detail).appendChild(h('div', { class: 'empty', text: 'No ' + cfg.noun + ' workstream has run for ' + sport(g) + ' yet.' })); return; }
-      return api('GET', '/admin/workstreams/' + encodeURIComponent(w.runId) + '/' + encodeURIComponent(w.workstreamId)).then(function (dr) {
-        var rows = dr.workstream.drafts; clear(detail);
-        if (!rows.length) { detail.appendChild(h('div', { class: 'empty', text: 'No prospects for ' + sport(g) + ' in this run.' })); return; }
-        var byId = {}; partners.forEach(function (p) { byId[p.id] = p; });
-        var tbody = h('tbody');
-        rows.forEach(function (d) {
-          var p = byId[d.prospectId] || {};
-          var tr = h('tr', { testid: 'prepared-row', 'data-prospect-id': d.prospectId });
-          var preview = h('tr', { class: 'preview-row' }); preview.hidden = true;
-          var previewCell = h('td', { colspan: '4' }); preview.appendChild(previewCell);
-          add(tr, [
-            h('td', null, h('strong', { text: d.prospectName || p.name || d.prospectId }), h('div', { class: 'small' }, d.sourceUrl ? h('a', { href: d.sourceUrl, target: '_blank', rel: 'noopener noreferrer', text: 'Public source' }) : null)),
-            h('td', { class: 'small', text: d.subject || '—' }),
-            h('td', null, p.contactVerified ? h('span', { class: 'chip good', text: '✓ ' + (p.contact || 'verified') }) : p.optedOut ? h('span', { class: 'chip bad', text: 'Opted out' }) : h('span', { class: 'chip', text: 'No contact yet' })),
-            h('td', { class: 'nowrap' },
-              h('button', { class: 'btn small', testid: 'btn-view-template', text: 'View draft', onclick: function (e) {
-                if (!preview.hidden) { preview.hidden = true; clear(previewCell); e.target.textContent = 'View draft'; return; }
-                previewCell.appendChild(emailPreview(d.html)); preview.hidden = false; e.target.textContent = 'Hide draft';
-              } }), ' ',
-              h('button', { class: 'btn primary small', testid: 'btn-add-contact', text: 'Add verified contact', onclick: function () { addContact(d.prospectId, d.prospectName || p.name, cfg.kind); } })),
-          ]);
-          tbody.appendChild(tr); tbody.appendChild(preview);
-        });
-        add(detail, [h('p', { class: 'muted small', testid: 'prepared-count', text: rows.length + ' prepared for ' + sport(g) }),
-          h('div', { class: 'table-wrap' }, h('table', { class: 'data' }, h('thead', null, h('tr', null, h('th', { text: 'Prospect' }), h('th', { text: 'Draft subject' }), h('th', { text: 'Contact' }), h('th', { text: '' }))), tbody))]);
+      var rows = res.shows.filter(function (x) { return x.genre === g; });
+      if (!rows.length) { detail.appendChild(h('div', { class: 'empty', testid: 'research-empty', text: 'No ' + sport(g) + ' shows researched for ' + cfg.noun + ' yet. Research runs automatically every 15 minutes.' })); return; }
+      var tbody = h('tbody');
+      rows.forEach(function (x) {
+        var o = OUTCOME[x.outcome] || ['Not researched yet', ''];
+        var draft = x.draftId ? byDraft[x.draftId] : null;
+        var tr = h('tr', { testid: 'prepared-row', 'data-prospect-id': x.id, 'data-outcome': x.outcome || '' });
+        var preview = h('tr', { class: 'preview-row' }); preview.hidden = true;
+        var previewCell = h('td', { colspan: '5' }); preview.appendChild(previewCell);
+        var evidence = [].concat(x.angle ? [x.angle.why] : [], x.evidence.filter(function (e) { return !x.angle || e.text !== x.angle.why; }).map(function (e) { return e.text; })).slice(0, 2);
+        add(tr, [
+          h('td', null, h('strong', { text: (x.show && x.show.title) || x.name }), h('div', { class: 'small muted', text: [x.score !== null ? 'Score ' + x.score : null, x.active ? 'active show' : x.researchedAt ? 'no recent episodes' : null].filter(Boolean).join(' · ') }),
+            h('div', { class: 'small' }, h('a', { href: x.sourceUrl, target: '_blank', rel: 'noopener noreferrer', text: 'Listing' }), x.feed ? [' · ', h('a', { href: x.feed, target: '_blank', rel: 'noopener noreferrer', text: 'Public feed' })] : null)),
+          h('td', { class: 'small' }, x.recentEpisode ? h('div', { text: 'Latest: “' + x.recentEpisode.title + '”' }) : null, evidence.map(function (t) { return h('div', { class: 'muted', text: '• ' + t }); })),
+          h('td', null, x.contact ? h('div', null, h('span', { class: 'chip good', testid: 'research-contact', text: '✓ ' + x.contact.email }), h('div', { class: 'small muted', text: x.contact.manual ? 'Added by you' : 'Published in the show’s feed (' + x.contact.field + ')' }))
+            : x.optedOut ? h('span', { class: 'chip bad', text: 'Opted out' }) : h('div', null, h('span', { class: 'chip', text: 'No contact' }), x.contactProblems.length ? h('div', { class: 'small muted', text: x.contactProblems[0] }) : null)),
+          h('td', null, h('span', { class: 'chip ' + o[1], testid: 'research-outcome', text: o[0] }), x.error ? h('div', { class: 'small muted', text: x.error }) : null),
+          h('td', { class: 'nowrap' },
+            draft ? h('button', { class: 'btn small', testid: 'btn-view-template', text: 'View email', onclick: function (e) {
+              if (!preview.hidden) { preview.hidden = true; clear(previewCell); e.target.textContent = 'View email'; return; }
+              previewCell.appendChild(emailPreview(draft.html)); preview.hidden = false; e.target.textContent = 'Hide email';
+            } }) : null, ' ',
+            !x.contact && !x.optedOut ? h('button', { class: 'btn primary small', testid: 'btn-add-contact', text: 'Add verified contact', onclick: function () { addContact(x.id, (x.show && x.show.title) || x.name, cfg.kind); } }) : null),
+        ]);
+        tbody.appendChild(tr); tbody.appendChild(preview);
       });
+      add(detail, [h('p', { class: 'muted small', testid: 'prepared-count', text: rows.length + ' researched for ' + sport(g) }),
+        h('div', { class: 'table-wrap' }, h('table', { class: 'data' }, h('thead', null, h('tr', null, h('th', { text: 'Show' }), h('th', { text: 'Evidence' }), h('th', { text: 'Contact' }), h('th', { text: 'Status' }), h('th', { text: '' }))), tbody))]);
     });
   }
   function onboarding(box) {
@@ -727,6 +781,7 @@
       var rejected = Object.keys(a.rejectedEvents || {});
       add(main, [
         head('Revenue Attribution', 'Which campaigns and affiliates bring in paying players.'),
+        a.synthetic ? syntheticCard(a.synthetic) : null,
         h('div', { class: 'banner warn', testid: 'payment-banner' }, h('span', { class: 'ico', 'aria-hidden': 'true', text: '!' }), h('div', null, h('strong', { text: 'Live payments are not connected to staging.' }), a.paymentSource.note + ' Connecting real payment data needs your approval.')),
         h('div', { class: 'grid tiles' },
           h('div', { class: 'tile', testid: 'rev-total' }, h('div', { class: 'label', text: 'Credited revenue' }), h('div', { class: 'value', text: money(a.totalRevenueCents) }), h('div', { class: 'hint', text: 'Verified, settled payments only' })),
@@ -911,9 +966,30 @@
     });
   };
 
+  // Sandbox outbox: approved emails built exactly as they would be sent, never sent.
+  function sandboxOutbox(sb) {
+    var card = h('section', { class: 'card', testid: 'sandbox-outbox' }, h('h2', { text: 'Sandbox outbox (nothing is sent)' }));
+    if (!sb) { card.appendChild(h('p', { class: 'muted', text: 'Could not load the sandbox outbox right now.' })); return card; }
+    if (sb.provider !== 'sandbox-capture') { card.appendChild(h('p', { class: 'muted', text: 'Email mode: ' + sb.provider + '. Approved emails are held (not built or sent).' })); return card; }
+    card.appendChild(h('p', { class: 'sub', text: sb.count + ' approved email' + (sb.count === 1 ? '' : 's') + ' built exactly as they would be sent (from contact@fantasymmadnesscom.com, with unsubscribe), then stored here. None were sent.' }));
+    if (!sb.messages.length) { card.appendChild(h('div', { class: 'empty', text: 'Approve a PR or affiliate email to see it here.' })); return card; }
+    var tbody = h('tbody');
+    sb.messages.forEach(function (m) {
+      var prev = h('tr', { class: 'preview-row' }); prev.hidden = true; var cell = h('td', { colspan: '4' }); prev.appendChild(cell);
+      tbody.appendChild(h('tr', { testid: 'sandbox-mail', 'data-receipt': m.id },
+        h('td', null, h('strong', { text: m.message.to.join(', ') }), h('div', { class: 'small muted', text: (KIND_NAMES[m.kind] || m.kind || '') + ' · ' + when(m.capturedAt) })),
+        h('td', { class: 'small', text: m.message.subject }),
+        h('td', null, m.checks.every(function (x) { return x.ok; }) ? h('span', { class: 'chip good', text: '✓ Checks passed' }) : h('span', { class: 'chip bad', text: 'Check failed: ' + m.checks.filter(function (x) { return !x.ok; }).map(function (x) { return x.name; }).join(', ') }), h('div', { class: 'small muted', text: 'Receipt ' + m.id + ' · not sent' })),
+        h('td', null, h('button', { class: 'btn small', testid: 'btn-sandbox-preview', text: 'View', onclick: function (ev) { if (!prev.hidden) { prev.hidden = true; clear(cell); ev.target.textContent = 'View'; return; } cell.appendChild(emailPreview(m.message.html)); prev.hidden = false; ev.target.textContent = 'Hide'; } }))));
+      tbody.appendChild(prev);
+    });
+    card.appendChild(h('div', { class: 'table-wrap' }, h('table', { class: 'data' }, h('thead', null, h('tr', null, h('th', { text: 'To' }), h('th', { text: 'Subject' }), h('th', { text: 'Checks' }), h('th', { text: '' }))), tbody)));
+    return card;
+  }
+
   pages.connections = function (main) {
-    return Promise.all([api('GET', '/admin/connections'), api('GET', '/admin/email/readiness').catch(function () { return { readiness: null }; })]).then(function (r) {
-      var c = r[0].connections, e = r[1].readiness; clear(main);
+    return Promise.all([api('GET', '/admin/connections'), api('GET', '/admin/email/readiness').catch(function () { return { readiness: null }; }), api('GET', '/admin/email/sandbox?limit=20').catch(function () { return null; })]).then(function (r) {
+      var c = r[0].connections, e = r[1].readiness, sb = r[2]; clear(main);
       var names = { facebook: 'Facebook Page', instagram: 'Instagram business account', x: 'X account', tiktok: 'TikTok account' };
       var list = function (items) { return h('ul', { class: 'checklist' }, items.map(function (it) { return h('li', { class: it.done ? 'done' : 'todo' }, h('span', { 'aria-hidden': 'true', text: it.done ? '✓ ' : '○ ' }), it.text); })); };
       add(main, [
@@ -924,6 +1000,7 @@
         h('section', { class: 'card', testid: 'conn-email' }, h('h2', { text: 'Business email (PR and affiliate invitations)' }), h('p', { class: 'sub', text: 'Sender: ' + c.email.sender + ' · real sending: ' + (c.email.realDelivery ? 'ON' : 'OFF') }),
           e ? list(e.steps) : h('p', { class: 'muted', text: 'Could not run the email check right now.' }),
           e && e.dns.error ? h('p', { class: 'small muted', text: 'DNS lookup problem: ' + e.dns.error }) : null),
+        sandboxOutbox(sb),
         h('section', { class: 'card', testid: 'conn-results' }, h('h2', { text: 'Registrations and paying players' }),
           list([
             { done: true, text: 'Every Growth Engine link carries the campaign tag the live site already records when someone registers' },

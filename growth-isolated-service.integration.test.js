@@ -27,8 +27,11 @@ const BASE = (() => { const d = new Date(); d.setUTCFullYear(d.getUTCFullYear() 
 const feed = contestFeed(() => BASE);
 const dayKey = (ms) => new Date(ms).toISOString().slice(0, 10).replace(/-/g, ''); // e.g. 20271102
 const DAY1 = dayKey(BASE + 86400000); const DAY2 = dayKey(BASE + 2 * 86400000);
-const podcastFetch = async (url) => {
+const { researchWeb } = require('./growth-podcast-research.fixture');
+const web = researchWeb();
+const podcastFetch = async (url, opts) => {
   const f = feed(url); if (f) return f;
+  const w = await web(url, opts); if (w) return w;
   const term = new URL(url).searchParams.get('term');
   const slug = term.replace(/[^a-z]+/gi, '-').toLowerCase();
   return { ok: true, status: 200, json: async () => ({ results: [1, 2].map((n) => ({ collectionName: `${term} show ${n}`, collectionViewUrl: `https://podcasts.apple.com/us/podcast/${slug}-${n}/id${n}` })) }) };
@@ -77,10 +80,25 @@ test('isolated Growth Engine service', { skip }, async (t) => {
       assert.ok(disc.result.prospectsFound >= 20); // already stored by the earlier cron call, so newProspects may be 0
       assert.ok(await runtime.collections.prospects.countDocuments() >= 20);
       const ws = runtime.collections.workstreams;
-      for (const fn of ['public-relations', 'affiliate-recruitment']) {
-        const withDrafts = await ws.distinct('genre', { runId: s.runId.replace('growth_', 'growth_'), functionName: fn, 'data.drafts.0': { $exists: true } });
-        assert.equal(withDrafts.length, 5, `${fn} drafts prepared for all five sports`);
+      for (const fn of ['public-relations', 'affiliate-recruitment']) assert.equal((await ws.distinct('genre', { runId: s.runId, functionName: fn })).length, 5, `${fn} workstream for all five sports`);
+      // Research: each show once, from its own feed; personalized drafts only with a published
+      // business contact AND evidence; never both PR and affiliate for one show.
+      assert.ok(s.research && s.research.researched >= 1, JSON.stringify(s.research));
+      await runtime.researchBatch(T(0), { limit: 20 });
+      const researched = await runtime.collections.prospects.find({ researchedAt: { $exists: true } }).toArray();
+      assert.equal(new Set(researched.map((p) => p.sourceUrl)).size, 15, 'every show researched once');
+      const auto = await runtime.collections.drafts.find({ autoResearched: true }).toArray();
+      assert.equal(auto.length, 5, auto.map((d) => d.id).join());
+      assert.deepEqual(auto.map((d) => d.kind).sort(), ['affiliate', 'affiliate', 'affiliate', 'affiliate', 'pr']);
+      for (const d of auto) {
+        assert.match(d.recipient, /^bookings@.+\.example$/); assert.equal(d.status, 'needs_owner_review'); assert.equal(d.sendPermitted, false);
+        assert.match(d.consentBasis, /published by the show/); assert.ok(d.personalization.angle.why);
+        assert.ok(d.text.includes(d.personalization.show)); assert.doesNotMatch(d.text, /\$\d|prize|commission of/i);
       }
+      assert.equal(new Set(auto.map((d) => d.recipient)).size, 5, 'one email per contact');
+      assert.equal(await runtime.collections.drafts.countDocuments({ recipient: /anchor\.fm/ }), 0, 'hosting-platform address never used');
+      const noRoute = await runtime.collections.prospects.countDocuments({ researchOutcome: 'no_verified_contact_route' });
+      assert.ok(noRoute >= 10, `no-contact shows recorded (${noRoute})`);
       const drafts = await runtime.listDrafts({ kind: 'marketing', status: 'needs_owner_review' });
       assert.equal(new Set(drafts.map((d) => d.genre)).size, 5);
       for (const d of drafts) { assert.ok(d.contestId && d.text.includes(d.contest.fighterA) && d.text.includes(d.contest.fighterB)); assert.doesNotMatch(d.text, /podcast|show \d/i); }
@@ -95,7 +113,7 @@ test('isolated Growth Engine service', { skip }, async (t) => {
     });
     let prDraftId, prospects;
     await t.test('owner adds a verified contact -> personalized PR draft awaiting review', async () => {
-      prospects = (await call('GET', '/admin/prospects', { token: adminToken })).json.prospects.filter((p) => p.focus === 'partners');
+      prospects = (await call('GET', '/admin/prospects', { token: adminToken })).json.prospects.filter((p) => p.focus === 'partners' && p.researchOutcome !== 'drafted'); // manual route: shows research did not draft for
       const missingConsent = await call('POST', `/admin/prospects/${prospects[0].id}/contact`, { token: adminToken, body: { contact: 'editor@sandbox.localhost', kind: 'pr' } });
       assert.equal(missingConsent.status, 422); assert.equal(missingConsent.json.reason, 'consent_basis_required');
       const r = await call('POST', `/admin/prospects/${prospects[0].id}/contact`, { token: adminToken, body: { contact: 'editor@sandbox.localhost', kind: 'pr', consentNote: 'Public press contact on outlet website; business outreach' } });
@@ -157,6 +175,12 @@ test('isolated Growth Engine service', { skip }, async (t) => {
       assert.equal(s.recoveredStaleRuns, 1);
       assert.equal((await runtime.collections.runs.findOne({ runId: 'growth_202611021000' })).state, 'stale');
       assert.ok((await runtime.listAlerts()).some((a) => a.kind === 'run' && a.id === 'growth_202611021000'));
+      // 20+ minutes later, with nothing left running or half-sent from that run, the alert closes itself.
+      const later = await runtime.tick({ now: new Date(Date.parse((await runtime.collections.runs.findOne({ runId: 'growth_202611021000' })).staleDetectedAt) + 25 * 60000) });
+      assert.ok(later.reconciledStaleRuns.closed >= 1, JSON.stringify(later.reconciledStaleRuns));
+      assert.equal((await runtime.collections.runs.findOne({ runId: 'growth_202611021000' })).state, 'recovered');
+      const a = await runtime.collections.alerts.findOne({ alertKey: 'stale:growth_202611021000' });
+      assert.equal(a.state, 'acknowledged'); assert.equal(a.ackBy, 'auto-recovery'); assert.match(a.resolution, /nothing was sent twice/);
     });
     await t.test('a failing provider retries with backoff, then alerts once; admin can requeue', async () => {
       const resolved = resolveGrowthRuntimeConfig(env);
