@@ -142,12 +142,13 @@ function createGrowthRuntime({ db, config, secrets = {}, provider, fetchImpl = g
         // The website's address for this fight changed (e.g. a fighter-name address appeared, or
         // it stopped working and the ID address is used again): update the campaign's links.
         // Same fight, same text; only the address path changes and every tag is kept.
-        if ((d.contest?.contestUrl || '') !== c.contestUrl || (d.contest?.cleanUrl || null) !== (c.cleanUrl || null)) {
+        if (!d.contest?.urlSource || (d.contest?.contestUrl || '') !== c.contestUrl || (d.contest?.cleanUrl || null) !== (c.cleanUrl || null)) { // also records the address source on campaigns made before this existed
           const k2 = fightUrls.relinkCampaign(d, c);
           const next = { ...d, ...k2, contest: { ...d.contest, idBase: c.idBase, idUrl: c.idUrl, cleanUrl: c.cleanUrl, urlSource: c.urlSource, contestUrl: c.contestUrl } };
           if (contestCampaigns.checkCampaign(next, c, { now, mediaNames: names }).length === 0) {
-            await col.drafts.updateOne({ id: d.id, status: d.status }, { $set: { text: next.text, posts: next.posts, link: next.link, sourceUrl: c.contestUrl, contest: next.contest }, $push: { linkHistory: { at: now.toISOString(), from: d.contest?.contestUrl || null, to: c.contestUrl, source: c.urlSource } } });
-            await audit('campaign_link_updated', { id: d.id, to: c.urlSource, admin: 'system' });
+            const moved = (d.contest?.contestUrl || '') !== c.contestUrl;
+            await col.drafts.updateOne({ id: d.id, status: d.status }, { $set: { text: next.text, posts: next.posts, link: next.link, sourceUrl: c.contestUrl, contest: next.contest }, ...(moved ? { $push: { linkHistory: { at: now.toISOString(), from: d.contest?.contestUrl || null, to: c.contestUrl, source: c.urlSource } } } : {}) });
+            if (moved) await audit('campaign_link_updated', { id: d.id, to: c.urlSource, admin: 'system' });
           }
         }
       }
