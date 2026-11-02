@@ -224,7 +224,7 @@ async function renderPremium({ contest, format = 'portrait', artwork = { mode: '
     put(wm, y - wm.pad, centerX(wm.width), 'brand'); y += wm.glyph.height + (story ? 30 : 12); layout.logo = false;
   }
   // 2. PREDICT (red) / THE FIGHT (white)
-  const headSize = story ? 140 : 112;
+  const headSize = story ? 132 : 112;
   const predict = await styledText(await fitMask('PREDICT', { font: S.headFont, width: inner, max: headSize, min: 70, spacing: S.tracking || 0 }), { metal: 'red', outline: '#2a0000', outlineW: 6, glow: '#ff1a0a', shadow: 0.9 });
   const theFight = await styledText(await fitMask('THE FIGHT', { font: S.headFont, width: inner, max: headSize, min: 70, spacing: S.tracking || 0 }), { metal: 'silver', outline: '#0b0b0b', outlineW: 6, shadow: 0.9 });
   const headInline = !story;
@@ -237,7 +237,7 @@ async function renderPremium({ contest, format = 'portrait', artwork = { mode: '
     put(p2, y - p2.pad + (h2 - p2.glyph.height), x0 - p2.pad, 'headline-predict'); put(t2, y - t2.pad + (h2 - t2.glyph.height), x0 + p2.glyph.width + 22 - t2.pad, 'headline-thefight');
     y += h2 + 8;
   } else {
-    put(predict, y - predict.pad, centerX(predict.width), 'headline-predict'); y += predict.glyph.height - 6;
+    put(predict, y - predict.pad, centerX(predict.width), 'headline-predict'); y += predict.glyph.height + 10;
     put(theFight, y - theFight.pad, centerX(theFight.width), 'headline-thefight'); y += theFight.glyph.height + 6;
   }
   // slash accent under the headline
@@ -251,7 +251,7 @@ async function renderPremium({ contest, format = 'portrait', artwork = { mode: '
   const dateT = await styledText(await fitMask(dateLine, { font: 'black', width: inner, max: story ? 46 : 38, min: 22 }), { metal: 'silver', outlineW: 3, shadow: 0.8, pad: 12 });
   const whereLine = [facts.where, facts.detail].filter(Boolean).join('  •  ');
   const whereT = whereLine ? await fitMask(whereLine, { font: 'bold', width: inner, max: story ? 30 : 24, min: 16 }) : null;
-  const qrPlate = (story ? 270 : 206); const qrInner = qrPlate - 24;
+  const qrPlate = (story ? 330 : 280); const qrInner = qrPlate - 20; // >= 4 px per module so phones can scan it
   const ctaH = story ? 118 : 96;
   const tagT = await fitMask('PLAY  •  PREDICT  •  COMPETE', { font: 'blackItalic', width: inner - 80, max: story ? 44 : 34, min: 22, spacing: 5 });
   const namesBlockH = variant === 'flank' ? (story ? 104 : 84) : 0;
@@ -389,6 +389,10 @@ async function renderPremium({ contest, format = 'portrait', artwork = { mode: '
   for (const im of layout.images) for (const t of layout.text) if (t.kind !== 'logo' && overlap(im, t)) layout.qc.problems.push(`text_over_image:${t.kind}`);
   for (const im of layout.images) if (overlap(im, { left: layout.qr.left, top: layout.qr.top, width: layout.qr.px, height: layout.qr.px })) layout.qc.problems.push('qr_over_image');
   if (layout.qr.top + layout.qr.px > H - 10 || y > H) layout.qc.problems.push('layout_overflow');
+  if (qr.px > qrPlate - 8) layout.qc.problems.push('qr_larger_than_its_plate');
+  if (qr.scale < 4) layout.qc.problems.push('qr_modules_too_small');
+  for (const t of layout.text) if (overlap(t, { left: qrLeft, top: Math.round(qrTop), width: qrPlate, height: qrPlate })) layout.qc.problems.push(`text_over_qr:${t.kind}`);
+  for (const t of layout.text) if (t.top + t.height > H - 8 || t.top < 0) layout.qc.problems.push(`text_off_poster:${t.kind}`);
   // QC 2: image proportions (uniform scale only)
   for (const im of layout.images) if (Math.abs(im.width / im.height - im.sourceWidth / im.sourceHeight) > 0.01) layout.qc.problems.push(`image_proportions:${im.name || im.side}`);
   // QC 3: legibility — small information text needs contrast against what is behind it

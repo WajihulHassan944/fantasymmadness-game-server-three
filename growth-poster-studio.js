@@ -72,7 +72,7 @@ function qrMatrix(url) {
   return { size: q.modules.size, get: (r, c) => q.modules.get(r, c) === 1 };
 }
 async function qrImage(url, target) {
-  const m = qrMatrix(url); const quiet = 4; const n = m.size + quiet * 2;
+  const m = qrMatrix(url); const quiet = 3; const n = m.size + quiet * 2;
   const scale = Math.max(4, Math.floor(target / n)); const px = n * scale;
   const raw = Buffer.alloc(px * px * 3, 255);
   for (let r = 0; r < m.size; r++) for (let c = 0; c < m.size; c++) if (m.get(r, c)) {
