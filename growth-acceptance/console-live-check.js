@@ -256,6 +256,44 @@ async function main() {
       log('marketing', JSON.stringify({ refresh: live.refresh, queued: queued.length, sportMask }));
     });
 
+    await check('posters: every queued fight campaign has a FANTASY MMADNESS poster from verified facts; artwork only official; QR = campaign link', async () => {
+      const sharp = require('sharp'); const ps = require('../growth-poster-studio');
+      const g = await api('POST', '/admin/posters/generate', {});
+      if (!(g.status === 200 && g.json.ok)) throw Object.assign(new Error(`generate ${g.status} ${JSON.stringify(g.json).slice(0, 300)}`), { diag: 250 });
+      const queued = await C.drafts.find({ kind: 'marketing', contestId: { $exists: true }, status: { $in: ['needs_owner_review', 'approved'] } }).toArray();
+      let official = 0; let text = 0;
+      for (const d of queued) {
+        if (!(d.poster && d.poster.portrait && d.poster.story)) throw Object.assign(new Error(`${d.id}: no poster`), { diag: 251 });
+        if (d.poster.art.used) {
+          official++;
+          if (!ps.checkArtSource(d.contest, ps.artPolicy(process.env)).ok) throw Object.assign(new Error(`${d.id}: artwork not from an FMM asset host`), { diag: 252 });
+        } else text++;
+        if (d.poster.qrUrl !== ps.qrLink(d.contest)) throw Object.assign(new Error(`${d.id}: QR link`), { diag: 253 });
+        for (const fmt of ['portrait', 'story']) {
+          const u = new URL(d.poster[fmt].url);
+          if (u.origin !== STAGING) throw Object.assign(new Error(`${d.id}: poster served from ${u.origin}`), { diag: 254 });
+          const r = await fetch(`${origin}${u.pathname}`); ok(r.status === 200 && r.headers.get('content-type') === 'image/jpeg', `${d.id} ${fmt} ${r.status}`);
+          const body = Buffer.from(await r.arrayBuffer()); const md = await sharp(body).metadata();
+          ok(md.width === 1080 && md.height === (fmt === 'portrait' ? 1350 : 1920), `${d.id} ${fmt} size`);
+          const doc = await gdb.collection('growth_posters').findOne({ id: d.poster[fmt].id }, { projection: { bytes: 0 } });
+          ok(doc.facts.fighterA === d.contest.fighterA && doc.facts.fighterB === d.contest.fighterB, `${d.id}: poster names`);
+          const L = doc.layout.qr; const { data, info } = await sharp(body).extract({ left: L.left, top: L.top, width: L.px, height: L.px }).greyscale().raw().toBuffer({ resolveWithObject: true });
+          const q = ps.qrMatrix(d.poster.qrUrl); let bad = 0;
+          for (let rr = 0; rr < q.size; rr++) for (let cc2 = 0; cc2 < q.size; cc2++) { const y = (rr + L.quiet) * L.scale + (L.scale >> 1); const x = (cc2 + L.quiet) * L.scale + (L.scale >> 1); if ((data[y * info.width + x] < 128) !== q.get(rr, cc2)) bad++; }
+          if (bad) throw Object.assign(new Error(`${d.id} ${fmt}: ${bad} QR modules differ`), { diag: 255 });
+          if (doc.layout.art) { const a = doc.layout.art; ok(Math.abs(a.width / a.height - a.sourceWidth / a.sourceHeight) < 0.01, `${d.id}: artwork aspect changed`); }
+        }
+      }
+      live.posters = { campaigns: queued.length, official, text };
+      log('posters', JSON.stringify(live.posters));
+    });
+    await check('isolated gate: the legacy game server is unreachable here; only /api/growth answers', async () => {
+      for (const pth of ['/', '/api/cron-job', '/api/public/prediction-fights', '/api/users/login']) {
+        const r = await fetch(`${origin}${pth}`);
+        if (!(r.status === 404 && (await r.json().catch(() => ({}))).service === 'growth-engine-isolated')) throw Object.assign(new Error(`${pth} -> ${r.status}`), { diag: 260 });
+      }
+      ok((await fetch(`${origin}/api/growth/health`)).status === 200, 'health');
+    });
     await check('connections, email readiness and funnel endpoints work on staging', async () => {
       const c = (await api('GET', '/admin/connections')).json.connections;
       ok(c.social.provider === 'sandbox', `social provider ${c.social.provider}`);
@@ -346,6 +384,13 @@ async function main() {
         ok(/All five sports/.test(txt), 'coverage card');
         await page.click('[data-testid=btn-check-fights]'); await page.waitForSelector('[data-testid=toast]');
         ok(/verified fight/.test(await page.textContent('[data-testid=toast]')), 'check-now toast');
+      });
+      await check('browser: campaign cards show the generated posters (feed + TikTok) with the artwork source', async () => {
+        await goto('#/approvals');
+        await page.waitForSelector('[data-testid=posters] [data-testid=poster-portrait] img');
+        const loaded = await page.$$eval('[data-testid=posters] img', (imgs) => imgs.slice(0, 6).map((i) => i.complete && i.naturalWidth));
+        ok(loaded.length >= 2 && loaded.every((w) => w === 1080), `poster images ${JSON.stringify(loaded)}`);
+        ok((await page.$$('[data-testid=poster-art]')).length >= 1, 'artwork chip');
       });
       // ---- buttons, on labelled fixtures only ----
       const nowIso = new Date().toISOString();
@@ -445,6 +490,34 @@ async function main() {
         }
       });
       await check('no browser errors and no CORS refusals', async () => { ok(problems.length === 0, problems.join(' | ')); ok(corsErrors.length === 0, corsErrors.join(' ')); });
+      // ---- REAL network: the deployed public staging address, embedded by the website preview origin ----
+      await check('real staging address is public (no Vercel sign-in wall), console embeddable only by the admin site', async () => {
+        const WEB = 'https://fmm-ver2-git-test-growth-e-7c8860-kelly-davis-projects-6c108d0b.vercel.app';
+        const h = await fetch(`${STAGING}/api/growth/health`, { redirect: 'manual' });
+        if (h.status !== 200) throw Object.assign(new Error(`public staging health -> ${h.status} ${h.headers.get('location') || ''}`), { diag: 270 });
+        const con = await fetch(`${STAGING}/api/growth/console?embed=1`, { redirect: 'manual' });
+        const csp = con.headers.get('content-security-policy') || '';
+        if (!(con.status === 200 && csp.includes(`frame-ancestors`) && csp.includes(WEB) && !con.headers.get('x-frame-options'))) throw Object.assign(new Error(`console ${con.status} xfo=${con.headers.get('x-frame-options')} csp=${csp}`), { diag: 271 });
+        const legacy = await fetch(`${STAGING}/api/cron-job`, { redirect: 'manual' });
+        if (legacy.status !== 404) throw Object.assign(new Error(`legacy route on the public staging address -> ${legacy.status}`), { diag: 272 });
+        const ctx = await browser.newContext({ viewport: { width: 1360, height: 900 } });
+        const host = async (pageOrigin) => {
+          const pg = await ctx.newPage(); pg.setDefaultTimeout(30000);
+          await ctx.route(`${pageOrigin}/__embed-check`, (rt) => rt.fulfill({ status: 200, contentType: 'text/html', body: `<!doctype html><title>embed</title><iframe id="ge" style="width:1200px;height:800px" src="${STAGING}/api/growth/console?embed=1#/overview" referrerpolicy="no-referrer"></iframe>` }));
+          await pg.goto(`${pageOrigin}/__embed-check`); await pg.waitForTimeout(500);
+          const deadline = Date.now() + 25000; let fr = null;
+          while (Date.now() < deadline) { fr = pg.frames().find((f) => f !== pg.mainFrame()); if (fr && fr.url() !== 'about:blank') break; await pg.waitForTimeout(250); }
+          let login = false; try { await fr.waitForSelector('[data-testid=login]', { timeout: 15000 }); login = true; } catch {}
+          const res = { url: fr ? fr.url() : null, login }; await pg.close(); return res;
+        };
+        const good = await host(WEB);
+        if (!good.login) throw Object.assign(new Error(`admin site could not embed the console: ${JSON.stringify(good)}`), { diag: 273 });
+        const bad = await host('https://not-the-admin-site.example');
+        if (bad.login) throw Object.assign(new Error('a foreign site could embed the console'), { diag: 274 });
+        await ctx.close();
+        live.embed = { admin: good, foreign: bad };
+        log('embed', JSON.stringify(live.embed));
+      });
     }
   } catch (e) {
     exitCode = e.code || 1;
