@@ -72,6 +72,21 @@ test('fighter-name URLs in every campaign, with the ID address as fallback', { s
       assert.equal(after.posts.facebook, d.posts.facebook); assert.equal((after.linkHistory || []).length, 0);
     });
 
+    await t.test('an owner edit that drops the tracking tags gets them back (attribution kept)', async () => {
+      const d = await drafts.findOne({ contestId: 'kb0000000002' });
+      const bare = d.posts.instagram.replace(/\?play=1&\S+/, '');
+      assert.ok(!/utm_/.test(bare));
+      const r = await call('POST', `/admin/drafts/${encodeURIComponent(d.id)}/edit`, { text: bare });
+      assert.equal(r.status, 200, JSON.stringify(r.json));
+      const after = await drafts.findOne({ id: d.id });
+      assert.match(after.posts.instagram, /\?play=1&utm_source=fan_acquisition&utm_medium=partner_outreach&utm_campaign=combat_fans_gs_kickboxing&utm_content=instagram/);
+      assert.match(after.posts.facebook, /utm_content=facebook/);
+      // an older edited campaign without tags is repaired by the next refresh
+      await drafts.updateOne({ id: d.id }, { $set: { 'posts.facebook': bare, editedAt: new Date().toISOString() } });
+      await rt.refreshMarketing(new Date());
+      assert.match((await drafts.findOne({ id: d.id })).posts.facebook, /utm_campaign=combat_fans_gs_kickboxing&utm_content=facebook/);
+    });
+
     let approvedId; let scheduledPostId;
     await t.test('an approved campaign is scheduled while only the ID address exists', async () => {
       const d = await drafts.findOne({ contestId: BX });

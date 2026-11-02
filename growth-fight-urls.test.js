@@ -112,3 +112,20 @@ test('affiliate links keep ref= and the affiliate campaign tag on the clean addr
   assert.equal(playerLink(a, c), `${CLEAN}?play=1&ref=${'a'.repeat(24)}&utm_source=fan_acquisition&utm_medium=partner_outreach&utm_campaign=combat_fans_aff_coach_ab12&utm_content=boxing`);
   assert.equal(playerLink(a, fight), `${idBaseFor(fight)}?play=1&ref=${'a'.repeat(24)}&utm_source=fan_acquisition&utm_medium=partner_outreach&utm_campaign=combat_fans_aff_coach_ab12&utm_content=boxing`);
 });
+
+test('campaign tags are restored on a fight link after an edit; generated links stay identical', async () => {
+  const { tagCampaignLinks } = require('./growth-contest-campaigns');
+  const [c] = await createFightUrlResolver({ col: memCol(), fetchImpl: site('redirect') }).enrich([fight]);
+  const k = buildCampaign(c);
+  for (const ch of ['facebook', 'instagram', 'x']) assert.equal(tagCampaignLinks(k.posts[ch], c, ch), k.posts[ch], `${ch} changed`);
+  const tags = 'utm_source=fan_acquisition&utm_medium=partner_outreach&utm_campaign=combat_fans_gs_boxing';
+  assert.equal(tagCampaignLinks(`Picks: ${CLEAN}.`, c, 'facebook'), `Picks: ${CLEAN}?play=1&${tags}&utm_content=facebook.`);
+  assert.equal(tagCampaignLinks(`Picks ${SITE}/fight/${fight.id}`, c, 'instagram'), `Picks ${SITE}/fight/${fight.id}?play=1&${tags}&utm_content=instagram`);
+  // a copy of the Instagram caption pasted for Facebook gets Facebook's tag
+  assert.match(tagCampaignLinks(k.posts.instagram, c, 'facebook'), /utm_content=facebook/);
+  // affiliate ref and affiliate campaign are kept
+  const aff = `${CLEAN}?play=1&ref=${'a'.repeat(24)}&utm_source=fan_acquisition&utm_medium=partner_outreach&utm_campaign=combat_fans_aff_x_ab12&utm_content=boxing`;
+  assert.equal(tagCampaignLinks(aff, c, 'facebook'), aff);
+  // other pages are untouched
+  assert.equal(tagCampaignLinks(`${SITE}/how-to-play and ${SITE}/fight/other-fight`, c, 'x'), `${SITE}/how-to-play and ${SITE}/fight/other-fight`);
+});
