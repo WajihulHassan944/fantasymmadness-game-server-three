@@ -24,6 +24,7 @@ const { createTokenVault } = require('./growth-token-vault');
 const fightUrls = require('./growth-fight-urls');
 const { createProspectResearch } = require('./growth-prospect-research');
 const outreachComposer = require('./growth-outreach-composer');
+const { createPosterStudio } = require('./growth-poster-studio');
 
 const clean = (s, n = 200) => String(s ?? '').replace(/[\r\n\x00-\x1f]/g, ' ').trim().slice(0, n);
 const minuteId = (d) => 'growth_' + d.toISOString().replace(/[^0-9]/g, '').slice(0, 12);
@@ -43,7 +44,7 @@ function createGrowthRuntime({ db, config, secrets = {}, provider, fetchImpl = g
     coverage: db.collection('growth_marketing_coverage'), gateRejections: db.collection('growth_campaign_rejections'),
     affiliates: db.collection('growth_affiliates'), liveReports: db.collection('growth_live_reports'),
     social: db.collection('growth_social_posts'), settings: db.collection('growth_settings'), socialSandbox: db.collection('growth_social_sandbox'),
-    connections: db.collection('growth_connections'), oauthStates: db.collection('growth_oauth_states'), fightUrls: db.collection('growth_fight_urls'), sandboxMail: db.collection('growth_sandbox_mail'),
+    connections: db.collection('growth_connections'), oauthStates: db.collection('growth_oauth_states'), fightUrls: db.collection('growth_fight_urls'), sandboxMail: db.collection('growth_sandbox_mail'), posters: db.collection('growth_posters'), artRights: db.collection('growth_art_rights'),
   };
   const claims = createIsolatedRunClaims(col.runs, { testMode: true });
   const store = createStore(col.jobs, { testMode: true });
@@ -63,6 +64,8 @@ function createGrowthRuntime({ db, config, secrets = {}, provider, fetchImpl = g
     await col.reports.createIndex({ day: 1 }, { unique: true });
     await col.coverage.createIndex({ day: 1 }, { unique: true });
     await col.gateRejections.createIndex({ at: -1 });
+    await col.posters.createIndex({ id: 1 }, { unique: true }); await col.posters.createIndex({ draftId: 1 });
+    await col.artRights.createIndex({ contestId: 1 }, { unique: true });
   }
 
   // ---- alerts: always recorded for the back office; emailed when a sender exists
@@ -162,6 +165,22 @@ function createGrowthRuntime({ db, config, secrets = {}, provider, fetchImpl = g
     const r = await col.drafts.updateMany({ kind: 'marketing', status: { $in: ['needs_owner_review', 'approved'] }, ...filter }, { $set: { status: 'rejected', ownerApproved: false, sendPermitted: false, rejectedBy: 'system-safeguard', rejectedAt: now.toISOString(), rejectReason: reason } });
     return r.modifiedCount || 0;
   }
+  const posterCfg = config.posters || { enabled: false };
+  const posterStudio = createPosterStudio({ col, fetchImpl, publicOrigin: posterCfg.publicOrigin, env: posterCfg.artEnv || {} });
+  // Posters for open fight campaigns: generated once per campaign version (a few per run).
+  // A failure never blocks marketing: the campaign simply waits for its poster.
+  async function ensurePosters(now = new Date(), { limit = posterCfg.perRun || 6, ids = null } = {}) {
+    if (!posterCfg.enabled) return { skipped: 'posters_disabled' };
+    const q = { kind: 'marketing', contestId: { $exists: true }, status: { $in: ['needs_owner_review', 'approved'] }, ...(ids ? { id: { $in: ids } } : {}) };
+    const open = await col.drafts.find(q).sort({ createdAt: 1 }).toArray();
+    const stale = open.filter((d) => !d.poster || !d.poster.portrait || !d.poster.story || d.poster.qrUrl !== require('./growth-poster-studio').qrLink(d.contest));
+    const done = []; const failed = [];
+    for (const d of stale.slice(0, limit)) {
+      try { const r = await posterStudio.ensureForDraft(d, { now }); if (r.ok) done.push({ id: d.id, art: r.poster.art.used ? 'official_artwork' : `typographic (${r.poster.art.reason})` }); else failed.push({ id: d.id, reason: r.reason }); }
+      catch (e) { failed.push({ id: d.id, reason: clean(e.message) }); await alert(`poster:${d.id}:${dayKey(now)}`, 'poster', d.id, `poster could not be generated: ${e.message}`, now); }
+    }
+    return { generated: done.length, failed, waiting: Math.max(0, stale.length - limit), done };
+  }
   async function refreshMarketing(now = new Date(), { trigger = 'manual' } = {}) {
     const names = await mediaNames();
     const feed = await withAddresses(await contestCampaigns.fetchVerifiedContests({ fetchImpl, baseUrl: config.contestSourceUrl, now, horizonDays: config.marketingHorizonDays, mediaNames: names }), now);
@@ -221,7 +240,8 @@ function createGrowthRuntime({ db, config, secrets = {}, provider, fetchImpl = g
     const doc = { day: dayKey(now), checkedAt: now.toISOString(), trigger, sourceReachable: feed.sourceReachable, sourceErrors: feed.errors, contestsChecked: feed.checked, verifiedContests: feed.contests.length, created: created.length, withdrawn, blocked, sports: coverage };
     await col.coverage.updateOne({ day: doc.day }, { $set: doc }, { upsert: true });
     if (withdrawn || created.length) await audit('refresh_marketing', { trigger, created: created.length, withdrawn, blocked: blocked.length, admin: 'system' });
-    return { contests: feed.contests, created: created.length, withdrawn, blocked: blocked.length, sourceReachable: feed.sourceReachable };
+    const posters = await ensurePosters(now).catch((e) => ({ error: clean(e.message) }));
+    return { contests: feed.contests, created: created.length, withdrawn, blocked: blocked.length, sourceReachable: feed.sourceReachable, posters };
   }
   // Re-verify a campaign's contest right before an owner action.
   async function reverifyMarketing(draft, now = new Date()) {
@@ -414,6 +434,11 @@ function createGrowthRuntime({ db, config, secrets = {}, provider, fetchImpl = g
     if (current && current.status === 'needs_owner_review' && current.kind === 'marketing') {
       const v = await reverifyMarketing(current, now);
       if (!v.ok) return { ok: false, reason: v.reason, details: v.details };
+      // With posters on, the owner approves the campaign together with its poster.
+      if (posterCfg.enabled && (!current.poster?.portrait || !current.poster?.story)) {
+        const g = await ensurePosters(now, { ids: [current.id], limit: 1 });
+        if (!g.generated) return { ok: false, reason: 'poster_not_ready_try_again', details: (g.failed || []).map((f) => f.reason) };
+      }
     }
     const r = await col.drafts.findOneAndUpdate({ id: clean(id, 160), status: 'needs_owner_review' }, { $set: { status: 'approved', ownerApproved: true, sendPermitted: true, approvedBy: clean(admin, 120), approvedAt: now.toISOString() } }, { returnDocument: 'after' });
     if (!r) return { ok: false, reason: 'not_found_or_not_awaiting_review' };
@@ -468,7 +493,7 @@ function createGrowthRuntime({ db, config, secrets = {}, provider, fetchImpl = g
   }
   async function unsubscribe(token) { return suppression.unsubscribe(token); }
 
-  return { init, tick, dispatch, researchBatch, refreshMarketing, reverifyMarketing, social: socialScheduler, publisher, meta, affiliates: affiliateProgram, listDrafts, approveDraft, rejectDraft, addVerifiedContact, overview, listAlerts, ackAlert, requeueJob, unsubscribe, suppression, collections: col };
+  return { init, tick, dispatch, researchBatch, refreshMarketing, ensurePosters, posters: posterStudio, reverifyMarketing, social: socialScheduler, publisher, meta, affiliates: affiliateProgram, listDrafts, approveDraft, rejectDraft, addVerifiedContact, overview, listAlerts, ackAlert, requeueJob, unsubscribe, suppression, collections: col };
 }
 
 module.exports = { createGrowthRuntime };

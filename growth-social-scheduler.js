@@ -18,6 +18,9 @@ const STUCK_MINUTES = 10;
 const DUPLICATE_WINDOW_DAYS = 7;
 const ACTIVE = ['scheduled', 'publishing', 'published', 'needs_check'];
 // Same channel + same caption + same image = the same post, whichever campaign it came from.
+// The campaign's generated FANTASY MMADNESS poster (4:5 for feeds, 9:16 for TikTok);
+// campaigns made before posters existed fall back to the contest's own artwork.
+const imageFor = (d, ch) => (ch === 'tiktok' ? d.poster?.story?.url : d.poster?.portrait?.url) || d.contest?.posterUrl || null;
 const fingerprint = (channel, text, imageUrl) => crypto.createHash('sha256').update([channel, String(text || '').trim().replace(/\s+/g, ' '), imageUrl || ''].join('|')).digest('hex').slice(0, 24);
 const CONTEST_LINK = /https:\/\/www\.fantasymmadness\.com\/\S*utm_campaign=combat_fans_gs_\S*/;
 
@@ -72,11 +75,12 @@ function createSocialScheduler({ col, social, publisher, reverifyMarketing, aler
         text = text.replace(CONTEST_LINK, `${playerLink(aff, d.contest)}&utm_term=${ch}`);
       }
       const needsImage = ch === 'instagram' || ch === 'tiktok';
-      if (needsImage && !d.contest.posterUrl) { results.push({ channel: ch, ok: false, reason: 'channel_needs_a_fight_poster_image' }); continue; }
+      const posterImage = imageFor(d, ch);
+      if (needsImage && !posterImage) { results.push({ channel: ch, ok: false, reason: 'channel_needs_a_fight_poster_image' }); continue; }
       const id = `${d.id}__${ch}${aff ? `__${aff.code}` : ''}`;
       const existing = await col.social.findOne({ id });
       if (existing && ACTIVE.includes(existing.status)) { results.push({ channel: ch, ok: false, reason: `already_${existing.status}` }); continue; }
-      const imageUrl = needsImage ? d.contest.posterUrl : (d.contest.posterUrl || null);
+      const imageUrl = posterImage;
       const fp = fingerprint(ch, text, imageUrl);
       const dup = await duplicateOf(fp, { excludeId: id, now });
       if (dup) { results.push({ channel: ch, ok: false, reason: `duplicate_of_${dup.status}_post`, duplicateOf: dup.id }); continue; }
@@ -195,7 +199,7 @@ function createSocialScheduler({ col, social, publisher, reverifyMarketing, aler
     if (!['approved', 'published'].includes(d.status)) return { ok: false, reason: 'approve_the_campaign_first' };
     const v = await reverifyMarketing({ ...d, status: 'needs_owner_review' }, now);
     if (!v.ok) return { ok: false, reason: v.reason };
-    const text = d.posts?.[ch]; const imageUrl = d.contest.posterUrl || null;
+    const text = d.posts?.[ch]; const imageUrl = imageFor(d, ch);
     if (!text) return { ok: false, reason: 'no_post_for_this_channel' };
     if (ch === 'instagram' && !imageUrl) return { ok: false, reason: 'channel_needs_a_fight_poster_image' };
     const fp = fingerprint(ch, text, imageUrl);

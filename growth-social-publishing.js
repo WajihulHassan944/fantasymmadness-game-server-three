@@ -59,6 +59,25 @@ function resolveSocialConfig(env = {}) {
   return { provider, approved, paused: env.GROWTH_SOCIAL_PAUSED === 'true', channels, errors, secrets };
 }
 
+// X counts every link as 23 characters and most emoji/CJK as 2.
+function xWeightedLength(text) {
+  let n = 0; const t = String(text || '').replace(/https?:\/\/\S+/g, (m) => { n += 23; return ''; });
+  for (const ch of t) { const cp = ch.codePointAt(0); n += (cp <= 0x10ff || (cp >= 0x2000 && cp <= 0x200d) || (cp >= 0x2010 && cp <= 0x201f) || (cp >= 0x2032 && cp <= 0x2037)) ? 1 : 2; }
+  return n;
+}
+
+// What each platform can really do through this engine (kept truthful; shown to the owner).
+const PLATFORM_CAPABILITIES = Object.freeze({
+  facebook: { media: 'poster image (Page photo post)', posterFormat: 'portrait 1080x1350', clickableLinks: true, captionLimit: 63206, implemented: true,
+    requires: ['Facebook Page connected (Connections)', 'pages_manage_posts permission', 'owner authorization for real posts'] },
+  instagram: { media: 'poster image (JPEG, 4:5 to 1.91:1, max 8 MB)', posterFormat: 'portrait 1080x1350', clickableLinks: false, captionLimit: 2200, hashtagLimit: 30, implemented: true,
+    requires: ['Instagram professional account linked to the Page', 'instagram_content_publish permission', 'image hosted at a public https address', 'owner authorization for real posts'], note: 'Links in captions are not clickable: the QR code on the poster carries the contest link.' },
+  x: { media: 'text and link only (poster not attached)', posterFormat: null, clickableLinks: true, captionLimit: 280, implemented: true,
+    requires: ['X user access token with tweet.write (GROWTH_X_USER_ACCESS_TOKEN)', 'owner authorization for real posts'], note: 'Attaching the poster needs X media upload (media.write); not enabled yet, so X posts are text + link.' },
+  tiktok: { media: 'poster photo (PULL_FROM_URL)', posterFormat: 'story 1080x1920', clickableLinks: false, captionLimit: 4000, implemented: true,
+    requires: ['TikTok Content Posting API app with video.publish / video.upload scope', 'the poster address domain verified in the TikTok developer portal (PULL_FROM_URL)', 'TikTok audit for public direct posting (until then: inbox drafts)', 'owner authorization for real posts'], note: 'Captions are not clickable: the QR code on the poster carries the contest link.' },
+});
+
 // Instagram accepts JPEG images only: ask Cloudinary for a JPEG rendition of the poster.
 function instagramImageUrl(url) {
   const u = String(url || '');
@@ -78,6 +97,8 @@ async function preflight(post, { fetchImpl } = {}) {
     if (!post.imageUrl) problems.push('Instagram requires an image (the fight has no poster image)');
   }
   if (post.channel === 'facebook' && [...text].length > 63206) problems.push('Facebook post is too long');
+  if (post.channel === 'x') { const n = xWeightedLength(text); if (n > 280) problems.push(`X post is ${n} characters (limit 280; links count as 23)`); if (post.imageUrl) notes.push('X: text post with link; the poster is not attached (X media upload not enabled)'); }
+  if (post.channel === 'tiktok') { if ([...text].length > 4000) problems.push('TikTok description is longer than 4,000 characters'); if (!post.imageUrl) problems.push('TikTok requires an image'); notes.push('TikTok: captions are not clickable; the poster QR code and "link in bio" carry the link'); }
   const img = post.channel === 'instagram' ? instagramImageUrl(post.imageUrl) : post.imageUrl;
   if (img) {
     if (!/^https:\/\//.test(img)) problems.push('image must be a public https address');
@@ -90,6 +111,8 @@ async function preflight(post, { fetchImpl } = {}) {
           if (post.channel === 'instagram' && type && !/image\/jpe?g/i.test(type)) problems.push(`Instagram needs a JPEG image (got ${type})`);
           if (post.channel === 'instagram' && size > 8 * 1024 * 1024) problems.push('Instagram images must be 8 MB or smaller');
           if (!/^image\//i.test(type) && type) problems.push(`image address does not return an image (${type})`);
+          const iw = Number(r.headers?.get?.('x-image-width') || 0); const ih = Number(r.headers?.get?.('x-image-height') || 0);
+          if (post.channel === 'instagram' && iw && ih && (iw / ih < 0.8 - 1e-3 || iw / ih > 1.91 + 1e-3)) problems.push(`Instagram feed images must be between 4:5 and 1.91:1 (got ${iw}x${ih})`);
           notes.push(`image checked (${type || 'type unknown'}${size ? ', ' + Math.round(size / 1024) + ' KB' : ''})`);
         }
       } catch (e) { notes.push('image could not be checked right now (network)'); }
@@ -188,7 +211,7 @@ function createSocialPublisher({ social, fetchImpl = globalThis.fetch, sandboxCo
     if (ch.needsImage && !post.imageUrl) return fail(`${post.channel} requires an image (the fight has no poster image)`, false);
     if (ch.mode === 'sandbox') {
       // Simulated: nothing reaches Meta. The same checks Meta applies are run read-only.
-      const pf = META_CHANNELS.includes(post.channel) ? await preflight(post, { fetchImpl: checkImages ? fetchImpl : null }) : { ok: true, problems: [], notes: [] };
+      const pf = await preflight(post, { fetchImpl: checkImages && post.channel !== 'x' ? fetchImpl : null });
       if (!pf.ok) return fail(`sandbox check failed: ${pf.problems.join('; ')}`, false);
       const connected = META_CHANNELS.includes(post.channel) ? Boolean(await credentials(post.channel)) : null;
       const id = `sandbox-${post.channel}-${crypto.randomBytes(6).toString('hex')}`;
@@ -203,4 +226,4 @@ function createSocialPublisher({ social, fetchImpl = globalThis.fetch, sandboxCo
   return { publish, publishLive, channelState, credentials, preflight: (post) => preflight(post, { fetchImpl: checkImages ? fetchImpl : null }) };
 }
 
-module.exports = { CHANNELS, META_CHANNELS, META_BLOCKER, resolveSocialConfig, createSocialPublisher, instagramImageUrl, preflight };
+module.exports = { CHANNELS, META_CHANNELS, META_BLOCKER, PLATFORM_CAPABILITIES, xWeightedLength, resolveSocialConfig, createSocialPublisher, instagramImageUrl, preflight };

@@ -6,7 +6,7 @@
 const expressPath = require.resolve('express');
 const expressOriginal = require(expressPath);
 let capturedApp = null;
-const expressCapture = (...args) => { capturedApp = expressOriginal(...args); capturedApp.use(require('./passive-incident-monitor').passiveIncidentMonitor); capturedApp.use(require('./fan-acquisition-attribution').registrationCapture); capturedApp.use(require('./registration-attempts').attemptRecorder); return capturedApp; };
+const expressCapture = (...args) => { capturedApp = expressOriginal(...args); if (process.env.VERCEL_PROJECT_ID === require('./growth-runtime-config').ISOLATED_PROJECT_ID) capturedApp.use(require('./growth-isolated-gate').isolatedGate); capturedApp.use(require('./passive-incident-monitor').passiveIncidentMonitor); capturedApp.use(require('./fan-acquisition-attribution').registrationCapture); capturedApp.use(require('./registration-attempts').attemptRecorder); return capturedApp; };
 Object.assign(expressCapture, expressOriginal);
 require.cache[expressPath].exports = expressCapture;
 require('./server');

@@ -86,6 +86,17 @@ function registerIsolatedGrowthRoutes({ app, env = process.env, express, transpo
     res.json({ ok: true, summary });
   }));
 
+  // ---- posters (public: Facebook/Instagram/TikTok fetch them by address) ----
+  router.get('/posters/:file', wrap(async (req, res, rt) => {
+    const m = String(req.params.file || '').match(/^([a-f0-9]{20}-(portrait|story))\.jpg$/);
+    const img = m ? await rt.posters.getImage(m[1]) : null;
+    if (!img) return res.status(404).set('Cache-Control', 'no-store').json({ ok: false, error: 'not_found' });
+    const fmt = require('./growth-poster-studio').FORMATS[m[2]];
+    res.set({ 'Content-Type': img.contentType, 'Content-Length': String(img.buffer.length), 'Cache-Control': 'public, max-age=600', ETag: `"${img.sha256.slice(0, 32)}"`, 'X-Content-Type-Options': 'nosniff', 'Cross-Origin-Resource-Policy': 'cross-origin', 'X-Image-Width': String(fmt.width), 'X-Image-Height': String(fmt.height) });
+    if (req.method === 'HEAD') return res.end();
+    res.end(img.buffer);
+  }));
+
   // ---- unsubscribe ----
   const unsubscribe = wrap(async (req, res, runtime) => {
     const token = String(req.query.token || req.body?.token || '');
@@ -303,6 +314,33 @@ function registerIsolatedGrowthRoutes({ app, env = process.env, express, transpo
     res.set({ 'Content-Type': 'application/javascript; charset=utf-8', 'Cache-Control': 'no-store', 'X-Content-Type-Options': 'nosniff' });
     res.send("(function(){try{history.replaceState(null,'',location.pathname);}catch(e){}var ok=document.body.getAttribute('data-ok')==='1';try{if(window.opener&&window.opener!==window)window.opener.postMessage({type:'fmm-meta-connect',ok:ok},location.origin);}catch(e){}if(ok)setTimeout(function(){try{window.close();}catch(e){}},2500);})();");
   });
+  // Posters + artwork rights + platform capabilities
+  router.get('/admin/posters', admin, wrap(async (req, res, rt) => {
+    const q = req.query.draftId ? { draftId: String(req.query.draftId).slice(0, 200) } : {};
+    const rows = await rt.collections.posters.find({ ...q, withdrawnAt: { $exists: false } }, { projection: { bytes: 0, _id: 0 } }).sort({ createdAt: -1 }).limit(100).toArray();
+    res.json({ ok: true, posters: rows.map((p) => ({ ...p, url: rt.posters.urlFor(p.id) })), enabled: Boolean(resolved.config.posters?.enabled) });
+  }));
+  router.post('/admin/posters/generate', admin, wrap(async (req, res, rt) => {
+    const ids = Array.isArray(req.body?.draftIds) ? req.body.draftIds.map((x) => String(x).slice(0, 200)).slice(0, 20) : null;
+    const r = await rt.ensurePosters(new Date(), { limit: 20, ids });
+    await rt.collections.audit.insertOne({ action: 'generate_posters', admin: who(req), generated: r.generated || 0, at: new Date().toISOString() });
+    res.json({ ok: !r.skipped, ...r });
+  }));
+  router.post('/admin/art-rights/:contestId', admin, wrap(async (req, res, rt) => {
+    const r = await rt.posters.setArtRights(req.params.contestId, { status: req.body?.status, note: req.body?.note, admin: who(req) });
+    if (r.ok) {
+      await rt.collections.audit.insertOne({ action: 'art_rights', contestId: String(req.params.contestId).slice(0, 80), status: req.body?.status, admin: who(req), at: new Date().toISOString() });
+      const ds = await rt.collections.drafts.find({ kind: 'marketing', contestId: String(req.params.contestId).slice(0, 80), status: { $in: ['needs_owner_review', 'approved'] } }).toArray();
+      for (const d of ds) {
+        await rt.posters.ensureForDraft(d, { force: true });
+        // The poster changed: an approved campaign goes back for review and its queued posts are cancelled.
+        if (d.status === 'approved') await rt.collections.drafts.updateOne({ id: d.id, status: 'approved' }, { $set: { status: 'needs_owner_review', ownerApproved: false, sendPermitted: false, reviewNote: 'Poster artwork changed (artwork rights updated): review the new poster' } });
+        await rt.collections.social.updateMany({ draftId: d.id, status: { $in: ['scheduled', 'held'] } }, { $set: { status: 'cancelled', cancelledBy: 'system: artwork rights changed', cancelledAt: new Date().toISOString() } });
+      }
+    }
+    res.status(r.ok ? 200 : 422).json(r);
+  }));
+  router.get('/admin/social/capabilities', admin, wrap(async (req, res, rt) => res.json({ ok: true, capabilities: require('./growth-social-publishing').PLATFORM_CAPABILITIES, channels: await liveChannels(rt), provider: resolved.config.social.provider })));
   router.post('/admin/social/pause', admin, wrap(async (req, res, rt) => res.json({ ok: true, paused: await rt.social.setPaused(req.body?.paused === true, { admin: who(req) }) })));
   router.post('/admin/social/:id/cancel', admin, wrap(async (req, res, rt) => { const r = await rt.social.cancel(req.params.id, { admin: who(req) }); res.status(r.ok ? 200 : 409).json(r); }));
   router.post('/admin/social/:id/retry', admin, wrap(async (req, res, rt) => { const r = await rt.social.retry(req.params.id, { admin: who(req), confirmNotPublished: req.body?.confirmNotPublished === true }); res.status(r.ok ? 200 : 409).json(r); }));

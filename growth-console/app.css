@@ -205,3 +205,8 @@ code.copy{display:block;padding:8px 10px;border:1px dashed #9ab;border-radius:6p
 .exec-next{font-weight:600;margin-top:4px}
 .exec ul{margin:4px 0 0;padding-left:18px}
 .exec-auto{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:12px;margin-top:8px}
+/* posters */
+.posters { margin: 10px 0; }
+.poster-row { display: flex; gap: 12px; align-items: flex-end; flex-wrap: wrap; }
+.poster-thumb { display: inline-flex; flex-direction: column; align-items: center; gap: 4px; text-decoration: none; color: inherit; }
+.poster-thumb img { width: 120px; height: auto; border-radius: 6px; border: 1px solid rgba(255,255,255,.15); background: #0b0b10; }

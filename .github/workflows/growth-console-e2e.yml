@@ -38,6 +38,18 @@ jobs:
         run: |
           npx --yes @vercel/nft@0.29.4 print growth-isolated-routes.js > nft.txt
           for f in growth-console/index.html growth-console/app.js growth-console/app.css; do grep -qx "$f" nft.txt || { echo "missing $f"; exit 1; }; echo "traced $f"; done
+      - name: Poster fonts are traced into the Vercel function bundle
+        run: |
+          npx --yes @vercel/nft@0.29.4 print growth-poster-studio.js > nft-posters.txt || true
+          for f in growth-assets/fonts/Poppins-Bold.ttf growth-assets/fonts/Poppins-Regular.ttf; do test -f "$f" || { echo "missing $f"; exit 1; }; done
+          grep -q '"growth-assets/\*\*"' vercel.json && echo "growth-assets included via vercel.json includeFiles"
+      - name: Render sample posters (synthetic artwork)
+        run: node growth-acceptance/render-poster-samples.js poster-samples
+      - name: Upload sample posters
+        uses: actions/upload-artifact@v4
+        with:
+          name: poster-samples
+          path: poster-samples
       - name: Full Growth Engine suite (regression; browser test skipped here)
         run: node --test --test-concurrency=1 growth-*.test.js growth-*.integration.test.js  # one file at a time: several share the fmgrowthtest database
       - name: Install Playwright + Chromium (test-only, not saved to package.json)
