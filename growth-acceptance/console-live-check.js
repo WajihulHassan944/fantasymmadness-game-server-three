@@ -31,7 +31,7 @@ const stamp = Date.now().toString(36);
 const FX = { mkt1: `uitest-mkt-a-${stamp}`, mkt2: `uitest-mkt-b-${stamp}`, prospect: `uitest-p-${stamp}`, prospect2: `uitest-q-${stamp}`, alert: `uitest:alert-${stamp}`, job: `uitest-job-${stamp}`, optout: `uitest-${stamp}@example.invalid` };
 const log = (...a) => console.log('[console-live-check]', ...a);
 let step = 0;
-const check = async (name, fn) => { step++; try { await fn(); log(`PASS ${step} ${name}`); } catch (e) { log(`FAIL ${step} ${name}: ${e && e.stack || e}`); throw Object.assign(new Error('check failed'), { code: 100 + step }); } };
+const check = async (name, fn) => { step++; try { await fn(); log(`PASS ${step} ${name}`); } catch (e) { log(`FAIL ${step} ${name}: ${e && e.stack || e}`); throw Object.assign(new Error('check failed'), { code: (e && e.diag) || 100 + step }); } };
 const ok = (v, msg) => { if (!v) throw new Error(msg || 'assertion failed'); };
 
 async function main() {
@@ -115,26 +115,26 @@ async function main() {
     });
     await check('fight addresses come from the real website (fighter-name URL when it has one, else the working ID address)', async () => {
       const r = await api('POST', '/admin/marketing/refresh');
-      ok(r.status === 200, `refresh ${r.status}`);
+      if (!(r.status === 200)) throw Object.assign(new Error(`refresh ${r.status}`), { diag: 201 });
       const ds = (await api('GET', '/admin/drafts?kind=marketing&limit=300')).json.drafts.filter((d) => d.contestId && ['needs_owner_review', 'approved'].includes(d.status));
-      ok(ds.length > 0, 'no open fight campaigns');
+      if (!(ds.length > 0)) throw Object.assign(new Error('no open fight campaigns'), { diag: 202 });
       const counts = {};
       for (const d of ds) {
         const c = d.contest || {};
         counts[c.urlSource || 'missing'] = (counts[c.urlSource || 'missing'] || 0) + 1;
-        ok(['id', 'redirect', 'canonical', 'feed'].includes(c.urlSource), `${d.id}: no address source`);
-        ok(/^https:\/\/www\.fantasymmadness\.com\//.test(c.idUrl || ''), `${d.id}: no ID fallback`);
+        if (!(['id', 'redirect', 'canonical', 'feed'].includes(c.urlSource))) throw Object.assign(new Error(`${d.id}: no address source`), { diag: 203 });
+        if (!(/^https:\/\/www\.fantasymmadness\.com\//.test(c.idUrl || ''))) throw Object.assign(new Error(`${d.id}: no ID fallback`), { diag: 204 });
         const base = (c.cleanUrl || c.idUrl).split('?')[0];
         for (const ch of ['facebook', 'instagram', 'x']) if (d.posts?.[ch]) {
-          ok(d.posts[ch].includes(base), `${d.id} ${ch}: link does not use the current address`);
-          ok(/utm_source=fan_acquisition&utm_medium=partner_outreach&utm_campaign=combat_fans_gs_/.test(d.posts[ch]), `${d.id} ${ch}: campaign tags missing`);
+          if (!(d.posts[ch].includes(base))) throw Object.assign(new Error(`${d.id} ${ch}: link does not use the current address`), { diag: 205 });
+          if (!(/utm_source=fan_acquisition&utm_medium=partner_outreach&utm_campaign=combat_fans_gs_/.test(d.posts[ch]))) throw Object.assign(new Error(`${d.id} ${ch}: campaign tags missing`), { diag: 206 });
         }
       }
       log(`campaign addresses: ${JSON.stringify(counts)}`);
       // A fighter-name address in use must really load on the website.
       for (const d of ds.filter((x) => x.contest?.cleanUrl).slice(0, 5)) {
         const v = await fetch(`${d.contest.contestUrl}`, { redirect: 'manual' });
-        ok(v.status === 200, `${d.contest.contestUrl} -> ${v.status}`);
+        if (!(v.status === 200)) throw Object.assign(new Error(`${d.contest.contestUrl} -> ${v.status}`), { diag: 207 });
       }
     });
     await check('sessions from before the password change are refused', async () => {
