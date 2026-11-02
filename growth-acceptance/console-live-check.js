@@ -113,6 +113,30 @@ async function main() {
       const lt = await api('POST', '/admin/social/live-test', { draftId: 'none', channel: 'facebook', confirmText: 'POST LIVE' });
       ok(lt.status === 409 && lt.json.reason === 'live_test_not_authorized_by_owner', `live test ${lt.status} ${JSON.stringify(lt.json)}`);
     });
+    await check('fight addresses come from the real website (fighter-name URL when it has one, else the working ID address)', async () => {
+      const r = await api('POST', '/admin/marketing/refresh');
+      ok(r.status === 200, `refresh ${r.status}`);
+      const ds = (await api('GET', '/admin/drafts?kind=marketing&limit=300')).json.drafts.filter((d) => d.contestId && ['needs_owner_review', 'approved'].includes(d.status));
+      ok(ds.length > 0, 'no open fight campaigns');
+      const counts = {};
+      for (const d of ds) {
+        const c = d.contest || {};
+        counts[c.urlSource || 'missing'] = (counts[c.urlSource || 'missing'] || 0) + 1;
+        ok(['id', 'redirect', 'canonical', 'feed'].includes(c.urlSource), `${d.id}: no address source`);
+        ok(/^https:\/\/www\.fantasymmadness\.com\//.test(c.idUrl || ''), `${d.id}: no ID fallback`);
+        const base = (c.cleanUrl || c.idUrl).split('?')[0];
+        for (const ch of ['facebook', 'instagram', 'x']) if (d.posts?.[ch]) {
+          ok(d.posts[ch].includes(base), `${d.id} ${ch}: link does not use the current address`);
+          ok(/utm_source=fan_acquisition&utm_medium=partner_outreach&utm_campaign=combat_fans_gs_/.test(d.posts[ch]), `${d.id} ${ch}: campaign tags missing`);
+        }
+      }
+      log(`campaign addresses: ${JSON.stringify(counts)}`);
+      // A fighter-name address in use must really load on the website.
+      for (const d of ds.filter((x) => x.contest?.cleanUrl).slice(0, 5)) {
+        const v = await fetch(`${d.contest.contestUrl}`, { redirect: 'manual' });
+        ok(v.status === 200, `${d.contest.contestUrl} -> ${v.status}`);
+      }
+    });
     await check('sessions from before the password change are refused', async () => {
       const stale = signConsoleToken(process.env.JWT_SECRET_ADMIN, { email: LABEL, pwv: 'old-password-ver' }, { expiresIn: '5m' });
       ok((await fetch(`${origin}/api/growth/admin/session`, { headers: { Authorization: `Bearer ${stale}`, Origin: STAGING } })).status === 401, 'stale accepted');
