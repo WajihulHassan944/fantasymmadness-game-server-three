@@ -64,7 +64,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        v2: ['on', 'off']   # on = Growth Engine replacement, off = rollback
+        v2: ['on', 'off', 'review']   # on = Growth Engine replacement, off = rollback, review = test back office (staging sign-in only)
     services:
       mongodb:
         image: mongo:7
@@ -110,12 +110,14 @@ jobs:
           NEXT_PUBLIC_API_BASE: http://127.0.0.1:9
           NEXT_PUBLIC_GROWTH_ENGINE_URL: http://127.0.0.1:4300
           NEXT_PUBLIC_GROWTH_ENGINE_V2: ${{ matrix.v2 }}
+          NEXT_PUBLIC_ADMIN_STAGING_REVIEW: ${{ matrix.v2 == 'review' && 'on' || 'off' }}
           NEXT_TELEMETRY_DISABLED: '1'
         run: cd web && npm run build
       - name: Start the website
         env:
           NEXT_PUBLIC_API_BASE_URL: http://127.0.0.1:9
           NEXT_PUBLIC_API_BASE: http://127.0.0.1:9
+          NEXT_PUBLIC_ADMIN_STAGING_REVIEW: ${{ matrix.v2 == 'review' && 'on' || 'off' }}
         run: |
           cd web && (npx next start -p 3000 > ../next.log 2>&1 &)
           for i in $(seq 1 60); do curl -sf -o /dev/null http://localhost:3000/administration/login && break; sleep 2; done
@@ -125,7 +127,7 @@ jobs:
           npm install --no-save --no-fund --ignore-scripts playwright@1.56.1
           npx playwright install --with-deps chromium
       - name: Browser test — back office navigation, auth, permissions, responsiveness, rollback
-        run: node --test --test-reporter=spec growth-acceptance/admin-replacement.e2e.test.js
+        run: node --test --test-reporter=spec growth-acceptance/admin-replacement.e2e.test.js growth-acceptance/staging-review.e2e.test.js
       - name: Website log (on failure)
         if: failure()
         run: tail -60 next.log || true
