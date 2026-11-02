@@ -145,8 +145,9 @@ function createGrowthRuntime({ db, config, secrets = {}, provider, fetchImpl = g
         if (!d.contest?.urlSource || (d.contest?.contestUrl || '') !== c.contestUrl || (d.contest?.cleanUrl || null) !== (c.cleanUrl || null)) { // also records the address source on campaigns made before this existed
           const k2 = fightUrls.relinkCampaign(d, c);
           const next = { ...d, ...k2, contest: { ...d.contest, idBase: c.idBase, idUrl: c.idUrl, cleanUrl: c.cleanUrl, urlSource: c.urlSource, contestUrl: c.contestUrl } };
-          if (contestCampaigns.checkCampaign(next, c, { now, mediaNames: names }).length === 0) {
-            const moved = (d.contest?.contestUrl || '') !== c.contestUrl;
+          const moved = (d.contest?.contestUrl || '') !== c.contestUrl || next.posts?.tiktok !== d.posts?.tiktok;
+          if (!moved) await col.drafts.updateOne({ id: d.id, status: d.status }, { $set: { contest: next.contest } }); // metadata only, text unchanged
+          else if (contestCampaigns.checkCampaign(next, c, { now, mediaNames: names }).length === 0) {
             await col.drafts.updateOne({ id: d.id, status: d.status }, { $set: { text: next.text, posts: next.posts, link: next.link, sourceUrl: c.contestUrl, contest: next.contest }, ...(moved ? { $push: { linkHistory: { at: now.toISOString(), from: d.contest?.contestUrl || null, to: c.contestUrl, source: c.urlSource } } } : {}) });
             if (moved) await audit('campaign_link_updated', { id: d.id, to: c.urlSource, admin: 'system' });
           }
