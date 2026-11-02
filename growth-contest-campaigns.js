@@ -100,7 +100,10 @@ function verifyContest(item, { now = new Date(), horizonDays = 21, mediaNames = 
     contestUrl: wrestling ? `${SITE}/pro-wrestling/play/${encodeURIComponent(id)}` : `${SITE}/fight/${encodeURIComponent(id)}?play=1`,
     source: wrestling ? 'fmm-public-pro-wrestling-feed' : 'fmm-public-prediction-feed',
     status: status || 'ongoing',
-    posterUrl: [item.fightPosterImage, item.featuredFightBackgroundImage, item.promotionBackground, item.bannerImage].map((u) => clean(u, 500)).find((u) => /^https:\/\/[^\s"'<>]+$/i.test(u)) || null,
+    ...(() => { // the contest's own official artwork, and which published field it came from
+      const f = ['fightPosterImage', 'featuredFightBackgroundImage', 'promotionBackground', 'bannerImage'].find((k) => /^https:\/\/[^\s"'<>]+$/i.test(clean(item[k], 500)));
+      return { posterUrl: f ? clean(item[f], 500) : null, posterField: f || null };
+    })(),
     // If the public feed itself names the website's canonical fight address, offer it to the
     // URL resolver (growth-fight-urls.js), which uses it only after the website serves it.
     canonicalFromFeed: clean(item.canonicalUrl || item.canonicalPath, 300) || null,

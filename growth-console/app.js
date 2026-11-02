@@ -237,6 +237,7 @@
       h('h3', { testid: 'draft-title', text: isEmail ? (d.subject || '(no subject)') : (d.headline || '(no headline)') }),
       isEmail ? h('div', { class: 'meta' }, h('span', null, 'To: ', h('strong', { text: d.recipient || '—' })), d.relevanceSource ? h('a', { href: d.relevanceSource, target: '_blank', rel: 'noopener noreferrer', text: 'Why this contact' }) : null) : null,
       d.kind === 'marketing' && d.contest ? fightFacts(d.contest) : null,
+      d.kind === 'marketing' && d.poster ? posterPanel(d, reload) : null,
       d.kind === 'marketing' && d.posts ? channelPosts(d) : h('div', { class: 'body', testid: 'draft-text', text: d.text || '' }),
       h('div', { class: 'meta' },
         !isEmail && d.channels ? h('span', { text: 'For: ' + d.channels.join(', ') }) : null,
@@ -264,6 +265,27 @@
       actions.appendChild(h('button', { class: 'btn danger small', testid: 'btn-withdraw', text: 'Withdraw approval', onclick: function () { reject(d, reload, true); } }));
     }
     return card;
+  }
+  // Generated FANTASY MMADNESS posters: feed (4:5) and TikTok (9:16), with the artwork source.
+  function posterPanel(d, reload) {
+    var p = d.poster; var art = p.art || {};
+    var thumb = function (fmt, label) { var x = p[fmt]; return x ? h('a', { href: x.url, target: '_blank', rel: 'noopener noreferrer', class: 'poster-thumb', testid: 'poster-' + fmt, title: 'Open full size' }, h('img', { src: x.url, alt: label + ' poster for ' + (d.contest ? d.contest.fighterA + ' vs ' + d.contest.fighterB : 'this fight'), loading: 'lazy', width: '120' }), h('small', { text: label })) : null; };
+    var artChip = art.used ? h('span', { class: 'chip good', testid: 'poster-art', 'data-art': 'official', text: '✓ Official FANTASY MMADNESS artwork (unaltered)' })
+      : h('span', { class: 'chip warn', testid: 'poster-art', 'data-art': 'typographic', text: 'Text poster: ' + String(art.reason || 'no approved artwork').replace(/_/g, ' ') });
+    var rights = d.contestId && (d.status === 'needs_owner_review' || d.status === 'approved') ? (art.used
+      ? h('button', { class: 'btn small danger', testid: 'btn-block-art', text: 'Block this artwork', onclick: function () { artRights(d, 'blocked', reload); } })
+      : (art.reason === 'artwork_blocked_by_owner' ? h('button', { class: 'btn small', testid: 'btn-allow-art', text: 'Allow artwork again', onclick: function () { artRights(d, 'allowed', reload); } }) : null)) : null;
+    return h('div', { class: 'posters', testid: 'posters' }, h('div', { class: 'poster-row' }, thumb('portrait', 'Feed 4:5'), thumb('story', 'TikTok 9:16')),
+      h('div', { class: 'meta' }, artChip, h('span', { class: 'small muted', testid: 'poster-qr', text: 'QR opens: ' + (p.qrUrl || '').replace(/^https:\/\//, '').replace(/\?.*$/, '') }), rights));
+  }
+  function artRights(d, status, reload) {
+    var note = h('input', { type: 'text', maxlength: '300', testid: 'art-note' });
+    return modal({
+      title: status === 'blocked' ? 'Block this fight artwork?' : 'Allow the official artwork again?', confirmLabel: status === 'blocked' ? 'Block artwork' : 'Allow artwork', confirmClass: status === 'blocked' ? 'danger' : '',
+      body: h('div', null, h('p', { class: 'small', text: status === 'blocked' ? 'The poster is rebuilt without any fighter image. If the campaign was approved it goes back for your review and its scheduled posts are cancelled.' : 'The poster is rebuilt with the official artwork published on this contest.' }),
+        status === 'blocked' ? h('label', { class: 'field' }, h('span', { text: 'Reason (required)' }), note) : null),
+      onConfirm: function () { return api('POST', '/admin/art-rights/' + encodeURIComponent(d.contestId), { status: status, note: note.value }); },
+    }).then(function (ok) { if (ok) { toast(status === 'blocked' ? 'Artwork blocked; poster rebuilt.' : 'Artwork allowed; poster rebuilt.', 'good'); reload(); } }).catch(fail);
   }
   function fightFacts(c) {
     var when = c.dateKey + (c.timeTba || !c.matchTime ? ' (time TBA)' : ' ' + c.matchTime + (c.timeZone ? ' ' + c.timeZone : ''));
@@ -324,7 +346,7 @@
       var boxes = {}; var names = { facebook: 'Facebook', instagram: 'Instagram', x: 'X', tiktok: 'TikTok' };
       var when = h('input', { type: 'datetime-local', testid: 'schedule-time' }); when.value = localInput(new Date(Date.now() + 10 * 60000));
       var rows = Object.keys(names).filter(function (ch) { return d.posts && d.posts[ch]; }).map(function (ch) {
-        var c = info.channels[ch] || {}; var noImg = c.needsImage && !(d.contest && d.contest.posterUrl);
+        var c = info.channels[ch] || {}; var noImg = c.needsImage && !((d.poster && d.poster.portrait) || (d.contest && d.contest.posterUrl));
         var box = h('input', { type: 'checkbox', testid: 'schedule-' + ch }); box.checked = !noImg; box.disabled = noImg; boxes[ch] = box;
         return h('label', { class: 'check-row' }, box, ' ', h('strong', { text: names[ch] }), ' ',
           noImg ? h('span', { class: 'chip warn', text: 'Needs a fight poster image' }) : c.ready ? h('span', { class: 'chip ' + (c.mode === 'live' ? 'good' : 'info'), text: c.mode === 'live' ? '✓ Live' : 'Sandbox (simulated)' }) : h('span', { class: 'chip warn', text: 'Authorization needed: will be held' }),
