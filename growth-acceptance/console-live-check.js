@@ -554,13 +554,13 @@ async function main() {
           const deadline = Date.now() + 25000; let fr = null;
           while (Date.now() < deadline) { fr = pg.frames().find((f) => f !== pg.mainFrame()); if (fr && fr.url() !== 'about:blank') break; await pg.waitForTimeout(250); }
           let login = false; try { await fr.waitForSelector('[data-testid=login]', { timeout: 15000 }); login = true; } catch {}
-          const res = { url: fr ? fr.url() : null, login }; await pg.close(); return res;
+          const res = { url: fr ? fr.url() : null, login }; await pg.close().catch(() => {}); return res;
         };
         const good = await host(WEB);
         if (!good.login) throw Object.assign(new Error(`admin site could not embed the console: ${JSON.stringify(good)}`), { diag: 273 });
         const bad = await host('https://not-the-admin-site.example');
         if (bad.login) throw Object.assign(new Error('a foreign site could embed the console'), { diag: 274 });
-        await ctx.close();
+        await ctx.close().catch(() => {}); // single-process serverless Chromium may already have torn the context down
         live.embed = { admin: good, foreign: bad };
         log('embed', JSON.stringify(live.embed));
       });
