@@ -21,7 +21,10 @@ const skip = !uri || !/^mongodb:\/\/(127\.0\.0\.1|localhost)/.test(uri);
 const secret = 's'.repeat(48);
 const env = { GROWTH_STAGING_MODE: 'isolated', GROWTH_OUTBOUND_ENABLED: 'false', GROWTH_TEST_MONGO_URI: uri, JWT_SECRET_ADMIN: secret, GROWTH_UNSUBSCRIBE_SECRET: secret, CRON_SECRET: 'cron-secret-for-tests-only', GROWTH_DELIVERY_PROVIDER: 'sandbox-smtp', GROWTH_UNSUBSCRIBE_BASE_URL: 'https://growth.sandbox.localhost/api/growth/unsubscribe' };
 const { contestFeed } = require('./growth-contest-feed.fixture');
-const feed = contestFeed(() => Date.parse('2026-11-02T12:00:00Z'));
+// Simulated days start at noon (UTC) a year after today, so they never coincide with the
+// real-time cron call made in this test (a fixed calendar date eventually becomes "today").
+const BASE = (() => { const d = new Date(); d.setUTCFullYear(d.getUTCFullYear() + 1); d.setUTCHours(12, 0, 0, 0); return d.getTime(); })();
+const feed = contestFeed(() => BASE);
 const podcastFetch = async (url) => {
   const f = feed(url); if (f) return f;
   const term = new URL(url).searchParams.get('term');
@@ -51,7 +54,7 @@ test('isolated Growth Engine service', { skip }, async (t) => {
     return { status: r.status, json, text };
   };
   const runtime = await mounted.getRuntime();
-  const T = (m) => new Date(Date.parse('2026-11-02T12:00:00Z') + m * 60000);
+  const T = (m) => new Date(BASE + m * 60000);
   try {
     await t.test('health reports a valid isolated configuration', async () => {
       const h = await call('GET', '/health');
@@ -156,7 +159,7 @@ test('isolated Growth Engine service', { skip }, async (t) => {
     await t.test('a failing provider retries with backoff, then alerts once; admin can requeue', async () => {
       const resolved = resolveGrowthRuntimeConfig(env);
       const broken = createGrowthRuntime({ db: client.db('fmgrowthtest'), config: resolved.config, secrets: resolved.secrets, provider: createDeliveryProvider({ config: resolved.config, secrets: resolved.secrets, transport }), fetchImpl: failingFetch });
-      const D = (m) => new Date(Date.parse('2026-11-03T08:00:00Z') + m * 60000);
+      const D = (m) => new Date(BASE + (24 * 60 - 4 * 60) * 60000 + m * 60000); // next day 08:00 UTC
       const states = [];
       for (const m of [0, 1, 3, 7]) {
         const s = await broken.tick({ now: D(m) });
@@ -198,7 +201,7 @@ test('isolated Growth Engine service', { skip }, async (t) => {
       assert.ok((await other.social.list({ status: 'cancelled' })).every((p) => p.cancelReason === 'contest_no_longer_open_or_verified'));
     });
     await t.test('daily report (due one minute after the day starts) aggregates drafts, deliveries, suppressions and alerts', async () => {
-      const day = Date.parse('2026-11-04T09:00:00Z');
+      const day = BASE + (2 * 24 * 60 - 3 * 60) * 60000; // two days later, 09:00 UTC
       await runtime.tick({ now: new Date(day) });
       assert.equal(await runtime.collections.reports.countDocuments({ day: '20261104' }), 0);
       const s = await runtime.tick({ now: new Date(day + 2 * 60000) });
