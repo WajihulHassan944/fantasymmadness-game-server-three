@@ -210,3 +210,6 @@ code.copy{display:block;padding:8px 10px;border:1px dashed #9ab;border-radius:6p
 .poster-row { display: flex; gap: 12px; align-items: flex-end; flex-wrap: wrap; }
 .poster-thumb { display: inline-flex; flex-direction: column; align-items: center; gap: 4px; text-decoration: none; color: inherit; }
 .poster-thumb img { width: 120px; height: auto; border-radius: 6px; border: 1px solid rgba(255,255,255,.15); background: #0b0b10; }
+.provenance { margin: 6px 0 0; padding-left: 18px; }
+.form-row { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 10px; }
+.form-row input { flex: 1 1 220px; }
