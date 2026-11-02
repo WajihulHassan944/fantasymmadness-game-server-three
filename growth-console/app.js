@@ -84,7 +84,7 @@
       live_test_not_authorized_by_owner: 'The controlled live test has not been authorized yet.', type_POST_LIVE_to_confirm: 'Type POST LIVE to confirm.', live_test_is_for_facebook_or_instagram: 'The live test is for Facebook or Instagram.',
       the_live_test_for_this_channel_was_already_used: 'The live test for this channel has already been used.', approve_the_campaign_first: 'Approve the campaign first.', only_verified_fight_campaigns: 'Only verified fight campaigns can be posted.',
       meta_did_not_publish: 'Meta did not publish the post. Nothing went live; see the details.', publishing_is_paused: 'Publishing is paused.', no_post_for_this_channel: 'There is no post for this channel.',
-      encryption_key_not_configured: 'Stored sign-in encryption is not set up yet.', app_id_must_be_digits: 'The App ID is a number (digits only).', app_secret_must_be_32_characters: 'The App Secret is 32 letters and numbers.',
+      encryption_key_not_configured: 'Stored sign-in encryption is not set up yet.', app_id_must_be_digits: 'The App ID is a number (digits only).', login_configuration_id_must_be_digits: 'The login configuration ID is a number (digits only).', app_secret_must_be_32_characters: 'The App Secret is 32 letters and numbers.',
       meta_rejected_app_id_or_secret: 'Meta did not accept that App ID and App Secret. Copy them again from the Meta app’s Basic settings.', meta_unreachable_try_again: 'Meta could not be reached. Try again in a minute.',
       meta_app_not_set_up: 'Enter the Meta app’s App ID and App Secret first.', authorize_with_meta_first: 'Connect with Meta first.', confirm_this_is_the_business_page: 'Tick the box to confirm this is the FANTASY MMADNESS business Page.',
       page_not_in_your_authorized_list: 'That Page is not in the list Meta authorized.', you_cannot_post_on_this_page: 'Your Facebook account cannot post on this Page.', no_instagram_professional_account_is_linked_to_this_page: 'No Instagram professional account is linked to this Page.',
@@ -791,10 +791,12 @@
       if (m.setup[0].done && !m.setup[1].done) {
         var appId = h('input', { type: 'text', inputmode: 'numeric', autocomplete: 'off', testid: 'meta-app-id' });
         var appSecret = h('input', { type: 'password', autocomplete: 'off', testid: 'meta-app-secret' });
+        var cfgId = h('input', { type: 'text', inputmode: 'numeric', autocomplete: 'off', testid: 'meta-config-id' });
         add(card, [h('p', { text: 'Enter your Meta app’s App ID and App Secret (Meta for Developers → your app → App settings → Basic). They are stored encrypted and never shown again.' }),
           h('label', { class: 'field' }, h('span', { text: 'App ID' }), appId), h('label', { class: 'field' }, h('span', { text: 'App Secret' }), appSecret),
+          h('label', { class: 'field' }, h('span', { text: 'Login configuration ID (only if your app has one)' }), cfgId, h('small', { text: 'Facebook Login for Business → Configurations. Leave empty if you did not create one.' })),
           h('button', { class: 'btn primary', testid: 'btn-meta-app-save', text: 'Save and check with Meta', onclick: function () {
-            api('POST', '/admin/meta/app', { appId: appId.value, appSecret: appSecret.value }).then(function (x) { appSecret.value = ''; toast('Meta app saved' + (x.appName ? ': ' + x.appName : '') + '.', 'good'); route(); }).catch(fail);
+            api('POST', '/admin/meta/app', { appId: appId.value, appSecret: appSecret.value, loginConfigId: cfgId.value }).then(function (x) { appSecret.value = ''; toast('Meta app saved' + (x.appName ? ': ' + x.appName : '') + '.', 'good'); route(); }).catch(fail);
           } })]);
       }
       add(card, [h('p', { class: 'small', text: 'In the Meta app, add this exact address under Facebook Login → Settings → Valid OAuth Redirect URIs:' }), h('code', { class: 'copy', testid: 'meta-redirect-uri', text: m.redirectUri })]);

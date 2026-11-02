@@ -10,6 +10,7 @@
 const crypto = require('crypto');
 const { CHANNELS } = require('./growth-social-publishing');
 const { playerLink } = require('./growth-affiliate-program');
+const fightUrls = require('./growth-fight-urls');
 
 const clean = (s, n = 200) => String(s ?? '').replace(/[\x00-\x1f]/g, ' ').trim().slice(0, n);
 const MAX_ATTEMPTS = 3;
@@ -79,7 +80,7 @@ function createSocialScheduler({ col, social, publisher, reverifyMarketing, aler
       const fp = fingerprint(ch, text, imageUrl);
       const dup = await duplicateOf(fp, { excludeId: id, now });
       if (dup) { results.push({ channel: ch, ok: false, reason: `duplicate_of_${dup.status}_post`, duplicateOf: dup.id }); continue; }
-      const doc = { id, draftId: d.id, contestId: d.contestId, genre: d.genre, channel: ch, text, imageUrl, fingerprint: fp, affiliate: aff ? { id: aff.id, code: aff.code, name: clean(aff.name, 120) } : null, scheduledAt: when.toISOString(), status: 'scheduled', attempts: 0, scheduledBy: clean(admin, 120), createdAt: now.toISOString(), history: [{ at: now.toISOString(), status: 'scheduled', by: clean(admin, 120), note: aff ? `affiliate link: ${aff.code}` : undefined }] };
+      const doc = { id, draftId: d.id, contestId: d.contestId, genre: d.genre, channel: ch, text, imageUrl, fingerprint: fp, cleanUrl: d.contest.cleanUrl || null, affiliate: aff ? { id: aff.id, code: aff.code, name: clean(aff.name, 120) } : null, scheduledAt: when.toISOString(), status: 'scheduled', attempts: 0, scheduledBy: clean(admin, 120), createdAt: now.toISOString(), history: [{ at: now.toISOString(), status: 'scheduled', by: clean(admin, 120), note: aff ? `affiliate link: ${aff.code}` : undefined }] };
       if (existing) await col.social.replaceOne({ id }, doc); else await col.social.insertOne(doc);
       results.push({ channel: ch, ok: true, id });
     }
@@ -138,6 +139,17 @@ function createSocialScheduler({ col, social, publisher, reverifyMarketing, aler
         if (v.reason === 'contest_feed_unreachable_try_again') { out.retrying++; continue; } // try next tick
         await col.social.updateOne({ id: p.id, status: 'scheduled' }, { $set: { status: 'cancelled', cancelReason: v.reason }, $push: { history: { at: now.toISOString(), status: 'cancelled', note: v.reason } } });
         out.cancelled++; continue;
+      }
+      // Use the website's current address for this fight (fighter-name address, else ID address).
+      const c = v.contest;
+      if (c && c.idBase) {
+        const to = c.cleanUrl || c.idBase;
+        const text = p.channel === 'tiktok' ? fightUrls.tiktokLine(p.text, c) : [c.idBase, p.cleanUrl].filter(Boolean).reduce((acc, f) => fightUrls.relink(acc, f, to), p.text);
+        if (text !== p.text) {
+          const fp2 = fingerprint(p.channel, text, p.imageUrl);
+          await col.social.updateOne({ id: p.id, status: 'scheduled' }, { $set: { text, fingerprint: fp2, cleanUrl: c.cleanUrl || null }, $push: { history: { at: now.toISOString(), status: 'scheduled', note: c.cleanUrl ? 'link updated to the fighter-name address' : 'link set to the fight ID address' } } });
+          p.text = text; p.fingerprint = fp2;
+        }
       }
       const dup = await duplicateOf(p.fingerprint || fingerprint(p.channel, p.text, p.imageUrl), { excludeId: p.id, now });
       if (dup && ['publishing', 'published', 'needs_check'].includes(dup.status)) {

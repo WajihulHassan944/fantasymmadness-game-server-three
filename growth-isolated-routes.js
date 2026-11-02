@@ -199,7 +199,7 @@ function registerIsolatedGrowthRoutes({ app, env = process.env, express, transpo
     return { ...st, connectionLabel: st.state === 'connected' ? 'Connected' : st.state === 'not_set_up' ? 'Not set up' : st.state === 'selection_needed' ? 'Choose your Page' : 'Authorization needed', publishing: { provider: resolved.config.social.provider, facebook: mode(ch.facebook), instagram: mode(ch.instagram), liveTestApproved: resolved.config.meta.liveTestApproved } };
   };
   router.get('/admin/meta', admin, wrap(async (req, res, rt) => res.json({ ok: true, meta: await metaView(rt) })));
-  router.post('/admin/meta/app', admin, wrap(async (req, res, rt) => { const r = await rt.meta.setApp({ appId: req.body?.appId, appSecret: req.body?.appSecret, admin: who(req) }); res.status(r.ok ? 200 : 422).json(r); }));
+  router.post('/admin/meta/app', admin, wrap(async (req, res, rt) => { const r = await rt.meta.setApp({ appId: req.body?.appId, appSecret: req.body?.appSecret, loginConfigId: req.body?.loginConfigId, admin: who(req) }); res.status(r.ok ? 200 : 422).json(r); }));
   router.post('/admin/meta/connect', admin, wrap(async (req, res, rt) => { const r = await rt.meta.startAuthorization({ admin: who(req) }); res.status(r.ok ? 200 : 409).json(r); }));
   router.post('/admin/meta/select', admin, wrap(async (req, res, rt) => { const r = await rt.meta.selectPage({ pageId: req.body?.pageId, confirm: req.body?.confirm === true, admin: who(req) }); res.status(r.ok ? 200 : 409).json(r.ok ? { ok: true, meta: await metaView(rt) } : r); }));
   router.post('/admin/meta/check', admin, wrap(async (req, res, rt) => { const r = await rt.meta.healthCheck({ force: true }); res.json({ ok: true, check: r, meta: await metaView(rt) }); }));

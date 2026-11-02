@@ -110,6 +110,15 @@ test('Facebook & Instagram connection and publishing (sandbox first)', { skip, t
       assert.ok(states.every((x) => !JSON.stringify(x).includes(u.searchParams.get('state'))));
     });
 
+    await t.test('with a Facebook Login for Business configuration the link carries config_id instead of the permission list', async () => {
+      assert.equal((await S.call('POST', '/admin/meta/app', { appId: meta.state.appId, appSecret: meta.state.appSecret, loginConfigId: 'abc' })).json.reason, 'login_configuration_id_must_be_digits');
+      assert.equal((await S.call('POST', '/admin/meta/app', { appId: meta.state.appId, appSecret: meta.state.appSecret, loginConfigId: '987654321012345' })).status, 200);
+      const u = new URL((await S.call('POST', '/admin/meta/connect')).json.authorizeUrl);
+      assert.equal(u.searchParams.get('config_id'), '987654321012345'); assert.equal(u.searchParams.get('scope'), null);
+      assert.equal((await S.call('POST', '/admin/meta/app', { appId: meta.state.appId, appSecret: meta.state.appSecret })).status, 200);
+      assert.ok(new URL((await S.call('POST', '/admin/meta/connect')).json.authorizeUrl).searchParams.get('scope'));
+    });
+
     await t.test('callback is protected: forged, replayed, expired and cancelled sign-ins are refused', async () => {
       const forged = await fetch(`${S.origin}/api/growth/meta/callback?code=x&state=forged`);
       assert.equal(forged.status, 400);

@@ -91,6 +91,7 @@ function resolveGrowthRuntimeConfig(env = process.env) {
     liveReport: { configured: /^.{20,}$/.test(String(env.GROWTH_LIVE_REPORT_TOKEN || '')) },
     ingest: { configured: String(env.GROWTH_ATTRIBUTION_INGEST_SECRET || '').length >= 32 },
     social: { provider: socialResolved.provider, approved: socialResolved.approved, paused: socialResolved.paused, channels: socialResolved.channels },
+    fightUrlDiscovery: env.GROWTH_FIGHT_URL_DISCOVERY !== 'off', // fighter-name addresses from the website (growth-fight-urls.js)
     meta: { redirectUri: metaResolved.redirectUri, liveTestApproved: metaResolved.liveTestApproved, expected: metaResolved.expected },
   };
   // Secrets are kept out of the returned config object.
