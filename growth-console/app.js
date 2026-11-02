@@ -813,6 +813,24 @@
     Promise.resolve(pages[r.name](main, r.params)).then(function () { if (state.pendingCount === null) refreshCounts(); else paintBadges(); })
       .catch(function (e) { if (e && e.silent) return; clear(main).appendChild(h('div', { class: 'banner bad', testid: 'page-error' }, h('span', { class: 'ico', text: '!' }), h('div', null, h('strong', { text: 'Could not load this page.' }), (e && e.message) || 'Request failed', ' ', h('button', { class: 'btn small', text: 'Try again', onclick: route })))); });
   }
+  // One sign-in from the admin back office: the embedding admin page may hand over its
+  // Growth Engine session. Accepted only from the direct parent window, only from an
+  // origin on this engine's embed list (from /health), and only if /admin/session
+  // accepts the token; otherwise ignored.
+  if (EMBEDDED) window.addEventListener('message', function (event) {
+    var d = event.data;
+    if (event.source !== window.parent || !d || d.type !== 'fmm-growth-session' || typeof d.token !== 'string' || d.token.length > 4096) return;
+    if (d.token === token()) return;
+    fetch(API + '/health', { cache: 'no-store' }).then(function (r) { return r.json(); }).then(function (hl) {
+      var allowed = (hl && hl.console && hl.console.embedOrigins) || [];
+      if (allowed.indexOf(event.origin) === -1) return;
+      return fetch(API + '/admin/session', { cache: 'no-store', headers: { Authorization: 'Bearer ' + d.token } }).then(function (r) {
+        if (!r.ok) return;
+        setToken(d.token); if (!location.hash || location.hash === '#/signin') location.hash = '#/overview'; boot();
+      });
+    }).catch(function () { /* ignore */ });
+  });
+
   function boot() {
     if (!token()) return renderLogin();
     api('GET', '/admin/session').then(function () { route(); }).catch(function (e) { if (!e.silent) renderLogin(); });
