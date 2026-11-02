@@ -1,0 +1,22 @@
+name: Poster preview (samples only)
+on:
+  push:
+    branches: [test/growth-poster-preview]
+permissions:
+  contents: read
+jobs:
+  preview:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with: { persist-credentials: false }
+      - uses: actions/setup-node@v4
+        with: { node-version: '22', cache: npm }
+      - run: npm ci --ignore-scripts --no-fund
+      - name: Render samples
+        run: node growth-acceptance/render-poster-samples.js poster-samples
+      - name: Print samples
+        if: always()
+        run: |
+          for f in poster-samples/*.jpg; do n=$(basename "$f"); node -e 'require("sharp")(process.argv[1]).jpeg({quality:88}).toBuffer().then(b=>process.stdout.write(b.toString("base64")))' "$f" | fold -w 30000 | sed "s/^/POSTER:$n:/"; echo; done
