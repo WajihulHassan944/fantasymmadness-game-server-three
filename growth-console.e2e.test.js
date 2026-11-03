@@ -241,13 +241,12 @@ test('Growth Engine back-office console: every screen, button and workflow', { s
       assert.match(await page.textContent(drafted), /Mentioned Merab Dvalishvili/);
       await page.click(`${drafted} [data-testid=btn-view-template]`);
       await page.waitForSelector('[data-testid=prepared-list] [data-testid=email-preview]');
-      assert.equal(await page.getAttribute('[data-testid=email-preview]', 'sandbox'), '');
-      // A sandboxed email preview must render instead of showing the browser's blocked frame page.
-      const emailFrame = page.frameLocator('[data-testid=email-preview]');
-      await emailFrame.locator('body').waitFor();
-      assert.match(await emailFrame.locator('body').innerText(), /FANTASY MMADNESS/i);
-      const previewResponse = await page.request.get(origin + '/api/growth/console');
-      assert.match(previewResponse.headers()['content-security-policy'], /frame-src[^;]*about:/);
+      // Preview must display the drafted email itself, without a nested browser
+      // frame that can be blocked by restrictive CSP in embedded admin pages.
+      assert.equal(await page.locator('[data-testid=email-preview]').evaluate(el => el.tagName), 'DIV');
+      assert.match(await page.locator('[data-testid=email-preview]').innerText(), /FANTASY MMADNESS/i);
+      assert.equal(await page.locator('[data-testid=email-preview] iframe, [data-testid=email-preview] script').count(), 0);
+      assert.equal(await page.locator('[data-testid=email-preview] [onclick], [data-testid=email-preview] [style]').count(), 0);
 
       await shot('05-public-relations');
       const autoId = `pr-${await page.getAttribute(drafted, 'data-prospect-id')}`;
