@@ -36,7 +36,10 @@ const PRESERVED_LABELS = ['Fight registry', 'Create fight', 'Registered users', 
 test(`admin back office — Growth Engine ${V2 ? 'replacement' : 'rollback'}`, { skip, timeout: 300000 }, async (t) => {
   const client = await new MongoClient(uri).connect();
   await client.db('fmgrowthtest').dropDatabase();
-  const env = { GROWTH_STAGING_MODE: 'isolated', GROWTH_OUTBOUND_ENABLED: 'false', GROWTH_TEST_MONGO_URI: uri, JWT_SECRET_ADMIN: 's'.repeat(48), GROWTH_UNSUBSCRIBE_SECRET: 's'.repeat(48), CRON_SECRET: 'cron-secret-for-tests-only', GROWTH_DELIVERY_PROVIDER: 'none', GROWTH_ADMIN_PASSWORD_HASH: hashPassword(PASSWORD), GROWTH_SOCIAL_PROVIDER: 'sandbox', GROWTH_CONSOLE_EMBED_ORIGINS: SITE };
+  const env = { GROWTH_STAGING_MODE: 'isolated', GROWTH_OUTBOUND_ENABLED: 'false', GROWTH_TEST_MONGO_URI: uri, JWT_SECRET_ADMIN: 's'.repeat(48), GROWTH_UNSUBSCRIBE_SECRET: 's'.repeat(48), CRON_SECRET: 'cron-secret-for-tests-only', GROWTH_DELIVERY_PROVIDER: 'none', GROWTH_ADMIN_PASSWORD_HASH: hashPassword(PASSWORD), GROWTH_SOCIAL_PROVIDER: 'sandbox', GROWTH_CONSOLE_EMBED_ORIGINS: SITE,
+    // rollback build: website-admin sign-in turned off, so the console's own password sign-in is what is tested here
+    // (the website-admin sign-in itself is covered by admin-sso.e2e.test.js)
+    GROWTH_SSO: 'off' };
   const engine = express();
   engine.use(cors({ origin: (o, cb) => (!o || [SITE, ENGINE].includes(o) ? cb(null, true) : cb(new Error('Not allowed by CORS'))), credentials: true })); // as server.js + CORS_ORIGINS (admin site + the engine's own address)
   const mounted = registerIsolatedGrowthRoutes({ app: engine, env, express, fetchImpl, connect: async () => client });
