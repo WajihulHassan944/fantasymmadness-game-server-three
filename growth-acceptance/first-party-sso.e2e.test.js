@@ -201,6 +201,8 @@ test(`website administrator -> Growth Engine, first-party session bridge (${MODE
       assert.equal(await frame().locator('[data-testid=login-password]').count(), 0);
     });
     await t.test('forged administrator session is refused by the live authority; no Growth session', async () => {
+      const genuine = await page.frames().find((x) => x.url().startsWith(`${ENGINE}/api/growth/console`)).evaluate(() => sessionStorage.getItem('fmmGrowthConsoleToken'));
+      assert.ok(genuine, 'the console holds the genuine session from the earlier login');
       const forged = jwt.sign({ id: '65f0c0ffee0000000000abcd', email: ADMIN.email }, 'f'.repeat(48), { expiresIn: '1h' });
       await page.evaluate((f) => { window.localStorage.setItem('adminAuthToken', f); window.sessionStorage.removeItem('fmmGrowthBridgeToken'); window.sessionStorage.removeItem('fmmGrowthBridgeExpiry'); }, forged);
       await page.goto(`${SITE}/administration/growth-engine/overview`);
@@ -210,6 +212,9 @@ test(`website administrator -> Growth Engine, first-party session bridge (${MODE
       const signedOut = await frame().locator('[data-testid=login]').waitFor({ timeout: 15000 }).then(() => true, () => false);
       if (!signedOut) { const f = page.frames().find((x) => x.url().startsWith(`${ENGINE}/api/growth/console`)); console.log('diagnostics:', JSON.stringify({ frame: f ? f.url() : null, consoleToken: f ? Boolean(await f.evaluate(() => sessionStorage.getItem('fmmGrowthConsoleToken'))) : null, logoutCalls: inbound.filter((r) => /logout/.test(r.path)).length, notice: await page.locator('[data-testid=ge-session-notice]').textContent() })); await shot('forged-diagnostics'); }
       assert.ok(signedOut, 'console signed out after the administrator was refused');
+      assert.match(await page.locator('[data-testid=ge-session-notice]').textContent(), /not accepted/);
+      assert.ok(await waitFor(() => auditFind({ action: 'session_revoked', sid: decode(genuine).sid.slice(0, 12) })), 'the earlier console session was revoked on the server');
+      assert.equal((await call(main.url, 'GET', '/admin/session', genuine)).status, 401);
       assert.equal(await frame().locator('[data-testid=page-overview]').count(), 0);
     });
 
