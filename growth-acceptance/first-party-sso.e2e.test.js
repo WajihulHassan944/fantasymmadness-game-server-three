@@ -207,7 +207,9 @@ test(`website administrator -> Growth Engine, first-party session bridge (${MODE
       await page.locator('[data-testid=ge-session-notice]').waitFor();
       assert.equal(await growthSession(), null, 'no Growth Engine session from a forged token');
       // the console in this tab is signed out too (it had a session from the earlier, genuine login)
-      await frame().locator('[data-testid=login]').waitFor();
+      const signedOut = await frame().locator('[data-testid=login]').waitFor({ timeout: 15000 }).then(() => true, () => false);
+      if (!signedOut) { const f = page.frames().find((x) => x.url().startsWith(`${ENGINE}/api/growth/console`)); console.log('diagnostics:', JSON.stringify({ frame: f ? f.url() : null, consoleToken: f ? Boolean(await f.evaluate(() => sessionStorage.getItem('fmmGrowthConsoleToken'))) : null, logoutCalls: inbound.filter((r) => /logout/.test(r.path)).length, notice: await page.locator('[data-testid=ge-session-notice]').textContent() })); await shot('forged-diagnostics'); }
+      assert.ok(signedOut, 'console signed out after the administrator was refused');
       assert.equal(await frame().locator('[data-testid=page-overview]').count(), 0);
     });
 
