@@ -4,7 +4,13 @@
   "builds": [
     {
       "src": "full-card-bootstrap.js",
-      "use": "@vercel/node"
+      "use": "@vercel/node",
+      "config": {
+        "includeFiles": [
+          "growth-console/**",
+          "growth-assets/**"
+        ]
+      }
     }
   ],
   "routes": [
@@ -49,6 +55,10 @@
     {
       "path": "/api/cron/fan-acquisition",
       "schedule": "0 12 * * *"
+    },
+    {
+      "path": "/api/growth/cron/tick",
+      "schedule": "*/15 * * * *"
     }
   ]
 }

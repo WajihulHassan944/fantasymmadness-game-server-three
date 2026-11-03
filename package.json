@@ -7,7 +7,7 @@
     "node": ">=14.20.1"
   },
   "scripts": {
-    "test": "node publish-integrity.test.js && node client-feedback-core.test.js && node pro-wrestling-core.test.js && node pro-wrestling-routes.test.js && node swarm-phase2.test.js && node seo-performance-phase2.test.js && node fight-data-quality.test.js && node ufc-event-discovery.test.js && node full-card-promoter.test.js",
+    "test": "node fan-acquisition-fight-campaigns.test.js && node publish-integrity.test.js && node client-feedback-core.test.js && node pro-wrestling-core.test.js && node pro-wrestling-routes.test.js && node swarm-phase2.test.js && node seo-performance-phase2.test.js && node fight-data-quality.test.js && node ufc-event-discovery.test.js && node full-card-promoter.test.js",
     "start": "node full-card-bootstrap.js",
     "test:pro-wrestling": "node pro-wrestling-core.test.js && node pro-wrestling-routes.test.js",
     "test:swarm-phase2": "node swarm-phase2.test.js",
@@ -30,6 +30,7 @@
     "form-data": "^4.0.0",
     "google-auth-library": "^9.14.1",
     "jsonwebtoken": "^9.0.2",
+    "jsqr": "1.4.0",
     "moment": "^2.30.1",
     "mongodb": "^6.12.0",
     "mongoose": "^7.1.0",
@@ -40,7 +41,7 @@
     "pusher": "^5.2.0",
     "qrcode": "^1.5.4",
     "rss-parser": "^3.13.0",
-    "sharp": "^0.33.5",
+    "sharp": "^0.35.5",
     "stripe": "^16.8.0",
     "util": "^0.12.5",
     "uuid": "^11.1.1",
@@ -55,6 +56,7 @@
     "tar": "7.5.22",
     "gaxios": {
       "uuid": "11.1.1"
-    }
+    },
+    "zod": "^4.6.6"
   }
 }

@@ -1,0 +1,34 @@
+name: Growth Engine isolated campaign simulation checkpoint
+on:
+  push:
+    branches: [security/growth-dependency-remediation]
+    paths: ['.github/workflows/growth-campaign-simulation.yml']
+  pull_request:
+    branches: [fix/growth-engine-fight-campaigns]
+    paths: ['.github/workflows/growth-campaign-simulation.yml', 'fan-acquisition-fight-campaigns*']
+permissions:
+  contents: read
+jobs:
+  campaign-simulation:
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    env:
+      NODE_ENV: test
+      GROWTH_ENGINE_PREVIEW_ONLY: 'true'
+      DISABLE_OUTBOUND: 'true'
+      DISABLE_PAYMENTS: 'true'
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Install locked dependencies without scripts
+        run: npm ci --ignore-scripts --no-fund
+      - name: Simulate campaign generation, affiliate attribution and safety gates
+        run: node fan-acquisition-fight-campaigns.test.js
+      - name: Run complete backend regression tests
+        run: npm test
+      - name: Confirm patched production dependency audit
+        run: npm audit --omit=dev --audit-level=high

@@ -1,0 +1,33 @@
+name: Isolated dependency repair validation
+on:
+  pull_request:
+    paths:
+      - 'package.json'
+      - 'package-lock.json'
+      - '.github/workflows/dependency-repair-preview.yml'
+permissions:
+  contents: read
+jobs:
+  dependency-repair:
+    if: github.head_ref == 'security/growth-dependency-remediation'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Regenerate candidate lockfile without executing install scripts
+        run: npm install --package-lock-only --ignore-scripts --no-audit --no-fund
+      - name: Preserve candidate lockfile for review
+        uses: actions/upload-artifact@v4
+        with:
+          name: candidate-package-lock
+          path: package-lock.json
+      - name: Install and test candidate dependencies
+        run: |
+          npm ci --ignore-scripts
+          npm test
+      - name: Audit candidate production dependencies
+        run: npm audit --omit=dev --audit-level=high

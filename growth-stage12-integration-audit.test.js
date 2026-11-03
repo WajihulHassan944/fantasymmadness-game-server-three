@@ -1,0 +1,14 @@
+'use strict';
+const assert=require('node:assert/strict');
+const {auditLaunchIntegration}=require('./growth-stage12-integration-audit');
+const initial=auditLaunchIntegration({senderAddress:'facester1@gmail.com',drafts:[{status:'draft',sent:false,sendPermitted:false}]});
+assert.equal(initial.readyForSandboxTest,false);
+assert.equal(initial.realDeliveryPermitted,false);
+assert.ok(initial.blockers.includes('businessSenderVerified'));
+assert.ok(initial.blockers.includes('officialLogoVerified'));
+const complete=auditLaunchIntegration({officialLogoVerified:true,officialLogoUrl:'https://example.invalid/official-logo.png',businessSenderVerified:true,senderAddress:'contact@fantasymmadnesscom.com',isolatedDatabaseVerified:true,sandboxMailVerified:true,suppressionAndUnsubscribeVerified:true,attributionVerified:true,productionUnchanged:true,recipientReviewApproved:true,ownerCampaignApproved:true,drafts:[{status:'draft',sent:false,sendPermitted:false}]});
+assert.equal(complete.readyForSandboxTest,true);
+assert.equal(complete.realDeliveryPermitted,false);
+assert.equal(complete.productionChanges,0);
+assert.equal(auditLaunchIntegration({...{officialLogoVerified:true,officialLogoUrl:'javascript:alert(1)'}}).checks.officialLogoVerified,false);
+console.log('STAGE12_INTEGRATION_AUDIT '+JSON.stringify({currentBlockers:initial.blockers,syntheticFullyAttestedSandboxReady:complete.readyForSandboxTest,externalSends:0}));

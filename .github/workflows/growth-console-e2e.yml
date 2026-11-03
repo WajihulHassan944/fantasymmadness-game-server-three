@@ -1,0 +1,193 @@
+name: Growth Engine back-office console E2E
+on:
+  workflow_dispatch:
+  push:
+    branches: [test/growth-backoffice-console]
+permissions:
+  contents: read
+jobs:
+  console-e2e:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    services:
+      mongodb:
+        image: mongo:7
+        ports:
+          - 27017:27017
+        options: >-
+          --health-cmd "mongosh --quiet --eval 'db.adminCommand({ping:1})'"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 12
+    env:
+      GROWTH_STAGING_MODE: isolated
+      GROWTH_OUTBOUND_ENABLED: 'false'
+      GROWTH_TEST_MONGO_URI: mongodb://127.0.0.1:27017
+      GROWTH_CONSOLE_SCREENSHOTS: ${{ github.workspace }}/console-screenshots
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - name: Install locked dependencies
+        run: npm ci --ignore-scripts --no-fund
+      - name: Console assets are traced into the Vercel function bundle
+        run: |
+          npx --yes @vercel/nft@0.29.4 print growth-isolated-routes.js > nft.txt
+          for f in growth-console/index.html growth-console/app.js growth-console/app.css; do grep -qx "$f" nft.txt || { echo "missing $f"; exit 1; }; echo "traced $f"; done
+      - name: Poster fonts are traced into the Vercel function bundle
+        run: |
+          npx --yes @vercel/nft@0.29.4 print growth-poster-studio.js > nft-posters.txt || true
+          for f in growth-assets/fonts/Poppins-Bold.ttf growth-assets/fonts/Poppins-Regular.ttf; do test -f "$f" || { echo "missing $f"; exit 1; }; done
+          grep -q '"growth-assets/\*\*"' vercel.json && echo "growth-assets included via vercel.json includeFiles"
+      - name: Render sample posters (synthetic artwork)
+        run: node growth-acceptance/render-poster-samples.js poster-samples
+      - name: Print sample posters (base64, for reviewers without artifact access)
+        run: |
+          for f in poster-samples/*.jpg; do n=$(basename "$f"); node -e 'require("sharp")(process.argv[1]).resize({width:540}).jpeg({quality:80}).toBuffer().then(b=>process.stdout.write(b.toString("base64")))' "$f" | fold -w 30000 | sed "s/^/POSTER:$n:/"; echo; done
+      - name: Upload sample posters
+        uses: actions/upload-artifact@v4
+        with:
+          name: poster-samples
+          path: poster-samples
+      - name: Full Growth Engine suite (regression; browser test skipped here)
+        run: node --test --test-concurrency=1 growth-*.test.js growth-*.integration.test.js  # one file at a time: several share the fmgrowthtest database
+      - name: Install Playwright + Chromium (test-only, not saved to package.json)
+        run: |
+          npm install --no-save --no-fund --ignore-scripts playwright@1.56.1
+          npx playwright install --with-deps chromium
+      - name: Browser E2E — every screen, button and workflow
+        run: node --test --test-concurrency=1 --test-reporter=spec growth-console.e2e.test.js growth-meta-connect.e2e.test.js
+      - name: Print screenshots (base64, for reviewers without artifact access)
+        if: always()
+        run: |
+          for f in console-screenshots/*.jpg; do n=$(basename "$f"); base64 -w 30000 "$f" | sed "s/^/SHOT:$n:/"; done
+      - name: Upload screenshots
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: console-screenshots
+          path: console-screenshots
+          if-no-files-found: ignore
+
+  admin-replacement-e2e:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        # on = replacement, off = rollback, review = test back office (website test branch);
+        # first-party = website administrator sign-in through the same-origin session bridge, on Codex's
+        # integration frontend (PR #193 + bridge), against the REAL website backend (loopback)
+        v2: ['on', 'off', 'review', 'first-party']
+    services:
+      mongodb:
+        image: mongo:7
+        ports:
+          - 27017:27017
+        options: >-
+          --health-cmd "mongosh --quiet --eval 'db.adminCommand({ping:1})'"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 12
+    env:
+      GROWTH_TEST_MONGO_URI: mongodb://127.0.0.1:27017
+      GROWTH_CONSOLE_SCREENSHOTS: ${{ github.workspace }}/console-screenshots
+      SITE_URL: http://localhost:3000
+      GROWTH_V2: ${{ matrix.v2 }}
+      SSO_WEBSITE_API: http://127.0.0.1:5071
+      SSO_JWT_SECRET_ADMIN: sso-test-admin-signing-secret-0123456789abcdef0123
+      SSO_JWT_SECRET: sso-test-player-signing-secret-0123456789abcdef01234
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Check out the website (test branch, read-only)
+        uses: actions/checkout@v4
+        with:
+          repository: WajihulHassan944/fmm-ver2
+          ref: ${{ matrix.v2 == 'first-party' && 'integration/growth-engine-first-party-session' || 'test/growth-engine-replacement' }}
+          path: web
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Install backend dependencies
+        run: npm ci --ignore-scripts --no-fund
+      - name: Install website dependencies
+        run: cd web && npm install --ignore-scripts --no-fund --no-audit
+      - name: Cut the website server off from production (live backend, live site, staging engine)
+        run: |
+          # The website's own server-side routes forward admin requests to the live backend.
+          # Point every production host at a closed loopback port so nothing can reach it.
+          for h in fantasymmadness-game-server-three-taupe.vercel.app www.fantasymmadness.com fantasymmadness.com fantasymmadness-growth-isolated-tes.vercel.app; do echo "127.0.0.1 $h" | sudo tee -a /etc/hosts; done
+          if curl -s -m 5 -o /dev/null https://fantasymmadness-game-server-three-taupe.vercel.app/; then echo "live backend still reachable"; exit 1; fi
+      - name: Test-only signing keys for the first-party bridge (generated per run, never stored)
+        if: matrix.v2 == 'first-party'
+        run: |
+          node -e 'const c=require("crypto");const k=c.generateKeyPairSync("ed25519");const b=(x)=>Buffer.from(x).toString("base64");console.log("SSO_SITE_PRIVATE_KEY="+b(k.privateKey.export({type:"pkcs8",format:"pem"})));console.log("SSO_SITE_PUBLIC_KEY="+b(k.publicKey.export({type:"spki",format:"pem"})))' >> "$GITHUB_ENV"
+          echo "WEB_DIR=$GITHUB_WORKSPACE/web" >> "$GITHUB_ENV"
+      - name: Build the website (Growth Engine switch = ${{ matrix.v2 }})
+        env:
+          NEXT_PUBLIC_API_BASE_URL: ${{ matrix.v2 == 'first-party' && 'http://127.0.0.1:5071' || 'http://127.0.0.1:9' }}
+          NEXT_PUBLIC_API_BASE: ${{ matrix.v2 == 'first-party' && 'http://127.0.0.1:5071' || 'http://127.0.0.1:9' }}
+          NEXT_PUBLIC_GROWTH_ENGINE_URL: http://127.0.0.1:4300
+          NEXT_PUBLIC_GROWTH_ENGINE_V2: ${{ matrix.v2 == 'first-party' && 'on' || matrix.v2 }}
+          NEXT_PUBLIC_FMM_GROWTH_ENGINE_ENABLED: ${{ matrix.v2 == 'first-party' && 'true' || 'false' }}
+          NEXT_PUBLIC_FMM_GROWTH_SESSION_PATH: ${{ matrix.v2 == 'first-party' && '/api/admin/growth-session' || '' }}
+          NEXT_PUBLIC_ADMIN_STAGING_REVIEW: ${{ matrix.v2 == 'review' && 'on' || 'off' }}
+          NEXT_TELEMETRY_DISABLED: '1'
+        run: cd web && npm run build
+      - name: Start the website
+        env:
+          NEXT_PUBLIC_API_BASE_URL: ${{ matrix.v2 == 'first-party' && 'http://127.0.0.1:5071' || 'http://127.0.0.1:9' }}
+          NEXT_PUBLIC_API_BASE: ${{ matrix.v2 == 'first-party' && 'http://127.0.0.1:5071' || 'http://127.0.0.1:9' }}
+          NEXT_PUBLIC_ADMIN_STAGING_REVIEW: ${{ matrix.v2 == 'review' && 'on' || 'off' }}
+          # server-only settings of the same-origin bridge (test values; loopback allowed only in this test)
+          GROWTH_SSO_SITE_PRIVATE_KEY: ${{ env.SSO_SITE_PRIVATE_KEY }}
+          GROWTH_ENGINE_SERVER_URL: http://127.0.0.1:4300
+          FMM_ADMIN_VERIFY_URL: http://127.0.0.1:5071
+          GROWTH_SITE_ORIGINS: http://localhost:3000
+          GROWTH_SSO_ALLOW_LOOPBACK: 'true'
+          GROWTH_SESSION_RATE_LIMIT_PER_MIN: '200'
+        run: |
+          cd web && (npx next start -p 3000 > ../next.log 2>&1 &)
+          for i in $(seq 1 60); do curl -sf -o /dev/null http://localhost:3000/administration/login && break; sleep 2; done
+      - name: Start the REAL website backend (server.js, loopback only, local database) for the sign-in builds
+        if: matrix.v2 == 'first-party'
+        env:
+          GROWTH_ACCEPTANCE_ISOLATED: '1'
+          PORT: '5071'
+          MONGODB_URI: mongodb://127.0.0.1:27017/fmm_sso_website?directConnection=true
+          JWT_SECRET: ${{ env.SSO_JWT_SECRET }}
+          JWT_SECRET_ADMIN: ${{ env.SSO_JWT_SECRET_ADMIN }}
+          CORS_ORIGINS: http://localhost:3000
+          SMTP_HOST: 127.0.0.1
+          SMTP_PORT: '1025'
+          SMTP_SECURE: 'false'
+          SMTP_USER: sso@localhost
+          SMTP_PASS: staging-only
+          GROWTH_ACCEPTANCE_OUT: /tmp
+        run: |
+          npm rebuild bcrypt
+          nohup node -r ./growth-acceptance/isolation-preload.js full-card-bootstrap.js > sso-backend.log 2>&1 &
+          for i in $(seq 1 60); do curl -s -o /dev/null http://127.0.0.1:5071/ && break; sleep 1; done
+          grep -m1 "isolation active" sso-backend.log
+          code=$(curl -s -o /dev/null -w '%{http_code}' -X POST -H 'Content-Type: application/json' -d '{"email":"nobody@x.test","password":"x"}' http://127.0.0.1:5071/admin/login); echo "website /admin/login answers $code"; test "$code" = "400"
+      - name: Install Playwright + Chromium (test-only)
+        run: |
+          mkdir -p console-screenshots
+          npm install --no-save --no-fund --ignore-scripts playwright@1.56.1
+          npx playwright install --with-deps chromium
+      - name: Browser test — back office navigation, auth, permissions, responsiveness, rollback
+        run: node --test --test-concurrency=1 --test-reporter=spec growth-acceptance/admin-replacement.e2e.test.js growth-acceptance/staging-review.e2e.test.js growth-acceptance/first-party-sso.e2e.test.js
+      - name: Website log (on failure)
+        if: failure()
+        run: tail -60 next.log || true; tail -60 sso-backend.log || true
+      - name: Print screenshots
+        if: always()
+        run: |
+          for f in console-screenshots/*.jpg; do [ -f "$f" ] || continue; n=$(basename "$f"); base64 -w 30000 "$f" | sed "s/^/SHOT:$n:/"; done

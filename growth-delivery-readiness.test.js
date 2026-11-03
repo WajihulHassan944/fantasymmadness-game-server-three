@@ -1,0 +1,15 @@
+'use strict';
+const assert=require('node:assert/strict');
+const {assessDeliveryReadiness}=require('./growth-delivery-readiness');
+const d={status:'draft',sent:false,sendPermitted:false};
+const baseline=assessDeliveryReadiness({drafts:[d]});
+assert.equal(baseline.realDeliveryPermitted,false);
+assert.ok(baseline.blockers.includes('business_sender_not_verified'));
+assert.ok(baseline.blockers.includes('isolated_database_not_verified'));
+assert.ok(baseline.blockers.includes('mail_sandbox_not_verified'));
+const safe=assessDeliveryReadiness({drafts:[d],senderAddress:'contact@fantasymmadnesscom.com',senderIdentityVerified:true,stagingDatabaseIsolated:true,mailSandboxIsolated:true,recipientReviewApproved:true,ownerCampaignApproved:true,unsubscribeOperational:true});
+assert.equal(safe.readyForSandboxTest,true);
+assert.equal(safe.realDeliveryPermitted,false);
+assert.equal(assessDeliveryReadiness({...{drafts:[d],senderAddress:'facester1@gmail.com',senderIdentityVerified:true,stagingDatabaseIsolated:true,mailSandboxIsolated:true,recipientReviewApproved:true,ownerCampaignApproved:true,unsubscribeOperational:true}}).readyForSandboxTest,false);
+assert.equal(assessDeliveryReadiness({drafts:[{...d,sent:true}]}).readyForSandboxTest,false);
+console.log('STAGE11_DELIVERY_READINESS_DRY_RUN '+JSON.stringify({defaultBlockers:baseline.blockers,sandboxEligibleWhenAttested:safe.readyForSandboxTest,realSends:0}));
