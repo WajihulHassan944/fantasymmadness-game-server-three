@@ -242,6 +242,13 @@ test('Growth Engine back-office console: every screen, button and workflow', { s
       await page.click(`${drafted} [data-testid=btn-view-template]`);
       await page.waitForSelector('[data-testid=prepared-list] [data-testid=email-preview]');
       assert.equal(await page.getAttribute('[data-testid=email-preview]', 'sandbox'), '');
+      // A sandboxed email preview must render instead of showing the browser's blocked frame page.
+      const emailFrame = page.frameLocator('[data-testid=email-preview]');
+      await emailFrame.locator('body').waitFor();
+      assert.match(await emailFrame.locator('body').innerText(), /FANTASY MMADNESS/i);
+      const previewResponse = await page.request.get(base + '/api/growth/console');
+      assert.match(previewResponse.headers()['content-security-policy'], /frame-src[^;]*about:/);
+
       await shot('05-public-relations');
       const autoId = `pr-${await page.getAttribute(drafted, 'data-prospect-id')}`;
       const auto = await draft(autoId);
