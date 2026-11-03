@@ -14,10 +14,25 @@ The backend lives in `WajihulHassan944/fantasymmadness-game-server-three`, branc
 | Call | Body | Returns |
 |---|---|---|
 | `POST /admin/login` | `{password}` (the Growth Engine owner password, not the live admin password) | `{token}`: a console token, 12 h |
-| `GET /admin/session` | | `200` while the token is valid |
+| `POST /admin/sso` | none; `Authorization: Bearer <website admin token>` (the token the website stores after `/admin/login` on the live backend) | `{ok, token, expiresInSeconds, expiresAt, admin:{email}, method:'website_admin', verification:{issuerConfirmed, signatureVerifiedLocally}}`; refusals return `{reason, message}` |
+| `GET /admin/session` | | `200` while the token is valid; includes `method` (`website_admin` or `console_password`) and `scope` |
 
 - Send `Authorization: Bearer <token>` on every `/admin/*` call.
 - `401` means sign in again. Tokens issued before a password change are refused.
+- **Website administrator sign-in (no second password).** The back office sends its existing admin token once to `POST /admin/sso`. On the server, the engine:
+  - checks the token's shape and age (HS256, admin id and email, at most 12 h old, not expired);
+  - asks the live backend whether it accepts that token right now (a read-only `GET /api/admin/matches/<all-zero id>` must answer `404`, not `401`);
+  - checks the signature itself when it holds the same secret;
+  - applies the optional allow-list `GROWTH_SSO_ALLOWED_ADMINS`;
+  - issues a Growth Engine session limited to `scope: growth` and `aud: fmm-growth-console`, valid for 30 min at most and never past the website session.
+  The website token is never stored. Only a fingerprint is written to the audit log (`sso_login` / `sso_denied`).
+  Refusals:
+  - `401`: `website_admin_session_required`, `not_a_website_admin_session`, `website_admin_session_expired`, `website_admin_session_too_old`, `website_rejected_this_admin_session`;
+  - `403`: `admin_not_allowed_for_growth_engine`;
+  - `429`: `too_many_attempts` (20/min per address);
+  - `503`: `website_unreachable_try_again`, `website_verification_unexpected_<status>`, `sso_not_configured`.
+  On `401` the back office sends the admin to the website login.
+- The Growth Engine session does not work on the live backend, and the website token does not work on the Growth Engine.
 - CORS allows `https://www.fantasymmadness.com`, `https://fmm-ver2*.vercel.app` previews and the staging origins only.
 
 ## Embedding the console (the command center iframe)
@@ -131,4 +146,7 @@ What each platform can do (`GET /admin/social/capabilities`):
 | `GROWTH_DELIVERY_PROVIDER` | `sandbox-capture` | Emails are built and stored, never sent. |
 | `GROWTH_POSTERS` | `on` | Generates posters. |
 | `GROWTH_ART_CLOUDINARY_CLOUDS` | `daflot6fo,dqi6vk2vn` | The only clouds fighter art is taken from. |
+| `GROWTH_SSO` | (unset = on) | `off` turns website-administrator sign-in off (rollback). The Growth Engine password keeps working. |
+| `GROWTH_SSO_VERIFY_URL` | (unset = the live backend) | The live backend asked to confirm admin sessions. It must be a FANTASY MMADNESS https host. |
+| `GROWTH_SSO_ALLOWED_ADMINS` | (optional) | Comma-separated admin emails or ids allowed into the Growth Engine. |
 | `GROWTH_SOCIAL_LIVE_TEST_APPROVED` | (unset) | The controlled live test stays off. |
