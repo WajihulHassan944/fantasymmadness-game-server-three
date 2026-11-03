@@ -80,7 +80,7 @@ test(`website administrator -> Growth Engine sign-in (${MODE})`, { skip, timeout
   });
   await ctx.addInitScript(() => { try { window.sessionStorage.setItem('jarvisGreeted', '1'); window.sessionStorage.setItem('adminPushAsked', '1'); } catch (e) { /* ignore */ } });
   const page = await ctx.newPage(); page.setDefaultTimeout(30000);
-  const pageErrors = []; page.on('pageerror', (e) => pageErrors.push({ url: page.url(), message: e.message }));
+  const pageErrors = []; let phase = 'signed-in'; page.on('pageerror', (e) => pageErrors.push({ phase, url: page.url(), message: e.message }));
   const shot = (name) => (SHOTS ? page.screenshot({ path: path.join(SHOTS, `${MODE}-${name}.jpg`), type: 'jpeg', quality: 70 }) : null);
   const frame = () => page.frameLocator('[data-testid=ge-frame]');
   const growthSession = () => page.evaluate(() => window.sessionStorage.getItem('fmmGrowthBridgeToken'));
@@ -143,6 +143,7 @@ test(`website administrator -> Growth Engine sign-in (${MODE})`, { skip, timeout
         assert.ok(await client.db('fmgrowthtest').collection('growth_audit_log').findOne({ action: 'sso_denied', reason: 'website_rejected_this_admin_session' }), 'the engine asked the website and the website refused');
       });
       await t.test('signed out of the website = no Growth Engine access', async () => {
+        phase = 'signed-out';
         await page.evaluate(() => { window.localStorage.removeItem('adminAuthToken'); window.sessionStorage.removeItem('fmmGrowthBridgeToken'); });
         await page.goto(`${SITE}/administration/growth-engine/overview`);
         await page.waitForURL(/\/administration\/login/);
@@ -225,8 +226,10 @@ test(`website administrator -> Growth Engine sign-in (${MODE})`, { skip, timeout
       assert.equal(posts[0].scheduledBy, ADMIN.email);
     });
     await t.test('no browser errors; nothing left the test machine', async () => {
-      // React #418 (hydration text mismatch) comes from the website's existing login/dashboard pages, not the Growth Engine page
-      assert.deepEqual(pageErrors.filter((e) => !/Failed to fetch|NetworkError|Load failed|aborted/i.test(e.message) && !(/Minified React error #418/.test(e.message) && !/growth-engine/.test(e.url))), []);
+      // React #418 (hydration mismatch) is the website's existing admin guard (PrivateRouteAdmin) rendering nothing for a
+      // signed-out visitor while it redirects to the login page; it is expected only in the signed-out step
+      console.log('page errors:', JSON.stringify(pageErrors));
+      assert.deepEqual(pageErrors.filter((e) => !/Failed to fetch|NetworkError|Load failed|aborted/i.test(e.message) && !(/Minified React error #418/.test(e.message) && (e.phase === 'signed-out' || !/growth-engine/.test(e.url)))), []);
       // outside requests were aborted by the test (nothing left the machine); none of them may be the live backend or website
       console.log('aborted outside requests:', [...blocked].join(', ') || 'none');
       assert.deepEqual([...blocked].filter((h) => /fantasymmadness|vercel\.app$/i.test(h)), []);
