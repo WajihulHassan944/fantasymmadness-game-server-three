@@ -182,12 +182,12 @@ table.data td.num,table.data th.num{text-align:right;font-variant-numeric:tabula
 
 /* embedded in the admin back office: no duplicate chrome */
 html.embedded .sidenav{display:none}
-html.embedded .layout{grid-template-columns:1fr;min-height:0}
+html.embedded .layout{grid-template-columns:minmax(0,1fr);min-height:0}
 html.embedded .topbar{position:static;height:44px;background:#fff;color:var(--ink);border-bottom:1px solid var(--line)}
 html.embedded .topbar .logo{display:none}
 html.embedded .topbar .signout{color:var(--ink-2);border-color:var(--line-2)}
 html.embedded .topbar .signout:hover{background:var(--bg)}
-html.embedded main{padding:16px 18px 40px}
+html.embedded main{padding:16px 18px 40px;min-width:0;overflow-wrap:anywhere}
 html.embedded .login-wrap{min-height:100vh}
 /* Facebook & Instagram connection */
 dl.facts{display:grid;grid-template-columns:max-content 1fr;gap:6px 16px;align-items:baseline}

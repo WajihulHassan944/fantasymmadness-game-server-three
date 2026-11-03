@@ -14,25 +14,12 @@ The backend lives in `WajihulHassan944/fantasymmadness-game-server-three`, branc
 | Call | Body | Returns |
 |---|---|---|
 | `POST /admin/login` | `{password}` (the Growth Engine owner password, not the live admin password) | `{token}`: a console token, 12 h |
-| `POST /admin/sso` | none; `Authorization: Bearer <website admin token>` (the token the website stores after `/admin/login` on the live backend) | `{ok, token, expiresInSeconds, expiresAt, admin:{email}, method:'website_admin', verification:{issuerConfirmed, signatureVerifiedLocally}}`; refusals return `{reason, message}` |
+| `POST /admin/logout` | none; `Authorization: Bearer <Growth session>` | `{ok, revoked}`; ends that session on the server |
 | `GET /admin/session` | | `200` while the token is valid; includes `method` (`website_admin` or `console_password`) and `scope` |
 
 - Send `Authorization: Bearer <token>` on every `/admin/*` call.
 - `401` means sign in again. Tokens issued before a password change are refused.
-- **Website administrator sign-in (no second password).** The back office sends its existing admin token once to `POST /admin/sso`. On the server, the engine:
-  - checks the token's shape and age (HS256, admin id and email, at most 12 h old, not expired);
-  - asks the live backend whether it accepts that token right now (a read-only `GET /api/admin/matches/<all-zero id>` must answer `404`, not `401`);
-  - checks the signature itself when it holds the same secret;
-  - applies the optional allow-list `GROWTH_SSO_ALLOWED_ADMINS`;
-  - issues a Growth Engine session limited to `scope: growth` and `aud: fmm-growth-console`, valid for 30 min at most and never past the website session.
-  The website token is never stored. Only a fingerprint is written to the audit log (`sso_login` / `sso_denied`).
-  Refusals:
-  - `401`: `website_admin_session_required`, `not_a_website_admin_session`, `website_admin_session_expired`, `website_admin_session_too_old`, `website_rejected_this_admin_session`;
-  - `403`: `admin_not_allowed_for_growth_engine`;
-  - `429`: `too_many_attempts` (20/min per address);
-  - `503`: `website_unreachable_try_again`, `website_verification_unexpected_<status>`, `sso_not_configured`.
-  On `401` the back office sends the admin to the website login.
-- The Growth Engine session does not work on the live backend, and the website token does not work on the Growth Engine.
+- **Website administrator sign-in (no second password): see "First-party administrator session" below.** The website administrator token is never sent to this engine.
 - CORS allows `https://www.fantasymmadness.com`, `https://fmm-ver2*.vercel.app` previews and the staging origins only.
 
 ## Embedding the console (the command center iframe)
@@ -147,6 +134,70 @@ What each platform can do (`GET /admin/social/capabilities`):
 | `GROWTH_POSTERS` | `on` | Generates posters. |
 | `GROWTH_ART_CLOUDINARY_CLOUDS` | `daflot6fo,dqi6vk2vn` | The only clouds fighter art is taken from. |
 | `GROWTH_SSO` | (unset = on) | `off` turns website-administrator sign-in off (rollback). The Growth Engine password keeps working. |
-| `GROWTH_SSO_VERIFY_URL` | (unset = the live backend) | The live backend asked to confirm admin sessions. It must be a FANTASY MMADNESS https host. |
+| `GROWTH_SSO_SITE_PUBLIC_KEY` | Ed25519 public key (PEM or base64 PEM) | Verifies the website server's assertions. Not secret. Without it, website sign-in is off. |
+| `GROWTH_SSO_SITE_ORIGINS` | (unset = `GROWTH_CONSOLE_EMBED_ORIGINS`) | Website origins an assertion may name. |
 | `GROWTH_SSO_ALLOWED_ADMINS` | (optional) | Comma-separated admin emails or ids allowed into the Growth Engine. |
 | `GROWTH_SOCIAL_LIVE_TEST_APPROVED` | (unset) | The controlled live test stays off. |
+
+## First-party administrator session (website sign-in, no second password)
+
+The website administrator token never leaves the website and its live backend. The flow:
+
+1. **Browser → website (same origin).** The back-office page sends `POST /api/admin/growth-session` with body `{}`, its usual `Authorization: Bearer <website admin token>`, `credentials: same-origin` and redirects forbidden.
+2. **The website server** (fmm-ver2 `src/server/growthSessionBridge.cjs`):
+   - refuses any request whose `Origin` is not the site itself (403 `cross_origin_refused`), any `Sec-Fetch-Site` other than `same-origin`, non-JSON bodies (415) and other methods (405);
+   - rate-limits to 20 per address per minute (429);
+   - checks the admin token's shape and age (HS256, `{id, email}`, ≤ 12 h, not expired, no `aud`/`role`/`scope`);
+   - asks the live admin authority whether it accepts the token right now: read-only `GET /api/admin/matches/<all-zero id>` must return `404`, not `401`. With `JWT_SECRET_ADMIN` set on the website, the signature is also checked;
+   - applies the optional allow-list.
+3. **Website server → engine (server to server)** `POST /api/growth/admin/sso/assertion` with `{assertion}`. The assertion is an Ed25519-signed compact JWS:
+   - header `{alg:'EdDSA', typ:'fmm-admin-assertion+jwt', kid}`;
+   - claims `{iss:'fmm-admin-site', aud:'fmm-growth-engine', purpose:'session', sub:<admin id>, email, site:<website origin>, jti:<random>, iat, exp:iat+60, adminExp, verifiedBy:'live-admin-authority'}`.
+   It contains no administrator token.
+4. **The engine:**
+   - refuses browser-originated calls (an `Origin` header gives 403 `server_to_server_only`);
+   - checks the signature with `GROWTH_SSO_SITE_PUBLIC_KEY`, plus issuer, audience, purpose, site origin, lifetime ≤ 120 s and expiry;
+   - **consumes the nonce once.** Nonces are stored in `growth_sso_nonces` with a TTL, so a replay gets `assertion_replayed`;
+   - applies the allow-list and audits `sso_login`;
+   - returns `{ok, token, expiresAt (ms), expiresInSeconds, admin:{email}, method:'website_admin'}`.
+5. **Website → browser:** `{ok, token, expiresAt (epoch ms), engineOrigin, admin:{email}, method}`. The Growth session has:
+   - `aud fmm-growth-console`, `scope growth` and its own key, so it is useless on the live backend;
+   - a lifetime of at most 30 min, never past the website session;
+   - a revocable session id `sid`.
+
+Refusals:
+
+| Status | Website endpoint | Engine |
+|---|---|---|
+| 401 | `administrator_session_required`, `not_an_administrator_session`, `administrator_session_expired`, `administrator_session_too_old`, `administrator_session_rejected` | `assertion_*`, `website_admin_session_expired` |
+| 403 | `cross_origin_refused`, `admin_not_allowed_for_growth_engine` | `server_to_server_only`, `admin_not_allowed_for_growth_engine` |
+| 429 | `too_many_attempts` | |
+| 503 | `growth_session_bridge_not_configured`, `admin_authority_unreachable`, `admin_authority_unexpected_<n>`, `growth_engine_unavailable` | `sso_not_configured` |
+
+The earlier direct route `POST /admin/sso` now answers `410 direct_admin_token_exchange_removed` and does not read the header.
+
+**Logout and revocation**
+- **Back-office logout.** The browser sends:
+  - `POST /api/growth/admin/logout` to the engine with the Growth session only, which revokes that `sid`;
+  - `DELETE /api/admin/growth-session` to the website. The website verifies the admin as above and sends a signed `purpose:'revoke'` assertion to `POST /api/growth/admin/sso/revoke`, which ends every Growth session of that administrator issued up to that millisecond.
+- **Console sign-out** revokes its own session.
+- Revoked sessions get `401` with reason `session_revoked` or `signed_out_of_website`. Revocations are stored in `growth_session_revocations` with a TTL.
+
+**Console messages (iframe ↔ back office)**
+- Parent → child, sent only to the exact engine origin:
+  - `{type:'fmm-growth-session', token}`;
+  - `{type:'fmm-growth-logout'}`, which makes the console revoke and forget its session.
+  The child accepts these only from `window.parent` and only from an origin on its embed list.
+- Child → parent: `{type:'fmm-growth-console', section, signedIn, event?, reason?, expiresAt?}`, where `event` is one of:
+  - `session-ready` (with `expiresAt` in ms);
+  - `session-expired` (with a reason): the parent renews from the administrator session, at most once per 30 s;
+  - `signed-out`: the parent stays signed out.
+
+**Settings**
+- **Website, server-only:**
+  - `GROWTH_SSO_SITE_PRIVATE_KEY` (secret, Ed25519);
+  - optional: `GROWTH_ENGINE_SERVER_URL`, `FMM_ADMIN_VERIFY_URL` (must be an FMM backend host), `GROWTH_SITE_ORIGINS`, `GROWTH_SSO_ALLOWED_ADMINS`, `JWT_SECRET_ADMIN`, `GROWTH_SSO=off`.
+- **Website, public:** `NEXT_PUBLIC_FMM_GROWTH_SESSION_PATH=/api/admin/growth-session`.
+- **Engine:** `GROWTH_SSO_SITE_PUBLIC_KEY` and the website origin in `GROWTH_CONSOLE_EMBED_ORIGINS`.
+
+**Rollback:** `GROWTH_SSO=off` on either side, or unset the session path. The Growth Engine password keeps working.

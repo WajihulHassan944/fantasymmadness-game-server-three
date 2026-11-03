@@ -28,7 +28,10 @@
   // navigation, so the console hides its own sidebar and reports the current section.
   var EMBEDDED = /[?&]embed=1(&|$)/.test(location.search) && window.parent !== window;
   if (EMBEDDED) document.documentElement.classList.add('embedded');
-  function tellParent(section) { if (EMBEDDED) { try { var parentOrigin = (window.location.ancestorOrigins && window.location.ancestorOrigins[0]) || '*'; window.parent.postMessage({ type: 'fmm-growth-console', section: section, signedIn: Boolean(token()) }, parentOrigin); } catch (e) { /* ignore */ } } }
+  // Messages to the back office: { type:'fmm-growth-console', section, signedIn, event?, reason?, expiresAt? }
+  // event: 'session-ready' (session accepted; expiresAt in ms), 'session-expired' (ended/revoked; reason),
+  // 'signed-out' (signed out here or at the back office's request).
+  function tellParent(section, extra) { if (EMBEDDED) { try { var parentOrigin = (window.location.ancestorOrigins && window.location.ancestorOrigins[0]) || '*'; var m = { type: 'fmm-growth-console', section: section, signedIn: Boolean(token()) }; if (extra) for (var k in extra) m[k] = extra[k]; window.parent.postMessage(m, parentOrigin); } catch (e) { /* ignore */ } } }
 
   // ---------- tiny DOM helpers ----------
   function h(tag, attrs) {
@@ -114,6 +117,19 @@
   }
 
   // ---------- API ----------
+  var expiryTimer = null;
+  // Revoke this session on the server (best effort), forget it here, and show the sign-in.
+  function signOut(message) {
+    var t = token();
+    setToken('');
+    if (t) { try { fetch(API + '/admin/logout', { method: 'POST', cache: 'no-store', keepalive: true, headers: { Authorization: 'Bearer ' + t } }).catch(function () {}); } catch (e) { /* ignore */ } }
+    renderLogin(message, { event: 'signed-out' });
+  }
+  function scheduleExpiry(expMs) {
+    clearTimeout(expiryTimer);
+    if (!expMs) return;
+    expiryTimer = setTimeout(function () { setToken(''); renderLogin('Your Growth Engine session ended. It renews automatically from your administrator sign-in.', { event: 'session-expired', reason: 'expired' }); }, Math.max(0, Math.min(expMs - Date.now(), 2147483000)));
+  }
   function token() { try { return sessionStorage.getItem(TOKEN_KEY) || ''; } catch (e) { return ''; } }
   function setToken(t) { try { if (t) sessionStorage.setItem(TOKEN_KEY, t); else sessionStorage.removeItem(TOKEN_KEY); } catch (e) { /* ignore */ } }
   function api(method, path, body) {
@@ -124,7 +140,7 @@
       .then(function (r) {
         return r.text().then(function (t) {
           var j = null; try { j = JSON.parse(t); } catch (e) { /* not json */ }
-          if (r.status === 401 && path !== '/admin/login') { setToken(''); renderLogin('Your session ended. Please sign in again.'); throw Object.assign(new Error('signed_out'), { silent: true }); }
+          if (r.status === 401 && path !== '/admin/login') { setToken(''); renderLogin('Your session ended. Please sign in again.', { event: 'session-expired', reason: (j && j.reason) || 'session_invalid' }); throw Object.assign(new Error('signed_out'), { silent: true }); }
           if (!r.ok) { var err = new Error((j && (j.message || j.reason)) || ('Request failed (' + r.status + ')')); err.status = r.status; err.reason = j && j.reason; err.body = j; throw err; }
           return j || {};
         });
@@ -169,8 +185,9 @@
   function fallbackCopy(text) { var t = h('textarea'); t.value = text; document.body.appendChild(t); t.select(); try { document.execCommand('copy'); } catch (e) { /* ignore */ } t.remove(); }
 
   // ---------- login ----------
-  function renderLogin(message) {
-    var app = clear(document.getElementById('app')); tellParent('signin');
+  function renderLogin(message, signal) {
+    clearTimeout(expiryTimer);
+    var app = clear(document.getElementById('app')); tellParent('signin', signal);
     var pw = h('input', { type: 'password', id: 'pw', autocomplete: 'current-password', required: true, testid: 'login-password' });
     var errBox = h('p', { class: 'error', role: 'alert', testid: 'login-error', text: message || '' });
     var btn = h('button', { class: 'btn primary', type: 'submit', testid: 'login-submit', text: 'Sign in' });
@@ -202,7 +219,7 @@
     add(app, [
       h('header', { class: 'topbar' }, h('div', { class: 'logo' }, 'FANTASY ', h('b', { text: 'MMADNESS' }), h('small', { text: 'GROWTH ENGINE · BACK OFFICE' })),
         h('span', { class: 'stage-pill', text: 'STAGING · nothing is sent' }),
-        h('button', { class: 'signout', testid: 'signout', text: 'Sign out', onclick: function () { setToken(''); renderLogin('You have signed out.'); } })),
+        h('button', { class: 'signout', testid: 'signout', text: 'Sign out', onclick: function () { signOut('You have signed out.'); } })),
       h('div', { class: 'layout' }, nav, main),
     ]);
     main.appendChild(h('div', { class: 'spinner', text: 'Loading live staging data…' }));
@@ -1101,23 +1118,40 @@
   // Growth Engine session. Accepted only from the direct parent window, only from an
   // origin on this engine's embed list (from /health), and only if /admin/session
   // accepts the token; otherwise ignored.
+  // The back office may also end the session ({type:'fmm-growth-logout'}): same checks, then the
+  // session is revoked on the server and forgotten here.
+  function fromAllowedParent(event) {
+    return fetch(API + '/health', { cache: 'no-store' }).then(function (r) { return r.json(); }).then(function (hl) {
+      var allowed = (hl && hl.console && hl.console.embedOrigins) || [];
+      return allowed.indexOf(event.origin) !== -1;
+    });
+  }
   if (EMBEDDED) window.addEventListener('message', function (event) {
     var d = event.data;
-    if (event.source !== window.parent || !d || d.type !== 'fmm-growth-session' || typeof d.token !== 'string' || d.token.length > 4096) return;
-    if (d.token === token()) return;
-    fetch(API + '/health', { cache: 'no-store' }).then(function (r) { return r.json(); }).then(function (hl) {
-      var allowed = (hl && hl.console && hl.console.embedOrigins) || [];
-      if (allowed.indexOf(event.origin) === -1) return;
+    if (event.source !== window.parent || !d || typeof d !== 'object') return;
+    if (d.type === 'fmm-growth-logout') {
+      fromAllowedParent(event).then(function (ok) { if (ok) signOut('You have signed out of administration.'); }).catch(function () { /* ignore */ });
+      return;
+    }
+    if (d.type !== 'fmm-growth-session' || typeof d.token !== 'string' || d.token.length > 4096) return;
+    if (d.token === token()) { tellParent(parse().name, { event: 'session-ready', expiresAt: state.sessionExpMs || null }); return; }
+    fromAllowedParent(event).then(function (ok) {
+      if (!ok) return;
       return fetch(API + '/admin/session', { cache: 'no-store', headers: { Authorization: 'Bearer ' + d.token } }).then(function (r) {
-        if (!r.ok) return;
-        setToken(d.token); if (!location.hash || location.hash === '#/signin') location.hash = '#/overview'; boot();
+        if (!r.ok) { tellParent('signin', { event: 'session-expired', reason: 'session_rejected' }); return; }
+        return r.json().then(function (s) {
+          setToken(d.token); state.sessionExpMs = s && s.exp ? s.exp * 1000 : null; scheduleExpiry(state.sessionExpMs);
+          if (!location.hash || location.hash === '#/signin') location.hash = '#/overview';
+          tellParent(parse().name, { event: 'session-ready', expiresAt: state.sessionExpMs });
+          boot();
+        });
       });
     }).catch(function () { /* ignore */ });
   });
 
   function boot() {
     if (!token()) return renderLogin();
-    api('GET', '/admin/session').then(function () { route(); }).catch(function (e) { if (!e.silent) renderLogin(); });
+    api('GET', '/admin/session').then(function (s) { state.sessionExpMs = s && s.exp ? s.exp * 1000 : null; scheduleExpiry(state.sessionExpMs); route(); }).catch(function (e) { if (!e.silent) renderLogin(); });
   }
   window.addEventListener('hashchange', route);
   boot();

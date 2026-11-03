@@ -18,8 +18,9 @@ const consoleKey = (adminJwtSecret) => {
 };
 
 // method: 'console_password' (Growth Engine password) or 'website_admin' (verified website administrator, short-lived).
-const signConsoleToken = (adminJwtSecret, { email = 'owner@growth-console', pwv, adminId, method = 'console_password' }, { expiresIn = '12h' } = {}) =>
-  jwt.sign({ email, role: CONSOLE_ROLE, pwv, scope: 'growth', method, ...(adminId ? { adminId } : {}) }, consoleKey(adminJwtSecret), { algorithm: 'HS256', expiresIn, audience: CONSOLE_AUDIENCE, issuer: CONSOLE_ISSUER });
+// sid: revocable session id (website-administrator sessions; see growth-admin-sso.js).
+const signConsoleToken = (adminJwtSecret, { email = 'owner@growth-console', pwv, adminId, sid, iatMs, method = 'console_password' }, { expiresIn = '12h' } = {}) =>
+  jwt.sign({ email, role: CONSOLE_ROLE, pwv, scope: 'growth', method, ...(adminId ? { adminId } : {}), ...(sid ? { sid } : {}), ...(iatMs ? { iatMs } : {}) }, consoleKey(adminJwtSecret), { algorithm: 'HS256', expiresIn, audience: CONSOLE_AUDIENCE, issuer: CONSOLE_ISSUER });
 
 // Fingerprint of the current console password hash: rotating the password ends every session.
 const consolePasswordVersion = (passwordHash) => crypto.createHash('sha256').update(String(passwordHash || '')).digest('hex').slice(0, 16);

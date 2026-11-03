@@ -47,7 +47,7 @@ function registerIsolatedGrowthRoutes({ app, env = process.env, express, transpo
   router.use(express.json({ limit: '32kb' }));
   router.get('/health', (req, res) => {
     res.set('Cache-Control', 'no-store');
-    res.status(resolved.ok ? 200 : 503).json({ ok: resolved.ok, service: 'growth-engine-isolated', mode: 'isolated', errors: resolved.errors, warnings: resolved.warnings, delivery: { provider: resolved.config.delivery.provider, realDelivery: resolved.config.delivery.realDelivery, blockers: resolved.config.delivery.blockers }, database: resolved.config.database, console: { path: '/api/growth/console', signInConfigured: Boolean(env.GROWTH_ADMIN_PASSWORD_HASH), embedOrigins: embedOrigins(env), websiteAdminSignIn: { enabled: Boolean(resolved.config.sso?.enabled), verifiedBy: (() => { try { return new URL(resolved.config.sso.verifyBase).hostname; } catch { return null; } })(), allowListConfigured: Boolean(resolved.config.sso?.allow?.length) } } });
+    res.status(resolved.ok ? 200 : 503).json({ ok: resolved.ok, service: 'growth-engine-isolated', mode: 'isolated', errors: resolved.errors, warnings: resolved.warnings, delivery: { provider: resolved.config.delivery.provider, realDelivery: resolved.config.delivery.realDelivery, blockers: resolved.config.delivery.blockers }, database: resolved.config.database, console: { path: '/api/growth/console', signInConfigured: Boolean(env.GROWTH_ADMIN_PASSWORD_HASH), embedOrigins: embedOrigins(env), websiteAdminSignIn: { enabled: Boolean(resolved.config.sso?.enabled), transport: 'first_party_signed_assertion', siteKeyId: resolved.config.sso?.keyId || null, siteOrigins: resolved.config.sso?.siteOrigins || [], allowListConfigured: Boolean(resolved.config.sso?.allow?.length) } } });
   });
   if (!resolved.ok) { app.use('/api/growth', router); return { mounted: false, errors: resolved.errors }; }
 
@@ -146,25 +146,42 @@ function registerIsolatedGrowthRoutes({ app, env = process.env, express, transpo
     res.json({ ok: true, token, expiresInHours: 12 });
   });
 
-  // ---- website administrator single sign-on ----
-  // The website's own admin session (verified server-side with the live backend) becomes a
-  // short-lived Growth Engine session. No Growth Engine password needed; nothing stored.
-  const ssoCfg = resolved.config.sso || { enabled: false };
+  // ---- website administrator sign-in: first-party signed assertion (growth-admin-sso.js) ----
+  // The website's own server verifies the administrator with the live admin authority and sends a
+  // one-time Ed25519-signed assertion here, server to server. The ordinary website admin token
+  // never reaches this engine. Browser requests to these routes are refused.
+  const ssoCfg = resolved.config.sso || { enabled: false, siteOrigins: [], allow: [] };
+  const lazyCollections = new Proxy({}, { get: (_t, name) => new Proxy({}, { get: (_u, method) => async (...args) => { const rt = await getRuntime(); const map = { nonces: rt.collections.ssoNonces, revocations: rt.collections.sessionRevocations, audit: rt.collections.audit }; return map[name][method](...args); } }) });
   const sso = require('./growth-admin-sso').createAdminSso({
-    config: ssoCfg, adminJwtSecret: secrets.adminJwtSecret, fetchImpl,
-    signSession: ({ email, adminId, ttl }) => signConsoleToken(secrets.adminJwtSecret, { email, adminId, pwv: passwordVersion, method: 'website_admin' }, { expiresIn: ttl }),
-    audit: async (action, details) => { try { const rt = await getRuntime(); await rt.collections.audit.insertOne({ action, ...details, at: new Date().toISOString() }); } catch { /* audit is best effort */ } },
+    config: ssoCfg, collections: lazyCollections, rateLimit: Math.max(1, Number(env.GROWTH_SSO_RATE_LIMIT_PER_MIN) || 30),
+    signSession: ({ email, adminId, sid, iatMs, ttl }) => signConsoleToken(secrets.adminJwtSecret, { email, adminId, sid, iatMs, pwv: passwordVersion, method: 'website_admin' }, { expiresIn: ttl }),
   });
-  router.post('/admin/sso', async (req, res) => {
+  const clientIp = (req) => String(req.headers['x-forwarded-for'] || req.socket?.remoteAddress || 'unknown').split(',')[0].trim();
+  const serverOnly = (req, res) => {
+    // a browser always sends Origin on a cross-origin POST; the website's server-side request does not
+    if (req.headers.origin || req.headers['sec-fetch-site']) { res.status(403).json({ ok: false, reason: 'server_to_server_only' }); return false; }
+    return true;
+  };
+  router.post('/admin/sso/assertion', async (req, res) => {
     res.set('Cache-Control', 'no-store');
-    const ip = String(req.headers['x-forwarded-for'] || req.socket?.remoteAddress || 'unknown').split(',')[0].trim();
-    const websiteToken = String(req.headers.authorization || '').replace(/^Bearer\s+/i, '');
+    if (!serverOnly(req, res)) return;
     try {
-      const r = await sso.exchange(websiteToken, { ip });
-      if (!r.ok) return res.status(r.status).json({ ok: false, reason: r.reason, message: r.status === 503 ? 'The website could not confirm your administrator session right now. Try again in a moment.' : 'Sign in to the website administration first.' });
-      return res.json({ ok: true, token: r.token, expiresInSeconds: r.expiresInSeconds, expiresAt: r.expiresAt, admin: r.admin, method: 'website_admin', verification: r.verification });
-    } catch (e) { console.error('[growth] sso failed:', e.message); return res.status(500).json({ ok: false, reason: 'sso_failed' }); }
+      const r = await sso.exchange(typeof req.body?.assertion === 'string' ? req.body.assertion : '', { ip: clientIp(req) });
+      if (!r.ok) return res.status(r.status).json({ ok: false, reason: r.reason });
+      return res.json({ ok: true, token: r.token, expiresAt: r.expiresAtMs, expiresInSeconds: r.expiresInSeconds, admin: r.admin, method: 'website_admin' });
+    } catch (e) { console.error('[growth] sso exchange failed:', e.message); return res.status(503).json({ ok: false, reason: 'sso_unavailable' }); }
   });
+  router.post('/admin/sso/revoke', async (req, res) => {
+    res.set('Cache-Control', 'no-store');
+    if (!serverOnly(req, res)) return;
+    try {
+      const r = await sso.revokeAdmin(typeof req.body?.assertion === 'string' ? req.body.assertion : '', { ip: clientIp(req) });
+      return res.status(r.ok ? 200 : r.status).json(r.ok ? { ok: true } : { ok: false, reason: r.reason });
+    } catch (e) { console.error('[growth] sso revoke failed:', e.message); return res.status(503).json({ ok: false, reason: 'sso_unavailable' }); }
+  });
+  // The earlier direct exchange (browser sends the website admin token here) is withdrawn.
+  // The Authorization header is not read.
+  router.post('/admin/sso', (req, res) => res.status(410).json({ ok: false, reason: 'direct_admin_token_exchange_removed', message: 'Use the website administration session endpoint.' }));
 
   // ---- back office ----
   const admin = (req, res, next) => {
@@ -172,10 +189,20 @@ function registerIsolatedGrowthRoutes({ app, env = process.env, express, transpo
     // Only Growth Engine console tokens are accepted (dedicated key + audience); a live
     // back-office admin token is rejected here, and console tokens are useless on the live API.
     try { req.admin = verifyConsoleToken(secrets.adminJwtSecret, token); }
-    catch { return res.status(401).json({ ok: false, message: 'Admin authentication required' }); }
-    if (req.admin.pwv !== passwordVersion) return res.status(401).json({ ok: false, message: 'Session ended because the console password was changed' });
-    return next();
+    catch { return res.status(401).json({ ok: false, reason: 'session_invalid', message: 'Admin authentication required' }); }
+    if (req.admin.pwv !== passwordVersion) return res.status(401).json({ ok: false, reason: 'password_changed', message: 'Session ended because the console password was changed' });
+    if (!req.admin.sid) return next();
+    // website-administrator sessions can be revoked (logout here, or logout on the website)
+    return sso.revokedReason(req.admin).then((why) => {
+      if (why) return res.status(401).json({ ok: false, reason: why, message: 'Your Growth Engine session has ended.' });
+      return next();
+    }).catch(() => res.status(503).json({ ok: false, reason: 'session_check_unavailable', message: 'Could not confirm your session. Try again.' }));
   };
+  router.post('/admin/logout', admin, async (req, res) => {
+    res.set('Cache-Control', 'no-store');
+    try { const r = await sso.revokeSession(req.admin, { ip: clientIp(req), reason: 'logout' }); return res.json({ ok: true, revoked: r.revoked }); }
+    catch (e) { return res.status(503).json({ ok: false, reason: 'logout_unavailable' }); }
+  });
   const who = (req) => String(req.admin?.email || req.admin?.id || 'admin');
   router.get('/admin/overview', admin, wrap(async (req, res, rt) => res.json({ ok: true, overview: await rt.overview() })));
   router.get('/admin/drafts', admin, wrap(async (req, res, rt) => res.json({ ok: true, drafts: await rt.listDrafts({ status: req.query.status, kind: req.query.kind, limit: req.query.limit }) })));

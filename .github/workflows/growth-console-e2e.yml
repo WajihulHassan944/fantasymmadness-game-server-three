@@ -79,7 +79,10 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        v2: ['on', 'off', 'review', 'sso-live', 'sso-review']   # on = replacement, off = rollback, review = test back office; sso-* = website administrator sign-in against the REAL website backend (loopback)
+        # on = replacement, off = rollback, review = test back office (website test branch);
+        # first-party = website administrator sign-in through the same-origin session bridge, on Codex's
+        # integration frontend (PR #193 + bridge), against the REAL website backend (loopback)
+        v2: ['on', 'off', 'review', 'first-party']
     services:
       mongodb:
         image: mongo:7
@@ -106,7 +109,7 @@ jobs:
         uses: actions/checkout@v4
         with:
           repository: WajihulHassan944/fmm-ver2
-          ref: test/growth-engine-replacement
+          ref: ${{ matrix.v2 == 'first-party' && 'integration/growth-engine-first-party-session' || 'test/growth-engine-replacement' }}
           path: web
           persist-credentials: false
       - uses: actions/setup-node@v4
@@ -122,25 +125,39 @@ jobs:
           # Point every production host at a closed loopback port so nothing can reach it.
           for h in fantasymmadness-game-server-three-taupe.vercel.app www.fantasymmadness.com fantasymmadness.com fantasymmadness-growth-isolated-tes.vercel.app; do echo "127.0.0.1 $h" | sudo tee -a /etc/hosts; done
           if curl -s -m 5 -o /dev/null https://fantasymmadness-game-server-three-taupe.vercel.app/; then echo "live backend still reachable"; exit 1; fi
+      - name: Test-only signing keys for the first-party bridge (generated per run, never stored)
+        if: matrix.v2 == 'first-party'
+        run: |
+          node -e 'const c=require("crypto");const k=c.generateKeyPairSync("ed25519");const b=(x)=>Buffer.from(x).toString("base64");console.log("SSO_SITE_PRIVATE_KEY="+b(k.privateKey.export({type:"pkcs8",format:"pem"})));console.log("SSO_SITE_PUBLIC_KEY="+b(k.publicKey.export({type:"spki",format:"pem"})))' >> "$GITHUB_ENV"
+          echo "WEB_DIR=$GITHUB_WORKSPACE/web" >> "$GITHUB_ENV"
       - name: Build the website (Growth Engine switch = ${{ matrix.v2 }})
         env:
-          NEXT_PUBLIC_API_BASE_URL: ${{ startsWith(matrix.v2, 'sso') && 'http://127.0.0.1:5071' || 'http://127.0.0.1:9' }}
-          NEXT_PUBLIC_API_BASE: ${{ startsWith(matrix.v2, 'sso') && 'http://127.0.0.1:5071' || 'http://127.0.0.1:9' }}
+          NEXT_PUBLIC_API_BASE_URL: ${{ matrix.v2 == 'first-party' && 'http://127.0.0.1:5071' || 'http://127.0.0.1:9' }}
+          NEXT_PUBLIC_API_BASE: ${{ matrix.v2 == 'first-party' && 'http://127.0.0.1:5071' || 'http://127.0.0.1:9' }}
           NEXT_PUBLIC_GROWTH_ENGINE_URL: http://127.0.0.1:4300
-          NEXT_PUBLIC_GROWTH_ENGINE_V2: ${{ startsWith(matrix.v2, 'sso') && 'on' || matrix.v2 }}
-          NEXT_PUBLIC_ADMIN_STAGING_REVIEW: ${{ (matrix.v2 == 'review' || matrix.v2 == 'sso-review') && 'on' || 'off' }}
+          NEXT_PUBLIC_GROWTH_ENGINE_V2: ${{ matrix.v2 == 'first-party' && 'on' || matrix.v2 }}
+          NEXT_PUBLIC_FMM_GROWTH_ENGINE_ENABLED: ${{ matrix.v2 == 'first-party' && 'true' || 'false' }}
+          NEXT_PUBLIC_FMM_GROWTH_SESSION_PATH: ${{ matrix.v2 == 'first-party' && '/api/admin/growth-session' || '' }}
+          NEXT_PUBLIC_ADMIN_STAGING_REVIEW: ${{ matrix.v2 == 'review' && 'on' || 'off' }}
           NEXT_TELEMETRY_DISABLED: '1'
         run: cd web && npm run build
       - name: Start the website
         env:
-          NEXT_PUBLIC_API_BASE_URL: ${{ startsWith(matrix.v2, 'sso') && 'http://127.0.0.1:5071' || 'http://127.0.0.1:9' }}
-          NEXT_PUBLIC_API_BASE: ${{ startsWith(matrix.v2, 'sso') && 'http://127.0.0.1:5071' || 'http://127.0.0.1:9' }}
-          NEXT_PUBLIC_ADMIN_STAGING_REVIEW: ${{ (matrix.v2 == 'review' || matrix.v2 == 'sso-review') && 'on' || 'off' }}
+          NEXT_PUBLIC_API_BASE_URL: ${{ matrix.v2 == 'first-party' && 'http://127.0.0.1:5071' || 'http://127.0.0.1:9' }}
+          NEXT_PUBLIC_API_BASE: ${{ matrix.v2 == 'first-party' && 'http://127.0.0.1:5071' || 'http://127.0.0.1:9' }}
+          NEXT_PUBLIC_ADMIN_STAGING_REVIEW: ${{ matrix.v2 == 'review' && 'on' || 'off' }}
+          # server-only settings of the same-origin bridge (test values; loopback allowed only in this test)
+          GROWTH_SSO_SITE_PRIVATE_KEY: ${{ env.SSO_SITE_PRIVATE_KEY }}
+          GROWTH_ENGINE_SERVER_URL: http://127.0.0.1:4300
+          FMM_ADMIN_VERIFY_URL: http://127.0.0.1:5071
+          GROWTH_SITE_ORIGINS: http://localhost:3000
+          GROWTH_SSO_ALLOW_LOOPBACK: 'true'
+          GROWTH_SESSION_RATE_LIMIT_PER_MIN: '200'
         run: |
           cd web && (npx next start -p 3000 > ../next.log 2>&1 &)
           for i in $(seq 1 60); do curl -sf -o /dev/null http://localhost:3000/administration/login && break; sleep 2; done
       - name: Start the REAL website backend (server.js, loopback only, local database) for the sign-in builds
-        if: startsWith(matrix.v2, 'sso')
+        if: matrix.v2 == 'first-party'
         env:
           GROWTH_ACCEPTANCE_ISOLATED: '1'
           PORT: '5071'
@@ -166,7 +183,7 @@ jobs:
           npm install --no-save --no-fund --ignore-scripts playwright@1.56.1
           npx playwright install --with-deps chromium
       - name: Browser test — back office navigation, auth, permissions, responsiveness, rollback
-        run: node --test --test-concurrency=1 --test-reporter=spec growth-acceptance/admin-replacement.e2e.test.js growth-acceptance/staging-review.e2e.test.js growth-acceptance/admin-sso.e2e.test.js
+        run: node --test --test-concurrency=1 --test-reporter=spec growth-acceptance/admin-replacement.e2e.test.js growth-acceptance/staging-review.e2e.test.js growth-acceptance/first-party-sso.e2e.test.js
       - name: Website log (on failure)
         if: failure()
         run: tail -60 next.log || true; tail -60 sso-backend.log || true

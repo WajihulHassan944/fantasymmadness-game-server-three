@@ -98,8 +98,8 @@ function resolveGrowthRuntimeConfig(env = process.env) {
     researchPerRun: Math.min(10, Math.max(0, Number(env.GROWTH_RESEARCH_PER_RUN ?? 4))), // shows researched per 15-minute run (0 = off) // fighter-name addresses from the website (growth-fight-urls.js)
     // Posters: generated from verified contests; served publicly from this service for the platforms to fetch.
     posters: { enabled: env.GROWTH_POSTERS === 'on', perRun: Math.min(20, Math.max(1, Number(env.GROWTH_POSTERS_PER_RUN || 3))), publicOrigin: String(env.GROWTH_PUBLIC_ORIGIN || 'https://fantasymmadness-growth-isolated-tes.vercel.app').replace(/\/+$/, ''), artEnv: { GROWTH_ART_CLOUDINARY_CLOUDS: String(env.GROWTH_ART_CLOUDINARY_CLOUDS || ''), GROWTH_ART_HOSTS: String(env.GROWTH_ART_HOSTS || '') } },
-    // Website administrator single sign-on (growth-admin-sso.js): the live backend confirms the admin session.
-    sso: (() => { const s = require('./growth-admin-sso').resolveSsoConfig(env, { defaultVerifyBase: contestSourceUrl }); return { enabled: s.enabled, verifyBase: s.verifyBase, allow: s.allow, errors: s.errors }; })(),
+    // Website administrator sign-in (growth-admin-sso.js): first-party signed assertion from the website server.
+    sso: (() => { const s = require('./growth-admin-sso').resolveSsoConfig(env); return { enabled: s.enabled, publicKey: s.publicKey, keyId: s.keyId, siteOrigins: s.siteOrigins, allow: s.allow, errors: s.errors }; })(),
     meta: { redirectUri: metaResolved.redirectUri, liveTestApproved: metaResolved.liveTestApproved, expected: metaResolved.expected },
   };
   // Secrets are kept out of the returned config object.

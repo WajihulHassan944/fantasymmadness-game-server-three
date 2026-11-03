@@ -39,7 +39,7 @@ function createGrowthRuntime({ db, config, secrets = {}, provider, fetchImpl = g
     runs: db.collection('isolated_run_claims'), workstreams: db.collection('isolated_workstream_runs'),
     jobs: db.collection('unattended_jobs'), drafts: db.collection('growth_drafts'), prospects: db.collection('growth_prospects'),
     deliveries: db.collection('growth_delivery_claims'), alerts: db.collection('growth_alerts'), reports: db.collection('growth_reports'),
-    suppressions: db.collection('growth_suppressions'), audit: db.collection('growth_audit_log'),
+    suppressions: db.collection('growth_suppressions'), audit: db.collection('growth_audit_log'), ssoNonces: db.collection('growth_sso_nonces'), sessionRevocations: db.collection('growth_session_revocations'),
     attribution: db.collection('growth_attribution_events'),
     coverage: db.collection('growth_marketing_coverage'), gateRejections: db.collection('growth_campaign_rejections'),
     affiliates: db.collection('growth_affiliates'), liveReports: db.collection('growth_live_reports'),
