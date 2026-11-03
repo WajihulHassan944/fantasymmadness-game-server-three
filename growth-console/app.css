@@ -120,6 +120,8 @@ table.data td.num,table.data th.num{text-align:right;font-variant-numeric:tabula
 .email-preview-safe td,.email-preview-safe th{vertical-align:top;padding:8px;border:1px solid #e4e6ec}
 .email-preview-safe blockquote{border-left:3px solid #d31c32;margin:12px 0;padding:6px 12px;background:#fbf6f7}
 .email-preview-safe a{color:#be1630;text-decoration:underline}
+.email-preview-safe a.email-preview-cta{display:inline-block;background:#c91d32;color:#fff;font-size:15px;font-weight:700;text-align:center;text-decoration:none;border-radius:6px;padding:12px 21px;margin:4px 0 12px;cursor:pointer}
+.email-preview-safe a.email-preview-cta:hover,.email-preview-safe a.email-preview-cta:focus-visible{background:#a90e22;color:#fff;text-decoration:underline}
 
 
 /* ---------- charts ---------- */
