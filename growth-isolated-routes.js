@@ -33,7 +33,7 @@ const CONSOLE_ASSETS = {
 // The console may be embedded ONLY by the origins listed in GROWTH_CONSOLE_EMBED_ORIGINS
 // (the FANTASY MMADNESS admin site). Anything else cannot frame it.
 const embedOrigins = (env) => String(env.GROWTH_CONSOLE_EMBED_ORIGINS || '').split(/[\s,]+/).filter((o) => /^https?:\/\/[a-z0-9.-]+(:\d+)?$/i.test(o) && (o.startsWith('https://') || /^http:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/.test(o)));
-const consoleCsp = (origins) => `default-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: https:; connect-src 'self'; frame-src 'self'; base-uri 'none'; form-action 'none'; frame-ancestors ${origins.length ? origins.join(' ') : "'none'"}`;
+const consoleCsp = (origins) => `default-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: https:; connect-src 'self'; frame-src 'self' about:; base-uri 'none'; form-action 'none'; frame-ancestors ${origins.length ? origins.join(' ') : "'none'"}`;
 const EMAIL_RE = /^[^\s@<>()",;:]+@[A-Za-z0-9-]+(\.[A-Za-z0-9-]+)+$/;
 
 function safeEqual(a, b) {
