@@ -163,9 +163,15 @@ test(`website administrator -> Growth Engine, first-party session bridge (${MODE
     await t.test('sign out inside the console revokes that session; the back office does not silently sign back in', async () => {
       await page.goto(`${SITE}/administration/growth-engine/overview`);
       await frame().locator('[data-testid=page-overview]').waitFor();
-      const tok = await growthSession(); const sid = decode(tok).sid;
+      const consoleFrame = () => page.frames().find((x) => x.url().startsWith(`${ENGINE}/api/growth/console`));
+      // the session the console itself is using (it was handed over by the back office)
+      const tok = await waitFor(async () => { const c = await consoleFrame().evaluate(() => sessionStorage.getItem('fmmGrowthConsoleToken')); const p = await growthSession(); return c && c === p ? c : null; }, 10000)
+        || await consoleFrame().evaluate(() => sessionStorage.getItem('fmmGrowthConsoleToken'));
+      const sid = decode(tok).sid;
       await frame().locator('[data-testid=signout]').click();
-      assert.ok(await waitFor(() => auditFind({ action: 'session_revoked', sid: sid.slice(0, 12) })), 'revoked on the server');
+      const revoked = await waitFor(() => auditFind({ action: 'session_revoked', sid: sid.slice(0, 12) }));
+      if (!revoked) console.log('diagnostics:', JSON.stringify({ logoutCalls: inbound.filter((r) => /logout/.test(r.path)).map((r) => r.path), audit: (await gdb.collection('growth_audit_log').find({ action: /session|sso/ }).toArray()).map((a) => [a.action, a.reason, a.sid]) }));
+      assert.ok(revoked, 'revoked on the server');
       assert.equal((await call(main.url, 'GET', '/admin/session', tok)).json.reason, 'session_revoked');
       await page.locator('[data-testid=ge-session-notice]').waitFor();
       assert.equal(await growthSession(), null);
@@ -200,6 +206,8 @@ test(`website administrator -> Growth Engine, first-party session bridge (${MODE
       await page.goto(`${SITE}/administration/growth-engine/overview`);
       await page.locator('[data-testid=ge-session-notice]').waitFor();
       assert.equal(await growthSession(), null, 'no Growth Engine session from a forged token');
+      // the console in this tab is signed out too (it had a session from the earlier, genuine login)
+      await frame().locator('[data-testid=login]').waitFor();
       assert.equal(await frame().locator('[data-testid=page-overview]').count(), 0);
     });
 
