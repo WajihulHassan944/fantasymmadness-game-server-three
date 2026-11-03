@@ -47,7 +47,7 @@ function registerIsolatedGrowthRoutes({ app, env = process.env, express, transpo
   router.use(express.json({ limit: '32kb' }));
   router.get('/health', (req, res) => {
     res.set('Cache-Control', 'no-store');
-    res.status(resolved.ok ? 200 : 503).json({ ok: resolved.ok, service: 'growth-engine-isolated', mode: 'isolated', errors: resolved.errors, warnings: resolved.warnings, delivery: { provider: resolved.config.delivery.provider, realDelivery: resolved.config.delivery.realDelivery, blockers: resolved.config.delivery.blockers }, database: resolved.config.database, console: { path: '/api/growth/console', signInConfigured: Boolean(env.GROWTH_ADMIN_PASSWORD_HASH), embedOrigins: embedOrigins(env) } });
+    res.status(resolved.ok ? 200 : 503).json({ ok: resolved.ok, service: 'growth-engine-isolated', mode: 'isolated', errors: resolved.errors, warnings: resolved.warnings, delivery: { provider: resolved.config.delivery.provider, realDelivery: resolved.config.delivery.realDelivery, blockers: resolved.config.delivery.blockers }, database: resolved.config.database, console: { path: '/api/growth/console', signInConfigured: Boolean(env.GROWTH_ADMIN_PASSWORD_HASH), embedOrigins: embedOrigins(env), websiteAdminSignIn: { enabled: Boolean(resolved.config.sso?.enabled), verifiedBy: (() => { try { return new URL(resolved.config.sso.verifyBase).hostname; } catch { return null; } })(), allowListConfigured: Boolean(resolved.config.sso?.allow?.length) } } });
   });
   if (!resolved.ok) { app.use('/api/growth', router); return { mounted: false, errors: resolved.errors }; }
 
@@ -144,6 +144,26 @@ function registerIsolatedGrowthRoutes({ app, env = process.env, express, transpo
     limiter.reset(ip);
     const token = signConsoleToken(secrets.adminJwtSecret, { pwv: passwordVersion });
     res.json({ ok: true, token, expiresInHours: 12 });
+  });
+
+  // ---- website administrator single sign-on ----
+  // The website's own admin session (verified server-side with the live backend) becomes a
+  // short-lived Growth Engine session. No Growth Engine password needed; nothing stored.
+  const ssoCfg = resolved.config.sso || { enabled: false };
+  const sso = require('./growth-admin-sso').createAdminSso({
+    config: ssoCfg, adminJwtSecret: secrets.adminJwtSecret, fetchImpl,
+    signSession: ({ email, adminId, ttl }) => signConsoleToken(secrets.adminJwtSecret, { email, adminId, pwv: passwordVersion, method: 'website_admin' }, { expiresIn: ttl }),
+    audit: async (action, details) => { try { const rt = await getRuntime(); await rt.collections.audit.insertOne({ action, ...details, at: new Date().toISOString() }); } catch { /* audit is best effort */ } },
+  });
+  router.post('/admin/sso', async (req, res) => {
+    res.set('Cache-Control', 'no-store');
+    const ip = String(req.headers['x-forwarded-for'] || req.socket?.remoteAddress || 'unknown').split(',')[0].trim();
+    const websiteToken = String(req.headers.authorization || '').replace(/^Bearer\s+/i, '');
+    try {
+      const r = await sso.exchange(websiteToken, { ip });
+      if (!r.ok) return res.status(r.status).json({ ok: false, reason: r.reason, message: r.status === 503 ? 'The website could not confirm your administrator session right now. Try again in a moment.' : 'Sign in to the website administration first.' });
+      return res.json({ ok: true, token: r.token, expiresInSeconds: r.expiresInSeconds, expiresAt: r.expiresAt, admin: r.admin, method: 'website_admin', verification: r.verification });
+    } catch (e) { console.error('[growth] sso failed:', e.message); return res.status(500).json({ ok: false, reason: 'sso_failed' }); }
   });
 
   // ---- back office ----
@@ -263,7 +283,7 @@ function registerIsolatedGrowthRoutes({ app, env = process.env, express, transpo
   // ---- console read models + owner actions ----
   let backoffice = null;
   const bo = (rt) => (backoffice ||= createBackoffice({ runtime: rt }));
-  router.get('/admin/session', admin, (req, res) => res.json({ ok: true, admin: who(req), exp: req.admin.exp || null }));
+  router.get('/admin/session', admin, (req, res) => res.json({ ok: true, admin: who(req), exp: req.admin.exp || null, method: req.admin.method || 'console_password', scope: req.admin.scope || 'growth' }));
   router.get('/admin/status', admin, wrap(async (req, res, rt) => res.json({ ok: true, scheduler: await bo(rt).schedulerStatus(), delivery: { provider: resolved.config.delivery.provider, realDelivery: resolved.config.delivery.realDelivery, blockers: resolved.config.delivery.blockers }, database: { name: resolved.config.database.name, kind: resolved.config.database.kind, hostPinned: resolved.config.database.hostPinned }, warnings: resolved.warnings })));
   router.get('/admin/runs', admin, wrap(async (req, res, rt) => res.json({ ok: true, runs: await bo(rt).runs({ limit: req.query.limit }) })));
   router.get('/admin/jobs', admin, wrap(async (req, res, rt) => res.json({ ok: true, jobs: await bo(rt).jobs({ state: req.query.state, limit: req.query.limit }) })));

@@ -53,11 +53,14 @@ test('test back office — staging sign-in (no live admin access)', { skip, time
   const shot = (name) => (SHOTS ? page.screenshot({ path: path.join(SHOTS, `review-${name}.jpg`), fullPage: false, type: 'jpeg', quality: 70 }) : null);
   const frame = () => page.frameLocator('[data-testid=ge-frame]');
   try {
-    await t.test('without a session every admin page goes to the staging sign-in; no live email/password form', async () => {
+    await t.test('without a session every admin page goes to the staging sign-in (Growth Engine only: admin account or Growth Engine password)', async () => {
       await page.goto(`${SITE}/administration/growth-engine/marketing`);
       await page.waitForURL(/\/administration\/login\?next=/);
       await page.waitForSelector('[data-testid=staging-review-login]');
-      assert.equal(await page.locator('input[type=email]').count(), 0, 'live admin email field shown');
+      assert.match(await page.textContent('[data-testid=staging-review-login]'), /only the Growth Engine/);
+      assert.match(await page.textContent('[data-testid=staging-review-login]'), /not kept in this test copy/);
+      await page.click('[data-testid=staging-mode-password]');
+      assert.equal(await page.locator('input[type=email]').count(), 0, 'email field on the password tab');
       assert.match(await page.textContent('[data-testid=staging-review-login]'), /Growth Engine password/);
       await shot('login');
     });
@@ -71,6 +74,7 @@ test('test back office — staging sign-in (no live admin access)', { skip, time
     });
 
     await t.test('wrong password is refused with a clear message', async () => {
+      await page.click('[data-testid=staging-mode-password]');
       await page.fill('[data-testid=staging-password]', 'not the password');
       await page.click('[data-testid=staging-login-submit]');
       await page.waitForSelector('[data-testid=staging-login-error]');
@@ -79,6 +83,7 @@ test('test back office — staging sign-in (no live admin access)', { skip, time
 
     await t.test('correct password opens the Growth Engine; the console is signed in automatically (one sign-in)', async () => {
       await page.goto(`${SITE}/administration/login?next=${encodeURIComponent('/administration/growth-engine/approvals')}`);
+      await page.click('[data-testid=staging-mode-password]');
       await page.fill('[data-testid=staging-password]', PASSWORD);
       await page.click('[data-testid=staging-login-submit]');
       await page.waitForURL(/\/administration\/growth-engine\/approvals$/);

@@ -79,7 +79,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        v2: ['on', 'off', 'review']   # on = Growth Engine replacement, off = rollback, review = test back office (staging sign-in only)
+        v2: ['on', 'off', 'review', 'sso-live', 'sso-review']   # on = replacement, off = rollback, review = test back office; sso-* = website administrator sign-in against the REAL website backend (loopback)
     services:
       mongodb:
         image: mongo:7
@@ -95,6 +95,9 @@ jobs:
       GROWTH_CONSOLE_SCREENSHOTS: ${{ github.workspace }}/console-screenshots
       SITE_URL: http://localhost:3000
       GROWTH_V2: ${{ matrix.v2 }}
+      SSO_WEBSITE_API: http://127.0.0.1:5071
+      SSO_JWT_SECRET_ADMIN: sso-test-admin-signing-secret-0123456789abcdef0123
+      SSO_JWT_SECRET: sso-test-player-signing-secret-0123456789abcdef01234
     steps:
       - uses: actions/checkout@v4
         with:
@@ -121,31 +124,52 @@ jobs:
           if curl -s -m 5 -o /dev/null https://fantasymmadness-game-server-three-taupe.vercel.app/; then echo "live backend still reachable"; exit 1; fi
       - name: Build the website (Growth Engine switch = ${{ matrix.v2 }})
         env:
-          NEXT_PUBLIC_API_BASE_URL: http://127.0.0.1:9
-          NEXT_PUBLIC_API_BASE: http://127.0.0.1:9
+          NEXT_PUBLIC_API_BASE_URL: ${{ startsWith(matrix.v2, 'sso') && 'http://127.0.0.1:5071' || 'http://127.0.0.1:9' }}
+          NEXT_PUBLIC_API_BASE: ${{ startsWith(matrix.v2, 'sso') && 'http://127.0.0.1:5071' || 'http://127.0.0.1:9' }}
           NEXT_PUBLIC_GROWTH_ENGINE_URL: http://127.0.0.1:4300
-          NEXT_PUBLIC_GROWTH_ENGINE_V2: ${{ matrix.v2 }}
-          NEXT_PUBLIC_ADMIN_STAGING_REVIEW: ${{ matrix.v2 == 'review' && 'on' || 'off' }}
+          NEXT_PUBLIC_GROWTH_ENGINE_V2: ${{ startsWith(matrix.v2, 'sso') && 'on' || matrix.v2 }}
+          NEXT_PUBLIC_ADMIN_STAGING_REVIEW: ${{ (matrix.v2 == 'review' || matrix.v2 == 'sso-review') && 'on' || 'off' }}
           NEXT_TELEMETRY_DISABLED: '1'
         run: cd web && npm run build
       - name: Start the website
         env:
-          NEXT_PUBLIC_API_BASE_URL: http://127.0.0.1:9
-          NEXT_PUBLIC_API_BASE: http://127.0.0.1:9
-          NEXT_PUBLIC_ADMIN_STAGING_REVIEW: ${{ matrix.v2 == 'review' && 'on' || 'off' }}
+          NEXT_PUBLIC_API_BASE_URL: ${{ startsWith(matrix.v2, 'sso') && 'http://127.0.0.1:5071' || 'http://127.0.0.1:9' }}
+          NEXT_PUBLIC_API_BASE: ${{ startsWith(matrix.v2, 'sso') && 'http://127.0.0.1:5071' || 'http://127.0.0.1:9' }}
+          NEXT_PUBLIC_ADMIN_STAGING_REVIEW: ${{ (matrix.v2 == 'review' || matrix.v2 == 'sso-review') && 'on' || 'off' }}
         run: |
           cd web && (npx next start -p 3000 > ../next.log 2>&1 &)
           for i in $(seq 1 60); do curl -sf -o /dev/null http://localhost:3000/administration/login && break; sleep 2; done
+      - name: Start the REAL website backend (server.js, loopback only, local database) for the sign-in builds
+        if: startsWith(matrix.v2, 'sso')
+        env:
+          GROWTH_ACCEPTANCE_ISOLATED: '1'
+          PORT: '5071'
+          MONGODB_URI: mongodb://127.0.0.1:27017/fmm_sso_website?directConnection=true
+          JWT_SECRET: ${{ env.SSO_JWT_SECRET }}
+          JWT_SECRET_ADMIN: ${{ env.SSO_JWT_SECRET_ADMIN }}
+          CORS_ORIGINS: http://localhost:3000
+          SMTP_HOST: 127.0.0.1
+          SMTP_PORT: '1025'
+          SMTP_SECURE: 'false'
+          SMTP_USER: sso@localhost
+          SMTP_PASS: staging-only
+          GROWTH_ACCEPTANCE_OUT: /tmp
+        run: |
+          npm rebuild bcrypt
+          nohup node -r ./growth-acceptance/isolation-preload.js full-card-bootstrap.js > sso-backend.log 2>&1 &
+          for i in $(seq 1 60); do curl -s -o /dev/null http://127.0.0.1:5071/ && break; sleep 1; done
+          grep -m1 "isolation active" sso-backend.log
+          code=$(curl -s -o /dev/null -w '%{http_code}' -X POST -H 'Content-Type: application/json' -d '{"email":"nobody@x.test","password":"x"}' http://127.0.0.1:5071/admin/login); echo "website /admin/login answers $code"; test "$code" = "400"
       - name: Install Playwright + Chromium (test-only)
         run: |
           mkdir -p console-screenshots
           npm install --no-save --no-fund --ignore-scripts playwright@1.56.1
           npx playwright install --with-deps chromium
       - name: Browser test — back office navigation, auth, permissions, responsiveness, rollback
-        run: node --test --test-concurrency=1 --test-reporter=spec growth-acceptance/admin-replacement.e2e.test.js growth-acceptance/staging-review.e2e.test.js
+        run: node --test --test-concurrency=1 --test-reporter=spec growth-acceptance/admin-replacement.e2e.test.js growth-acceptance/staging-review.e2e.test.js growth-acceptance/admin-sso.e2e.test.js
       - name: Website log (on failure)
         if: failure()
-        run: tail -60 next.log || true
+        run: tail -60 next.log || true; tail -60 sso-backend.log || true
       - name: Print screenshots
         if: always()
         run: |

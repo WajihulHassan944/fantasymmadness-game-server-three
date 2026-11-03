@@ -20,7 +20,7 @@ const uri = process.env.GROWTH_TEST_MONGO_URI;
 const SITE = process.env.SITE_URL;
 const V2 = process.env.GROWTH_V2 !== 'off';
 let chromium = null; try { ({ chromium } = require('playwright')); } catch { /* optional */ }
-const skip = process.env.GROWTH_V2 === 'review' ? 'staging review build: see staging-review.e2e.test.js' : (!uri || !SITE || !chromium ? 'needs loopback MongoDB, a running site and playwright' : false);
+const skip = process.env.GROWTH_V2 === 'review' ? 'staging review build: see staging-review.e2e.test.js' : /^sso/.test(process.env.GROWTH_V2 || '') ? 'website-admin sign-in build: see admin-sso.e2e.test.js' : (!uri || !SITE || !chromium ? 'needs loopback MongoDB, a running site and playwright' : false);
 const ENGINE = 'http://127.0.0.1:4300';
 const PASSWORD = 'replacement test password (test only)';
 const SHOTS = process.env.GROWTH_CONSOLE_SCREENSHOTS;
