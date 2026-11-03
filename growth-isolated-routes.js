@@ -151,7 +151,13 @@ function registerIsolatedGrowthRoutes({ app, env = process.env, express, transpo
   // one-time Ed25519-signed assertion here, server to server. The ordinary website admin token
   // never reaches this engine. Browser requests to these routes are refused.
   const ssoCfg = resolved.config.sso || { enabled: false, siteOrigins: [], allow: [] };
-  const lazyCollections = new Proxy({}, { get: (_t, name) => new Proxy({}, { get: (_u, method) => async (...args) => { const rt = await getRuntime(); const map = { nonces: rt.collections.ssoNonces, revocations: rt.collections.sessionRevocations, audit: rt.collections.audit }; return map[name][method](...args); } }) });
+  // the runtime (and its database) is created lazily, so the collections are reached through it
+  const col = async (name) => (await getRuntime()).collections[name];
+  const lazyCollections = {
+    nonces: { createIndex: async (...a) => (await col('ssoNonces')).createIndex(...a), insertOne: async (...a) => (await col('ssoNonces')).insertOne(...a) },
+    revocations: { createIndex: async (...a) => (await col('sessionRevocations')).createIndex(...a), updateOne: async (...a) => (await col('sessionRevocations')).updateOne(...a), find: (q) => ({ toArray: async () => (await col('sessionRevocations')).find(q).toArray() }) },
+    audit: { insertOne: async (...a) => (await col('audit')).insertOne(...a) },
+  };
   const sso = require('./growth-admin-sso').createAdminSso({
     config: ssoCfg, collections: lazyCollections, rateLimit: Math.max(1, Number(env.GROWTH_SSO_RATE_LIMIT_PER_MIN) || 30),
     signSession: ({ email, adminId, sid, iatMs, ttl }) => signConsoleToken(secrets.adminJwtSecret, { email, adminId, sid, iatMs, pwv: passwordVersion, method: 'website_admin' }, { expiresIn: ttl }),
