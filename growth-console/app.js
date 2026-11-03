@@ -122,8 +122,11 @@
   function signOut(message) {
     var t = token();
     setToken('');
-    if (t) { try { fetch(API + '/admin/logout', { method: 'POST', cache: 'no-store', keepalive: true, headers: { Authorization: 'Bearer ' + t } }).catch(function () {}); } catch (e) { /* ignore */ } }
-    renderLogin(message, { event: 'signed-out' });
+    var done = false; var finish = function () { if (done) return; done = true; renderLogin(message, { event: 'signed-out' }); };
+    if (!t) return finish();
+    // tell the back office only after the server has revoked the session (it may remove this frame)
+    try { fetch(API + '/admin/logout', { method: 'POST', cache: 'no-store', keepalive: true, headers: { Authorization: 'Bearer ' + t } }).then(finish, finish); } catch (e) { finish(); }
+    setTimeout(finish, 3000);
   }
   function scheduleExpiry(expMs) {
     clearTimeout(expiryTimer);

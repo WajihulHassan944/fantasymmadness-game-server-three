@@ -65,7 +65,7 @@ test(`website administrator -> Growth Engine, first-party session bridge (${MODE
   const startEngine = async (port, env) => {
     const app = express();
     // every request that reaches the engine is recorded (headers + parsed body) for the credential-egress check
-    app.use((req, res, next) => { res.on('finish', () => inbound.push({ port, path: req.path, auth: String(req.headers.authorization || ''), body: JSON.stringify(req.body || {}), origin: req.headers.origin || null })); next(); });
+    app.use((req, res, next) => { res.on('finish', () => inbound.push({ port, path: req.originalUrl.split('?')[0], auth: String(req.headers.authorization || ''), body: JSON.stringify(req.body || {}), origin: req.headers.origin || null })); next(); });
     app.use(cors({ origin: (o, cb) => (!o || [SITE, ENGINE].includes(o) ? cb(null, true) : cb(new Error('Not allowed by CORS'))), credentials: true }));
     const m = registerIsolatedGrowthRoutes({ app, env: { ...baseEnv, ...env }, express, fetchImpl, connect: async () => client });
     assert.equal(m.mounted, true, JSON.stringify(m.errors));
