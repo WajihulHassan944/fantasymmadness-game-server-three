@@ -173,6 +173,8 @@ test('Growth Engine back-office console: every screen, button and workflow', { s
         await page.click(`[data-draft-id="${id}"] [data-testid=btn-approve]`); await confirm(); await clearToasts();
         await page.waitForSelector(`[data-draft-id="${id}"]`, { state: 'detached' });
       }
+      // the badge refreshes just after the last card leaves: wait for it rather than read it mid-refresh
+      await page.waitForFunction(() => document.querySelector('[data-testid=nav-pending]')?.textContent === '6', null, { timeout: 10000 }).catch(() => {});
       assert.equal(await page.textContent('[data-testid=nav-pending]'), '6');
       // Filters (rejected = the owner's rejection + the legacy podcast campaign withdrawn by the safeguard)
       await page.selectOption('[data-testid=filter-status]', 'rejected');
