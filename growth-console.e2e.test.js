@@ -292,6 +292,18 @@ test('Growth Engine back-office console: every screen, button and workflow', { s
       const proposal = await draft(`affiliate-${affiliateProspect}`);
       assert.match(proposal.subject, /fan league for Naoya Inoue vs Murodjon Akhmadaliev/);
       assert.match(proposal.text, /affiliate program terms are shown on the sign-up page/);
+      // The owner can inspect the actual affiliate call-to-action: it must
+      // remain clickable after email sanitization, without restoring scripts
+      // or allowing arbitrary third-party destinations in the preview.
+      await page.click(`${drafted} [data-testid=btn-view-template]`);
+      await page.waitForSelector('[data-testid=prepared-list] [data-testid=email-preview]');
+      const previewCta = page.locator('[data-testid=prepared-list] [data-testid=email-preview] a.email-preview-cta');
+      assert.equal(await previewCta.count(), 1, 'Affiliate call-to-action should remain a button link');
+      assert.match(await previewCta.getAttribute('href'), /^https:\/\/(www\.)?fantasymmadness\.com\//);
+      assert.equal(await previewCta.getAttribute('target'), '_blank');
+      assert.equal(await previewCta.getAttribute('rel'), 'noopener noreferrer');
+      assert.equal(await page.locator('[data-testid=prepared-list] [data-testid=email-preview] iframe, [data-testid=prepared-list] [data-testid=email-preview] script').count(), 0);
+
       // manual contact form still validates addresses
       await page.click('[data-testid=prepared-row][data-outcome=no_verified_contact_route] [data-testid=btn-add-contact]');
       assert.equal(await page.inputValue('[data-testid=contact-kind]'), 'affiliate');
