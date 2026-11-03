@@ -190,6 +190,15 @@
     var drop = { SCRIPT: 1, STYLE: 1, NOSCRIPT: 1, TEMPLATE: 1, SVG: 1, MATH: 1,
       FORM: 1, IFRAME: 1, OBJECT: 1, EMBED: 1, VIDEO: 1, AUDIO: 1, PICTURE: 1 };
     var copied = 0;
+    function approvedPreviewLink(raw) {
+      if (!raw || typeof raw !== 'string') return null;
+      try {
+        var u = new URL(raw, 'https://www.fantasymmadness.com/');
+        if (u.protocol !== 'https:' || (u.hostname !== 'fantasymmadness.com' && u.hostname !== 'www.fantasymmadness.com')) return null;
+        if (u.username || u.password || u.port) return null;
+        return u.href;
+      } catch (_) { return null; }
+    }
     function safeCopy(node, into, depth) {
       if (depth > 45 || copied++ > 10000) return;
       if (node.nodeType === 3) { into.appendChild(document.createTextNode(node.nodeValue || '')); return; }
@@ -201,8 +210,17 @@
         return;
       }
       var item = document.createElement(node.tagName.toLowerCase());
-      // Deliberately copy no attributes: all hrefs, styles and on* attributes
-      // are excluded, so the preview cannot trigger network requests.
+      // Only verified FANTASY MMADNESS HTTPS links are clickable in this
+      // staging preview. Do not restore styles, event handlers or remote URLs.
+      if (node.tagName === 'A') {
+        var href = approvedPreviewLink(node.getAttribute('href'));
+        if (href) {
+          item.setAttribute('href', href);
+          item.setAttribute('target', '_blank');
+          item.setAttribute('rel', 'noopener noreferrer');
+          if (/^\\s*See the affiliate program\\s*$/i.test(node.textContent || '')) item.className = 'email-preview-cta';
+        }
+      }
       Array.from(node.childNodes).forEach(function (n) { safeCopy(n, item, depth + 1); });
       into.appendChild(item);
     }
