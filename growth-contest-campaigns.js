@@ -72,7 +72,11 @@ function verifyContest(item, { now = new Date(), horizonDays = 21, mediaNames = 
   if (item.draft === true || item.isDraft === true || item.voidedAt) reasons.push('draft_or_voided');
   const status = clean(wrestling ? item.status : item.matchStatus, 20).toLowerCase();
   if (wrestling ? status !== 'open' : !OPEN_MATCH_STATUSES.has(status || 'ongoing')) reasons.push(`contest_not_open (${status || 'none'})`);
-  if (!wrestling && String(item.matchShadowOpenStatus || '').toLowerCase() === 'closed') reasons.push('contest_entries_closed');
+  // The live player-entry helper ignores legacy shadow flags on published LIVE
+  // fights. Marketing must follow that same rule: otherwise a playable LIVE
+  // contest can be incorrectly excluded. Genuine shadow/non-LIVE closures stay
+  // protected, as do the separate lockAt and entryClosedAt checks below.
+  if (!wrestling && String(item.matchType || '').toUpperCase() !== 'LIVE' && String(item.matchShadowOpenStatus || '').toLowerCase() === 'closed') reasons.push('contest_entries_closed');
   if (wrestling && item.publicVisible === false) reasons.push('not_public');
   // Date: must be a real future date inside the horizon.
   const tz = validTimeZone(item.eventTimeZone);
