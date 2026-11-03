@@ -218,7 +218,7 @@
           item.setAttribute('href', href);
           item.setAttribute('target', '_blank');
           item.setAttribute('rel', 'noopener noreferrer');
-          if (/^\\s*See the affiliate program\\s*$/i.test(node.textContent || '')) item.className = 'email-preview-cta';
+          if (/^\s*See the affiliate program\s*$/i.test(node.textContent || '')) item.className = 'email-preview-cta';
         }
       }
       Array.from(node.childNodes).forEach(function (n) { safeCopy(n, item, depth + 1); });
