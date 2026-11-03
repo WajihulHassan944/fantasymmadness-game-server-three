@@ -177,8 +177,38 @@
     });
   }
   function emailPreview(html) {
-    // No allow-scripts / allow-same-origin: the draft cannot run code or reach the console.
-    return h('iframe', { class: 'preview', sandbox: '', title: 'Email preview', srcdoc: String(html || ''), testid: 'email-preview' });
+    // Render a safe, readable email in the existing console. Browser security
+    // policies block nested about:srcdoc frames on some hosting/browser paths.
+    // Do not use innerHTML or append untrusted nodes: copy ONLY approved tags
+    // and text into newly created elements. No scripts, CSS, event handlers,
+    // images, forms, iframes or remote resources can reach the console.
+    var panel = h('div', { class: 'preview email-preview-safe', role: 'region', 'aria-label': 'Read-only email preview', testid: 'email-preview' });
+    var parsed = new DOMParser().parseFromString(String(html || ''), 'text/html');
+    var tags = { P: 1, DIV: 1, SPAN: 1, B: 1, STRONG: 1, I: 1, EM: 1, U: 1, BR: 1,
+      H1: 1, H2: 1, H3: 1, H4: 1, UL: 1, OL: 1, LI: 1, BLOCKQUOTE: 1,
+      TABLE: 1, THEAD: 1, TBODY: 1, TR: 1, TD: 1, TH: 1, HR: 1, SMALL: 1, A: 1 };
+    var drop = { SCRIPT: 1, STYLE: 1, NOSCRIPT: 1, TEMPLATE: 1, SVG: 1, MATH: 1,
+      FORM: 1, IFRAME: 1, OBJECT: 1, EMBED: 1, VIDEO: 1, AUDIO: 1, PICTURE: 1 };
+    var copied = 0;
+    function safeCopy(node, into, depth) {
+      if (depth > 45 || copied++ > 10000) return;
+      if (node.nodeType === 3) { into.appendChild(document.createTextNode(node.nodeValue || '')); return; }
+      if (node.nodeType !== 1 || drop[node.tagName]) return;
+      if (!tags[node.tagName]) {
+        // Unrecognized containers are flattened, not trusted or executed.
+        if (node.tagName === 'IMG' || node.tagName === 'LINK' || node.tagName === 'META') return;
+        Array.from(node.childNodes).forEach(function (n) { safeCopy(n, into, depth + 1); });
+        return;
+      }
+      var item = document.createElement(node.tagName.toLowerCase());
+      // Deliberately copy no attributes: all hrefs, styles and on* attributes
+      // are excluded, so the preview cannot trigger network requests.
+      Array.from(node.childNodes).forEach(function (n) { safeCopy(n, item, depth + 1); });
+      into.appendChild(item);
+    }
+    if (parsed.body) Array.from(parsed.body.childNodes).forEach(function (n) { safeCopy(n, panel, 0); });
+    if (!panel.textContent.trim()) panel.appendChild(h('p', { text: 'This email has no readable preview content.' }));
+    return panel;
   }
   function copyText(text) {
     var done = function () { toast('Copied to clipboard. Paste it into the social account.', 'good'); };
