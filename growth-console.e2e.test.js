@@ -246,7 +246,7 @@ test('Growth Engine back-office console: every screen, button and workflow', { s
       const emailFrame = page.frameLocator('[data-testid=email-preview]');
       await emailFrame.locator('body').waitFor();
       assert.match(await emailFrame.locator('body').innerText(), /FANTASY MMADNESS/i);
-      const previewResponse = await page.request.get(base + '/api/growth/console');
+      const previewResponse = await page.request.get(origin + '/api/growth/console');
       assert.match(previewResponse.headers()['content-security-policy'], /frame-src[^;]*about:/);
 
       await shot('05-public-relations');
