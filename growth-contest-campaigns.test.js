@@ -43,6 +43,23 @@ test('every unverifiable contest is rejected with a reason', () => {
   for (const [name, item] of Object.entries(cases)) assert.equal(verifyContest(item, { now: NOW }).ok, false, name);
 });
 
+test('published LIVE contest ignores legacy shadow closed field but still blocks actual closures', () => {
+  const live = fight({ matchType: 'LIVE', sourceType: 'match', matchShadowOpenStatus: 'closed' });
+  assert.equal(verifyContest(live, { now: NOW }).ok, true);
+  const shadow = fight({ matchType: 'shadow', sourceType: 'shadow', matchShadowOpenStatus: 'closed' });
+  assert.equal(verifyContest(shadow, { now: NOW }).ok, false);
+  const nonLiveClosed = fight({ matchType: 'scheduled', sourceType: 'match', matchShadowOpenStatus: 'closed' });
+  assert.equal(verifyContest(nonLiveClosed, { now: NOW }).ok, false);
+  for (const closed of [
+    { matchStatus: 'Finished' }, { matchStatus: 'Closed' },
+    { entryClosedAt: NOW.toISOString() },
+    { lockAt: new Date(NOW.getTime() - 1000).toISOString() },
+  ]) {
+    const result = verifyContest({ ...live, ...closed }, { now: NOW });
+    assert.equal(result.ok, false, JSON.stringify(closed));
+  }
+});
+
 test('all five sports map, including pro wrestling from its own feed', () => {
   assert.equal(verifyContest(fight({ matchCategory: 'MMA' }), { now: NOW }).contest.sport, 'mma-ufc');
   assert.equal(verifyContest(fight({ matchCategory: 'mma', matchCategoryTwo: 'Bare Knuckle' }), { now: NOW }).contest.sport, 'bare-knuckle');
