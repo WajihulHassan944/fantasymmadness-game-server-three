@@ -2,7 +2,7 @@
 const test = require('node:test'), assert = require('node:assert/strict'), crypto = require('crypto');
 const express = require('express'), jwt = require('jsonwebtoken'), { MongoClient } = require('mongodb');
 const { installGrowthSocialOAuth, resolveOAuthConfig, decrypt } = require('./growth-social-oauth-isolated');
-const { signConsoleToken, consolePasswordVersion } = require('./growth-console-token');
+const { signConsoleToken, consolePasswordVersion } = require('./growth-social-oauth-token');
 const origin = 'https://growth-preview.example.test';
 const secret = crypto.randomBytes(48).toString('hex'), key = crypto.randomBytes(32);
 const salt = crypto.randomBytes(16), password = 'isolated-fixture-password';
@@ -51,6 +51,9 @@ test('OAuth security and account confirmation with isolated MongoDB',{skip:!/^mo
  await run('only scoped administrator sessions access connections or connect',async h=>{
   assert.equal((await h.call('GET','/social/connections',{auth:null})).status,401);
   assert.equal((await h.call('POST','/social/tiktok/connect',{auth:jwt.sign({id:'user'},secret),body:{}})).status,401);
+  const productionKey=crypto.createHmac('sha256',secret).update('fmm-growth-console-token/v1').digest();
+  const productionToken=jwt.sign({role:'growth_owner',scope:'growth',pwv:consolePasswordVersion(passwordHash)},productionKey,{audience:'fmm-growth-console',issuer:'fmm-growth-engine',expiresIn:'20m'});
+  assert.equal((await h.call('GET','/social/connections',{auth:productionToken})).status,401);
   assert.equal((await h.call('POST','/social/tiktok/connect',{body:{},headers:{Origin:'https://evil.test'}})).status,403);
   assert.equal(h.calls.length,0);
  });

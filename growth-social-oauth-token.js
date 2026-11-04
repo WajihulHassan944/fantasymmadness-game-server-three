@@ -1,24 +1,20 @@
 'use strict';
-// Growth Engine console sign-in tokens.
-// They are signed with a key DERIVED from JWT_SECRET_ADMIN (HMAC with a fixed label) and
-// carry a fixed audience/issuer. So even if this staging project shares its
-// JWT_SECRET_ADMIN value with the live backend, a console token is never a valid live
-// admin token, and a live admin token is never accepted by the console.
+// Preview-only administrator sessions. A distinct key label, issuer and audience
+// prevent production Growth or website tokens from authenticating to this Preview.
 const crypto = require('crypto');
 const jwt = require('jsonwebtoken');
 
-const CONSOLE_AUDIENCE = 'fmm-growth-console';
-const CONSOLE_ISSUER = 'fmm-growth-engine';
+const CONSOLE_AUDIENCE = 'fmm-growth-social-oauth-preview';
+const CONSOLE_ISSUER = 'fmm-growth-social-oauth-preview';
 const CONSOLE_ROLE = 'growth_owner';
 
 const consoleKey = (adminJwtSecret) => {
   const secret = String(adminJwtSecret || '');
   if (!secret) throw new Error('JWT_SECRET_ADMIN is not configured');
-  return crypto.createHmac('sha256', secret).update('fmm-growth-console-token/v1').digest();
+  return crypto.createHmac('sha256', secret).update('fmm-growth-social-oauth-preview-token/v1').digest();
 };
 
-// method: 'console_password' (Growth Engine password) or 'website_admin' (verified website administrator, short-lived).
-// sid: revocable session id (website-administrator sessions; see growth-admin-sso.js).
+// Short-lived, revocable administrator console session.
 const signConsoleToken = (adminJwtSecret, { email = 'owner@growth-console', pwv, adminId, sid, iatMs, method = 'console_password' }, { expiresIn = '12h' } = {}) =>
   jwt.sign({ email, role: CONSOLE_ROLE, pwv, scope: 'growth', method, ...(adminId ? { adminId } : {}), ...(sid ? { sid } : {}), ...(iatMs ? { iatMs } : {}) }, consoleKey(adminJwtSecret), { algorithm: 'HS256', expiresIn, audience: CONSOLE_AUDIENCE, issuer: CONSOLE_ISSUER });
 

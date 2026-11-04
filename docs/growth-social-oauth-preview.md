@@ -32,7 +32,7 @@ Existing isolated runtime configuration is still required: `GROWTH_STAGING_MODE=
 
 ## Security and confirmation flow
 
-1. Sign into the isolated connection back office with the existing Growth console administrator credential. Only dedicated audience/issuer/role-bound Growth sessions are accepted. Raw website administrator or player JWTs are rejected. Login is rate limited; logout revokes that session and cancels its unfinished authorizations.
+1. Sign into the isolated connection back office with the existing Growth console administrator credential. Only dedicated audience/issuer/role-bound Growth sessions are accepted. Production Growth console sessions, raw website administrator JWTs, and player JWTs are rejected, even if underlying server secrets happen to be shared: the Preview uses its own derived signing key, issuer and audience. Login is rate limited; logout revokes that session and cancels its unfinished authorizations.
 2. Connect issues a random, hashed, ten-minute, single-use state bound to that session and an HttpOnly / Secure / SameSite=Lax host-only browser cookie. X additionally uses S256 PKCE and confidential-client Basic authentication.
 3. The callback atomically consumes the matching state and browser binding. It exchanges the authorization code using a fixed provider endpoint, exact callback, timeout, and redirect refusal.
 4. TikTok **must** supply a valid `open_id` in both the token response and authenticated user-info response. They must match; no fallback accepts an unverified identity. X must return a valid account ID and username `FMmadness2024` (case-insensitive exact match).

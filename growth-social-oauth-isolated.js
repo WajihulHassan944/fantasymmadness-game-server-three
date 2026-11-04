@@ -2,11 +2,11 @@
 // Preview-only OAuth: provider proof -> encrypted verified candidate -> owner confirmation.
 const crypto = require('crypto');
 const { promisify } = require('util');
-const { signConsoleToken, verifyConsoleToken, consolePasswordVersion } = require('./growth-console-token');
+const { signConsoleToken, verifyConsoleToken, consolePasswordVersion } = require('./growth-social-oauth-token');
 const scrypt = promisify(crypto.scrypt);
 const PROVIDERS = {
   tiktok: { authorize: 'https://www.tiktok.com/v2/auth/authorize/', token: 'https://open.tiktokapis.com/v2/oauth/token/', me: 'https://open.tiktokapis.com/v2/user/info/?fields=open_id,display_name', scopes: 'user.info.basic' },
-  x: { authorize: 'https://twitter.com/i/oauth2/authorize', token: 'https://api.x.com/2/oauth2/token', me: 'https://api.x.com/2/users/me?user.fields=id,name,username', scopes: 'tweet.read users.read offline.access' },
+  x: { authorize: 'https://x.com/i/oauth2/authorize', token: 'https://api.x.com/2/oauth2/token', me: 'https://api.x.com/2/users/me?user.fields=id,name,username', scopes: 'tweet.read users.read offline.access' },
 };
 const hash = s => crypto.createHash('sha256').update(String(s)).digest('base64url');
 const random = () => crypto.randomBytes(32).toString('base64url');
@@ -91,6 +91,7 @@ function installGrowthSocialOAuth({ router, env, db, fetchImpl = globalThis.fetc
   router.post('/social/admin/logout', sameOrigin, auth, wrap(async (req, res) => {
     await indexes(); await revoked.updateOne({ _id: req.socialSession }, { $set: { expiresAt: new Date(req.socialAdmin.exp * 1000) } }, { upsert: true });
     await pending.deleteMany({ session: req.socialSession }); await candidates.deleteMany({ session: req.socialSession });
+    for (const p of Object.keys(PROVIDERS)) { clearCookie(res, p); clearCandidate(res, p); }
     res.json({ ok: true });
   }));
   router.post('/social/:provider/connect', sameOrigin, auth, wrap(async (req, res) => {
@@ -123,7 +124,7 @@ function installGrowthSocialOAuth({ router, env, db, fetchImpl = globalThis.fetc
     const body = new URLSearchParams({ client_secret: configs[p].secret, code: req.query.code, grant_type: 'authorization_code', redirect_uri: callback(p) });
     body.set(p === 'tiktok' ? 'client_key' : 'client_id', configs[p].clientId);
     const headers = { 'Content-Type': 'application/x-www-form-urlencoded', Accept: 'application/json' };
-    if (p === 'x') { body.set('code_verifier', decrypt(claim.verifier, key)); headers.Authorization = 'Basic ' + Buffer.from(configs[p].clientId + ':' + configs[p].secret).toString('base64'); body.delete('client_secret'); }
+    if (p === 'x') { body.set('code_verifier', decrypt(claim.verifier, key)); headers.Authorization = 'Basic ' + Buffer.from(encodeURIComponent(configs[p].clientId) + ':' + encodeURIComponent(configs[p].secret)).toString('base64'); body.delete('client_secret'); }
     let tokens, profile;
     try {
       const response = await remote(PROVIDERS[p].token, { method: 'POST', headers, body: body.toString() });
@@ -177,7 +178,7 @@ function installGrowthSocialOAuth({ router, env, db, fetchImpl = globalThis.fetc
       const body = new URLSearchParams({ grant_type:'refresh_token',refresh_token:previous.refresh_token });
       const headers = {'Content-Type':'application/x-www-form-urlencoded',Accept:'application/json'};
       body.set(p==='tiktok'?'client_key':'client_id',configs[p].clientId);
-      if(p==='x')headers.Authorization='Basic '+Buffer.from(configs[p].clientId+':'+configs[p].secret).toString('base64');else body.set('client_secret',configs[p].secret);
+      if(p==='x')headers.Authorization='Basic '+Buffer.from(encodeURIComponent(configs[p].clientId)+':'+encodeURIComponent(configs[p].secret)).toString('base64');else body.set('client_secret',configs[p].secret);
       let tokens,profile;
       try {
         const r=await remote(PROVIDERS[p].token,{method:'POST',headers,body:body.toString()});if(!r.ok)throw Error();tokens=await r.json();
