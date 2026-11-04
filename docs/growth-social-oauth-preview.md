@@ -28,11 +28,30 @@ Preserve all production settings. Scope the following to Preview / branch `featu
 - Optional `GROWTH_TIKTOK_REDIRECT_URI`: must equal the exact derived callback, otherwise authorization is refused.
 - Optional verified `GROWTH_TIKTOK_EXPECTED_OPEN_ID` / `GROWTH_X_EXPECTED_USER_ID`: extra pins; an Open ID is **not required before the first TikTok authorization**.
 
-Existing isolated runtime configuration is still required: `GROWTH_STAGING_MODE=isolated`, isolated `MONGODB_URI`, `GROWTH_TEST_ATLAS_HOST`, `JWT_SECRET_ADMIN`, `CRON_SECRET`, `GROWTH_UNSUBSCRIBE_SECRET`, and the existing `GROWTH_ADMIN_PASSWORD_HASH` for the administrator console. No password or secret should be pasted into an issue or chat.
+Existing isolated runtime configuration is still required: `GROWTH_STAGING_MODE=isolated`, isolated `MONGODB_URI`, `GROWTH_TEST_ATLAS_HOST`, `JWT_SECRET_ADMIN`, `CRON_SECRET`, `GROWTH_UNSUBSCRIBE_SECRET`, and the existing `GROWTH_ADMIN_PASSWORD_HASH` (session-rotation fingerprint only; password login is disabled in this Preview). No password or secret should be pasted into an issue or chat.
+
+## Website administrator sign-in configuration
+
+Backend Preview branch only:
+
+- `GROWTH_SOCIAL_SSO_PUBLIC_KEY`: existing staging Ed25519 public key; no production private key is reused.
+- `GROWTH_SOCIAL_ADMIN_SITE_ORIGIN=https://fmm-ver2-growth-social-preview.vercel.app`
+- `GROWTH_SOCIAL_PASSWORD_LOGIN=false`
+
+Frontend branch `repair/growth-social-preview-admin-login-20261104` only:
+
+- Preview-only existing staging `GROWTH_SSO_SITE_PRIVATE_KEY`, retained as a Secret without reading or exporting it. Its branch binding was moved from the prior staging release branch; existing deployments retain their immutable configuration. Production key and domains were untouched.
+- `GROWTH_SOCIAL_SSO_KEY_BINDING=existing_staging_key`
+- `GROWTH_SOCIAL_ENGINE_ORIGIN` = backend stable Preview origin above.
+- `GROWTH_SOCIAL_ADMIN_SITE_ORIGIN` = dedicated frontend Preview origin above.
+- `NEXT_PUBLIC_GROWTH_SOCIAL_PREVIEW=true` enables logout propagation only in this staging build.
+- `NEXT_PUBLIC_API_BASE_URL` points to the existing website administrator authority. It is used for normal administrator sign-in, never for Growth database writes.
+
+`GET /api/admin/growth-social-session` exposes configuration status and the public-key fingerprint only. Deployed smoke tests require its fingerprint to match the backend and require the exact Preview origins. This route and its POST/DELETE exchange are disabled outside Vercel Preview. No new password, recovery code, or secret is delivered in chat or stored in GitHub.
 
 ## Security and confirmation flow
 
-1. Sign into the isolated connection back office with the existing Growth console administrator credential. Only dedicated audience/issuer/role-bound Growth sessions are accepted. Production Growth console sessions, raw website administrator JWTs, and player JWTs are rejected, even if underlying server secrets happen to be shared: the Preview uses its own derived signing key, issuer and audience. Login is rate limited; logout revokes that session and cancels its unfinished authorizations.
+1. Choose **Sign in with FANTASY MMADNESS** in the Connections Preview. A window opens on `https://fmm-ver2-growth-social-preview.vercel.app`. Use the same website administrator account you use at FANTASYMMADNESS.COM; there is no separate Growth password. The normal website sign-in accepts `next` and returns to `/administration/growth-connections`. Click **Continue as website administrator**, then return to Connections Preview. The server validates that administrator with the existing live authority using a read-only proof and signs a one-use Ed25519 assertion; the Preview verifies its own staging public key and exact website origin. No website password or raw website session is sent to the engine. The window handoff checks the exact origin, popup source, and random challenge before validating the returned Preview session. Sessions expire within 20 minutes and never outlive the website session. Website logout revokes this administrator’s staging sessions. The undocumented Growth password form is hidden and its endpoint refuses login unless an explicit test-only opt-in is set. Only dedicated audience/issuer/role-bound Growth sessions are accepted. Production Growth console sessions, raw website administrator JWTs, and player JWTs are rejected, even if underlying server secrets happen to be shared: the Preview uses its own derived signing key, issuer and audience. Assertion exchange is rate limited; logout revokes that session and cancels its unfinished authorizations.
 2. Connect issues a random, hashed, ten-minute, single-use state bound to that session and an HttpOnly / Secure / SameSite=Lax host-only browser cookie. X additionally uses S256 PKCE and confidential-client Basic authentication.
 3. The callback atomically consumes the matching state and browser binding. It exchanges the authorization code using a fixed provider endpoint, exact callback, timeout, and redirect refusal.
 4. TikTok **must** supply a valid `open_id` in both the token response and authenticated user-info response. They must match; no fallback accepts an unverified identity. X must return a valid account ID and username `FMmadness2024` (case-insensitive exact match).

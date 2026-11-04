@@ -46,6 +46,15 @@ function installGrowthSocialOAuth({ router, env, db, fetchImpl = globalThis.fetc
   const candidates = db.collection('growth_social_oauth_candidates');
   const accounts = db.collection('growth_social_accounts');
   const revoked = db.collection('growth_social_oauth_revoked');
+  const { resolveSsoConfig, createAdminSso } = require('./growth-social-admin-sso');
+  const ssoConfig = resolveSsoConfig({ ...env, GROWTH_SSO_SITE_PUBLIC_KEY: env.GROWTH_SOCIAL_SSO_PUBLIC_KEY, GROWTH_SSO_SITE_ORIGINS: env.GROWTH_SOCIAL_ADMIN_SITE_ORIGIN });
+  const sso = createAdminSso({ config: ssoConfig, collections: {
+    nonces: db.collection('growth_social_sso_nonces'), revocations: db.collection('growth_social_sso_revocations'), audit: db.collection('growth_social_sso_audit'),
+  }, now: clock, signSession: ({ ttl, ...claims }) => signConsoleToken(adminSecret, { ...claims, method: 'website_admin', pwv: consolePasswordVersion(env.GROWTH_ADMIN_PASSWORD_HASH) }, { expiresIn: Math.min(ttl, 1200) }) });
+  const serverOnly = (req, res, next) => {
+    if (req.headers.origin || req.headers['sec-fetch-site']) return res.status(403).json({ ok: false, reason: 'server_to_server_required' });
+    next();
+  };
   const hits = new Map();
   function limited(key, max) { const now = clock().getTime(); const rows = (hits.get(key) || []).filter(t => t > now - 600000); rows.push(now); if (hits.size > 2000) hits.clear(); hits.set(key, rows); return rows.length > max; }
   const cookieName = p => '__Host-growth_' + p + '_oauth';
@@ -66,6 +75,7 @@ function installGrowthSocialOAuth({ router, env, db, fetchImpl = globalThis.fetc
       if (!match || match[1].length > 4096) throw Error('no session');
       const claims = verifyConsoleToken(adminSecret, match[1]);
       if (claims.scope !== 'growth' || claims.pwv !== consolePasswordVersion(env.GROWTH_ADMIN_PASSWORD_HASH) || !Number.isInteger(claims.exp) || claims.exp * 1000 <= clock().getTime()) throw Error('invalid session');
+      if (await sso.revokedReason(claims)) throw Error('website session ended');
       req.socialSession = hash(match[1]); req.socialAdmin = claims;
       if (await revoked.findOne({ _id: req.socialSession, expiresAt: { $gt: clock() } })) throw Error('signed out');
       return next();
@@ -75,7 +85,20 @@ function installGrowthSocialOAuth({ router, env, db, fetchImpl = globalThis.fetc
   let indexed;
   const indexes = () => indexed ||= Promise.all([pending, candidates, revoked].map(c => c.createIndex({ expiresAt: 1 }, { expireAfterSeconds: 0 }))).catch(e => { indexed = null; throw e; });
   const remote = (url, opts) => fetchImpl(url, { ...opts, redirect: 'error', signal: AbortSignal.timeout(10000) });
+  router.post('/admin/sso/assertion', serverOnly, wrap(async (req, res) => {
+    const out = await sso.exchange(req.body?.assertion, { ip: req.ip });
+    res.status(out.status || 200).json(out.ok ? { ...out, expiresAt: out.expiresAtMs } : out);
+  }));
+  router.post('/admin/sso/revoke', serverOnly, wrap(async (req, res) => {
+    const out = await sso.revokeAdmin(req.body?.assertion, { ip: req.ip }); res.status(out.status || 200).json(out);
+  }));
+  router.get('/social/admin/sign-in', (req, res) => {
+    let url = null;
+    try { const u = new URL(env.GROWTH_SOCIAL_ADMIN_SITE_ORIGIN); if (u.protocol === 'https:' && ssoConfig.siteOrigins.includes(u.origin) && u.href === u.origin + '/') url = u.origin + '/administration/growth-connections'; } catch {}
+    res.set('Cache-Control', 'no-store').json({ ok: true, method: 'website_admin', configured: Boolean(url && ssoConfig.enabled), keyId: ssoConfig.keyId, url: ssoConfig.enabled ? url : null });
+  });
   router.post('/social/admin/login', sameOrigin, wrap(async (req, res) => {
+    if (env.GROWTH_SOCIAL_PASSWORD_LOGIN !== 'true') return res.status(403).json({ ok: false, error: 'use_website_administrator_sign_in' });
     if (limited('login:' + (req.ip || 'unknown'), 10)) return res.status(429).json({ ok: false, error: 'too_many_attempts' });
     const m = /^scrypt\$([A-Za-z0-9+/=]+)\$([A-Za-z0-9+/=]+)$/.exec(env.GROWTH_ADMIN_PASSWORD_HASH || '');
     if (!m) return res.status(503).json({ ok: false, error: 'administrator_login_not_configured' });

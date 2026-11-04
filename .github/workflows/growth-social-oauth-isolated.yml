@@ -41,6 +41,7 @@ jobs:
           node --check growth-social-oauth-isolated.js
           node --check growth-social-oauth-console.js
           node --check growth-isolated-routes.js
+          node growth-social-admin-sso.test.js
           node growth-social-oauth-isolated.test.js
           node growth-social-oauth-preview.test.js
       - name: Install Chromium for isolated back-office UI tests

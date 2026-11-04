@@ -7,7 +7,7 @@ const origin = 'https://growth-preview.example.test';
 const secret = crypto.randomBytes(48).toString('hex'), key = crypto.randomBytes(32);
 const salt = crypto.randomBytes(16), password = 'isolated-fixture-password';
 const passwordHash = `scrypt$${salt.toString('base64')}$${crypto.scryptSync(password,salt,64).toString('base64')}`;
-const env = { GROWTH_SOCIAL_PUBLIC_ORIGIN: origin, GROWTH_SOCIAL_TOKEN_KEY: key.toString('base64'), GROWTH_TIKTOK_CLIENT_KEY: 'fixture-client', GROWTH_TIKTOK_CLIENT_SECRET: 'fixture-secret', GROWTH_X_CLIENT_ID: 'fixture-x-client', GROWTH_X_CLIENT_SECRET: 'fixture-x-secret', GROWTH_ADMIN_PASSWORD_HASH: passwordHash, GROWTH_SOCIAL_PROVIDER: 'none' };
+const env = { GROWTH_SOCIAL_PUBLIC_ORIGIN: origin, GROWTH_SOCIAL_TOKEN_KEY: key.toString('base64'), GROWTH_TIKTOK_CLIENT_KEY: 'fixture-client', GROWTH_TIKTOK_CLIENT_SECRET: 'fixture-secret', GROWTH_X_CLIENT_ID: 'fixture-x-client', GROWTH_X_CLIENT_SECRET: 'fixture-x-secret', GROWTH_SOCIAL_PASSWORD_LOGIN:'true',GROWTH_ADMIN_PASSWORD_HASH: passwordHash, GROWTH_SOCIAL_PROVIDER: 'none' };
 const token = () => signConsoleToken(secret,{pwv:consolePasswordVersion(passwordHash),sid:crypto.randomBytes(16).toString('hex')},{expiresIn:'20m'});
 const tikId = 'verified_tiktok_open_id', xId = '123456789012345678';
 const uri = process.env.GROWTH_TEST_MONGO_URI;
