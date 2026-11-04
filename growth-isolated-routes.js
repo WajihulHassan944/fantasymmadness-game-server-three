@@ -44,6 +44,8 @@ function registerIsolatedGrowthRoutes({ app, env = process.env, express, transpo
           : (provider.realDelivery && alertTo ? (m) => provider.send({ id: `alert-${Date.now()}`, status: 'approved', ownerApproved: true, sendPermitted: true, recipient: alertTo, listUnsubscribe: config.unsubscribeBaseUrl, ...m }) : null);
         const runtime = createGrowthRuntime({ db, config, secrets, provider, fetchImpl, alertSender });
         await runtime.init();
+        // Private handle for isolated social OAuth; never included in API output.
+        runtime.socialOAuthDb = db;
         return runtime;
       })().catch((e) => { runtimePromise = null; throw e; });
     }
@@ -53,6 +55,32 @@ function registerIsolatedGrowthRoutes({ app, env = process.env, express, transpo
     try { await fn(req, res, await getRuntime()); }
     catch (e) { console.error('[growth] request failed:', e.message); res.status(500).json({ ok: false, message: 'Growth Engine request failed' }); }
   };
+
+  // Social OAuth is opt-in and available ONLY in the isolated Growth Engine.
+  // This router remains disabled until sandbox secrets and a dedicated store exist.
+  if (env.GROWTH_SOCIAL_OAUTH_ENABLED === 'true') {
+    const socialRouter = express.Router();
+    let socialInit = null;
+    socialRouter.use(async (req, res, next) => {
+      try {
+        if (!socialInit) socialInit = getRuntime().then((runtime) => {
+          const { installGrowthSocialOAuth } = require('./growth-social-oauth-isolated');
+          const oauthRouter = express.Router();
+          installGrowthSocialOAuth({
+            router: oauthRouter, env, db: runtime.socialOAuthDb,
+            adminSecret: secrets.adminJwtSecret, fetchImpl,
+          });
+          return oauthRouter;
+        }).catch((error) => { socialInit = null; throw error; });
+        const oauthRouter = await socialInit;
+        return oauthRouter(req, res, next);
+      } catch (error) {
+        console.error('[growth-social] isolated setup unavailable:', error.message);
+        return res.status(503).json({ ok: false, error: 'social_oauth_unavailable' });
+      }
+    });
+    router.use(socialRouter);
+  }
 
   // ---- scheduler ----
   router.get('/cron/tick', wrap(async (req, res, runtime) => {
