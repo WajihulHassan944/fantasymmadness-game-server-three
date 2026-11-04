@@ -70,6 +70,8 @@ function verifyContest(item, { now = new Date(), horizonDays = 21, mediaNames = 
   // Auto-discovered candidates are not published contests until the owner promotes them.
   if (item.autoDiscovered === true && !item.homepagePromoted && !item.featuredThisWeek && !item.featuredFight) reasons.push('unpublished_auto_discovered_candidate');
   if (item.draft === true || item.isDraft === true || item.voidedAt) reasons.push('draft_or_voided');
+  if (item.cancelledAt || item.canceledAt || item.cancelled === true || item.canceled === true) reasons.push('fight_cancelled');
+  if (item.entryOpen === false || item.canSubmitPrediction === false) reasons.push('registry_entries_unavailable');
   const status = clean(wrestling ? item.status : item.matchStatus, 20).toLowerCase();
   if (wrestling ? status !== 'open' : !OPEN_MATCH_STATUSES.has(status || 'ongoing')) reasons.push(`contest_not_open (${status || 'none'})`);
   // The live player-entry helper ignores legacy shadow flags on published LIVE
@@ -99,7 +101,8 @@ function verifyContest(item, { now = new Date(), horizonDays = 21, mediaNames = 
     dateKey, timeTba, matchTime: timeTba ? null : item.matchTime, timeZone: tz,
     venue: clean(item.venue, 80) || null, city: clean(item.eventCity, 60) || null,
     weightClass: clean(item.weightClass || item.division, 40) || null, maxRounds: Number.isInteger(item.maxRounds) && item.maxRounds > 0 && item.maxRounds <= 15 ? item.maxRounds : null,
-    promotion: wrestling ? (clean(item.promotionName, 40) || null) : null,
+    promotion: clean(item.promotionName || item.promoterName, 80) || null,
+    entry: { open: item.entryOpen !== false, feeTokens: Number.isFinite(item.entryFeeTokens) ? item.entryFeeTokens : null },
     ufc: !wrestling && (Number.isInteger(item.ufcEventNumber) || /\bufc\b/i.test(title || '')),
     contestUrl: wrestling ? `${SITE}/pro-wrestling/play/${encodeURIComponent(id)}` : `${SITE}/fight/${encodeURIComponent(id)}?play=1`,
     source: wrestling ? 'fmm-public-pro-wrestling-feed' : 'fmm-public-prediction-feed',
@@ -114,14 +117,16 @@ function verifyContest(item, { now = new Date(), horizonDays = 21, mediaNames = 
     // URL resolver (growth-fight-urls.js), which uses it only after the website serves it.
     canonicalFromFeed: clean(item.canonicalUrl || item.canonicalPath, 300) || null,
   };
-  contest.fingerprint = hash([contest.id, contest.sport, contest.fighterA, contest.fighterB, contest.dateKey, contest.matchTime, contest.eventName].join('|')).slice(0, 10);
+  contest.fingerprint = hash(JSON.stringify([contest.id, contest.sport, contest.fighterA, contest.fighterB, contest.dateKey, contest.matchTime, contest.timeZone, contest.eventName, contest.promotion, contest.venue, contest.city, contest.weightClass, contest.maxRounds, contest.entry])).slice(0, 10);
   return { ok: true, contest };
 }
 
 async function getJson(fetchImpl, url) {
-  const r = await fetchImpl(url, { headers: { Accept: 'application/json' } });
+  const r = await fetchImpl(url, { headers: { Accept: 'application/json' }, redirect: 'error', signal: AbortSignal.timeout(10000), cache: 'no-store' });
   if (!r || !r.ok) throw Error(`contest feed ${new URL(url).pathname} returned ${r ? r.status : 'no response'}`);
-  return r.json();
+  const j = await r.json();
+  if (!j || !Array.isArray(j.items) || j.ok === false) throw Error(`contest feed ${new URL(url).pathname} returned an invalid listing`);
+  return j;
 }
 
 function sourceBase(env = {}) {
@@ -137,14 +142,18 @@ async function fetchVerifiedContests({ fetchImpl = globalThis.fetch, baseUrl = D
   catch (e) { errors.push(clean(e.message, 200)); }
   try { const j = await getJson(fetchImpl, `${baseUrl}/api/public/pro-wrestling/matches?status=OPEN&limit=50`); for (const it of (j.items || [])) raw.push({ ...it, __feed: 'pro-wrestling' }); }
   catch (e) { errors.push(clean(e.message, 200)); }
-  const contests = []; const rejected = []; const seen = new Set();
+  const contests = []; const rejected = []; const seen = new Set(); const events = new Set();
   for (const it of raw) {
     const v = verifyContest(it, { now, horizonDays, mediaNames });
     if (!v.ok) { rejected.push({ id: v.id, sport: v.sport, label: v.label, reasons: v.reasons }); continue; }
     if (seen.has(v.contest.id)) continue; seen.add(v.contest.id); contests.push(v.contest);
+    const c = v.contest;
+    const eventKey = [c.sport, c.dateKey, ...[norm(c.fighterA), norm(c.fighterB)].sort()].join('|');
+    if (events.has(eventKey)) { contests.pop(); rejected.push({ id: c.id, sport: c.sport, label: `${c.fighterA} vs ${c.fighterB}`, reasons: ['duplicate_registry_fight'] }); }
+    else events.add(eventKey);
   }
   contests.sort((x, y) => x.dateKey.localeCompare(y.dateKey));
-  return { contests, rejected, errors, checked: raw.length, sourceReachable: errors.length < 2 };
+  return { contests, rejected, errors, checked: raw.length, sourceReachable: errors.length < 2, complete: errors.length === 0 };
 }
 
 // ---- copy ----------------------------------------------------------------------

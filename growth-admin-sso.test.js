@@ -52,6 +52,8 @@ test('a valid first-party assertion gives a short-lived Growth session (<=30 min
   assert.equal(issued[0].adminId, ADMIN_ID); assert.ok(issued[0].sid.length >= 20); assert.equal(issued[0].iatMs, NOW.getTime());
   const short = await sso.exchange(signAssertion(keys.privateKey, claims({ adminExp: nowS + 300 })));
   assert.equal(short.expiresInSeconds, 300, 'bounded by the website session');
+  const ending = await sso.exchange(signAssertion(keys.privateKey, claims({ adminExp: nowS + 45 })));
+  assert.equal(ending.expiresInSeconds, 45, 'a near-expiry administrator session must not be extended to a minute');
   const log = collections.audit.rows.find((a) => a.action === 'sso_login');
   assert.equal(log.transport, 'first_party_assertion'); assert.equal(log.issuerConfirmed, true);
   assert.equal(JSON.stringify(collections.audit.rows).includes('growth.'), false, 'no tokens in the audit log');

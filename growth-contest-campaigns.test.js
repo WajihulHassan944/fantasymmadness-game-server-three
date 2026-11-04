@@ -116,3 +116,30 @@ test('the reported bug: show names like "Mannix and Mora" / "Budocast" are rejec
   assert.ok(v.reasons.includes('fighter_b_looks_like_media_not_a_fighter'));
   assert.equal(verifyContest(fight({ matchFighterA: 'Jake Paul' }), { now: NOW }).ok, true);
 });
+
+
+test('registry closure, cancellation and duplicate records cannot create campaigns', async () => {
+  for (const flags of [{entryOpen:false},{canSubmitPrediction:false},{cancelled:true},{canceledAt:NOW.toISOString()}]) {
+    assert.equal(verifyContest(fight(flags), {now:NOW}).ok, false);
+  }
+  const result=await fetchVerifiedContests({now:NOW,fetchImpl:async u=>({ok:true,json:async()=>({items:u.includes('pro-wrestling')?[]:[fight(),fight({_id:'other000001'})]})})});
+  assert.equal(result.contests.length,1);
+  assert.ok(result.rejected.some(r=>r.reasons.includes('duplicate_registry_fight')));
+  assert.equal(result.complete,true);
+});
+
+test('partial and malformed feeds are reported without claiming a complete registry check', async () => {
+  const result=await fetchVerifiedContests({now:NOW,fetchImpl:async u=>({ok:true,json:async()=>u.includes('pro-wrestling')?{unexpected:[]}:{items:[fight()]}})});
+  assert.equal(result.contests.length,1);
+  assert.equal(result.sourceReachable,true);
+  assert.equal(result.complete,false);
+  assert.match(result.errors[0],/invalid listing/);
+});
+
+test('a campaign version changes when registry promoter, entry terms, venue or timezone changes', () => {
+  const original=verifyContest(fight(),{now:NOW}).contest;
+  for (const patch of [{promoterName:'Verified Promoter'},{entryFeeTokens:50},{venue:'Registry Arena'},{eventTimeZone:'Europe/London'}]) {
+    const updated=verifyContest(fight(patch),{now:NOW}).contest;
+    assert.notEqual(updated.fingerprint,original.fingerprint);
+  }
+});

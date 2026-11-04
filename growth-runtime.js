@@ -213,9 +213,11 @@ function createGrowthRuntime({ db, config, secrets = {}, provider, fetchImpl = g
           await col.drafts.updateOne({ id: d.id }, { $set: { 'contest.fighterPhotos': c.fighterPhotos || null, 'contest.posterUrl': c.posterUrl || null, 'contest.posterField': c.posterField || null } });
           d.contest = { ...d.contest, fighterPhotos: c.fighterPhotos, posterUrl: c.posterUrl, posterField: c.posterField };
         }
-        const why = !c ? 'Withdrawn automatically: the contest is no longer open, upcoming and verified'
+        const why = !c && feed.complete !== false ? 'Withdrawn automatically: the contest is no longer open, upcoming and verified'
+          : !c ? null
           : c.fingerprint !== d.contestFingerprint ? 'Withdrawn automatically: fight details changed (a corrected campaign was prepared)' : null;
         if (why) { withdrawn += await withdraw({ id: d.id }, why, now); continue; }
+        if (!c) continue; // A failed feed is not evidence that its fights were removed.
         // The website's address for this fight changed (e.g. a fighter-name address appeared, or
         // it stopped working and the ID address is used again): update the campaign's links.
         // Same fight, same text; only the address path changes and every tag is kept.
@@ -251,7 +253,7 @@ function createGrowthRuntime({ db, config, secrets = {}, provider, fetchImpl = g
     } else {
       await alert(`contest-source:${dayKey(now)}`, 'marketing', 'contest feed', `could not reach the FANTASY MMADNESS contest feed: ${feed.errors.join('; ')}`, now);
     }
-    const doc = { day: dayKey(now), checkedAt: now.toISOString(), trigger, sourceReachable: feed.sourceReachable, sourceErrors: feed.errors, contestsChecked: feed.checked, verifiedContests: feed.contests.length, created: created.length, withdrawn, blocked, sports: coverage };
+    const doc = { day: dayKey(now), checkedAt: now.toISOString(), trigger, sourceReachable: feed.sourceReachable, complete: feed.complete, sourceErrors: feed.errors, contestsChecked: feed.checked, verifiedContests: feed.contests.length, created: created.length, withdrawn, blocked, sports: coverage };
     await col.coverage.updateOne({ day: doc.day }, { $set: doc }, { upsert: true });
     if (withdrawn || created.length) await audit('refresh_marketing', { trigger, created: created.length, withdrawn, blocked: blocked.length, admin: 'system' });
     const posters = await ensurePosters(now).catch((e) => ({ error: clean(e.message) }));
