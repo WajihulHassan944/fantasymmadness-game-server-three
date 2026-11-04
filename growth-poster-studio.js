@@ -29,7 +29,7 @@ const SITE_HOST = 'www.fantasymmadness.com';
 const BRAND = 'FANTASY MMADNESS';
 const FORMATS = Object.freeze({ portrait: { width: 1080, height: 1350, use: ['instagram', 'facebook', 'x'] }, story: { width: 1080, height: 1920, use: ['tiktok'] } });
 const SPORT_LABEL = { boxing: 'BOXING', 'mma-ufc': 'MMA / UFC', kickboxing: 'KICKBOXING', 'bare-knuckle': 'BARE-KNUCKLE', 'pro-wrestling': 'PRO WRESTLING' };
-const RENDER_VERSION = 'v7-premium';
+const RENDER_VERSION = 'v8-original-art';
 
 const sha = (b) => crypto.createHash('sha256').update(b).digest('hex');
 const esc = (s) => String(s ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
