@@ -26,14 +26,14 @@ function installGrowthSocialOAuth({ router, env, db, fetchImpl = globalThis.fetc
   const pending = db.collection('growth_social_oauth_pending');
   const accounts = db.collection('growth_social_accounts');
   const origin = new URL(env.GROWTH_SOCIAL_PUBLIC_ORIGIN || '');
-  if (origin.protocol !== 'https:') throw Error('HTTPS staging origin required');
+  if (origin.protocol !== 'https:' || !/growth|staging|preview|test/i.test(origin.hostname) || /^(www\\.)?fantasymmadness\\.com$/i.test(origin.hostname)) throw Error('Dedicated HTTPS staging origin required');
   const configs = {
     tiktok: { clientId: env.GROWTH_TIKTOK_CLIENT_KEY, secret: env.GROWTH_TIKTOK_CLIENT_SECRET, expected: env.GROWTH_TIKTOK_EXPECTED_OPEN_ID },
     x: { clientId: env.GROWTH_X_CLIENT_ID, secret: env.GROWTH_X_CLIENT_SECRET, expected: env.GROWTH_X_EXPECTED_USER_ID }
   };
   const callback = provider => new URL('/api/growth/social/' + provider + '/callback', origin).toString();
   const auth = (req, res, next) => {
-    try { req.socialAdmin = jwt.verify(String(req.headers.authorization || '').replace(/^Bearer\\s+/i, ''), adminSecret); next(); }
+    try { req.socialAdmin = jwt.verify(String(req.headers.authorization || '').replace(/^Bearer\s+/i, ''), adminSecret); next(); }
     catch { res.status(401).json({ ok: false, error: 'admin_required' }); }
   };
   const selected = (req, res) => {
@@ -86,7 +86,7 @@ function installGrowthSocialOAuth({ router, env, db, fetchImpl = globalThis.fetc
       const me = await fetchImpl(PROVIDERS[p].me, { headers: { Authorization: 'Bearer ' + tokens.access_token } });
       if (!me.ok) return res.status(400).send('Account verification failed');
       const profile = await me.json();
-      const identity = p === 'x' ? profile.data?.id : profile.data?.user?.open_id;
+      const identity = p === 'x' ? profile.data?.id : (profile.data?.user?.open_id || tokens.open_id);
       if (!identity || !configs[p].expected || identity !== configs[p].expected) return res.status(403).send('Account does not match approved sandbox identity');
       await accounts.updateOne({ provider: p }, { $set: { provider: p, identity, admin: claim.admin, credentials: encrypt(tokens, key), connectedAt: new Date(), publishingEnabled: false } }, { upsert: true });
       res.status(200).type('text/plain').send('FANTASY MMADNESS: ' + p.toUpperCase() + ' sandbox connected. Publishing remains disabled. Return to Growth Engine.');
