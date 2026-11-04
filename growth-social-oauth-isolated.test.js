@@ -1,0 +1,20 @@
+'use strict';
+// Isolated OAuth regression guard. This does not authorize or publish posts.
+const assert = require('node:assert/strict');
+const fs = require('node:fs');
+const vm = require('node:vm');
+const path = require('node:path');
+const source = fs.readFileSync(path.join(__dirname, 'growth-social-oauth-isolated.js'), 'utf8');
+const routes = fs.readFileSync(path.join(__dirname, 'growth-isolated-routes.js'), 'utf8');
+new vm.Script(source, { filename: 'growth-social-oauth-isolated.js' });
+new vm.Script(routes, { filename: 'growth-isolated-routes.js' });
+assert.match(routes, /GROWTH_SOCIAL_OAUTH_ENABLED === 'true'/, 'social routes must be opt-in');
+assert.match(source, /db\.databaseName !== 'fmgrowthtest'/, 'dedicated database only');
+assert.match(source, /publishingEnabled: false/, 'no automatic publishing');
+assert.match(source, /createCipheriv\('aes-256-gcm'/, 'encrypt credentials at rest');
+assert.match(source, /findOneAndDelete\(/, 'OAuth state must be single use');
+assert.match(source, /code_challenge_method', 'S256'/, 'X must use PKCE');
+assert.match(source, /req\.headers\.authorization/, 'admin authorization required');
+assert.match(source, /replace\(\/\^Bearer\\s\+\/i/, 'bearer parsing regression');
+assert.doesNotMatch(source, /console\.log\([^)]*(?:access_token|client_secret)/, 'never log secrets');
+console.log('Isolated OAuth static safety checks passed (NOT an end-to-end OAuth test).');
