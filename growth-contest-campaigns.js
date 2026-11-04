@@ -71,7 +71,9 @@ function verifyContest(item, { now = new Date(), horizonDays = 21, mediaNames = 
   if (item.autoDiscovered === true && !item.homepagePromoted && !item.featuredThisWeek && !item.featuredFight) reasons.push('unpublished_auto_discovered_candidate');
   if (item.draft === true || item.isDraft === true || item.voidedAt) reasons.push('draft_or_voided');
   if (item.cancelledAt || item.canceledAt || item.cancelled === true || item.canceled === true) reasons.push('fight_cancelled');
-  if (item.entryOpen === false || item.canSubmitPrediction === false) reasons.push('registry_entries_unavailable');
+  // canSubmitPrediction describes the requesting player's prediction state,
+  // not whether this public contest accepts entries. Use the registry entry flag.
+  if (item.entryOpen === false) reasons.push('registry_entries_unavailable');
   const status = clean(wrestling ? item.status : item.matchStatus, 20).toLowerCase();
   if (wrestling ? status !== 'open' : !OPEN_MATCH_STATUSES.has(status || 'ongoing')) reasons.push(`contest_not_open (${status || 'none'})`);
   // The live player-entry helper ignores legacy shadow flags on published LIVE
@@ -93,6 +95,10 @@ function verifyContest(item, { now = new Date(), horizonDays = 21, mediaNames = 
   }
   for (const f of ['lockAt', 'entryClosedAt']) {
     if (item[f]) { const t = new Date(item[f]).getTime(); if (Number.isFinite(t) && t <= now.getTime()) reasons.push(f === 'lockAt' ? 'predictions_already_locked' : 'entries_already_closed'); }
+  }
+  if (item.timeTba !== true && /^\d{1,2}:\d{2}$/.test(String(item.matchTime || ''))) {
+    const cutoff = require('./fight-entry-time').getFightEntryLockTime(item);
+    if (Number.isFinite(cutoff) && cutoff <= now.getTime()) reasons.push('scheduled_entry_time_passed');
   }
   if (reasons.length) return { ok: false, id: id || null, sport, reasons, label: a && b ? `${a} vs ${b}` : (title || id || 'unknown') };
   const timeTba = item.timeTba === true || !/^\d{1,2}:\d{2}$/.test(String(item.matchTime || ''));

@@ -119,13 +119,19 @@ test('the reported bug: show names like "Mannix and Mora" / "Budocast" are rejec
 
 
 test('registry closure, cancellation and duplicate records cannot create campaigns', async () => {
-  for (const flags of [{entryOpen:false},{canSubmitPrediction:false},{cancelled:true},{canceledAt:NOW.toISOString()}]) {
+  for (const flags of [{entryOpen:false},{cancelled:true},{canceledAt:NOW.toISOString()}]) {
     assert.equal(verifyContest(fight(flags), {now:NOW}).ok, false);
   }
   const result=await fetchVerifiedContests({now:NOW,fetchImpl:async u=>({ok:true,json:async()=>({items:u.includes('pro-wrestling')?[]:[fight(),fight({_id:'other000001'})]})})});
   assert.equal(result.contests.length,1);
   assert.ok(result.rejected.some(r=>r.reasons.includes('duplicate_registry_fight')));
   assert.equal(result.complete,true);
+});
+
+test('public contest entry availability is independent of a viewer prediction flag', () => {
+  const v = verifyContest(fight({ matchType: 'LIVE', matchShadowOpenStatus: 'closed', entryOpen: true, canSubmitPrediction: false }), {now:NOW});
+  assert.equal(v.ok, true, JSON.stringify(v.reasons));
+  assert.equal(verifyContest(fight({matchDateKey:day(0),matchDate:day(0),matchTime:'01:00',eventTimeZone:'America/New_York'}),{now:NOW}).ok,false);
 });
 
 test('partial and malformed feeds are reported without claiming a complete registry check', async () => {
