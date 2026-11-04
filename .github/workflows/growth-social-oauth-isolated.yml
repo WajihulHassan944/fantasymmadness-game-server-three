@@ -4,16 +4,22 @@ on:
     paths:
       - 'growth-social-oauth*'
       - 'vercel.json'
+      - 'scripts/growth-social-oauth-deployed-smoke.js'
       - 'growth-console-token.js'
       - 'growth-isolated-*.js'
       - 'full-card-bootstrap.js'
       - '.github/workflows/growth-social-oauth-isolated.yml'
   workflow_dispatch:
+    inputs:
+      deployed_smoke:
+        description: Run read-only checks against the isolated OAuth Preview
+        type: boolean
+        default: false
 permissions:
   contents: read
 jobs:
   isolated-social-oauth:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     services:
       mongo:
         image: mongo:7.0
@@ -43,3 +49,7 @@ jobs:
       - name: Administrator-only social Connections browser test
         run: node growth-social-oauth-console.browser.test.js
       - run: npm audit --omit=dev --audit-level=high
+
+      - name: Verify deployed isolated Preview without provider authorization
+        if: github.event_name == 'workflow_dispatch' && inputs.deployed_smoke
+        run: node scripts/growth-social-oauth-deployed-smoke.js
