@@ -76,6 +76,7 @@ function installGrowthSocialOAuth({ router, env, db, fetchImpl = globalThis.fetc
       const claims = verifyConsoleToken(adminSecret, match[1]);
       if (claims.scope !== 'growth' || claims.pwv !== consolePasswordVersion(env.GROWTH_ADMIN_PASSWORD_HASH) || !Number.isInteger(claims.exp) || claims.exp * 1000 <= clock().getTime()) throw Error('invalid session');
       if (await sso.revokedReason(claims)) throw Error('website session ended');
+      if (env.GROWTH_SOCIAL_PASSWORD_LOGIN !== 'true' && claims.method !== 'website_admin') throw Error('website administrator session required');
       req.socialSession = hash(match[1]); req.socialAdmin = claims;
       if (await revoked.findOne({ _id: req.socialSession, expiresAt: { $gt: clock() } })) throw Error('signed out');
       return next();
