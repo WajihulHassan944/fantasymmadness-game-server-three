@@ -2,7 +2,8 @@
 // Read-only deployed Preview checks. No provider calls, credentials, authorization or posts.
 const assert = require('node:assert/strict');
 const base = 'https://fantasymmadness-growth-git-585652-kelly-davis-projects-6c108d0b.vercel.app';
-async function get(path) { const r = await fetch(path.startsWith('https://') ? path : base + path, {redirect:'error',signal:AbortSignal.timeout(20000)});const text=await r.text();let json;try{json=JSON.parse(text);}catch{}return {status:r.status,text,json,headers:r.headers}; }
+async function get(path) { const url=path.startsWith('https://') ? path : base+path;let r;try { r=await fetch(url,{redirect:'error',signal:AbortSignal.timeout(20000)}); } catch(e) { throw Error(new URL(url).host+new URL(url).pathname+' fetch failed: '+(e.cause?.code||e.cause?.message||e.message)); } const text=await r.text();let json;try{json=JSON.parse(text);}catch{}return {status:r.status,text,json,headers:r.headers}; }
+
 (async()=>{
  const h=await get('/api/growth/health');assert.equal(h.status,200,h.text);assert.equal(h.json.service,'growth-social-oauth-isolated-preview');assert.equal(h.json.environment,'preview');assert.equal(h.json.database.name,'fmgrowthtest');assert.equal(h.json.database.connected,true);assert.equal(h.json.database.hostPinned,true);assert.equal(h.json.publishingEnabled,false);assert.equal(h.json.outboundEnabled,false);assert.deepEqual(h.json.errors,[]);
  const tiktok=h.json.providers.find(p=>p.provider==='tiktok'),x=h.json.providers.find(p=>p.provider==='x');assert.equal(tiktok.configured,true,JSON.stringify(tiktok.blockers));
