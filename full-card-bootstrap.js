@@ -1,4 +1,11 @@
 'use strict';
+// OAuth feature previews exit through the isolated app before loading ANY legacy module.
+if (process.env.GROWTH_SOCIAL_OAUTH_ENABLED === 'true' &&
+    process.env.VERCEL_ENV === 'preview' &&
+    process.env.VERCEL_PROJECT_ID === require('./growth-runtime-config').ISOLATED_PROJECT_ID) {
+  module.exports = require('./growth-social-oauth-preview');
+} else {
+
 
 // Sidecar bootstrap keeps Full Card isolated from the 25k-line legacy server.
 // It captures the existing Express app, lets server.js register/start normally,
@@ -275,4 +282,6 @@ try {
   }
 } catch (error) {
   console.error('[growth] isolated Growth Engine unavailable:', error?.message);
+}
+
 }

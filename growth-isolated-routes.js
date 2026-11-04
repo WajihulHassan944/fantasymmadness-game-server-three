@@ -62,6 +62,7 @@ function registerIsolatedGrowthRoutes({ app, env = process.env, express, transpo
     const socialRouter = express.Router();
     let socialInit = null;
     socialRouter.use(async (req, res, next) => {
+      if (!/^\/social(?:\/|$)/.test(req.path) && req.path !== '/console') return next();
       try {
         if (!socialInit) socialInit = getRuntime().then((runtime) => {
           const { installGrowthSocialOAuth } = require('./growth-social-oauth-isolated');

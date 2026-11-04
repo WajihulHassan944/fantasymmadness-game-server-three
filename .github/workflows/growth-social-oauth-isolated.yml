@@ -1,10 +1,12 @@
-name: Isolated social OAuth safety gate
+name: Isolated social OAuth security tests
 on:
   pull_request:
     paths:
-      - 'growth-social-oauth-isolated.js'
-      - 'growth-social-oauth-isolated.test.js'
-      - 'growth-isolated-routes.js'
+      - 'growth-social-oauth*'
+      - 'vercel.json'
+      - 'growth-console-token.js'
+      - 'growth-isolated-*.js'
+      - 'full-card-bootstrap.js'
       - '.github/workflows/growth-social-oauth-isolated.yml'
   workflow_dispatch:
 permissions:
@@ -12,13 +14,32 @@ permissions:
 jobs:
   isolated-social-oauth:
     runs-on: ubuntu-latest
+    services:
+      mongo:
+        image: mongo:7.0
+        ports:
+          - 27017:27017
+        options: >-
+          --health-cmd "mongosh --quiet --eval 'db.adminCommand({ping:1}).ok'"
+          --health-interval 10s --health-timeout 5s --health-retries 5
+    env:
+      GROWTH_TEST_MONGO_URI: mongodb://127.0.0.1:27017/fmgrowthtest
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
-      - name: Syntax and isolated OAuth static safety checks
+          cache: npm
+      - run: npm ci --ignore-scripts
+      - name: Syntax and real MongoDB OAuth security checks (providers mocked)
         run: |
           node --check growth-social-oauth-isolated.js
+          node --check growth-social-oauth-console.js
           node --check growth-isolated-routes.js
           node growth-social-oauth-isolated.test.js
+          node growth-social-oauth-preview.test.js
+      - name: Install Chromium for isolated back-office UI tests
+        run: npx playwright install --with-deps chromium
+      - name: Administrator-only social Connections browser test
+        run: node growth-social-oauth-console.browser.test.js
+      - run: npm audit --omit=dev --audit-level=high
