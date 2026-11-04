@@ -113,7 +113,7 @@ function createAdminSso({ config, collections, signSession, now: clock = () => n
     const c = await check(assertion, { ip, purpose: 'session' });
     if (!c.ok) return c;
     const nowS = Math.floor(clock().getTime() / 1000);
-    const ttl = Math.max(60, Math.min(SESSION_S, c.payload.adminExp - nowS));
+    const ttl = Math.max(1, Math.min(SESSION_S, c.payload.adminExp - nowS));
     const sid = b64u(crypto.randomBytes(18));
     const token = signSession({ email: c.email, adminId: c.adminId, sid, iatMs: clock().getTime(), ttl });
     await audit('sso_login', { admin: c.email, adminId: c.adminId, ip: clean(ip, 64), method: 'website_admin', transport: 'first_party_assertion', site: c.payload.site, assertionId: c.payload.jti.slice(0, 12), sid: sid.slice(0, 12), issuerConfirmed: true, ttlSeconds: ttl });

@@ -240,10 +240,20 @@ test('premium posters: all five genres, both sizes, cut-outs and text fallback â
         for (const k of ['headline-predict', 'headline-thefight', 'cta', 'tagline', 'event', 'date']) assert.ok(kinds.includes(k), `${sport} ${format}: missing ${k}`);
         assert.ok(kinds.includes('name-a') && kinds.includes('name-b'), 'both names');
         for (const im of r.layout.images) for (const tx of r.layout.text) assert.ok(!(im.left < tx.left + tx.width && im.left + im.width > tx.left && im.top < tx.top + tx.height && im.top + im.height > tx.top), `${tx.kind} over ${im.name}`);
-        if (mode === 'photos') { assert.deepEqual(r.layout.images.map((i) => i.method), ['cutout_transparent', 'cutout_background_removed']); seenVariants.add(r.layout.variant); }
+        if (mode === 'photos') { assert.deepEqual(r.layout.images.map((i) => i.method), ['framed', 'framed']); seenVariants.add(r.layout.variant); }
         assert.equal((await P.decodeQr(r.buffer)).text, P.qrLink(c), `${sport} ${format}: QR`);
       }
     }
   }
   assert.ok(seenVariants.size >= 1);
+});
+
+test('original-art mode preserves every source pixel, dimensions and background', async () => {
+  const source = await figure('#f4f4f4');
+  const kept = await prepareFighter(source, { preserveOriginal: true });
+  assert.equal(kept.method, 'framed'); assert.equal(kept.removed, 0); assert.equal(kept.trimmed, null);
+  const original = await sharp(source.buffer).rotate().ensureAlpha().raw().toBuffer({resolveWithObject:true});
+  const actual = await sharp(kept.png).ensureAlpha().raw().toBuffer({resolveWithObject:true});
+  assert.equal(actual.info.width, original.info.width); assert.equal(actual.info.height, original.info.height);
+  assert.deepEqual(actual.data, original.data);
 });

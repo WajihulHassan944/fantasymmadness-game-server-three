@@ -631,6 +631,7 @@
       var blocked = (latest && latest.sports ? cov.sports.reduce(function (acc, sp) { return acc.concat((latest.sports[sp].rejected || []).map(function (x) { return Object.assign({ sport: sp }, x); })); }, []) : []);
       add(main, [
         head('Marketing', 'Social posts for real, upcoming fights that have an open FANTASY MMADNESS contest. Nothing is posted automatically.', checkNow),
+        latest && latest.sourceErrors && latest.sourceErrors.length ? h('div', { class: 'banner bad', role: 'alert', text: 'Fight Registry check incomplete: ' + latest.sourceErrors.join('; ') + '. Existing campaigns are retained until their source can be verified.' }) : null,
         h('div', { class: 'banner info' }, h('span', { class: 'ico', 'aria-hidden': 'true', text: 'ℹ' }), h('div', null, h('strong', { text: 'Where campaigns come from' }),
           'Only fights published as open contests on FANTASY MMADNESS. Every fight is checked first: real fighter names, a future date, one of the five sports, entries still open. It is checked again when you approve. Podcasts, shows and creators go to Public Relations and Affiliate Recruitment, never here. No prizes, fees or event details are added that the contest does not show.')),
         h('div', { class: 'grid tiles' },

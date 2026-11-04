@@ -156,10 +156,11 @@ async function styledText(mask, { metal = 'silver', outline = '#000000', outline
 const svgBuf = (w, h, inner) => Buffer.from(`<svg xmlns="http://www.w3.org/2000/svg" width="${w}" height="${h}">${inner}</svg>`);
 
 // ---- fighter photos: cut-out detection (background only) or framed ----------------------------------
-async function prepareFighter(f) {
+async function prepareFighter(f, { preserveOriginal = false } = {}) {
   const img = sharp()(f.buffer).rotate().ensureAlpha();
   const { data, info } = await img.raw().toBuffer({ resolveWithObject: true });
   const { width: w, height: h } = info; const at = (x, y) => (y * w + x) * 4;
+  if (preserveOriginal) return { ...f, method: 'framed', removed: 0, png: await sharp()(f.buffer).rotate().png().toBuffer(), width: w, height: h, trimmed: null };
   const border = []; for (let x = 0; x < w; x++) border.push(at(x, 0)); for (let y = 0; y < h; y++) border.push(at(0, y), at(w - 1, y));
   for (let x = 0; x < w; x++) border.push(at(x, h - 1));
   const sides = border.slice(0, w + 2 * h); // top + left + right
@@ -264,7 +265,8 @@ async function renderPremium({ contest, format = 'portrait', artwork = { mode: '
   const baseLayers = [];
   if (artwork.mode !== 'text') baseLayers.push({ input: svgBuf(W, 140, `<defs><radialGradient id="fl"><stop offset="0" stop-color="${S.glow}" stop-opacity="0.55"/><stop offset="0.6" stop-color="${S.glow}" stop-opacity="0.12"/><stop offset="1" stop-color="${S.glow}" stop-opacity="0"/></radialGradient></defs><ellipse cx="${W / 2}" cy="70" rx="${W * 0.52}" ry="58" fill="url(#fl)"/><ellipse cx="${W / 2}" cy="70" rx="${W * 0.44}" ry="34" fill="none" stroke="${S.accent}" stroke-opacity="0.55" stroke-width="3"/>`), top: Math.min(H - 140, bandTop + bandH - 80), left: 0 });
   if (artwork.mode === 'fighter_photos') {
-    const [A, B] = await Promise.all(artwork.fighters.map(prepareFighter));
+    // Owner policy: preserve the complete original photographs and their backgrounds.
+    const [A, B] = await Promise.all(artwork.fighters.map((f) => prepareFighter(f, { preserveOriginal: true })));
     const vsSize = story ? 170 : 136;
     // boxes: flank = two halves with VS in the gap; faceoff = narrower boxes at the edges, names + VS in the centre column
     const centreW = variant === 'faceoff' ? Math.round(W * (story ? 0.36 : 0.38)) : vsSize + 20;
