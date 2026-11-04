@@ -1,0 +1,24 @@
+name: Isolated social OAuth safety gate
+on:
+  pull_request:
+    paths:
+      - 'growth-social-oauth-isolated.js'
+      - 'growth-social-oauth-isolated.test.js'
+      - 'growth-isolated-routes.js'
+      - '.github/workflows/growth-social-oauth-isolated.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  isolated-social-oauth:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Syntax and isolated OAuth static safety checks
+        run: |
+          node --check growth-social-oauth-isolated.js
+          node --check growth-isolated-routes.js
+          node growth-social-oauth-isolated.test.js
