@@ -101,9 +101,14 @@ function createAffiliateProgram({ col, audit }) {
     // Synthetic test journeys (staging): event IDs start with "syn_". They are stored in their
     // own lane and never counted as real registrations, payments or affiliate credit.
     const synthetic = eventId.startsWith('syn_');
-    let affiliate = null;
-    if (e.liveAffiliateId) affiliate = await col.affiliates.findOne({ liveAffiliateId: clean(e.liveAffiliateId, 40).toLowerCase() });
-    if (!affiliate && e.campaign) affiliate = await col.affiliates.findOne({ code: clean(e.campaign, 80).replace(/^combat_fans_/, '') });
+    const identities=e.liveAffiliateId?await col.affiliates.find({liveAffiliateId:clean(e.liveAffiliateId,40).toLowerCase()}).limit(2).toArray():[];
+    if(identities.length>1)return{ok:false,reason:'ambiguous_affiliate_identity'};
+    const byIdentity=identities[0]||null;
+    const byCampaign=e.campaign?await col.affiliates.findOne({code:clean(e.campaign,80).replace(/^combat_fans_/,'')}):null;
+    if(e.liveAffiliateId&&!byIdentity)return{ok:false,reason:'unknown_affiliate_identity'};
+    if(byIdentity&&byCampaign&&byIdentity.id!==byCampaign.id)return{ok:false,reason:'affiliate_campaign_identity_mismatch'};
+    const affiliate=byIdentity||byCampaign;
+    if(e.referralAffiliateId&&(!affiliate||![affiliate.id,affiliate.liveAffiliateId].includes(e.referralAffiliateId)))return{ok:false,reason:'referral_identity_mismatch'};
     const doc = {
       eventId, type: e.type, verified: true, source: 'signed_ingest', at: new Date(e.occurredAt || now).toISOString(), receivedAt: now.toISOString(),
       playerId: playerRef || null, campaign: clean(e.campaign, 80) || null, channel: clean(e.channel, 20) || null,

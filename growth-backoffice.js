@@ -251,13 +251,14 @@ function createBackoffice({ runtime, manualOnly = false }) {
   async function syntheticLane(events) {
     const synAff = new Map();
     for (const a of await col.affiliates.find({ synthetic: true }).toArray()) synAff.set(a.id, { ...createRecruit({ id: a.id, name: a.name, consent: true, approved: true }), code: a.code });
-    const accepted = new Set(events.filter((e) => e.type === 'entry_accepted').map((e) => e.entryId));
+    const accepted = new Map();for(const e of events.filter(e=>e.type==='entry_accepted'))accepted.set(e.entryId,[...(accepted.get(e.entryId)||[]),e]);
     const entries = new Map(); const rejected = {};
     for (const e of events.filter((x) => x.type === 'paid_entry')) {
       if (e.paymentMode !== 'test') { rejected.not_a_test_payment = (rejected.not_a_test_payment || 0) + 1; continue; }
       const r = verifyPaidEntry(e, { affiliates: synAff, entries });
       if (!r.credited) { rejected[r.reason] = (rejected[r.reason] || 0) + 1; continue; }
       if (!accepted.has(e.entryId)) { entries.delete(e.entryId); rejected.entry_not_accepted = (rejected.entry_not_accepted || 0) + 1; }
+      else if(!accepted.get(e.entryId).every(a=>a.playerId===e.playerId&&a.fightId===e.fightId&&a.affiliateId===e.affiliateId)){entries.delete(e.entryId);rejected.accepted_entry_identity_mismatch=(rejected.accepted_entry_identity_mismatch||0)+1;}
     }
     const n = (t) => events.filter((e) => e.type === t).length;
     return {
