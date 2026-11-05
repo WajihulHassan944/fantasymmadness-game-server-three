@@ -888,7 +888,7 @@
       if (alertState === 'open') state.alertCount = alerts.length;
       clear(main);
       var runNow = h('button', { class: 'btn primary', testid: 'btn-run-now', text: '▶ Run now', onclick: function () {
-        modal({ title: 'Run the Growth Engine now?', confirmLabel: 'Run now', body: h('p', { text: INTEGRATED ? 'Run one sandbox cycle now. There is no automatic worker in this Preview, and no real message or post will be sent.' : 'This runs one cycle immediately, exactly like the automatic 15-minute run. The same safety rules apply: nothing is sent or posted.' }),
+        modal({ title: 'Run the Growth Engine now?', confirmLabel: 'Run now', body: h('p', { text: INTEGRATED ? 'Run one sandbox cycle now. Every new draft requires owner approval. No real message or post will be sent.' : 'This runs one cycle immediately, exactly like the automatic 15-minute run. The same safety rules apply: nothing is sent or posted.' }),
           onConfirm: function () { return api('POST', '/admin/run-now'); } })
           .then(function (res) {
             if (!res) return;
@@ -923,7 +923,7 @@
                   api('POST', '/admin/alerts/' + encodeURIComponent(a.alertKey) + '/ack').then(function (res) { toast(res.ok ? 'Alert acknowledged.' : 'Already acknowledged.', 'good'); refreshCounts(); route(); }).catch(fail);
                 } }) : h('span', { class: 'small muted', text: a.ackBy ? 'by ' + a.ackBy : '' })));
             })))) : h('div', { class: 'empty', testid: 'alerts-empty', text: alertState === 'open' ? 'No open alerts. Everything is running normally.' : 'No alerts recorded.' })),
-        h('section', { class: 'card' }, h('h2', { text: 'Background jobs' }), h('p', { class: 'sub', text: INTEGRATED ? 'Recorded sandbox jobs are processed during owner-started cycles. No automatic worker or real delivery is enabled.' : 'Daily discovery, follow-ups and the daily report. Failed jobs retry automatically up to 3 times; after that you can run them again.' }),
+        h('section', { class: 'card' }, h('h2', { text: 'Background jobs' }), h('p', { class: 'sub', text: INTEGRATED ? (sc.schedulerEnabled ? 'Sandbox preparation runs on durable timers. New drafts await owner approval. Failed jobs retry automatically; no real delivery is enabled.' : 'Recorded sandbox jobs are processed during owner-started cycles. No automatic worker or real delivery is enabled.') : 'Daily discovery, follow-ups and the daily report. Failed jobs retry automatically up to 3 times; after that you can run them again.' }),
           jobs.length ? h('div', { class: 'table-wrap' }, h('table', { class: 'data', testid: 'jobs-table' },
             h('thead', null, h('tr', null, h('th', { text: 'Job' }), h('th', { text: 'Due' }), h('th', { text: 'State' }), h('th', { class: 'num', text: 'Attempts' }), h('th', { text: '' }))),
             h('tbody', null, jobs.map(function (j) {

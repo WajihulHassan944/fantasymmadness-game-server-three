@@ -37,16 +37,23 @@ test('integrated back office shares verified sessions, preserves OAuth and isola
   const run=await call('/admin/run-now',{});assert.equal(run.status,200,run.text);
   const receipts=await call('/admin/email/sandbox');assert.equal(receipts.json.count,2,receipts.text);assert.equal(receipts.json.realDelivery,false);assert.deepEqual(receipts.json.messages.map(x=>x.kind).sort(),['affiliate','pr']);assert.ok(receipts.json.messages.every(x=>x.sent===false&&x.network===false));
   const connections=await call('/social/connections');assert.equal(connections.json.connections.length,2);assert.ok(!connections.text.includes('fixture-existing-token'));
+  const settings=db.collection('preview198_growth_settings');
+  await settings.insertOne({_id:'managed-scheduler',enabled:true,lastScheduledAt:new Date().toISOString(),scheduledExecutions:2,ownerCount:1});
+  await settings.insertOne({_id:'managed-owner-allowlist',ids:['0123456789abcdef01234567']});
+  assert.equal((await call('/admin/status')).json.scheduler.healthy,true);
+  const executive=await call('/admin/executive');assert.ok(executive.json.autonomy.automatic.length>0);assert.ok(!executive.text.includes('not enabled in this Preview'));
+  assert.equal((await call('/admin/autonomy')).json.ownerPolicyEditable,true);
   browser=await chromium.launch({headless:true,...(process.env.GROWTH_TEST_CHROMIUM?{executablePath:process.env.GROWTH_TEST_CHROMIUM}:{}),args:['--no-sandbox']});const context=await browser.newContext();await context.addInitScript(t=>sessionStorage.setItem('fmmGrowthSocialOAuthPreviewToken',t),token);
   await context.route('**/*',route=>new URL(route.request().url()).origin===new URL(base).origin?route.continue():route.fulfill({status:404,body:'External requests disabled in test'}));
   const page=await context.newPage(),errors=[];page.on('pageerror',e=>errors.push(e.message));
-  for(const section of ['overview','marketing','pr','affiliates','approvals','publishing','analytics','revenue','automation','connections']){await page.goto(base+'/console#/'+section);await page.waitForLoadState('networkidle');assert.equal(await page.getByTestId('page-error').count(),0,section+': '+await page.locator('body').innerText());assert.equal(await page.getByTestId('integrated-sign-in').count(),0,section);}
+  for(const section of ['overview','marketing','pr','affiliates','approvals','publishing','analytics','revenue','automation','connections']){await page.goto(base+'/console#/'+section);await page.waitForLoadState('networkidle');assert.equal(await page.getByTestId('page-error').count(),0,section+': '+await page.locator('body').innerText());assert.equal(await page.getByTestId('integrated-sign-in').count(),0,section);if(section==='overview')assert.match(await page.getByTestId('scheduler-banner').innerText(),/running automatically/);if(section==='automation')assert.ok(!(await page.locator('body').innerText()).includes('No automatic worker'));}
   assert.equal(await page.getByRole('button',{name:'Connect TikTok',exact:true}).isEnabled(),true);assert.equal(await page.getByRole('button',{name:'Connect X',exact:true}).isEnabled(),true);assert.match(await page.getByTestId('oauth-tiktok').innerText(),/Status: connected/);assert.match(await page.getByTestId('oauth-x').innerText(),/@FMmadness2024/);assert.equal(await page.locator('input[type=password]').count(),0);
   assert.match(await page.getByTestId('meta-existing-facebook').innerText(),/Verified existing connection/);assert.match(await page.getByTestId('meta-existing-instagram').innerText(),/Verified existing connection/);assert.equal(JSON.stringify(await db.collection('growth_connections').find({}).toArray()),metaSnapshot);
   assert.equal(await page.getByTestId('sandbox-mail').count(),2);assert.deepEqual(errors,[]);
   assert.deepEqual(await db.collection('growth_drafts').findOne({id:original.id}),original);
   assert.equal(JSON.stringify(await db.collection('growth_social_accounts').find({}).sort({_id:1}).toArray()),snapshot);
   assert.ok(network.every(x=>!/(open\.tiktokapis|api\.x\.com|api\.resend\.com)/.test(x)));
+  assert.equal((await call('/admin/autonomy/stop',{})).status,200);assert.equal((await settings.findOne({_id:'managed-scheduler'})).enabled,false);assert.equal((await call('/admin/status')).json.scheduler.schedulerEnabled,false);
   assert.equal((await call('/admin/logout',{})).status,200);assert.equal((await call('/admin/overview')).status,401);assert.equal((await call('/social/connections')).status,401);
  }finally{if(browser)await browser.close();server.closeAllConnections();await new Promise(r=>server.close(r));await db.dropDatabase();await client.close();}
 });

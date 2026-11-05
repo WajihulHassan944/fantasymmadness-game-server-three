@@ -307,7 +307,8 @@ function registerIsolatedGrowthRoutes({ app, env = process.env, express, transpo
       needsOwner: ['Approving every campaign, pitch and proposal', 'Authorizing any real post (controlled live test) or real email sending', 'Connecting Meta and choosing the Page', 'Linking an affiliate’s live affiliate ID after they join'],
       notConnected: [att.paymentSource.connected ? null : 'Real payments and registrations (staging uses signed test events only)', resolved.config.delivery.realDelivery ? null : 'Real email sending'].filter(Boolean),
     };
-    if (sessionAuth) { autonomy.automatic = []; autonomy.notConnected.push('Unattended worker and automatic schedule: not enabled in this Preview'); autonomy.needsOwner.push('Start sandbox cycles manually in Automation'); }
+    if (sessionAuth && !sched.healthy) { autonomy.automatic = []; autonomy.notConnected.push(sched.schedulerEnabled ? 'Scheduled worker has no recent verified timer execution' : 'Unattended worker and automatic schedule: not enabled in this Preview'); autonomy.needsOwner.push(sched.schedulerEnabled ? 'Inspect worker status and execution logs in Automation' : 'Start sandbox cycles manually in Automation'); }
+    if (meta.state === 'connected') autonomy.needsOwner = autonomy.needsOwner.filter(x => x !== 'Connecting Meta and choosing the Page');
     res.json({ ok: true, generatedAt: new Date().toISOString(), departments, exceptions, autonomy });
   }));
   router.get('/admin/prospects', admin, wrap(async (req, res, rt) => res.json({ ok: true, prospects: (await rt.collections.prospects.find(req.query.genre ? { genre: String(req.query.genre) } : {}).sort({ firstSeenAt: -1 }).limit(Math.min(500, Number(req.query.limit) || 100)).toArray()).map(({ _id, ...p }) => p) })));
