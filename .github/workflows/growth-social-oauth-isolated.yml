@@ -93,6 +93,9 @@ jobs:
         run: |
           node growth-link-audit.test.js
           node growth-affiliate-qr-journey.integration.test.js
+          node growth-affiliate-acceptance.test.js
+          node growth-affiliate-acceptance-http.test.js
+          node growth-affiliate-hold-review.test.js
       - name: Platform copy, PR quality, independent affiliate recruitment and connection persistence
         run: |
           node growth-preparation-operations.test.js

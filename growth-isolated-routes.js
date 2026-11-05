@@ -41,7 +41,7 @@ function safeEqual(a, b) {
   return x.length === y.length && crypto.timingSafeEqual(x, y);
 }
 
-function registerIsolatedGrowthRoutes({ app, env = process.env, express, transport, fetchImpl, connect, sessionAuth, metaConnection } = {}) {
+function registerIsolatedGrowthRoutes({ app, env = process.env, express, transport, fetchImpl, connect, sessionAuth, metaConnection, affiliateAcceptance } = {}) {
   const resolved = resolveGrowthRuntimeConfig(env);
   const router = express.Router();
   router.use(express.json({ limit: '32kb' }));
@@ -229,6 +229,29 @@ function registerIsolatedGrowthRoutes({ app, env = process.env, express, transpo
     if (!owners.length || ![req.admin?.email, req.admin?.adminId, req.admin?.id, req.admin?.sub].some(x => x && owners.includes(String(x).toLowerCase()))) return res.status(403).json({ ok: false, reason: 'automation_owner_required', message: 'An explicitly configured automation owner is required.' });
     next();
   };
+  if(sessionAuth&&env.GROWTH_AFFILIATE_SANDBOX_ENABLED==='true'){
+    const sandboxWrap=fn=>async(req,res)=>{try{const service=affiliateAcceptance;if(!service)return res.status(503).json({ok:false,reason:'isolated_signup_unavailable'});await fn(req,res,service);}catch(e){res.status(e.status||503).json({ok:false,reason:e.reason||'isolated_acceptance_unavailable'});}};
+    const owner=req=>({kind:'owner_session',actor:who(req),confirmed:true});
+    const rate=createLoginLimiter({max:30,windowMs:15*60000});
+    const publicLimit=(req,res,next)=>rate.allow(clientIp(req))?next():res.status(429).json({ok:false,reason:'staging_signup_rate_limited'});
+    router.post('/affiliate-sandbox/context',publicLimit,sandboxWrap(async(req,res,s)=>res.json({ok:true,...await s.context(req.body?.token)})));
+    router.post('/affiliate-sandbox/click',publicLimit,sandboxWrap(async(req,res,s)=>res.json({ok:true,...await s.click(req.body||{})})));
+    router.post('/affiliate-sandbox/signup',publicLimit,sandboxWrap(async(req,res,s)=>res.json({ok:true,...await s.signup(req.body||{})})));
+    router.post('/affiliate-sandbox/verify',publicLimit,sandboxWrap(async(req,res,s)=>res.json({ok:true,account:await s.verify(req.body||{})})));
+    router.get('/affiliate-sandbox/leagues/:id',sandboxWrap(async(req,res,s)=>res.json({ok:true,league:await s.publicLeague(req.params.id)})));
+    router.get('/affiliate-sandbox/leagues/:id/qr.png',sandboxWrap(async(req,res,s)=>{const row=await s.qr(req.params.id);if(!row)return res.status(404).end();const bytes=Buffer.isBuffer(row.bytes)?row.bytes:Buffer.from(row.bytes.buffer||row.bytes);res.set({'Content-Type':'image/png','Cache-Control':'no-store','X-Content-Type-Options':'nosniff'}).send(bytes);}));
+    router.get('/admin/affiliate-sandbox',admin,autonomyOwner,sandboxWrap(async(req,res,s)=>res.json({ok:true,...await s.summary(),captures:await s.captures()})));
+    router.post('/admin/affiliate-sandbox/terms',admin,autonomyOwner,sandboxWrap(async(req,res,s)=>res.json({ok:true,review:await s.approveTerms(req.body||{},owner(req))})));
+    router.post('/admin/affiliate-sandbox/review-holds',admin,autonomyOwner,sandboxWrap(async(req,res,s)=>{const summary=await s.summary();res.json({ok:true,review:await s.review(summary.recentRuns[0]?.result,owner(req))});}));
+    router.post('/admin/affiliate-sandbox/invitations',admin,autonomyOwner,sandboxWrap(async(req,res,s)=>res.json({ok:true,...await s.issue(req.body||{},owner(req))})));
+    router.post('/admin/affiliate-sandbox/accounts/:id/verify-captured',admin,autonomyOwner,sandboxWrap(async(req,res,s)=>res.json({ok:true,account:await s.verifyCaptured(req.params.id,owner(req))})));
+    router.post('/admin/affiliate-sandbox/accounts/:id/approve',admin,autonomyOwner,sandboxWrap(async(req,res,s)=>res.json({ok:true,account:await s.approve(req.params.id,owner(req))})));
+    router.post('/admin/affiliate-sandbox/accounts/:id/map',admin,autonomyOwner,sandboxWrap(async(req,res,s)=>res.json({ok:true,account:await s.map(req.params.id,owner(req))})));
+    router.post('/admin/affiliate-sandbox/leagues',admin,autonomyOwner,sandboxWrap(async(req,res,s)=>res.json({ok:true,league:await s.league(req.body||{},owner(req))})));
+    router.post('/admin/affiliate-sandbox/test-entry',admin,autonomyOwner,sandboxWrap(async(req,res,s)=>res.json({ok:true,result:await s.testEntry(req.body||{},owner(req))})));
+    router.post('/admin/affiliate-sandbox/runs',admin,autonomyOwner,sandboxWrap(async(req,res,s)=>{if(req.body?.confirmation!=='RUN STAGING ACCEPTANCE')return res.status(409).json({ok:false,reason:'explicit_staging_acceptance_confirmation_required'});res.json({ok:true,result:await s.run(req.body,owner(req))});}));
+    router.post('/internal/affiliate-sandbox/acceptance',sandboxWrap(async(req,res,s)=>{if(!secrets.cronSecret||!safeEqual(req.headers.authorization,'Bearer '+secrets.cronSecret))return res.status(401).json({ok:false,reason:'service_authority_required'});if(req.body?.confirmation!=='RUN STAGING ACCEPTANCE')return res.status(409).json({ok:false,reason:'explicit_staging_acceptance_confirmation_required'});const by={kind:'authorized_staging_acceptance',actor:'owner_authorized_issue202_test',confirmed:true};const result=await s.run(req.body,by);res.json({ok:true,result,holdReview:await s.review(result,by)});}));
+  }
   router.get('/admin/autonomy', admin, sessionAuth ? async (req, res, next) => { try { const rt=await getRuntime();req.managedOwners=(await rt.collections.settings.findOne({_id:'managed-owner-allowlist'}))?.ids||[];next(); } catch { res.status(503).json({ok:false}); } } : autonomyOwner, wrap(async (req, res, rt) => res.json({ ok: true, ownerPolicyEditable: [req.admin?.email, req.admin?.adminId].some(x => x && [...config.autonomy.owners,...(req.managedOwners || [])].includes(String(x).toLowerCase())), operations:await rt.preparation.summary({details:true}),...(await rt.autonomy.status()) })));
   router.put('/admin/autonomy', admin, autonomyOwner, wrap(async (req, res, rt) => {
     try { res.json({ ok: true, policy: await rt.autonomy.save(req.body?.policy, { actor: who(req), expectedVersion: req.body?.expectedVersion }) }); }

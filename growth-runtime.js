@@ -503,7 +503,7 @@ function createGrowthRuntime({ db, config, secrets = {}, provider, fetchImpl = g
   }
   async function approveDraft(id, { admin, acceptTextPoster = false, now = new Date() } = {}) {
     const current = await col.drafts.findOne({ id: clean(id, 160) });
-    if(current?.kind==='affiliate'&&(current.approvalBlockers||[]).length)return{ok:false,reason:'affiliate_program_verification_required',details:current.approvalBlockers};
+    if(current?.kind==='affiliate'&&(current.approvalBlockers||[]).length){const review=await col.settings.findOne({_id:'affiliate-terms-review',status:'approved',scope:'staging_recruitment_review',approvedByKind:'owner_session'});const blockers=current.approvalBlockers.filter(reason=>!(reason==='affiliate_terms_require_owner_review'&&review?.sourceHash&&review.version));if(blockers.length)return{ok:false,reason:'affiliate_program_verification_required',details:blockers};}
     if(current&&current.kind!=='marketing'&&(current.autoResearched||current.recruitmentSource)){const blockers=await preparation.quality(current,now);if(blockers.length)return{ok:false,reason:'preparation_quality_review_required',details:blockers};}
     if (current && current.status === 'needs_owner_review' && current.kind === 'marketing') {
       const v = await reverifyMarketing(current, now);

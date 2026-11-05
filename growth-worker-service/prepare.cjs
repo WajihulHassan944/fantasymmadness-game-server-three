@@ -4,3 +4,6 @@ for(const f of fs.readdirSync(path.join(__dirname,'..')))if(/^growth-.*\.js$/.te
 fs.copyFileSync(path.join(__dirname,'..','fight-entry-time.js'),path.join(__dirname,'shared','fight-entry-time.js'));
 
 fs.writeFileSync(path.join(__dirname,'shared','package.json'),JSON.stringify({type:'commonjs'}));
+
+fs.mkdirSync(path.join(__dirname,'shared','docs','evidence'),{recursive:true});
+fs.copyFileSync(path.join(__dirname,'..','docs','evidence','growth-affiliate-links-20261105.json'),path.join(__dirname,'shared','docs','evidence','growth-affiliate-links-20261105.json'));

@@ -9,7 +9,9 @@ function createPreparationOperations({col,actions={},isPaused=async()=>false,isS
  const store=createStore(col.preparationJobs,{testMode:true});
  async function init(){await store.init();await col.preparationReceipts.createIndex({id:1},{unique:true});await col.preparationReceipts.createIndex({draftId:1,createdAt:-1});}
  async function quality(d,now=clock()){
-  const held=[...(d.approvalBlockers||[])];
+  const ownerTerms=d.kind==='affiliate'?await col.settings.findOne({_id:'affiliate-terms-review',status:'approved',scope:'staging_recruitment_review',approvedByKind:'owner_session'}):null;
+  const termsReviewed=Boolean(ownerTerms?.sourceHash&&ownerTerms.version);
+  const held=(d.approvalBlockers||[]).filter(reason=>!(reason==='affiliate_terms_require_owner_review'&&termsReviewed));
   if(d.kind==='marketing'){
    if(!await col.contestVerifications.findOne({_id:d.contestId,fingerprint:d.contestFingerprint,eligible:true,verifiedAt:{$gte:new Date(+now-35*60000).toISOString()}}))held.push('fresh_published_contest_verification_required');
    held.push(...require('./growth-contest-campaigns').checkCampaign(d,d.contest,{now}));
@@ -32,7 +34,7 @@ function createPreparationOperations({col,actions={},isPaused=async()=>false,isS
    if(/\bI (?:listened|watched|have been following)\b/i.test(d.text||''))held.push('unsupported_personal_experience_claim');
    if(!lead||(independent?!(lead.evidence||[]).some(e=>e.kind==='role'&&/^https:\/\//.test(e.sourceUrl||'')):lead.research?.ok!==true||!(d.personalization?.evidence||[]).some(e=>e.text)))held.push('sourced_personalization_required');
    if(d.kind==='affiliate'){
-    const terms=await col.settings.findOne({_id:'affiliate-program-readiness'});if(terms?.termsVerified!==true)held.push('affiliate_terms_require_owner_review');
+    const terms=await col.settings.findOne({_id:'affiliate-program-readiness'});if(!termsReviewed&&terms?.termsVerified!==true)held.push('affiliate_terms_require_owner_review');
     let url;try{url=new URL(d.signupUrl||String(d.text||'').match(/https:\/\/www\.fantasymmadness\.com\/auth\?[^\s]+/)?.[0]);}catch{}
     if(!url||url.hostname!=='www.fantasymmadness.com'||url.pathname!=='/auth'||url.searchParams.get('role')!=='affiliate'||!url.searchParams.get('utm_campaign')||!url.searchParams.get('utm_source'))held.push('tracked_affiliate_signup_required');
    }
