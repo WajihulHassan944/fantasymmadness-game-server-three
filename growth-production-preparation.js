@@ -8,11 +8,14 @@ async function createProductionPreparation({rawDb,config,secrets,fetchImpl,verif
  const owners=config.autonomy.owners;
  if(!Array.isArray(verifiedOwnerIds)||!owners.every(id=>verifiedOwnerIds.includes(id)))throw Error('production_first_party_owner_evidence_required');
  const db={databaseName:rawDb.databaseName,collection:name=>{if(!/^[a-z_]+$/.test(name)||name.startsWith('preview'))throw Error('production_collection_not_permitted');return rawDb.collection(PREFIX+name);}};
+ const marker=await db.collection('growth_settings').findOne({_id:'production-preparation'});
+ if(marker&&(marker.environment!=='production'||marker.database!==rawDb.databaseName||marker.schemaVersion!==1))throw Error('production_namespace_requires_review');
+ if(!marker){for(const name of ['growth_drafts','growth_affiliates','growth_attribution_events','growth_prospects'])if(await db.collection(name).countDocuments({}))throw Error('production_namespace_requires_review');}
  const provider=Object.freeze({name:'none',realDelivery:false,send:async()=>{throw Error('production_preparation_delivery_disabled');}});
  const runtime=(runtimeFactory||require('./growth-runtime').createGrowthRuntime)({db,config,secrets,provider,fetchImpl:productionReadOnlyFetch(fetchImpl),alertSender:null});
  await runtime.init();
  const settings=runtime.collections.settings,cycles=db.collection('preparation_cycles');
- await settings.updateOne({_id:'production-preparation'},{$setOnInsert:{enabled:false,generation:'production-preparation-v1',createdAt:clock().toISOString()},$set:{ownerCount:owners.length,approvalMode:'owner_required',publishingEnabled:false,outboundEnabled:false}},{upsert:true});
+ await settings.updateOne({_id:'production-preparation'},{$setOnInsert:{enabled:false,environment:'production',database:rawDb.databaseName,schemaVersion:1,generation:'production-preparation-v1',createdAt:clock().toISOString()},$set:{ownerCount:owners.length,approvalMode:'owner_required',publishingEnabled:false,outboundEnabled:false}},{upsert:true});
  const stopped=async()=>{const s=await settings.findOne({_id:'production-preparation'}),p=await settings.findOne({_id:'autonomy:policy'});return !s?.enabled||p?.paused===true;};
  async function cycle({generation,ordinal,deploymentId,workflowRunId=null}){
   const state=await settings.findOne({_id:'production-preparation'});if(await stopped()||state.generation!==generation||state.deploymentId!==deploymentId)return{stop:true};
