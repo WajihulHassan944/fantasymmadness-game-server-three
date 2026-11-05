@@ -8,6 +8,10 @@ on:
       - 'growth-platform-copy*'
       - 'growth-event-timing*'
       - 'growth-text-quality*'
+      - 'growth-poster*'
+      - 'growth-managed*'
+      - 'growth-worker-service/**'
+      - 'growth-assets/**'
       - 'vercel.json'
       - 'scripts/growth-social-oauth-deployed-smoke.js'
       - 'growth-isolated-*.js'
@@ -85,6 +89,10 @@ jobs:
           node growth-prospect-research.test.js
           node growth-contest-campaigns.test.js
           node growth-fight-urls.test.js
+      - name: Actual poster rendering, original-image integrity and affiliate QR regression
+        run: |
+          node growth-poster-studio.test.js
+          node growth-posters.integration.test.js
       - run: npm audit --omit=dev --audit-level=high
 
       - name: Verify deployed isolated Preview without provider authorization
@@ -95,6 +103,9 @@ jobs:
         run: |
           npm ci --prefix growth-worker-service
           node growth-worker-service/prepare.cjs
+          cd growth-worker-service
+          node scripts/poster-bundle.test.mjs
+          cd ..
           node --test growth-managed-scheduler.test.js
           npm audit --omit=dev --audit-level=high --prefix growth-worker-service
       - name: Verify durable scheduled execution without owner session

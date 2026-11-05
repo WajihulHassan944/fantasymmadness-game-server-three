@@ -29,7 +29,7 @@ const SITE_HOST = 'www.fantasymmadness.com';
 const BRAND = 'FANTASY MMADNESS';
 const FORMATS = Object.freeze({ portrait: { width: 1080, height: 1350, use: ['instagram', 'facebook', 'x'] }, story: { width: 1080, height: 1920, use: ['tiktok'] } });
 const SPORT_LABEL = { boxing: 'BOXING', 'mma-ufc': 'MMA / UFC', kickboxing: 'KICKBOXING', 'bare-knuckle': 'BARE-KNUCKLE', 'pro-wrestling': 'PRO WRESTLING' };
-const RENDER_VERSION = 'v9-verified-event-time';
+const RENDER_VERSION = 'v10-bundled-runtime-fonts';
 
 const sha = (b) => crypto.createHash('sha256').update(b).digest('hex');
 const esc = (s) => String(s ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
@@ -82,7 +82,9 @@ async function qrImage(url, target) {
 async function renderPoster({ contest, format = 'portrait', artwork = { mode: 'text' }, logo = null, qrUrl }) {
   if (!FORMATS[format]) throw Error(`unknown poster format ${format}`);
   const facts = posterFacts(contest, qrUrl);
-  const r = await require('./growth-poster-premium').renderPremium({ contest, format, artwork, logo, qrUrl, facts, qrImage });
+  const premium = require('./growth-poster-premium');
+  if (typeof premium.renderPremium !== 'function') throw Error('poster_renderer_unavailable');
+  const r = await premium.renderPremium({ contest, format, artwork, logo, qrUrl, facts, qrImage });
   return { buffer: r.buffer, layout: r.layout, facts };
 }
 

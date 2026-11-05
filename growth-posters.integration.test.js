@@ -166,6 +166,12 @@ test('fight posters and platform campaigns, sandbox only', { skip, timeout: 1800
       assert.equal((await fetch(`${origin}/api/growth/admin/posters`)).status, 401, 'poster admin needs the console sign-in');
     });
 
+    await t.test('runtime failure alerts close only after ready original-art posters pass QR and destination checks',async()=>{
+      const alerts=db.collection('growth_alerts');await alerts.insertMany([{alertKey:'runtime-ready',kind:'poster',id:boxing.id,state:'open',error:'poster could not be generated: __dirname is not defined'},{alertKey:'unrelated',kind:'poster',id:boxing.id,state:'open',error:'unrelated source error'},{alertKey:'runtime-no-art',kind:'poster',id:noArt.id,state:'open',error:'renderPremium is not a function'}]);
+      await rt.ensurePosters(new Date(),{ids:[boxing.id,noArt.id]});
+      assert.equal((await alerts.findOne({alertKey:'runtime-ready'})).state,'acknowledged');assert.equal((await alerts.findOne({alertKey:'unrelated'})).state,'open');assert.equal((await alerts.findOne({alertKey:'runtime-no-art'})).state,'open');
+    });
+
     await t.test('platform capabilities are truthful', async () => {
       const cap = (await call('GET', '/admin/social/capabilities')).json.capabilities;
       assert.deepEqual(Object.keys(cap).sort(), ['facebook', 'instagram', 'tiktok', 'x']);
@@ -173,34 +179,35 @@ test('fight posters and platform campaigns, sandbox only', { skip, timeout: 1800
       assert.match(cap.x.media, /text and link only/); assert.match(cap.tiktok.requires.join(' '), /domain verified/);
     });
 
-    await t.test('approve with poster -> schedule all four platforms -> sandbox publish with the right poster per platform', async () => {
+    await t.test('approved poster -> tracked Facebook/X sandbox receipts; unverified profile destinations stay held', async () => {
       assert.equal((await call('POST', `/admin/drafts/${encodeURIComponent(boxing.id)}/approve`)).status, 200);
       const when = new Date(Date.now() + 2 * 60000).toISOString();
       const s = await call('POST', `/admin/drafts/${encodeURIComponent(boxing.id)}/schedule`, { channels: ['facebook', 'instagram', 'x', 'tiktok'], scheduledAt: when });
-      assert.equal(s.status, 200, s.text); assert.equal(s.json.results.filter((r) => r.ok).length, 4, s.text);
+      assert.equal(s.status, 200, s.text); assert.equal(s.json.results.filter((r) => r.ok).length, 2, s.text);
+      assert.deepEqual(s.json.results.filter(r=>!r.ok).map(r=>[r.channel,r.reason]),[['instagram','verified_platform_destination_required'],['tiktok','verified_platform_destination_required']]);
       // the same campaign cannot be queued twice
-      const again = await call('POST', `/admin/drafts/${encodeURIComponent(boxing.id)}/schedule`, { channels: ['instagram'], scheduledAt: when });
+      const again = await call('POST', `/admin/drafts/${encodeURIComponent(boxing.id)}/schedule`, { channels: ['facebook'], scheduledAt: when });
       assert.match(again.json.results[0].reason, /^already_scheduled/);
       const out = await rt.social.dispatch(new Date(Date.now() + 5 * 60000));
-      if (out.published !== 4) assert.fail(JSON.stringify((await db.collection('growth_social_posts').find({ draftId: boxing.id }).toArray()).map((p) => [p.channel, p.status, p.lastError])));
+      if (out.published !== 2) assert.fail(JSON.stringify((await db.collection('growth_social_posts').find({ draftId: boxing.id }).toArray()).map((p) => [p.channel, p.status, p.lastError])));
       const posts = await db.collection('growth_social_posts').find({ draftId: boxing.id }).toArray();
       const by = Object.fromEntries(posts.map((p) => [p.channel, p]));
-      assert.equal(by.instagram.imageUrl, boxing.poster.portrait.url); assert.equal(by.facebook.imageUrl, boxing.poster.portrait.url);
-      assert.equal(by.tiktok.imageUrl, boxing.poster.story.url);
+      assert.equal(by.facebook.imageUrl, boxing.poster.portrait.url);
+      assert.equal(by.instagram,undefined);assert.equal(by.tiktok,undefined);
       for (const p of posts) { assert.equal(p.status, 'published'); assert.equal(p.sandbox, true, 'sandbox receipts only'); }
       const receipts = await db.collection('growth_social_sandbox').find({ postId: { $in: posts.map((p) => p.id) } }).toArray();
-      assert.equal(receipts.length, 4);
-      const ig = receipts.find((r) => r.channel === 'instagram');
-      assert.ok(ig.preflight.notes.some((n) => /image checked \(image\/jpeg/.test(n)), JSON.stringify(ig.preflight));
+      assert.equal(receipts.length, 2);
+      const fb = receipts.find((r) => r.channel === 'facebook');
+      assert.ok(fb.preflight.notes.some((n) => /image checked \(image\/jpeg/.test(n)), JSON.stringify(fb.preflight));
       assert.ok(receipts.find((r) => r.channel === 'x').preflight.notes.some((n) => /poster is not attached/.test(n)));
-      assert.ok(receipts.find((r) => r.channel === 'tiktok').preflight.notes.some((n) => /not clickable/.test(n)));
+
     });
 
     await t.test('owner blocks artwork: text poster, campaign back to review, queued posts cancelled', async () => {
       const d2 = await drafts.findOne({ contestId: 'bx0000000002' });
       assert.equal(d2.poster.art.used, true);
       assert.equal((await call('POST', `/admin/drafts/${encodeURIComponent(d2.id)}/approve`)).status, 200);
-      const s = await call('POST', `/admin/drafts/${encodeURIComponent(d2.id)}/schedule`, { channels: ['facebook', 'instagram'], scheduledAt: new Date(Date.now() + 60 * 60000).toISOString() });
+      const s = await call('POST', `/admin/drafts/${encodeURIComponent(d2.id)}/schedule`, { channels: ['facebook', 'x'], scheduledAt: new Date(Date.now() + 60 * 60000).toISOString() });
       assert.equal(s.status, 200, s.text);
       assert.equal((await call('POST', '/admin/art-rights/bx0000000002', { status: 'blocked', note: '' })).status, 422, 'a reason is required');
       assert.equal((await call('POST', '/admin/art-rights/bx0000000002', { status: 'blocked', note: 'Owner test: image licence not confirmed' })).status, 200);

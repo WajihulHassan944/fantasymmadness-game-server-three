@@ -18,6 +18,7 @@ test('allowlist accepts only issuer-confirmed first-party administrators and mon
   assert.equal((await schedulerStatus(col)).healthy,false,'activation or a bootstrap is not timer proof');
   await col.updateOne({_id:'managed-scheduler'},{$set:{lastScheduledAt:new Date().toISOString(),scheduledExecutions:2}});
   assert.equal((await schedulerStatus(col)).healthy,true);
+  await col.insertOne({_id:'autonomy:policy',paused:true});const stopped=await schedulerStatus(col);assert.equal(stopped.schedulerEnabled,true);assert.equal(stopped.preparationEnabled,false);assert.equal(stopped.preparationPaused,true);await col.deleteOne({_id:'autonomy:policy'});
   await col.updateOne({_id:'managed-scheduler'},{$set:{lastError:'workstream_error_check_execution_log'}});assert.equal((await schedulerStatus(col)).healthy,false,'recent timer does not hide a workstream error');
   await col.updateOne({_id:'managed-scheduler'},{$set:{lastError:null}});
   assert.equal((await schedulerStatus(col,new Date(Date.now()+36*60000))).healthy,false);

@@ -26,9 +26,11 @@ const path = require('path');
 
 let sharpLib = null;
 const sharp = () => (sharpLib ||= require('sharp'));
-const F = (n) => path.join(__dirname, 'growth-assets', 'fonts', n);
-const FONTS = { blackItalic: F('InterDisplay-BlackItalic.otf'), black: F('InterDisplay-Black.otf'), xbItalic: F('InterDisplay-ExtraBoldItalic.otf'), bold: F('Poppins-Bold.ttf'), reg: F('Poppins-Regular.ttf') };
-const FAMILY = { blackItalic: 'Inter Display Black Italic', black: 'Inter Display Black', xbItalic: 'Inter Display ExtraBold Italic', bold: 'Poppins Bold', reg: 'Poppins' };
+// CJS runs beside the source; Nitro bundles into ESM without __dirname.
+// The worker build copies the same licensed assets beside its deployed entry.
+const F = (n) => path.join(typeof __dirname === 'string' ? __dirname : process.cwd(), 'growth-assets', 'fonts', n);
+const FONTS = { blackItalic: F('Inter-Italic.ttf'), black: F('Inter.ttf'), xbItalic: F('Inter-Italic.ttf'), bold: F('Poppins-Bold.ttf'), reg: F('Poppins-Regular.ttf') };
+const FAMILY = { blackItalic: 'Inter Heavy Italic', black: 'Inter Heavy', xbItalic: 'Inter ExtraBold Italic', bold: 'Poppins Bold', reg: 'Poppins' };
 const BRAND = 'FANTASY MMADNESS';
 const RED = '#e10600';
 const esc = (s) => String(s ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');

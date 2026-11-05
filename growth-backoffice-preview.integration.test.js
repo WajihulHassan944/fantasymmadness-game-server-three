@@ -41,6 +41,7 @@ test('integrated back office shares verified sessions, preserves OAuth and isola
   await settings.insertOne({_id:'managed-scheduler',enabled:true,lastScheduledAt:new Date().toISOString(),scheduledExecutions:2,ownerCount:1});
   await settings.insertOne({_id:'managed-owner-allowlist',ids:['0123456789abcdef01234567']});
   assert.equal((await call('/admin/status')).json.scheduler.healthy,true);
+  const autonomous=(await call('/admin/autonomy')).json;assert.equal(autonomous.scheduler.healthy,true);assert.equal(autonomous.scheduler.scheduledExecutions,2);
   const executive=await call('/admin/executive');assert.ok(executive.json.autonomy.automatic.length>0);assert.ok(!executive.text.includes('not enabled in this Preview'));
   assert.equal((await call('/admin/autonomy')).json.ownerPolicyEditable,true);
   browser=await chromium.launch({headless:true,...(process.env.GROWTH_TEST_CHROMIUM?{executablePath:process.env.GROWTH_TEST_CHROMIUM}:{}),args:['--no-sandbox']});const context=await browser.newContext();await context.addInitScript(t=>sessionStorage.setItem('fmmGrowthSocialOAuthPreviewToken',t),token);

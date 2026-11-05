@@ -195,6 +195,7 @@ function createGrowthRuntime({ db, config, secrets = {}, provider, fetchImpl = g
         const r = await posterStudio.ensureForDraft(d, { now });
         if (!r.ok) { failed.push({ id: d.id, reason: r.reason }); continue; }
         done.push({ id: d.id, mode: r.poster.art.mode, status: r.poster.status, holdReasons: r.poster.holdReasons });
+        if(r.poster.status==='ready'&&!r.poster.needsArtwork&&r.poster.qr.decodedMatches&&r.poster.qr.destination.ok)await col.alerts.updateMany({kind:'poster',id:d.id,state:'open',error:{$regex:'(__dirname is not defined|renderPremium is not a function)'}},{$set:{state:'acknowledged',ackBy:'verified-poster-recovery',ackAt:now.toISOString(),resolution:'Current renderer generated both formats; original artwork, final-image QR and fight destination verified.',posterIds:[r.poster.portrait.id,r.poster.story.id]}});
         // A poster that changed after approval goes back to the owner (never published unseen).
         if (d.status === 'approved' && d.poster && d.poster.portrait?.id !== r.poster.portrait.id) {
           await col.drafts.updateOne({ id: d.id, status: 'approved' }, { $set: { status: 'needs_owner_review', ownerApproved: false, sendPermitted: false, reviewNote: 'The poster changed (new artwork or link): review it again' } });
@@ -278,7 +279,7 @@ function createGrowthRuntime({ db, config, secrets = {}, provider, fetchImpl = g
     await col.coverage.updateOne({ day: doc.day }, { $set: doc }, { upsert: true });
     if (withdrawn || created.length) await audit('refresh_marketing', { trigger, created: created.length, withdrawn, blocked: blocked.length, admin: 'system' });
     const posters = await ensurePosters(now).catch((e) => ({ error: clean(e.message) }));
-    return { refinement,contests: feed.contests, created: created.length, withdrawn, blocked: blocked.length, sourceReachable: feed.sourceReachable, posters };
+    return { coverage:doc,refinement,contests: feed.contests, created: created.length, withdrawn, blocked: blocked.length, sourceReachable: feed.sourceReachable, posters };
   }
   // Re-verify a campaign's contest right before an owner action.
   async function reverifyMarketing(draft, now = new Date()) {

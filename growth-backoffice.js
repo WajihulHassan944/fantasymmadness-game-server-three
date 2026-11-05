@@ -67,7 +67,7 @@ function createBackoffice({ runtime, manualOnly = false }) {
     const lastAt = last ? Date.parse(last.finishedAt || last.createdAt) : null;
     const minutesSince = lastAt ? Math.round((now.getTime() - lastAt) / 60000) : null;
     const managed = manualOnly ? await require('./growth-managed-scheduler').schedulerStatus(col.settings, now) : null;
-    if (managed?.schedulerEnabled) return {...managed, lastRunAt:managed.lastScheduledAt,lastRunState:last?.state||null,minutesSinceLastRun:minutesSince,runsLast24h:last24};
+    if (managed?.schedulerEnabled || managed?.generation) return {...managed, lastRunAt:managed.lastScheduledAt,lastRunState:last?.state||null,minutesSinceLastRun:minutesSince,runsLast24h:last24};
     return {
       schedulerEnabled: !manualOnly, schedule: manualOnly ? 'manual sandbox cycles only' : 'every 15 minutes', lastRunId: last?.runId || null, lastRunAt: last ? (last.finishedAt || last.createdAt) : null,
       lastRunState: last?.state || null, minutesSinceLastRun: minutesSince, runsLast24h: last24,
