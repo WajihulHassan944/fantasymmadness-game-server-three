@@ -46,8 +46,8 @@ jobs:
           --health-interval 10s --health-timeout 5s --health-retries 5
     env:
       # Pinned isolated acceptance target; never a production alias.
-      STAGING_WORKER_URL: https://fantasymmadness-growth-isolated-test-lo6co1vqw.vercel.app
-      STAGING_WORKER_RELEASE: quality-recruitment-persistence-v2
+      STAGING_WORKER_URL: https://fantasymmadness-growth-isolated-test-aqellf8lc.vercel.app
+      STAGING_WORKER_RELEASE: poster-status-repair-v3
       GROWTH_TEST_MONGO_URI: mongodb://127.0.0.1:27017/fmgrowthtest
     steps:
       - uses: actions/checkout@v4
