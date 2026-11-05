@@ -10,6 +10,10 @@ on:
       - '.github/workflows/growth-social-oauth-isolated.yml'
   workflow_dispatch:
     inputs:
+      expected_release:
+        description: Require verified timer execution from this worker release
+        type: string
+        required: false
       worker_url:
         description: Exact isolated worker Preview URL to verify durable timer execution
         type: string
@@ -54,7 +58,12 @@ jobs:
           node growth-social-oauth-isolated.test.js
           node growth-social-oauth-preview.test.js
       - name: Install Chromium for isolated back-office UI tests
-        run: npx playwright install --with-deps chromium
+        run: |
+          if command -v google-chrome >/dev/null 2>&1; then
+            echo "GROWTH_TEST_CHROMIUM=$(command -v google-chrome)" >> "$GITHUB_ENV"
+          else
+            npx playwright install chromium
+          fi
       - name: Administrator-only social Connections browser test
         run: node growth-social-oauth-console.browser.test.js
       - name: Integrated back office, affiliate QR parity and sandbox receipt regressions
@@ -84,4 +93,5 @@ jobs:
         if: inputs.worker_url != ''
         env:
           WORKER_URL: ${{ inputs.worker_url }}
+          EXPECTED_WORKER_RELEASE: ${{ inputs.expected_release }}
         run: node scripts/growth-managed-worker-smoke.js

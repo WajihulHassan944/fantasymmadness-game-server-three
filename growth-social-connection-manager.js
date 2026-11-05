@@ -4,6 +4,7 @@ const PROVIDERS={tiktok:{token:'https://open.tiktokapis.com/v2/oauth/token/',me:
 const scopes=s=>[...new Set(String(s||'').split(/[ ,]+/).filter(Boolean))].sort();
 function createConnectionManager({db,env,fetchImpl=globalThis.fetch,clock=()=>new Date()}){
  if(db.databaseName!=='fmgrowthtest')throw Error('isolated_database_required');
+ if(env.VERCEL&&(env.VERCEL_ENV!=='preview'||env.VERCEL_PROJECT_ID!==require('./growth-runtime-config').ISOLATED_PROJECT_ID)||env.GROWTH_OUTBOUND_ENABLED==='true'||env.GROWTH_SOCIAL_PROVIDER==='live')throw Error('isolated_preview_maintenance_required');
  const {encrypt,decrypt}=require('./growth-social-oauth-isolated');
  const key=Buffer.from(env.GROWTH_SOCIAL_TOKEN_KEY||'','base64');if(key.length!==32)throw Error('original_oauth_encryption_key_required');
  const accounts=db.collection('growth_social_accounts'),alerts=db.collection('preview198_growth_connection_alerts');
@@ -15,6 +16,7 @@ function createConnectionManager({db,env,fetchImpl=globalThis.fetch,clock=()=>ne
   if(!PROVIDERS[p])return{ok:false,status:400,error:'unsupported_provider'};
   const before=await accounts.findOne({_id:p});if(!before?.confirmed||before.status!=='connected'||!before.credentials)return{ok:false,status:409,error:'not_connected_or_refresh_in_progress'};
   if(!force&&new Date(before.tokenExpiresAt)-clock()>30*60000&&!before.pendingRefresh)return{ok:true,skipped:'not_due',connection:summary(before)};
+  if(!force&&(before.refreshAttempts||0)>=6)return{ok:false,status:409,error:'renewal_retry_budget_exhausted_review_required'};
   if(!force&&before.nextRefreshAttemptAt>clock())return{ok:true,skipped:'retry_backoff',connection:summary(before)};
   const lock=crypto.randomUUID(),now=clock();
   const a=await accounts.findOneAndUpdate({_id:p,revision:before.revision,status:'connected',$or:[{refreshLockUntil:{$exists:false}},{refreshLockUntil:{$lte:now}}]},{$set:{refreshLock:lock,refreshLockUntil:new Date(+now+90000)}},{returnDocument:'after'});
