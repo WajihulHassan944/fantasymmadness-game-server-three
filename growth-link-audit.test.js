@@ -1,0 +1,17 @@
+'use strict';
+const test=require('node:test'),assert=require('node:assert/strict'),crypto=require('node:crypto'),{MongoClient}=require('mongodb');
+const {inventory,links}=require('./growth-link-audit');
+const uri=process.env.GROWTH_TEST_MONGO_URI,skip=!/^mongodb:\/\/(localhost|127\.0\.0\.1)(:\d+)?\//.test(uri||'');
+test('recruitment link extraction decodes HTML entities, includes legacy routes and excludes security/contact links',()=>{assert.deepEqual(links('<a href="https://www.fantasymmadness.com/affiliate-create-account?utm_source=fan_acquisition&amp;utm_campaign=fixture">join</a>\nhttps://www.fantasymmadness.com/api/growth/unsubscribe?token=private\nhttps://recipient.invalid/contact'),['https://www.fantasymmadness.com/affiliate-create-account?utm_source=fan_acquisition&utm_campaign=fixture']);});
+test('audit rejects another database before any collection access',async()=>{await assert.rejects(()=>inventory({db:{databaseName:'production',collection(){throw Error('must not read');}}}),/isolated_database_required/);});
+test('read-only inventory decodes actual QR bytes, includes held drafts and preserves affiliate records',{skip},async()=>{
+ const client=await new MongoClient(uri).connect(),raw=client.db('fmgrowthtest'),prefix='auditfixture_'+crypto.randomBytes(6).toString('hex')+'_',collection=n=>raw.collection(prefix+n),reads=[];
+ const readonly={databaseName:'fmgrowthtest',collection(n){assert.match(n,/^preview198_/);reads.push(n);const c=collection(n);return{find:(...a)=>c.find(...a),findOne:(...a)=>c.findOne(...a)};}};
+ try{
+  const aff={id:'fixture-partner',name:'Fixture Partner',code:'fixture_partner',status:'active',liveAffiliateId:'a'.repeat(24)};await collection('preview198_growth_affiliates').insertOne(aff);
+  const url='https://www.fantasymmadness.com/fight/'+('b'.repeat(24))+'?play=1&ref='+aff.liveAffiliateId+'&utm_source=fan_acquisition&utm_campaign=fixture';
+  await collection('preview198_growth_drafts').insertMany([{id:'fixture-held',kind:'affiliate',status:'needs_owner_review',text:'Hi,\nhttps://www.fantasymmadness.com/affiliate-create-account?utm_campaign=fixture',approvalBlockers:['affiliate_terms_require_owner_review']},{id:'fixture-fight',kind:'marketing',contestId:'b'.repeat(24),contest:{id:'b'.repeat(24),sport:'boxing'},poster:{qrUrl:url}}]);
+  const bytes=await require('qrcode').toBuffer(url,{width:800,margin:4});for(const format of ['portrait','story'])await collection('preview198_growth_posters').insertOne({id:'fixture-'+format,draftId:'fixture-fight',contestId:'b'.repeat(24),format,bytes,qrUrl:url});
+  const snapshot=JSON.stringify(await collection('preview198_growth_affiliates').find({}).toArray());const report=await inventory({db:readonly});assert.equal(report.readOnly,true);assert.equal(report.affiliateRecordsUnchanged,true);assert.equal(report.inventory.posterImages,2);assert.ok(report.rows.some(r=>r.sourceItem==='fixture-held'&&r.sourceType==='email_affiliate'));assert.ok(report.rows.filter(r=>r.sourceType==='fight_poster_qr').every(r=>r.decodedUrl===url&&r.qrMetadataMatch));assert.equal(JSON.stringify(report).includes('bytes'),false);assert.deepEqual(JSON.stringify(await collection('preview198_growth_affiliates').find({}).toArray()),snapshot);assert.ok(reads.every(n=>!n.includes('social_accounts')&&!n.includes('connections')));
+ }finally{for(const c of await raw.listCollections({name:{$regex:'^'+prefix}}).toArray())await raw.collection(c.name).drop();await client.close();}
+});
