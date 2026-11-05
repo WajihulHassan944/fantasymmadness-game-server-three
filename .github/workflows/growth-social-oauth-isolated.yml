@@ -48,6 +48,8 @@ jobs:
         run: npx playwright install --with-deps chromium
       - name: Administrator-only social Connections browser test
         run: node growth-social-oauth-console.browser.test.js
+      - name: Integrated back office, affiliate QR parity and sandbox receipt regressions
+        run: node --test --test-concurrency=1 growth-backoffice-preview.integration.test.js growth-autonomy-safety.integration.test.js growth-affiliate-program.test.js growth-affiliate-attribution.test.js growth-fight-urls.integration.test.js growth-backoffice.test.js growth-sandbox-receipt-reporting.test.js growth-registry-refresh.integration.test.js
       - run: npm audit --omit=dev --audit-level=high
 
       - name: Verify deployed isolated Preview without provider authorization

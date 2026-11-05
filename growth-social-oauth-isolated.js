@@ -112,12 +112,14 @@ function installGrowthSocialOAuth({ router, env, db, fetchImpl = globalThis.fetc
     const token = signConsoleToken(adminSecret, { pwv: consolePasswordVersion(env.GROWTH_ADMIN_PASSWORD_HASH), sid: random() }, { expiresIn: '20m' });
     res.json({ ok: true, token });
   }));
-  router.post('/social/admin/logout', sameOrigin, auth, wrap(async (req, res) => {
+  const logout = wrap(async (req, res) => {
     await indexes(); await revoked.updateOne({ _id: req.socialSession }, { $set: { expiresAt: new Date(req.socialAdmin.exp * 1000) } }, { upsert: true });
     await pending.deleteMany({ session: req.socialSession }); await candidates.deleteMany({ session: req.socialSession });
     for (const p of Object.keys(PROVIDERS)) { clearCookie(res, p); clearCandidate(res, p); }
     res.json({ ok: true });
-  }));
+  });
+  router.post('/social/admin/logout', sameOrigin, auth, logout);
+  if (env.GROWTH_BACKOFFICE_INTEGRATED === 'true') router.post('/admin/logout', auth, logout);
   router.post('/social/:provider/connect', sameOrigin, auth, wrap(async (req, res) => {
     const p = selected(req, res); if (!p) return;
     if (limited('connect:' + req.socialSession, 10)) return res.status(429).json({ ok: false, error: 'too_many_attempts' });
@@ -172,6 +174,7 @@ function installGrowthSocialOAuth({ router, env, db, fetchImpl = globalThis.fetc
     if (sealed.length > 3800) return res.status(400).send('Provider response exceeds secure confirmation transport');
     await indexes(); await candidates.insertOne({ _id: hash(req.query.state), provider: p, generation:claim.generation, session: claim.session, identity, username, displayName: String(profile.data?.user?.display_name || profile.data?.name || '').slice(0, 100), sealedHash: hash(sealed), verifiedAt: clock(), expiresAt, tokenExpiresAt: new Date(clock().getTime() + tokens.expires_in * 1000) });
     res.append('Set-Cookie', candidateCookie(p) + '=' + sealed + '; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age=300');
+    if (env.GROWTH_BACKOFFICE_INTEGRATED === 'true') return res.type('html').send('<!doctype html><meta name="referrer" content="no-referrer"><p>Account verified. Confirm its profile and ID before saving. Publishing remains disabled.</p><a href="/api/growth/console#/connections">Return to Connections to confirm</a>');
     res.type('text/plain').send(p.toUpperCase() + ' account verified. Return to the Growth Engine Connections tab and confirm the displayed account. Publishing remains disabled.');
   }));
   router.post('/social/:provider/confirm', sameOrigin, auth, wrap(async (req, res) => {
@@ -230,11 +233,17 @@ function installGrowthSocialOAuth({ router, env, db, fetchImpl = globalThis.fetc
     res.json({ ok: true, database: 'fmgrowthtest', publishingEnabled: false, providers: Object.keys(PROVIDERS).map(provider => ({ provider, configured: !config.errors(provider).length, blockers: config.errors(provider), callbackUrl: callback(provider) })), connections: docs.filter(d=>d.confirmed===true && d.identity).map(d => ({ provider: d.provider, identity: d.identity, displayName: d.displayName, username: d.username, refreshAvailable: d.refreshAvailable === true, status: d.status === 'connected' && d.tokenExpiresAt > clock() ? 'connected' : d.status === 'connected' ? 'expired' : 'disconnected', publishingEnabled: false })), pending: list.map(d => ({ candidateId: d._id, provider: d.provider, identity: d.identity, username: d.username, displayName: d.displayName, expiresAt: d.expiresAt })) });
   }));
   const ui = require('./growth-social-oauth-console');
+  const nextIntegratedConsole = (req, res) => {
+    const fs = require('fs'), path = require('path');
+    const origins = ssoConfig.siteOrigins.join(' ');
+    res.set({ 'Cache-Control': 'no-store', 'Content-Security-Policy': `default-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: https:; connect-src 'self'; frame-src 'self' about:; base-uri 'none'; form-action 'none'; frame-ancestors ${origins || "'none'"}`, 'Referrer-Policy': 'no-referrer' }).type('html').send(fs.readFileSync(path.join(__dirname, 'growth-console', 'index.html'), 'utf8').replace('<html lang="en">', '<html lang="en" data-integrated-preview="true">'));
+  };
   router.get('/console', (req, res) => {
     if (env.VERCEL && req.headers.host !== new URL(config.origin).host) return res.redirect(302, config.origin + '/api/growth/console');
+    if (env.GROWTH_BACKOFFICE_INTEGRATED === 'true') return nextIntegratedConsole(req, res);
     res.set({ 'Cache-Control': 'no-store', 'Content-Security-Policy': "default-src 'none'; script-src 'self'; style-src 'unsafe-inline'; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'none'", 'Referrer-Policy': 'no-referrer', 'X-Content-Type-Options': 'nosniff' }).type('html').send(ui.html);
   });
   router.get('/social/console.js', (req, res) => res.set('Cache-Control', 'no-store').type('application/javascript').send(ui.script));
-  return { callback, config: { origin: config.origin, publishingEnabled: false } };
+  return { auth, callback, config: { origin: config.origin, publishingEnabled: false } };
 }
 module.exports = { installGrowthSocialOAuth, resolveOAuthConfig, encrypt, decrypt };

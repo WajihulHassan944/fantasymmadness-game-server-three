@@ -47,6 +47,7 @@ function resolveGrowthRuntimeConfig(env = process.env) {
   // ---- delivery -------------------------------------------------------------
   // none (default): drafts are prepared and approved, nothing is sent.
   // sandbox-smtp:   loopback SMTP sandbox only (CI / local verification).
+  // sandbox-capture: exact message built and stored for review; never sent (staging).
   // resend:         REAL email; every approval flag + credential required.
   const provider = String(env.GROWTH_DELIVERY_PROVIDER || 'none');
   const delivery = { provider, realDelivery: false, sender: '', blockers: [] };
@@ -54,6 +55,8 @@ function resolveGrowthRuntimeConfig(env = process.env) {
     const host = String(env.GROWTH_SANDBOX_SMTP_HOST || '127.0.0.1');
     if (!['127.0.0.1', 'localhost'].includes(host)) errors.push('Sandbox SMTP must be loopback');
     delivery.smtp = { host, port: Number(env.GROWTH_SANDBOX_SMTP_PORT || 1025) };
+  } else if (provider === 'sandbox-capture') {
+    delivery.sender = BUSINESS_SENDER; // the message is built exactly as it would be sent, then stored; never sent
   } else if (provider === 'resend') {
     const need = (ok, why) => { if (!ok) delivery.blockers.push(why); };
     need(env.GROWTH_OUTBOUND_ENABLED === 'true', 'GROWTH_OUTBOUND_ENABLED must be "true"');
@@ -66,18 +69,42 @@ function resolveGrowthRuntimeConfig(env = process.env) {
   } else if (provider !== 'none') errors.push(`Unknown GROWTH_DELIVERY_PROVIDER "${provider}"`);
   if (env.GROWTH_OUTBOUND_ENABLED === 'true' && !delivery.realDelivery) errors.push('GROWTH_OUTBOUND_ENABLED is "true" but real delivery is not fully authorized');
 
+  // Social publishing (fails closed; see growth-social-publishing.js).
+  const socialResolved = require('./growth-social-publishing').resolveSocialConfig(env);
+  errors.push(...socialResolved.errors);
+  // Meta (Facebook Page + Instagram) connection; the app secret stays in `secrets`.
+  const metaResolved = require('./growth-meta-connect').resolveMetaConfig(env);
+
+  // Marketing campaigns come only from the published FANTASY MMADNESS contest feeds (read-only).
+  let contestSourceUrl = '';
+  try { contestSourceUrl = require('./growth-contest-campaigns').sourceBase(env); } catch (e) { errors.push(e.message); }
+
   // Hostname only (never credentials), so the operator can confirm the cluster
   // and pin it with GROWTH_TEST_ATLAS_HOST.
   let host = null; try { host = uri ? new URL(uri).hostname : null; } catch {}
   const config = {
-    mode: 'isolated', onVercel, database: { kind: dbKind, name: DATABASE, host, hostPinned: Boolean(env.GROWTH_TEST_ATLAS_HOST) }, delivery,
+    mode: 'isolated', onVercel, autonomy: { liveApproved: env.GROWTH_AUTOMATION_LIVE_APPROVED === 'true', owners: String(env.GROWTH_AUTOMATION_OWNER_IDS || env.GROWTH_SSO_ALLOWED_ADMINS || '').split(',').map(s => s.trim().toLowerCase()).filter(Boolean) }, database: { kind: dbKind, name: DATABASE, host, hostPinned: Boolean(env.GROWTH_TEST_ATLAS_HOST) }, delivery,
     discoveryEnabled: env.GROWTH_DISCOVERY_ENABLED !== 'false',
+    discoveryCountries: [...new Set(String(env.GROWTH_DISCOVERY_COUNTRIES || 'US,GB,CA,AU,BR,MX,JP,DE,FR,ZA').split(',').map(x => x.trim().toUpperCase()).filter(x => /^[A-Z]{2}$/.test(x)))].slice(0,10),
     discoveryLimitPerWorker: Math.min(25, Math.max(1, Number(env.GROWTH_DISCOVERY_LIMIT || 10))),
     unsubscribeBaseUrl: String(env.GROWTH_UNSUBSCRIBE_BASE_URL || ''),
     staleRunMinutes: Math.max(5, Number(env.GROWTH_STALE_RUN_MINUTES || 30)),
+    contestSourceUrl,
+    marketingHorizonDays: Math.min(45, Math.max(3, Number(env.GROWTH_MARKETING_HORIZON_DAYS || 21))),
+    maxCampaignsPerSport: Math.min(10, Math.max(1, Number(env.GROWTH_MAX_CAMPAIGNS_PER_SPORT || 3))),
+    liveReport: { configured: /^.{20,}$/.test(String(env.GROWTH_LIVE_REPORT_TOKEN || '')) },
+    ingest: { configured: String(env.GROWTH_ATTRIBUTION_INGEST_SECRET || '').length >= 32 },
+    social: { provider: socialResolved.provider, approved: socialResolved.approved, paused: socialResolved.paused, channels: socialResolved.channels },
+    fightUrlDiscovery: env.GROWTH_FIGHT_URL_DISCOVERY !== 'off',
+    researchPerRun: Math.min(10, Math.max(0, Number(env.GROWTH_RESEARCH_PER_RUN ?? 4))), // shows researched per 15-minute run (0 = off) // fighter-name addresses from the website (growth-fight-urls.js)
+    // Posters: generated from verified contests; served publicly from this service for the platforms to fetch.
+    posters: { enabled: env.GROWTH_POSTERS === 'on', perRun: Math.min(20, Math.max(1, Number(env.GROWTH_POSTERS_PER_RUN || 3))), publicOrigin: String(env.GROWTH_PUBLIC_ORIGIN || 'https://fantasymmadness-growth-isolated-tes.vercel.app').replace(/\/+$/, ''), artEnv: { GROWTH_ART_CLOUDINARY_CLOUDS: String(env.GROWTH_ART_CLOUDINARY_CLOUDS || ''), GROWTH_ART_HOSTS: String(env.GROWTH_ART_HOSTS || '') } },
+    // Website administrator sign-in (growth-admin-sso.js): first-party signed assertion from the website server.
+    sso: (() => { const s = require('./growth-admin-sso').resolveSsoConfig(env); return { enabled: s.enabled, publicKey: s.publicKey, keyId: s.keyId, siteOrigins: s.siteOrigins, allow: s.allow, errors: s.errors }; })(),
+    meta: { redirectUri: metaResolved.redirectUri, liveTestApproved: metaResolved.liveTestApproved, expected: metaResolved.expected },
   };
   // Secrets are kept out of the returned config object.
-  const secrets = { mongoUri: uri, cronSecret: String(env.CRON_SECRET || ''), adminJwtSecret: String(env.JWT_SECRET_ADMIN || ''), unsubscribeSecret: String(env.GROWTH_UNSUBSCRIBE_SECRET || ''), resendApiKey: String(env.GROWTH_RESEND_API_KEY || '') };
+  const secrets = { mongoUri: uri, cronSecret: String(env.CRON_SECRET || ''), adminJwtSecret: String(env.JWT_SECRET_ADMIN || ''), unsubscribeSecret: String(env.GROWTH_UNSUBSCRIBE_SECRET || ''), resendApiKey: String(env.GROWTH_RESEND_API_KEY || ''), social: socialResolved.secrets, meta: metaResolved, tokenEncryptionKey: String(env.GROWTH_TOKEN_ENCRYPTION_KEY || ''), liveReportToken: String(env.GROWTH_LIVE_REPORT_TOKEN || ''), ingestSecret: String(env.GROWTH_ATTRIBUTION_INGEST_SECRET || '') };
   return { ok: errors.length === 0, errors, warnings, config, secrets };
 }
 

@@ -9,6 +9,7 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const express = require('express');
 const jwt = require('jsonwebtoken');
+const { signConsoleToken, consolePasswordVersion } = require('./growth-console-token');
 const { MongoClient } = require('mongodb');
 const { registerIsolatedGrowthRoutes } = require('./growth-isolated-routes');
 const { createGrowthRuntime } = require('./growth-runtime');
@@ -19,7 +20,18 @@ const uri = process.env.GROWTH_TEST_MONGO_URI;
 const skip = !uri || !/^mongodb:\/\/(127\.0\.0\.1|localhost)/.test(uri);
 const secret = 's'.repeat(48);
 const env = { GROWTH_STAGING_MODE: 'isolated', GROWTH_OUTBOUND_ENABLED: 'false', GROWTH_TEST_MONGO_URI: uri, JWT_SECRET_ADMIN: secret, GROWTH_UNSUBSCRIBE_SECRET: secret, CRON_SECRET: 'cron-secret-for-tests-only', GROWTH_DELIVERY_PROVIDER: 'sandbox-smtp', GROWTH_UNSUBSCRIBE_BASE_URL: 'https://growth.sandbox.localhost/api/growth/unsubscribe' };
-const podcastFetch = async (url) => {
+const { contestFeed } = require('./growth-contest-feed.fixture');
+// Simulated days start at noon (UTC) a year after today, so they never coincide with the
+// real-time cron call made in this test (a fixed calendar date eventually becomes "today").
+const BASE = (() => { const d = new Date(); d.setUTCFullYear(d.getUTCFullYear() + 1); d.setUTCHours(12, 0, 0, 0); return d.getTime(); })();
+const feed = contestFeed(() => BASE);
+const dayKey = (ms) => new Date(ms).toISOString().slice(0, 10).replace(/-/g, ''); // e.g. 20271102
+const DAY1 = dayKey(BASE + 86400000); const DAY2 = dayKey(BASE + 2 * 86400000);
+const { researchWeb } = require('./growth-podcast-research.fixture');
+const web = researchWeb();
+const podcastFetch = async (url, opts) => {
+  const f = feed(url); if (f) return f;
+  const w = await web(url, opts); if (w) return w;
   const term = new URL(url).searchParams.get('term');
   const slug = term.replace(/[^a-z]+/gi, '-').toLowerCase();
   return { ok: true, status: 200, json: async () => ({ results: [1, 2].map((n) => ({ collectionName: `${term} show ${n}`, collectionViewUrl: `https://podcasts.apple.com/us/podcast/${slug}-${n}/id${n}` })) }) };
@@ -37,7 +49,9 @@ test('isolated Growth Engine service', { skip }, async (t) => {
   assert.equal(mounted.mounted, true);
   const server = app.listen(0);
   const base = `http://127.0.0.1:${server.address().port}/api/growth`;
-  const adminToken = jwt.sign({ email: 'owner@fmm-staging.test' }, secret);
+  const adminToken = signConsoleToken(secret, { email: 'owner@fmm-staging.test', pwv: consolePasswordVersion(env.GROWTH_ADMIN_PASSWORD_HASH) });
+  // A token signed directly with JWT_SECRET_ADMIN (what the live backend issues) is refused.
+  assert.equal((await fetch(`${base}/admin/overview`, { headers: { Authorization: `Bearer ${jwt.sign({ email: 'owner@fmm-staging.test', role: 'growth_owner', pwv: consolePasswordVersion(env.GROWTH_ADMIN_PASSWORD_HASH) }, secret)}` } })).status, 401);
   const call = async (method, path, { token, body, headers = {} } = {}) => {
     const h = { ...headers }; if (token) h.Authorization = `Bearer ${token}`; if (body) h['Content-Type'] = 'application/json';
     const r = await fetch(base + path, { method, headers: h, body: body ? JSON.stringify(body) : undefined });
@@ -45,7 +59,7 @@ test('isolated Growth Engine service', { skip }, async (t) => {
     return { status: r.status, json, text };
   };
   const runtime = await mounted.getRuntime();
-  const T = (m) => new Date(Date.parse('2026-11-02T12:00:00Z') + m * 60000);
+  const T = (m) => new Date(BASE + m * 60000);
   try {
     await t.test('health reports a valid isolated configuration', async () => {
       const h = await call('GET', '/health');
@@ -61,17 +75,33 @@ test('isolated Growth Engine service', { skip }, async (t) => {
       const s = await runtime.tick({ now: T(0) });
       const disc = s.jobs.find((j) => j.id.startsWith('discover-'));
       assert.equal(disc.ok, true, JSON.stringify(s));
-      assert.equal(disc.result.marketingDrafts, 5);
+      assert.equal(await runtime.collections.drafts.countDocuments({ kind: 'marketing', contestId: { $exists: true } }), 10); // 2 verified contests x 5 sports (one campaign per contest, not per day); invalid contests rejected
       assert.equal(disc.result.workstreams, 25);
       assert.ok(disc.result.prospectsFound >= 20); // already stored by the earlier cron call, so newProspects may be 0
       assert.ok(await runtime.collections.prospects.countDocuments() >= 20);
       const ws = runtime.collections.workstreams;
-      for (const fn of ['public-relations', 'affiliate-recruitment']) {
-        const withDrafts = await ws.distinct('genre', { runId: s.runId.replace('growth_', 'growth_'), functionName: fn, 'data.drafts.0': { $exists: true } });
-        assert.equal(withDrafts.length, 5, `${fn} drafts prepared for all five sports`);
+      for (const fn of ['public-relations', 'affiliate-recruitment']) assert.equal((await ws.distinct('genre', { runId: s.runId, functionName: fn })).length, 5, `${fn} workstream for all five sports`);
+      // Research: each show once, from its own feed; personalized drafts only with a published
+      // business contact AND evidence; never both PR and affiliate for one show.
+      assert.ok(s.research && s.research.researched >= 1, JSON.stringify(s.research));
+      await runtime.researchBatch(T(0), { limit: 20 });
+      const researched = await runtime.collections.prospects.find({ researchedAt: { $exists: true } }).toArray();
+      assert.equal(new Set(researched.map((p) => p.sourceUrl)).size, 15, 'every show researched once');
+      const auto = await runtime.collections.drafts.find({ autoResearched: true }).toArray();
+      assert.equal(auto.length, 5, auto.map((d) => d.id).join());
+      assert.deepEqual(auto.map((d) => d.kind).sort(), ['affiliate', 'affiliate', 'affiliate', 'affiliate', 'pr']);
+      for (const d of auto) {
+        assert.match(d.recipient, /^bookings@.+\.example$/); assert.equal(d.status, 'needs_owner_review'); assert.equal(d.sendPermitted, false);
+        assert.match(d.consentBasis, /published by the show/); assert.ok(d.personalization.angle.why);
+        assert.ok(d.text.includes(d.personalization.show)); assert.doesNotMatch(d.text, /\$\d|prize|commission of/i);
       }
+      assert.equal(new Set(auto.map((d) => d.recipient)).size, 5, 'one email per contact');
+      assert.equal(await runtime.collections.drafts.countDocuments({ recipient: /anchor\.fm/ }), 0, 'hosting-platform address never used');
+      const noRoute = await runtime.collections.prospects.countDocuments({ researchOutcome: 'no_verified_contact_route' });
+      assert.ok(noRoute >= 10, `no-contact shows recorded (${noRoute})`);
       const drafts = await runtime.listDrafts({ kind: 'marketing', status: 'needs_owner_review' });
       assert.equal(new Set(drafts.map((d) => d.genre)).size, 5);
+      for (const d of drafts) { assert.ok(d.contestId && d.text.includes(d.contest.fighterA) && d.text.includes(d.contest.fighterB)); assert.doesNotMatch(d.text, /podcast|show \d/i); }
     });
     await t.test('duplicate invocation in the same minute is skipped', async () => {
       assert.equal((await runtime.tick({ now: T(0) })).skipped, 'duplicate_invocation');
@@ -83,7 +113,7 @@ test('isolated Growth Engine service', { skip }, async (t) => {
     });
     let prDraftId, prospects;
     await t.test('owner adds a verified contact -> personalized PR draft awaiting review', async () => {
-      prospects = (await call('GET', '/admin/prospects', { token: adminToken })).json.prospects.filter((p) => p.focus === 'partners');
+      prospects = (await call('GET', '/admin/prospects', { token: adminToken })).json.prospects.filter((p) => p.focus === 'partners' && p.researchOutcome !== 'drafted'); // manual route: shows research did not draft for
       const missingConsent = await call('POST', `/admin/prospects/${prospects[0].id}/contact`, { token: adminToken, body: { contact: 'editor@sandbox.localhost', kind: 'pr' } });
       assert.equal(missingConsent.status, 422); assert.equal(missingConsent.json.reason, 'consent_basis_required');
       const r = await call('POST', `/admin/prospects/${prospects[0].id}/contact`, { token: adminToken, body: { contact: 'editor@sandbox.localhost', kind: 'pr', consentNote: 'Public press contact on outlet website; business outreach' } });
@@ -145,22 +175,28 @@ test('isolated Growth Engine service', { skip }, async (t) => {
       assert.equal(s.recoveredStaleRuns, 1);
       assert.equal((await runtime.collections.runs.findOne({ runId: 'growth_202611021000' })).state, 'stale');
       assert.ok((await runtime.listAlerts()).some((a) => a.kind === 'run' && a.id === 'growth_202611021000'));
+      // 20+ minutes later, with nothing left running or half-sent from that run, the alert closes itself.
+      const later = await runtime.tick({ now: new Date(Date.parse((await runtime.collections.runs.findOne({ runId: 'growth_202611021000' })).staleDetectedAt) + 25 * 60000) });
+      assert.ok(later.reconciledStaleRuns.closed >= 1, JSON.stringify(later.reconciledStaleRuns));
+      assert.equal((await runtime.collections.runs.findOne({ runId: 'growth_202611021000' })).state, 'recovered');
+      const a = await runtime.collections.alerts.findOne({ alertKey: 'stale:growth_202611021000' });
+      assert.equal(a.state, 'acknowledged'); assert.equal(a.ackBy, 'auto-recovery'); assert.match(a.resolution, /nothing was sent twice/);
     });
     await t.test('a failing provider retries with backoff, then alerts once; admin can requeue', async () => {
       const resolved = resolveGrowthRuntimeConfig(env);
       const broken = createGrowthRuntime({ db: client.db('fmgrowthtest'), config: resolved.config, secrets: resolved.secrets, provider: createDeliveryProvider({ config: resolved.config, secrets: resolved.secrets, transport }), fetchImpl: failingFetch });
-      const D = (m) => new Date(Date.parse('2026-11-03T08:00:00Z') + m * 60000);
+      const D = (m) => new Date(BASE + (24 * 60 - 4 * 60) * 60000 + m * 60000); // next day 08:00 UTC
       const states = [];
       for (const m of [0, 1, 3, 7]) {
         const s = await broken.tick({ now: D(m) });
-        const j = s.jobs.find((x) => x.id === 'discover-20261103');
+        const j = s.jobs.find((x) => x.id === `discover-${DAY1}`);
         if (j) states.push(j.state || 'ok');
       }
       assert.deepEqual(states, ['retry', 'retry', 'failed']);
-      assert.ok((await broken.listAlerts()).some((a) => a.alertKey === 'job:discover-20261103:failed'));
-      const rq = await call('POST', '/admin/jobs/discover-20261103/requeue', { token: adminToken });
+      assert.ok((await broken.listAlerts()).some((a) => a.alertKey === `job:discover-${DAY1}:failed`));
+      const rq = await call('POST', `/admin/jobs/discover-${DAY1}/requeue`, { token: adminToken });
       assert.equal(rq.json.ok, true);
-      assert.equal((await client.db('fmgrowthtest').collection('unattended_jobs').findOne({ id: 'discover-20261103' })).state, 'retry');
+      assert.equal((await client.db('fmgrowthtest').collection('unattended_jobs').findOne({ id: `discover-${DAY1}` })).state, 'retry');
     });
     await t.test('with no delivery provider, approved emails are held, never sent', async () => {
       const resolved = resolveGrowthRuntimeConfig({ ...env, GROWTH_DELIVERY_PROVIDER: 'none' });
@@ -172,15 +208,33 @@ test('isolated Growth Engine service', { skip }, async (t) => {
       assert.ok(s.delivery.held >= 1);
       assert.equal(mail.length, before);
     });
+    await t.test('publishing gates: not connected -> held; fight no longer verified -> cancelled', async () => {
+      const d = (await runtime.listDrafts({ kind: 'marketing', status: 'needs_owner_review' }))[0];
+      assert.equal((await runtime.approveDraft(d.id, { admin: 'owner', now: T(40) })).ok, true);
+      const s1 = await runtime.social.schedule(d.id, { channels: ['x', 'facebook'], scheduledAt: T(41).toISOString(), admin: 'owner', now: T(40) });
+      assert.equal(s1.ok, true, JSON.stringify(s1));
+      const out = await runtime.social.dispatch(T(42));
+      assert.equal(out.held, 2); // provider "none": nothing is posted
+      const held = await runtime.social.list({ status: 'held' });
+      assert.ok(held.every((p) => /provider is "none"/.test(p.heldReason)));
+      // Owner retries after "connecting"; the fight has meanwhile disappeared from the contest list
+      for (const p of held) assert.equal((await runtime.social.retry(p.id, { admin: 'owner', now: T(43) })).ok, true);
+      const resolved = resolveGrowthRuntimeConfig({ ...env, GROWTH_SOCIAL_PROVIDER: 'sandbox', GROWTH_DELIVERY_PROVIDER: 'none' });
+      const emptyFeed = async (url) => (url.includes('/api/public/') ? { ok: true, status: 200, json: async () => ({ items: [] }) } : podcastFetch(url));
+      const other = createGrowthRuntime({ db: client.db('fmgrowthtest'), config: resolved.config, secrets: resolved.secrets, provider: createDeliveryProvider({ config: resolved.config }), fetchImpl: emptyFeed });
+      const out2 = await other.social.dispatch(T(50));
+      assert.equal(out2.cancelled, 2); assert.equal(out2.published, 0);
+      assert.ok((await other.social.list({ status: 'cancelled' })).every((p) => p.cancelReason === 'contest_no_longer_open_or_verified'));
+    });
     await t.test('daily report (due one minute after the day starts) aggregates drafts, deliveries, suppressions and alerts', async () => {
-      const day = Date.parse('2026-11-04T09:00:00Z');
+      const day = BASE + (2 * 24 * 60 - 3 * 60) * 60000; // two days later, 09:00 UTC
       await runtime.tick({ now: new Date(day) });
-      assert.equal(await runtime.collections.reports.countDocuments({ day: '20261104' }), 0);
+      assert.equal(await runtime.collections.reports.countDocuments({ day: DAY2 }), 0);
       const s = await runtime.tick({ now: new Date(day + 2 * 60000) });
-      const job = s.jobs.find((j) => j.id === 'report-20261104');
+      const job = s.jobs.find((j) => j.id === `report-${DAY2}`);
       assert.equal(job?.ok, true, JSON.stringify(s));
       const rep = (await runtime.overview()).latestReport;
-      assert.equal(rep.day, '20261104');
+      assert.equal(rep.day, DAY2);
       assert.equal(rep.suppressions, 2);
       assert.ok(rep.draftsByStatus.delivered >= 1);
       assert.ok(rep.openAlerts >= 2);

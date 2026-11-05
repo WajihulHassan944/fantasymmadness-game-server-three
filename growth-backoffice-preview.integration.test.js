@@ -1,0 +1,47 @@
+'use strict';
+const test=require('node:test'),assert=require('node:assert/strict'),crypto=require('node:crypto');
+const {MongoClient}=require('mongodb'),{chromium}=require('playwright');
+const {createPreviewApp}=require('./growth-social-oauth-preview'),{signAssertion}=require('./growth-social-admin-sso'),{encrypt}=require('./growth-social-oauth-isolated'),{contestFeed}=require('./growth-contest-feed.fixture');
+const uri=process.env.GROWTH_TEST_MONGO_URI,skip=!/^mongodb:\/\/(127\.0\.0\.1|localhost)(:\d+)?\//.test(uri||'');
+test('integrated back office shares verified sessions, preserves OAuth and isolates all department writes',{skip,timeout:120000},async()=>{
+ const client=await new MongoClient(uri).connect(),db=client.db('fmgrowthtest');await db.dropDatabase();
+ const pair=crypto.generateKeyPairSync('ed25519'),key=crypto.randomBytes(32),origin='https://growth-preview.example.test',site='https://fmm-ver2-fixture.vercel.app';
+ const env={GROWTH_BACKOFFICE_INTEGRATED:'true',GROWTH_STAGING_MODE:'isolated',GROWTH_TEST_MONGO_URI:uri,JWT_SECRET_ADMIN:crypto.randomBytes(48).toString('hex'),GROWTH_UNSUBSCRIBE_SECRET:crypto.randomBytes(32).toString('hex'),GROWTH_SOCIAL_OAUTH_ENABLED:'true',GROWTH_SOCIAL_TOKEN_KEY:key.toString('base64'),GROWTH_SOCIAL_PUBLIC_ORIGIN:origin,GROWTH_SOCIAL_SSO_PUBLIC_KEY:pair.publicKey.export({type:'spki',format:'pem'}),GROWTH_SOCIAL_ADMIN_SITE_ORIGIN:site,GROWTH_DELIVERY_PROVIDER:'sandbox-capture',GROWTH_SOCIAL_PROVIDER:'sandbox',GROWTH_OUTBOUND_ENABLED:'false',GROWTH_DISCOVERY_ENABLED:'false',GROWTH_FIGHT_URL_DISCOVERY:'off',GROWTH_RESEARCH_PER_RUN:'0',GROWTH_POSTERS:'off',GROWTH_AUTOMATION_OWNER_IDS:'owner@fixture.invalid',GROWTH_TIKTOK_CLIENT_KEY:'fixture-client',GROWTH_TIKTOK_CLIENT_SECRET:'fixture-secret',GROWTH_X_CLIENT_ID:'fixture-x-client',GROWTH_X_CLIENT_SECRET:'fixture-x-secret'};
+ const original={id:'existing-production-sentinel',status:'needs_owner_review',text:'must remain unchanged'};await db.collection('growth_drafts').insertOne(original);
+ for(const provider of ['tiktok','x'])await db.collection('growth_social_accounts').insertOne({_id:provider,provider,confirmed:true,identity:provider==='tiktok'?'verified_open_id':'123456789',username:provider==='x'?'FMmadness2024':undefined,status:'connected',tokenExpiresAt:new Date(Date.now()+3600000),credentials:encrypt({access_token:'fixture-existing-token'},key),publishingEnabled:false});
+ const snapshot=JSON.stringify(await db.collection('growth_social_accounts').find({}).sort({_id:1}).toArray());
+ const feed=contestFeed(),network=[];const fetchImpl=async(url,opts={})=>{network.push(String(url));const f=feed(String(url));if(f)return f;if(String(url).includes('dns.google'))return{ok:true,json:async()=>({Answer:[]})};throw Error('No external delivery or provider access permitted in fixture: '+new URL(url).host);};
+ const app=createPreviewApp({env,connect:async()=>client,fetchImpl});const server=app.listen(0,'127.0.0.1');await new Promise(r=>server.once('listening',r));const base='http://127.0.0.1:'+server.address().port+'/api/growth';let token;
+ const call=async(path,body,authorized=true)=>{const r=await fetch(base+path,{method:body?'POST':'GET',headers:{...(authorized&&token?{Authorization:'Bearer '+token}:{}),...(body?{'Content-Type':'application/json'}:{})},...(body?{body:JSON.stringify(body)}:{})});const text=await r.text();let json;try{json=JSON.parse(text);}catch{}return {status:r.status,json,text,headers:r.headers};};
+ let browser;
+ try{
+  assert.equal((await call('/admin/overview',false,false)).status,401);assert.equal(await db.collection('preview198_growth_drafts').countDocuments(),0);
+  const now=Math.floor(Date.now()/1000),assertion=signAssertion(pair.privateKey,{iss:'fmm-admin-site',aud:'fmm-growth-engine',purpose:'session',sub:'0123456789abcdef01234567',email:'owner@fixture.invalid',site,jti:crypto.randomBytes(24).toString('base64url'),iat:now,exp:now+60,adminExp:now+3600,verifiedBy:'live-admin-authority'});
+  const login=await call('/admin/sso/assertion',{assertion},false);assert.equal(login.status,200,login.text);token=login.json.token;
+  assert.equal((await call('/admin/session')).json.method,'website_admin');
+  for(const path of ['/admin/overview','/admin/executive','/admin/drafts','/admin/research','/admin/affiliates','/admin/marketing/coverage','/admin/analytics','/admin/attribution','/admin/connections','/admin/reports','/admin/audit','/admin/status','/admin/email/sandbox','/admin/autonomy']){
+   assert.equal((await call(path,false,false)).status,401,path);
+   const r=await call(path);assert.equal(r.status,200,path+' '+r.text);assert.equal(r.json.ok,true,path);
+  }
+  for(const path of ['/cron/tick','/admin/social/live-test','/admin/drafts/any/mark-published','/events'])assert.equal((await call(path,{})).status,404,path);
+  const ui=await call('/console');assert.equal(ui.status,200);assert.match(ui.text,/data-integrated-preview="true"/);assert.match(ui.headers.get('content-security-policy'),/frame-ancestors https:\/\/fmm-ver2-fixture.vercel.app/);
+  const status=await call('/admin/status');assert.equal(status.json.scheduler.schedulerEnabled,false);assert.equal(status.json.scheduler.healthy,false);
+  const refreshed=await call('/admin/marketing/refresh',{});assert.equal(refreshed.status,200,refreshed.text);assert.equal(refreshed.json.result.created,0);assert.ok(refreshed.json.result.verifiedContests>0);
+  const draftCol=db.collection('preview198_growth_drafts');assert.ok(await draftCol.countDocuments({kind:'marketing'})>0);assert.equal(await db.collection('growth_drafts').countDocuments(),1);
+  // Explicit local fixture drafts exercise real approval and captured-receipt APIs.
+  for(const kind of ['pr','affiliate']){const id='fixture-'+kind;await draftCol.insertOne({id,kind,genre:'boxing',headline:'TEST FIXTURE '+kind,subject:'TEST FIXTURE '+kind,text:'A sourced local test draft.',html:'<body>Local fixture</body>',recipient:kind+'@fixture.example',status:'needs_owner_review',ownerApproved:false,sendPermitted:false,createdAt:new Date().toISOString()});assert.equal((await call('/admin/drafts/'+id+'/approve',{})).status,200);}
+  const run=await call('/admin/run-now',{});assert.equal(run.status,200,run.text);
+  const receipts=await call('/admin/email/sandbox');assert.equal(receipts.json.count,2,receipts.text);assert.equal(receipts.json.realDelivery,false);assert.deepEqual(receipts.json.messages.map(x=>x.kind).sort(),['affiliate','pr']);assert.ok(receipts.json.messages.every(x=>x.sent===false&&x.network===false));
+  const connections=await call('/social/connections');assert.equal(connections.json.connections.length,2);assert.ok(!connections.text.includes('fixture-existing-token'));
+  browser=await chromium.launch({headless:true,...(process.env.GROWTH_TEST_CHROMIUM?{executablePath:process.env.GROWTH_TEST_CHROMIUM}:{}),args:['--no-sandbox']});const context=await browser.newContext();await context.addInitScript(t=>sessionStorage.setItem('fmmGrowthSocialOAuthPreviewToken',t),token);
+  await context.route('**/*',route=>new URL(route.request().url()).origin===new URL(base).origin?route.continue():route.fulfill({status:404,body:'External requests disabled in test'}));
+  const page=await context.newPage(),errors=[];page.on('pageerror',e=>errors.push(e.message));
+  for(const section of ['overview','marketing','pr','affiliates','approvals','publishing','analytics','revenue','automation','connections']){await page.goto(base+'/console#/'+section);await page.waitForLoadState('networkidle');assert.equal(await page.getByTestId('page-error').count(),0,section+': '+await page.locator('body').innerText());assert.equal(await page.getByTestId('integrated-sign-in').count(),0,section);}
+  assert.equal(await page.getByRole('button',{name:'Connect TikTok',exact:true}).isEnabled(),true);assert.equal(await page.getByRole('button',{name:'Connect X',exact:true}).isEnabled(),true);assert.match(await page.getByTestId('oauth-tiktok').innerText(),/Status: connected/);assert.match(await page.getByTestId('oauth-x').innerText(),/@FMmadness2024/);assert.equal(await page.locator('input[type=password]').count(),0);
+  assert.equal(await page.getByTestId('sandbox-mail').count(),2);assert.deepEqual(errors,[]);
+  assert.deepEqual(await db.collection('growth_drafts').findOne({id:original.id}),original);
+  assert.equal(JSON.stringify(await db.collection('growth_social_accounts').find({}).sort({_id:1}).toArray()),snapshot);
+  assert.ok(network.every(x=>!/(open\.tiktokapis|api\.x\.com|api\.resend\.com)/.test(x)));
+  assert.equal((await call('/admin/logout',{})).status,200);assert.equal((await call('/admin/overview')).status,401);assert.equal((await call('/social/connections')).status,401);
+ }finally{if(browser)await browser.close();server.closeAllConnections();await new Promise(r=>server.close(r));await db.dropDatabase();await client.close();}
+});
