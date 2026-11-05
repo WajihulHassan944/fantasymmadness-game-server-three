@@ -29,13 +29,14 @@ function createPreviewApp({ env = process.env, fetchImpl = globalThis.fetch, con
     const client = connect ? await connect(resolved.secrets.mongoUri) : await new MongoClient(resolved.secrets.mongoUri, { serverSelectionTimeoutMS: 10000, maxPoolSize: 3 }).connect();
     const db = client.db('fmgrowthtest'); if (db.databaseName !== 'fmgrowthtest') throw Error('wrong database'); await db.command({ ping: 1 }); return db;
   })().catch(e => { dbPromise = null; throw e; });
-  let existingMeta;
+  let existingMeta,posterHttpHealth;
   const metaConnection = async () => existingMeta ||= require('./growth-existing-meta-readonly').createExistingMetaReadOnly({ db: await database(), env, fetchImpl });
   app.get('/api/growth/health', async (req, res) => {
     res.set('Cache-Control', 'no-store'); let connected = false;
     if (!errors.length) { try { await database(); connected = true; } catch { /* report only safe status, never connection credentials */ } }
     let meta = null; if (integrated && connected) { try { meta = await (await metaConnection()).summary(); } catch { meta = { investigation: 'unavailable', credentialsChanged: false }; } }
-    res.status(!errors.length && connected ? 200 : 503).json({ ok: !errors.length && connected, service: 'growth-social-oauth-isolated-preview', environment: 'preview', database: { name: 'fmgrowthtest', connected, hostPinned: resolved.config.database.hostPinned }, errors, publishingEnabled: false, outboundEnabled: false, existingMeta: meta, backoffice: { integrated, collectionPrefix: integrated ? PREFIX : null }, console: { embedOrigins: origin ? [origin] : [] }, providers: oauthConfig ? ['tiktok', 'x'].map(provider => ({provider,configured:!oauthConfig.errors(provider).length,blockers:oauthConfig.errors(provider),callbackUrl:oauthConfig.callback(provider)})) : [] });
+    let posterVerification=null;if(integrated&&connected){try{posterHttpHealth ||= require('./growth-poster-http-health').createPosterHttpHealth({db:await database(),origin:env.GROWTH_SOCIAL_PUBLIC_ORIGIN,fetchImpl});posterVerification=await posterHttpHealth.check();}catch{posterVerification={error:'staging_poster_verification_unavailable',imagesExported:false};}}
+    res.status(!errors.length && connected ? 200 : 503).json({ ok: !errors.length && connected, service: 'growth-social-oauth-isolated-preview', environment: 'preview', database: { name: 'fmgrowthtest', connected, hostPinned: resolved.config.database.hostPinned }, errors, publishingEnabled: false, outboundEnabled: false, existingMeta: meta, posterVerification, backoffice: { integrated, collectionPrefix: integrated ? PREFIX : null }, console: { embedOrigins: origin ? [origin] : [] }, providers: oauthConfig ? ['tiktok', 'x'].map(provider => ({provider,configured:!oauthConfig.errors(provider).length,blockers:oauthConfig.errors(provider),callbackUrl:oauthConfig.callback(provider)})) : [] });
   });
   let installed;
   app.use('/api/growth', async (req, res, next) => {

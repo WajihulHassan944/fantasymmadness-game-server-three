@@ -93,6 +93,7 @@ jobs:
         run: |
           node growth-poster-studio.test.js
           node growth-posters.integration.test.js
+          node growth-poster-http-health.test.js
       - run: npm audit --omit=dev --audit-level=high
 
       - name: Verify deployed isolated Preview without provider authorization

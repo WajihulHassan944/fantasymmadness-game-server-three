@@ -6,6 +6,7 @@ async function get(path) { const url=path.startsWith('https://') ? path : base+p
 
 (async()=>{
  const h=await get('/api/growth/health');assert.equal(h.status,200,h.text);assert.equal(h.json.service,'growth-social-oauth-isolated-preview');assert.equal(h.json.environment,'preview');assert.equal(h.json.database.name,'fmgrowthtest');assert.equal(h.json.database.connected,true);assert.equal(h.json.database.hostPinned,true);assert.equal(h.json.publishingEnabled,false);assert.equal(h.json.outboundEnabled,false);assert.deepEqual(h.json.errors,[]);
+ assert.equal(h.json.posterVerification.checked,4);assert.equal(h.json.posterVerification.passed,4);assert.equal(h.json.posterVerification.failed,0);assert.equal(h.json.posterVerification.imagesExported,false);
  assert.equal(h.json.backoffice.integrated,true);assert.equal(h.json.backoffice.collectionPrefix,'preview198_');
  const tiktok=h.json.providers.find(p=>p.provider==='tiktok'),x=h.json.providers.find(p=>p.provider==='x');assert.equal(tiktok.configured,true,JSON.stringify(tiktok.blockers));
  for(const p of [tiktok,x])assert.equal(p.callbackUrl,base+'/api/growth/social/'+p.provider+'/callback');
@@ -24,5 +25,5 @@ async function get(path) { const url=path.startsWith('https://') ? path : base+p
  assert.equal((await get('/api/growth/social/tiktok/callback')).status,400);
  assert.equal((await get('/api/growth/social/x/callback')).status,x.configured?400:503);
  for(const path of ['/users','/api/payments/webhook','/api/growth/cron/tick','/api/growth/admin/run-now'])assert.equal((await get(path)).status,404,path);
- console.log(JSON.stringify({preview:base,database:h.json.database,backoffice:h.json.backoffice,existingMeta:h.json.existingMeta,administratorOnly:true,websiteSignInConfigured:true,websiteLoginCorsVerified:true,stagingPublicKeyPinned:true,frontendDeploymentProtected:frontendProtected,frontendMetadataPubliclyVerified:!frontendProtected,authenticatedOwnerSignInPerformed:false,callbackRoutesVerified:true,publishingEnabled:false,outboundEnabled:false,tiktokConfigured:tiktok.configured,xConfigured:x.configured,xBlockers:x.blockers,realProviderAuthorizationPerformed:false}));
+ console.log(JSON.stringify({preview:base,database:h.json.database,backoffice:h.json.backoffice,existingMeta:h.json.existingMeta,posterVerification:h.json.posterVerification,administratorOnly:true,websiteSignInConfigured:true,websiteLoginCorsVerified:true,stagingPublicKeyPinned:true,frontendDeploymentProtected:frontendProtected,frontendMetadataPubliclyVerified:!frontendProtected,authenticatedOwnerSignInPerformed:false,callbackRoutesVerified:true,publishingEnabled:false,outboundEnabled:false,tiktokConfigured:tiktok.configured,xConfigured:x.configured,xBlockers:x.blockers,realProviderAuthorizationPerformed:false}));
 })().catch(e=>{console.error(e.message);process.exitCode=1;});
