@@ -1,0 +1,2 @@
+import {defineNitroConfig} from 'nitro/config';
+export default defineNitroConfig({preset:'vercel',modules:['workflow/nitro'],vercel:{entryFormat:'node'},routes:{'/**':{handler:'./src/index.ts',format:'node'}}});

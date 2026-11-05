@@ -1,0 +1,6 @@
+node_modules/
+shared/
+.nitro/
+.output/
+.vercel/
+/.swc
