@@ -88,7 +88,7 @@ jobs:
       - run: npm audit --omit=dev --audit-level=high
 
       - name: Verify deployed isolated Preview without provider authorization
-        if: github.event_name == 'workflow_dispatch' && inputs.deployed_smoke
+        if: (github.event_name == 'workflow_dispatch' && inputs.deployed_smoke) || github.head_ref == 'feature/growth-social-oauth-isolated'
         run: node scripts/growth-social-oauth-deployed-smoke.js
 
       - name: Managed worker dependencies and security tests
