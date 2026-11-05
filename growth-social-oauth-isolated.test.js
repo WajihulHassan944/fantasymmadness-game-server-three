@@ -86,6 +86,19 @@ test('OAuth security and account confirmation with isolated MongoDB',{skip:!/^mo
  await run('refresh preserves existing credentials on failed exchange or identity mismatch',async h=>{await h.callback(await h.start('x'),'x');await h.confirm('x');const before=(await db.collection('growth_social_accounts').findOne({_id:'x'})).credentials;h.state.tokenFailure=true;assert.equal((await h.call('POST','/social/x/refresh',{body:{}})).status,400);h.state.tokenFailure=false;h.state.username='wrong';assert.equal((await h.call('POST','/social/x/refresh',{body:{}})).status,403);assert.deepEqual((await db.collection('growth_social_accounts').findOne({_id:'x'})).credentials,before);});
  await run('omitted rotated refresh token is retained; disconnect removes stored credentials',async h=>{await h.callback(await h.start('x'),'x');await h.confirm('x');h.state.noRotatedRefresh=true;assert.equal((await h.call('POST','/social/x/refresh',{body:{}})).status,200);assert.equal(decrypt((await db.collection('growth_social_accounts').findOne({_id:'x'})).credentials,key).refresh_token,'fixture-refresh-token');assert.equal((await h.call('POST','/social/x/disconnect',{body:{}})).status,200);const a=await db.collection('growth_social_accounts').findOne({_id:'x'});assert.equal(a.credentials,undefined);assert.equal(a.identity,xId);assert.equal(a.status,'disconnected');assert.equal((await h.call('POST','/social/x/refresh',{body:{}})).status,409);});
  await run('disconnect invalidates any unconfirmed authorization without saving credentials',async h=>{await h.callback(await h.start());const pending=(await h.status()).json.pending[0];const before=await db.collection('growth_social_oauth_candidates').findOne({});assert.ok(before);await h.call('POST','/social/tiktok/disconnect',{body:{}});assert.equal((await h.call('POST','/social/tiktok/confirm',{body:{candidateId:pending.candidateId,identity:pending.identity}})).status,409);assert.equal(await db.collection('growth_social_accounts').countDocuments({credentials:{$exists:true}}),0);});
+ await run('service maintenance survives administrator logout and rejects browser authority or wrong service secrets',async h=>{
+  await h.callback(await h.start('x'),'x');await h.confirm('x');
+  const before=(await db.collection('growth_social_accounts').findOne({_id:'x'})).credentials;
+  assert.equal((await h.call('POST','/social/admin/logout',{body:{}})).status,200);
+  assert.equal((await h.call('GET','/social/connections')).status,401);
+  for(const auth of [null,'wrong-service-secret'])assert.equal((await h.call('POST','/internal/connections/maintenance',{auth,body:{}})).status,401);
+  const maintained=await h.call('POST','/internal/connections/maintenance',{auth:'fixture-service-maintenance-secret',body:{}});
+  assert.equal(maintained.status,200,maintained.text);assert.equal(maintained.json.connections.find(x=>x.provider==='x').status,'connected');
+  assert.deepEqual((await db.collection('growth_social_accounts').findOne({_id:'x'})).credentials,before);
+  await db.collection('preview198_growth_settings').updateOne({_id:'autonomy:policy'},{$set:{paused:true}},{upsert:true});
+  h.calls.length=0;const stopped=await h.call('POST','/internal/connections/maintenance',{auth:'fixture-service-maintenance-secret',body:{}});assert.equal(stopped.json.paused,true);assert.equal(h.calls.length,0);
+  assert.equal(JSON.stringify(maintained.json).includes('fixture-access-token'),false);
+ },{env:{CRON_SECRET:'fixture-service-maintenance-secret'}});
  await run('backend refuses unrequested publishing routes',async h=>{assert.equal((await h.call('POST','/social/tiktok/publish',{body:{}})).status,404);assert.equal(h.calls.length,0);});
  }finally{await db.dropDatabase();await client.close();}
 });
