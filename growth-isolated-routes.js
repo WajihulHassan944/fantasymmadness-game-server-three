@@ -79,7 +79,7 @@ function registerIsolatedGrowthRoutes({ app, env = process.env, express, transpo
       const rt = await getRuntime();
       if (sessionAuth && req.admin) {
         previewBootstrap ||= (async () => {
-          if(await rt.collections.settings.findOne({_id:'ui-quality-refinement-v2'}))return;
+          if(await rt.autonomy.isPaused()||await rt.collections.settings.findOne({_id:'ui-quality-refinement-v2'}))return;
           try {const marketing=await rt.refreshMarketing(new Date(), { trigger: 'isolated_preview_bootstrap' });const emails=await rt.refineEmailDrafts();await rt.collections.settings.updateOne({_id:'ui-quality-refinement-v2'},{$set:{marketing:marketing.refinement,emails,at:new Date().toISOString()}},{upsert:true}); }
           catch { await rt.collections.audit.insertOne({ action: 'preview_bootstrap_source_unavailable', at: new Date().toISOString() }); }
         })().catch(error => { previewBootstrap = null; throw error; });

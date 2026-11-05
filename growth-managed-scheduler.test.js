@@ -1,7 +1,7 @@
 'use strict';
 const test=require('node:test'),assert=require('node:assert/strict'),crypto=require('node:crypto');
 const {MongoClient}=require('mongodb');
-const {verifiedOwners,schedulerStatus,SITE}=require('./growth-managed-scheduler');
+const {verifiedOwners,schedulerStatus,SITE,activateRelease}=require('./growth-managed-scheduler');
 const {cycle,validate}=require('./growth-worker-service/src/runtime.cjs');
 const uri=process.env.GROWTH_TEST_MONGO_URI,skip=!/^mongodb:\/\/(localhost|127\.0\.0\.1)(:\d+)?\//.test(uri||'');
 test('managed worker fails closed outside dedicated Preview and against live providers',()=>{
@@ -37,6 +37,9 @@ test('scheduled execution is durable, duplicate-safe, recoverable, generation-bo
   await settings.updateOne({_id:'managed-scheduler'},{$set:{leaseUntil:new Date(Date.now()-1000).toISOString(),leaseOwner:'terminated-process'}});
   assert.equal((await cycle('test',3,{},ctx)).stop,false,'an expired process lease must recover');
   assert.equal((await cycles.findOne({_id:'test:3'})).errorCount,0);
+  await settings.updateOne({_id:'managed-scheduler'},{$set:{leaseUntil:new Date(Date.now()+60000).toISOString()}});assert.equal((await activateRelease(settings,{release:'next-release',previous:'test'})).modifiedCount,0,'handoff waits for an active lease');
+  await settings.updateOne({_id:'managed-scheduler'},{$unset:{leaseUntil:''}});assert.equal((await activateRelease(settings,{release:'next-release',previous:'test'})).modifiedCount,1);assert.equal((await activateRelease(settings,{release:'old-release',previous:'test'})).modifiedCount,0,'an old deployment cannot roll the generation back');
+  await settings.updateOne({_id:'managed-scheduler'},{$set:{generation:'test'}});
   const before=ticks;let release;const gate=new Promise(r=>release=r);const original=ctx.rt.tick;
   ctx.rt.tick=async()=>{await gate;return original();};
   const inFlight=cycle('test',4,{workflowRunId:'fixture'},ctx);

@@ -4,7 +4,7 @@ const {resolveGrowthRuntimeConfig,ISOLATED_PROJECT_ID}=require('../shared/growth
 const {createGrowthRuntime}=require('../shared/growth-runtime');
 const {createDeliveryProvider}=require('../shared/growth-delivery-provider');
 const {createExistingMetaReadOnly}=require('../shared/growth-existing-meta-readonly');
-const {PREFIX,verifiedOwners,schedulerStatus}=require('../shared/growth-managed-scheduler');
+const {PREFIX,verifiedOwners,schedulerStatus,activateRelease}=require('../shared/growth-managed-scheduler');
 let ready;
 function validate(env=process.env){
  const r=resolveGrowthRuntimeConfig(env);
@@ -22,10 +22,10 @@ async function runtime(){return ready ||= (async()=>{
  const settings=rt.collections.settings;
  await settings.updateOne({_id:'managed-owner-allowlist'},{$set:{ids:owners,provenance:'verified_first_party_website_admin_audit',updatedAt:new Date().toISOString()}},{upsert:true});
  await settings.updateOne({_id:'managed-scheduler'},{$setOnInsert:{enabled:true,generation:'sandbox-v1',createdAt:new Date().toISOString()},$set:{ownerCount:owners.length}},{upsert:true});
- const release=process.env.GROWTH_WORKER_RELEASE;
- if(release&&/^[a-z0-9-]{3,80}$/.test(release)&&process.env.GROWTH_WORKER_PREVIOUS_RELEASE){await settings.updateOne({_id:'managed-scheduler',enabled:true,generation:process.env.GROWTH_WORKER_PREVIOUS_RELEASE,$or:[{leaseUntil:{$exists:false}},{leaseUntil:{$lt:new Date().toISOString()}}]},{$set:{generation:release,rolloutAt:new Date().toISOString(),previousGeneration:process.env.GROWTH_WORKER_PREVIOUS_RELEASE,generationScheduledExecutions:0}});}
+ async function ensureRelease(){if(await rt.autonomy.isPaused())return{modifiedCount:0};return activateRelease(settings,{release:process.env.GROWTH_WORKER_RELEASE,previous:process.env.GROWTH_WORKER_PREVIOUS_RELEASE});}
+ await ensureRelease();
  async function maintainConnections(){const response=await fetch('https://fantasymmadness-growth-git-585652-kelly-davis-projects-6c108d0b.vercel.app/api/growth/internal/connections/maintenance',{method:'POST',headers:{Authorization:'Bearer '+r.secrets.cronSecret,'Content-Type':'application/json'},body:'{}',redirect:'error',signal:AbortSignal.timeout(55000)});if(!response.ok)throw Error('connection_maintenance_unavailable');const result=await response.json();await settings.updateOne({_id:'connection-maintenance'},{$set:{at:new Date().toISOString(),result}},{upsert:true});return result;}
- return {rt,settings,maintainConnections,cycles:db.collection('managed_worker_cycles')};
+ return {rt,settings,ensureRelease,maintainConnections,cycles:db.collection('managed_worker_cycles')};
  })().catch(e=>{ready=null;throw e;});}
 async function cycle(generation,ordinal,metadata,context){
  const {rt,settings,cycles,maintainConnections}=context || await runtime();const s=await settings.findOne({_id:'managed-scheduler'});
