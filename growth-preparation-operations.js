@@ -11,6 +11,7 @@ function createPreparationOperations({col,actions={},isPaused=async()=>false,isS
  async function quality(d,now=clock()){
   const held=[...(d.approvalBlockers||[])];
   if(d.kind==='marketing'){
+   if(!await col.contestVerifications.findOne({_id:d.contestId,fingerprint:d.contestFingerprint,eligible:true,verifiedAt:{$gte:new Date(+now-35*60000).toISOString()}}))held.push('fresh_published_contest_verification_required');
    held.push(...require('./growth-contest-campaigns').checkCampaign(d,d.contest,{now}));
    if(d.poster?.status!=='ready'||d.poster?.needsArtwork||!d.poster?.qr?.decodedMatches||!d.poster?.qr?.destination?.ok)held.push('verified_original_artwork_and_qr_required');
    if(d.poster?.liveAffiliateId){try{if(new URL(d.poster.qrUrl).searchParams.get('ref')!==d.poster.liveAffiliateId)held.push('affiliate_qr_identity_mismatch');}catch{held.push('affiliate_qr_identity_mismatch');}}

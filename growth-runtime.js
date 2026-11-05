@@ -37,7 +37,7 @@ function createGrowthRuntime({ db, config, secrets = {}, provider, fetchImpl = g
   if (db.databaseName && db.databaseName !== 'fmgrowthtest') throw Error('Growth runtime only uses the fmgrowthtest database');
   if (!provider || typeof provider.send !== 'function') throw Error('Delivery provider required');
   const col = {
-    recruitment:db.collection('affiliate_prospects'),preparationJobs:db.collection('growth_preparation_jobs'),preparationReceipts:db.collection('growth_preparation_receipts'),connectionAlerts:db.collection('growth_connection_alerts'),
+    contestVerifications:db.collection('growth_contest_verifications'),recruitment:db.collection('affiliate_prospects'),preparationJobs:db.collection('growth_preparation_jobs'),preparationReceipts:db.collection('growth_preparation_receipts'),connectionAlerts:db.collection('growth_connection_alerts'),
     runs: db.collection('isolated_run_claims'), workstreams: db.collection('isolated_workstream_runs'),
     jobs: db.collection('unattended_jobs'), drafts: db.collection('growth_drafts'), prospects: db.collection('growth_prospects'),
     deliveries: db.collection('growth_delivery_claims'), alerts: db.collection('growth_alerts'), reports: db.collection('growth_reports'),
@@ -212,6 +212,8 @@ function createGrowthRuntime({ db, config, secrets = {}, provider, fetchImpl = g
   async function refreshMarketing(now = new Date(), { trigger = 'manual' } = {}) {
     const names = await mediaNames();
     const feed = await withAddresses(await contestCampaigns.fetchVerifiedContests({ fetchImpl, baseUrl: config.contestSourceUrl, now, horizonDays: config.marketingHorizonDays, mediaNames: names }), now);
+    for(const c of feed.contests)await col.contestVerifications.updateOne({_id:c.id},{$set:{fingerprint:c.fingerprint,eligible:true,verifiedAt:now.toISOString(),source:'published_fight_registry'}},{upsert:true});
+    if(feed.complete)await col.contestVerifications.updateMany({_id:{$nin:feed.contests.map(c=>c.id)}},{$set:{eligible:false,verifiedAt:now.toISOString()}});
     // Safeguard 1: campaigns not tied to a verified contest leave the queue
     // (this removes the old podcast/media-based "fight" posts).
     let withdrawn = await withdraw({ contestId: { $exists: false } }, 'Withdrawn automatically: not based on a verified FANTASY MMADNESS fight contest', now);

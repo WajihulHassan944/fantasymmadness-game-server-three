@@ -237,6 +237,20 @@ function registerIsolatedGrowthRoutes({ app, env = process.env, express, transpo
   router.post('/admin/autonomy/stop', admin, autonomyOwner, wrap(async (req, res, rt) => { const policy=await rt.autonomy.stop(who(req)); if(sessionAuth) await rt.collections.settings.updateOne({_id:'managed-scheduler'},{$set:{enabled:false,stoppedAt:new Date().toISOString(),stoppedBy:who(req)}});res.json({ok:true,policy}); }));
   router.get('/admin/preparation/jobs',admin,wrap(async(req,res,rt)=>res.json({ok:true,jobs:await rt.preparation.jobs()})));
   router.post('/admin/preparation/jobs/:id/requeue',admin,autonomyOwner,wrap(async(req,res,rt)=>{const r=await rt.preparation.requeue(req.params.id);if(r.ok)await rt.collections.audit.insertOne({action:'preparation_job_owner_requeue',id:req.params.id,admin:who(req),at:new Date().toISOString()});res.status(r.ok?200:409).json(r);}));
+  router.post('/admin/autonomy/resume',admin,autonomyOwner,wrap(async(req,res,rt)=>{
+    if(!sessionAuth||req.body?.confirmation!=='RESUME PREPARATION')return res.status(409).json({ok:false,reason:'explicit_preparation_resume_required'});
+    const settings=rt.collections.settings,current=await settings.findOne({_id:'managed-scheduler'});
+    if(!current?.workerRelease||!current.workerDeploymentId||!/^https:\/\/fantasymmadness-growth-isolated-test-[a-z0-9]+\.vercel\.app$/.test(current.workerOrigin||''))return res.status(409).json({ok:false,reason:'verified_worker_binding_required'});
+    const trigger=async()=>{try{return(await fetchImpl(current.workerOrigin+'/health',{method:'GET',redirect:'error',signal:AbortSignal.timeout(10000)})).ok;}catch{return false;}};
+    if(current.enabled){const policy=await rt.autonomy.policy();if(current.lastScheduledGeneration===current.generation||policy.paused||policy.version!==req.body.expectedVersion)return res.status(409).json({ok:false,reason:'worker_already_enabled_or_policy_changed'});const triggered=await trigger();return res.status(202).json({ok:true,policy,scheduler:await bo(rt).schedulerStatus(),verificationPending:true,triggered,publishingEnabled:false,outboundEnabled:false});}
+    const oldPolicy=await rt.autonomy.policy();let policy;try{policy=await rt.autonomy.save({...oldPolicy,paused:false,enabled:false,mode:'sandbox'},{actor:who(req),expectedVersion:req.body.expectedVersion});}catch(e){return res.status(e.status||409).json({ok:false,reason:'owner_policy_version_changed'});}
+    const generation=current.workerRelease+'--'+require('node:crypto').randomBytes(6).toString('hex');
+    const saved=await settings.updateOne({_id:'managed-scheduler',generation:current.generation,enabled:false},{$set:{generation,previousGeneration:current.generation,enabled:true,generationScheduledExecutions:0,lastScheduledGeneration:null,lastError:null,resumedAt:new Date().toISOString(),resumedBy:who(req)},$unset:{leaseUntil:'',leaseOwner:'',leaseToken:''}});
+    if(!saved.modifiedCount)return res.status(409).json({ok:false,reason:'scheduler_changed_refresh_status'});
+    await rt.collections.audit.insertOne({action:'preparation_worker_owner_resume',admin:who(req),generation,at:new Date().toISOString()});
+    const triggered=await trigger();
+    res.status(triggered?200:202).json({ok:true,policy,scheduler:await bo(rt).schedulerStatus(),verificationPending:true,triggered,publishingEnabled:false,outboundEnabled:false});
+  }));
   router.get('/admin/overview', admin, wrap(async (req, res, rt) => res.json({ ok: true, overview: await rt.overview() })));
   router.get('/admin/drafts', admin, wrap(async (req, res, rt) => res.json({ ok: true, drafts: await rt.listDrafts({ status: req.query.status, kind: req.query.kind, contestId: req.query.contestId, limit: req.query.limit }) })));
   router.post('/admin/drafts/:id/approve', admin, ...(sessionAuth?[autonomyOwner]:[]), wrap(async (req, res, rt) => { const r = await rt.approveDraft(req.params.id, { admin: who(req), acceptTextPoster: req.body?.acceptTextPoster === true }); res.status(r.ok ? 200 : 409).json(r); }));
