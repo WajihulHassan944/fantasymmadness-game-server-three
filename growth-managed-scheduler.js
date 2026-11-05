@@ -9,6 +9,6 @@ async function verifiedOwners(rawDb) {
 async function schedulerStatus(settings,now=new Date()) {
  const s=await settings.findOne({_id:'managed-scheduler'});
  const age=s?.lastScheduledAt?now.getTime()-Date.parse(s.lastScheduledAt):Infinity;
- return {schedulerEnabled:s?.enabled===true,provider:'vercel-workflow',schedule:'every 15 minutes',healthy:s?.enabled===true&&age>=0&&age<=35*60000,lastScheduledAt:s?.lastScheduledAt||null,scheduledExecutions:s?.scheduledExecutions||0,lastRunId:s?.lastRunId||null,lastError:s?.lastError||null,nextWakeAt:s?.nextWakeAt||null,ownerAllowlistConfigured:(s?.ownerCount||0)>0,approvalMode:'owner_required',publishingEnabled:false,outboundEnabled:false};
+ return {schedulerEnabled:s?.enabled===true,provider:'vercel-workflow',schedule:'every 15 minutes',healthy:s?.enabled===true&&!s.lastError&&age>=0&&age<=35*60000,lastScheduledAt:s?.lastScheduledAt||null,scheduledExecutions:s?.scheduledExecutions||0,lastRunId:s?.lastRunId||null,lastError:s?.lastError||null,nextWakeAt:s?.nextWakeAt||null,ownerAllowlistConfigured:(s?.ownerCount||0)>0,approvalMode:'owner_required',publishingEnabled:false,outboundEnabled:false};
 }
 module.exports={PREFIX,SITE,verifiedOwners,schedulerStatus};
