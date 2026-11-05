@@ -1,4 +1,4 @@
-import {sleep} from 'workflow';
+import {sleep,getWorkflowMetadata} from 'workflow';
 import {start} from 'workflow/api';
 import preparation from '../src/production-preparation.cjs';
 export async function productionPreparationLoop(generation:string,ordinal=0){
@@ -12,6 +12,6 @@ export async function productionPreparationLoop(generation:string,ordinal=0){
 }
 export async function executeProductionPreparation(generation:string,ordinal:number){
  'use step';
- return preparation.cycle(generation,ordinal);
+ return preparation.cycle(generation,ordinal,getWorkflowMetadata());
 }
 executeProductionPreparation.maxRetries=3;

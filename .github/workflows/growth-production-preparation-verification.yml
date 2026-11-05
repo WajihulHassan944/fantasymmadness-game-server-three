@@ -1,0 +1,28 @@
+name: Read-only production preparation verification
+on:
+  workflow_dispatch:
+    inputs:
+      check_url:
+        description: Exact staged Growth production deployment or Growth production alias
+        required: true
+        type: string
+      expect_active:
+        description: Require at least one real unattended scheduled production cycle
+        default: false
+        type: boolean
+permissions:
+  contents: read
+jobs:
+  verify:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 4
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Verify actual production preparation read-only
+        env:
+          GROWTH_PRODUCTION_CHECK_URL: ${{ inputs.check_url }}
+          GROWTH_PRODUCTION_EXPECT_ACTIVE: ${{ inputs.expect_active }}
+        run: node scripts/growth-production-preparation-smoke.js
