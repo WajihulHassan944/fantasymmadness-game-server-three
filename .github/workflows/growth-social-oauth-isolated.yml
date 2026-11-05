@@ -3,6 +3,11 @@ on:
   pull_request:
     paths:
       - 'growth-social-oauth*'
+      - 'growth-social-connection-*'
+      - 'growth-affiliate-recruitment*'
+      - 'growth-platform-copy*'
+      - 'growth-event-timing*'
+      - 'growth-text-quality*'
       - 'vercel.json'
       - 'scripts/growth-social-oauth-deployed-smoke.js'
       - 'growth-isolated-*.js'

@@ -59,7 +59,8 @@ function createConnectionManager({db,env,fetchImpl=globalThis.fetch,clock=()=>ne
   const id=p==='tiktok'?j.data?.user?.open_id:j.data?.id;
   const valid=r.ok&&id===a.identity&&(p!=='tiktok'||!j.error?.code||j.error.code==='ok')&&(p!=='x'||String(j.data?.username||'').toLowerCase()==='fmmadness2024');
   const granted=scopes(tokens.scope),status=valid?PROVIDERS[p].required.some(x=>!granted.includes(x))?'insufficient-permissions':new Date(a.tokenExpiresAt)-clock()<30*60000?'refresh-needed':'connected':r.status===403?'insufficient-permissions':r.status===401?'expired':'refresh-needed';
-  await accounts.updateOne({_id:p,revision:a.revision},{$set:{identityVerifiedAt:valid?clock():a.identityVerifiedAt||null,grantedScopes:granted,connectionHealth:{status,reason:valid?null:'provider_identity_verification_failed',at:clock()}}});return summary({...a,grantedScopes:granted,connectionHealth:{status,reason:valid?null:'provider_identity_verification_failed'}});
+  const health=valid&&(a.pendingRefresh||a.refreshAttempts>0)&&a.connectionHealth?.status!=='connected'?a.connectionHealth:{status:!valid&&r.status===401&&a.connectionHealth?.status==='revoked'?'revoked':status,reason:valid?null:'provider_identity_verification_failed',at:clock()};
+  await accounts.updateOne({_id:p,revision:a.revision},{$set:{identityVerifiedAt:valid?clock():a.identityVerifiedAt||null,grantedScopes:granted,connectionHealth:health}});return summary({...a,grantedScopes:granted,connectionHealth:health});
  }
  async function maintain({paused=false}={}){if(paused)return{paused:true,renewals:[],connections:(await accounts.find({confirmed:true}).toArray()).map(summary)};const renewals=[];for(const p of Object.keys(PROVIDERS))renewals.push({provider:p,...await renew(p)});const connections=[];for(const p of Object.keys(PROVIDERS))connections.push(await identity(p));return{renewals,connections,publishingEnabled:false,outboundEnabled:false};}
  return{renew,identity,maintain,summary};

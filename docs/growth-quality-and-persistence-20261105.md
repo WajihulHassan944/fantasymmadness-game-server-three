@@ -130,30 +130,43 @@ passes with the new greeting expectations. Poster tests 10/10 passed, including
 original image geometry and verified-time handling. Dependency audits found
 zero vulnerabilities in backend and worker production dependencies.
 
-GitHub isolated security run 42067720789 passed at 283fb3e. The broader quality
-run at 953ba21 failed its old business-email greeting assertion; the expectation
-was corrected and the full affected offline chain passed locally. Do not call
-that earlier failed run green. Subsequent workflow dispatch attempts returned
-HTTP 500/502. Latest commits must receive a new CI run when Actions accepts it.
+GitHub final runs at af95e89 passed: isolated OAuth/security/browser/integration
+42069731169 and broader quality/security 42069731211. Earlier failed greeting
+expectations were corrected; the earlier failure is not mislabeled as passing.
 
-Application-code Preview deployments (953ba21): backend
-`dpl_4aySG5S8xwp1jHCmnh8L6SRqiJjA`, worker
-`dpl_719f7MW51K9wXSVgoe68ikGQmA1Z`. READY is build evidence only.
-The new worker has not been activated/verified: the hosted runner is required to
-probe its health and observe two scheduled cycles for release
-`quality-recruitment-persistence-v2`. The original v1 durable run
-`wrun_41M6P3MDAN0GZGJWKFDKFX67PC` remains running and was not stopped.
-Owner stop/pause and an active lease prevent handoff; health cannot resume a stop.
+Backend Preview dpl_3vXDLnrSXKex8C7f5xkBsHiJb4mB (ccde3ad application code)
+and worker Preview dpl_719f7MW51K9wXSVgoe68ikGQmA1Z (953ba21 worker runtime)
+were deployed. The GitHub PR runner successfully activated release
+quality-recruitment-persistence-v2 after transient dispatch 500/502 failures.
+The Vercel connector still denies this project (403), but runner verification
+provides a working alternative without weakening access protection.
 
-Vercel connector web-fetch returns 403 for the isolated project; the scoped
-server-side deployment API works. Direct Preview requests are restricted in the
-execution environment. No access protection is weakened. As a result, fresh
-provider-verified Facebook/Instagram/TikTok/X statuses after the new deployment,
-actual staging draft regeneration and actual independent recruitment examples
-remain unverified. Owner-confirmed prior connections are not substituted for
-fresh checks. No credential is regenerated or revoked to work around access.
+Actual 17:00:45 UTC worker health evidence: fmgrowthtest, preview198_, healthy,
+owner_required, publishing=false, outbound=false, generationScheduledExecutions=2,
+lastScheduledAt=17:00:43.879Z, nextWakeAt=17:15:43.879Z. Durable run
+wrun_41M6PAA4QB0GWXV11VX895ZBGN recorded bootstrap and two timer executions.
+The old generation exits on its next wake. No claim of 24 hours' historical
+uptime is made. The owner was not logged in for worker verification.
+
+Provider status after deployment: TikTok connected, user.info.basic; X connected,
+offline.access/tweet.read/users.read. Existing Facebook and Instagram each
+provider-verified connected; Meta scopes verified. Original Meta credentials
+unchanged; no disconnect/revoke/key regeneration. No forced refresh of a working
+not-due credential was performed. Real provider refresh success is not inferred
+from fixture refresh tests; scheduled checks renew only when due.
+
+Actual migrations: marketing regenerated 2, email regenerated 8, approvedPreserved
+true. Cami's stored unapproved invitation now says Hi, and retains sourced
+research and tracked attribution. Independent recruitment discovered 14, researched
+6 and prepared 1 draft by that health snapshot. Research errors remain visible;
+researched does not mean verified contact. Actual private Workflow evidence
+contains source-backed professional examples and unapproved invitation previews.
+No email was sent, and no financial conversion was invented.
 
 Acceptance URL remains
 https://fmm-ver2-growth-social-preview.vercel.app/administration/growth .
-A fresh owner browser session and all-four-account status check remain pending.
-No live publishing, outbound messages, production deployment or merge occurred.
+Provider persistence after staging deployment and worker operation are verified.
+A fresh real owner browser login/closure check remains owner acceptance: automated
+session/logout and process-recreation tests are not represented as that manual
+browser check. Meta documentation numerical limits, supported profile destinations
+and approved affiliate terms remain explicitly held where unverified.
