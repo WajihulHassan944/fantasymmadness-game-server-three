@@ -36,13 +36,16 @@ jobs:
           --health-cmd "mongosh --quiet --eval 'db.adminCommand({ping:1}).ok'"
           --health-interval 10s --health-timeout 5s --health-retries 5
     env:
+      # Pinned isolated acceptance target; never a production alias.
+      STAGING_WORKER_URL: https://fantasymmadness-growth-isolated-test-lo6co1vqw.vercel.app
+      STAGING_WORKER_RELEASE: quality-recruitment-persistence-v2
       GROWTH_TEST_MONGO_URI: mongodb://127.0.0.1:27017/fmgrowthtest
     steps:
       - uses: actions/checkout@v4
       - name: Probe isolated worker health before regressions
-        if: inputs.worker_url != ''
+        if: inputs.worker_url != '' || github.head_ref == 'feature/growth-social-oauth-isolated'
         env:
-          WORKER_URL: ${{ inputs.worker_url }}
+          WORKER_URL: ${{ inputs.worker_url || env.STAGING_WORKER_URL }}
         run: node -e 'fetch(process.env.WORKER_URL+"/health").then(async r=>console.log("worker health",r.status,(await r.text()).slice(0,1500)))'
       - uses: actions/setup-node@v4
         with:
@@ -90,8 +93,8 @@ jobs:
           node --test growth-managed-scheduler.test.js
           npm audit --omit=dev --audit-level=high --prefix growth-worker-service
       - name: Verify durable scheduled execution without owner session
-        if: inputs.worker_url != ''
+        if: inputs.worker_url != '' || github.head_ref == 'feature/growth-social-oauth-isolated'
         env:
-          WORKER_URL: ${{ inputs.worker_url }}
-          EXPECTED_WORKER_RELEASE: ${{ inputs.expected_release }}
+          WORKER_URL: ${{ inputs.worker_url || env.STAGING_WORKER_URL }}
+          EXPECTED_WORKER_RELEASE: ${{ inputs.expected_release || env.STAGING_WORKER_RELEASE }}
         run: node scripts/growth-managed-worker-smoke.js
