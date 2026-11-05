@@ -119,3 +119,41 @@ renewal as well as research. A new release generation takes over only when the
 old generation has no active lease; old durable runs exit on their next wake.
 No public health request can reset a stop or roll a generation backwards.
 The original worker remains running until a tested replacement is deployed.
+
+## Verification and staging handoff, November 5
+
+Local MongoDB 7 fixtures: composed integration/security suite 76/76 passed;
+connection persistence/renewal suite 8/8 passed (including TikTok Open ID and
+finite expiry, X rotation, concurrent refresh, quarantine recovery, failure and
+stop); scheduler suite 3/3 passed. The offline quality chain (25 scripts) also
+passes with the new greeting expectations. Poster tests 10/10 passed, including
+original image geometry and verified-time handling. Dependency audits found
+zero vulnerabilities in backend and worker production dependencies.
+
+GitHub isolated security run 42067720789 passed at 283fb3e. The broader quality
+run at 953ba21 failed its old business-email greeting assertion; the expectation
+was corrected and the full affected offline chain passed locally. Do not call
+that earlier failed run green. Subsequent workflow dispatch attempts returned
+HTTP 500/502. Latest commits must receive a new CI run when Actions accepts it.
+
+Application-code Preview deployments (953ba21): backend
+`dpl_4aySG5S8xwp1jHCmnh8L6SRqiJjA`, worker
+`dpl_719f7MW51K9wXSVgoe68ikGQmA1Z`. READY is build evidence only.
+The new worker has not been activated/verified: the hosted runner is required to
+probe its health and observe two scheduled cycles for release
+`quality-recruitment-persistence-v2`. The original v1 durable run
+`wrun_41M6P3MDAN0GZGJWKFDKFX67PC` remains running and was not stopped.
+Owner stop/pause and an active lease prevent handoff; health cannot resume a stop.
+
+Vercel connector web-fetch returns 403 for the isolated project; the scoped
+server-side deployment API works. Direct Preview requests are restricted in the
+execution environment. No access protection is weakened. As a result, fresh
+provider-verified Facebook/Instagram/TikTok/X statuses after the new deployment,
+actual staging draft regeneration and actual independent recruitment examples
+remain unverified. Owner-confirmed prior connections are not substituted for
+fresh checks. No credential is regenerated or revoked to work around access.
+
+Acceptance URL remains
+https://fmm-ver2-growth-social-preview.vercel.app/administration/growth .
+A fresh owner browser session and all-four-account status check remain pending.
+No live publishing, outbound messages, production deployment or merge occurred.

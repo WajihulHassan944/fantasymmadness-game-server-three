@@ -25,7 +25,7 @@ function createConnectionManager({db,env,fetchImpl=globalThis.fetch,clock=()=>ne
   try{
    let previous;try{previous=decrypt(a.credentials,key);}catch{return await fail(409,'original_token_key_unavailable');}
    if(!previous.refresh_token)return await fail(409,'reauthorization_required');
-   if(a.refreshExpiresAt&&new Date(a.refreshExpiresAt)<=now)return await fail(409,'refresh_token_expired','expired');
+   if(!a.pendingRefresh&&a.refreshExpiresAt&&new Date(a.refreshExpiresAt)<=now)return await fail(409,'refresh_token_expired','expired');
    if(!configs[p].id||!configs[p].secret)return await fail(409,'existing_client_configuration_missing');
    let tokens,issuedAt;
    if(a.pendingRefresh){try{const pending=decrypt(a.pendingRefresh,key);tokens=pending.tokens;issuedAt=new Date(pending.issuedAt);}catch{return await fail(409,'pending_rotation_key_unavailable');}}
