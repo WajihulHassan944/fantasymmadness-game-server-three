@@ -1,0 +1,3 @@
+'use strict';
+const test=require('node:test'),assert=require('node:assert/strict'),{safeError,observeProductionPreparation}=require('./growth-production-observation');
+test('production read-only observation requires explicit separate stores and redacts arbitrary provider error bodies',async()=>{await assert.rejects(()=>observeProductionPreparation({productionDb:{databaseName:'fmgrowthtest'},originalDb:{databaseName:'fmgrowthtest'}}),/separate_database/);assert.equal(safeError('http_403'),'http_403');assert.equal(safeError('HTTP status 429'),'http_429');assert.equal(safeError('provider response with a private query or credential'),'external_source_unavailable');});

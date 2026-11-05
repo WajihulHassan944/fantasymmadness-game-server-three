@@ -6,6 +6,7 @@ import worker from './runtime.cjs';
 import {affiliateLinkAudit} from '../workflows/link-audit';
 import {affiliateStagingAcceptance} from '../workflows/affiliate-acceptance';
 import {productionLaunchAudit} from '../workflows/production-launch-audit';
+import {productionReadOnlyObservation} from '../workflows/production-observation';
 import production from './production-preparation.cjs';
 import {productionPreparationLoop} from '../workflows/production-preparation';
 import {activateVerifiedProductionPreparation,stopProductionPreparation,inspectProductionPreparation} from '../workflows/production-release';
@@ -18,7 +19,7 @@ app.get('/health',async(_req,res)=>{
  try{
   const {settings,ensureRelease}=await worker.runtime();await ensureRelease();const s=await settings.findOne({_id:'managed-scheduler'});
   if(s?.enabled&&(s.workerRelease||s.generation)===process.env.GROWTH_WORKER_RELEASE&&(!s.workerDeploymentId||s.workerDeploymentId===process.env.VERCEL_DEPLOYMENT_ID)){try{await start(sandboxLoop,[s.generation,0],{experimental_hook:{token:`growth:${s.generation}:0`}});}catch(e){if(!HookConflictError.is(e))throw e;}}
-  res.json({ok:true,environment:'preview',database:'fmgrowthtest',collectionPrefix:'preview198_',readOnlyAuditAvailable:Boolean(affiliateLinkAudit),isolatedAcceptanceAvailable:Boolean(affiliateStagingAcceptance),productionReadinessAuditAvailable:Boolean(productionLaunchAudit),productionControlAvailable,scheduler:await worker.status()});
+  res.json({ok:true,environment:'preview',database:'fmgrowthtest',collectionPrefix:'preview198_',readOnlyAuditAvailable:Boolean(affiliateLinkAudit),isolatedAcceptanceAvailable:Boolean(affiliateStagingAcceptance),productionReadinessAuditAvailable:Boolean(productionLaunchAudit),productionReadOnlyObservationAvailable:Boolean(productionReadOnlyObservation),productionControlAvailable,scheduler:await worker.status()});
  }catch{res.status(503).json({ok:false,error:'managed_scheduler_unavailable',publishingEnabled:false,outboundEnabled:false});}
 });
 app.use((_req,res)=>res.status(404).json({ok:false}));
