@@ -24,8 +24,8 @@ async function runtime(){return ready ||= (async()=>{
  await settings.updateOne({_id:'managed-scheduler'},{$setOnInsert:{enabled:true,generation:'sandbox-v1',createdAt:new Date().toISOString()},$set:{ownerCount:owners.length}},{upsert:true});
  return {rt,settings,cycles:db.collection('managed_worker_cycles')};
  })().catch(e=>{ready=null;throw e;});}
-async function cycle(generation,ordinal,metadata){
- const {rt,settings,cycles}=await runtime();const s=await settings.findOne({_id:'managed-scheduler'});
+async function cycle(generation,ordinal,metadata,context){
+ const {rt,settings,cycles}=context || await runtime();const s=await settings.findOne({_id:'managed-scheduler'});
  if(!s?.enabled||s.generation!==generation)return {stop:true};
  const now=new Date();const key=generation+':'+ordinal;
  const prior=await cycles.findOne({_id:key});if(prior?.finishedAt)return {stop:false,duplicate:true};

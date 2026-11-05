@@ -10,6 +10,10 @@ on:
       - '.github/workflows/growth-social-oauth-isolated.yml'
   workflow_dispatch:
     inputs:
+      worker_url:
+        description: Exact isolated worker Preview URL to verify durable timer execution
+        type: string
+        required: false
       deployed_smoke:
         description: Run read-only checks against the isolated OAuth Preview
         type: boolean
@@ -55,3 +59,15 @@ jobs:
       - name: Verify deployed isolated Preview without provider authorization
         if: github.event_name == 'workflow_dispatch' && inputs.deployed_smoke
         run: node scripts/growth-social-oauth-deployed-smoke.js
+
+      - name: Managed worker dependencies and security tests
+        run: |
+          npm ci --prefix growth-worker-service
+          node growth-worker-service/prepare.cjs
+          node --test growth-managed-scheduler.test.js
+          npm audit --omit=dev --audit-level=high --prefix growth-worker-service
+      - name: Verify durable scheduled execution without owner session
+        if: inputs.worker_url != ''
+        env:
+          WORKER_URL: ${{ inputs.worker_url }}
+        run: node scripts/growth-managed-worker-smoke.js

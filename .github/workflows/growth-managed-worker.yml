@@ -1,0 +1,38 @@
+name: Isolated managed Growth worker
+on:
+  workflow_dispatch:
+    inputs:
+      worker_url:
+        description: Exact immutable sandbox worker Preview URL for timer verification
+        type: string
+        required: false
+permissions:
+  contents: read
+jobs:
+  managed-worker:
+    runs-on: ubuntu-24.04
+    services:
+      mongo:
+        image: mongo:7.0
+        ports: ['27017:27017']
+    env:
+      GROWTH_TEST_MONGO_URI: mongodb://127.0.0.1:27017/fmgrowthtest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - run: npm ci --ignore-scripts
+      - run: npm ci --prefix growth-worker-service
+      - run: node growth-worker-service/prepare.cjs
+      - name: Scheduler security, duplicate, failure recovery, monitoring and rollback tests
+        run: node --test growth-managed-scheduler.test.js
+      - name: Existing isolated regression tests
+        run: node --test --test-concurrency=1 growth-existing-meta-readonly.test.js growth-autonomy-safety.integration.test.js growth-backoffice.test.js growth-sandbox-receipt-reporting.test.js growth-registry-refresh.integration.test.js
+      - run: npm run build --prefix growth-worker-service
+      - run: npm audit --omit=dev --audit-level=high --prefix growth-worker-service
+      - name: Verify actual durable timer resumption without website session
+        if: inputs.worker_url != ''
+        env:
+          WORKER_URL: ${{ inputs.worker_url }}
+        run: node scripts/growth-managed-worker-smoke.js

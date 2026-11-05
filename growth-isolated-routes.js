@@ -223,12 +223,13 @@ function registerIsolatedGrowthRoutes({ app, env = process.env, express, transpo
     catch (e) { return res.status(503).json({ ok: false, reason: 'logout_unavailable' }); }
   });
   const who = (req) => String(req.admin?.email || req.admin?.id || 'admin');
-  const autonomyOwner = (req, res, next) => {
-    const owners = config.autonomy?.owners || [];
+  const autonomyOwner = async (req, res, next) => {
+    const owners = [...(config.autonomy?.owners || [])];
+    if (sessionAuth) { try { const rt = await getRuntime(); const saved = await rt.collections.settings.findOne({_id:'managed-owner-allowlist'}); owners.push(...(saved?.ids || [])); } catch { return res.status(503).json({ok:false,reason:'owner_allowlist_unavailable'}); } }
     if (!owners.length || ![req.admin?.email, req.admin?.adminId, req.admin?.id, req.admin?.sub].some(x => x && owners.includes(String(x).toLowerCase()))) return res.status(403).json({ ok: false, reason: 'automation_owner_required', message: 'An explicitly configured automation owner is required.' });
     next();
   };
-  router.get('/admin/autonomy', admin, sessionAuth ? (_req, _res, next) => next() : autonomyOwner, wrap(async (req, res, rt) => res.json({ ok: true, ownerPolicyEditable: [req.admin?.email, req.admin?.adminId].some(x => x && config.autonomy.owners.includes(String(x).toLowerCase())), ...(await rt.autonomy.status()) })));
+  router.get('/admin/autonomy', admin, sessionAuth ? async (req, res, next) => { try { const rt=await getRuntime();req.managedOwners=(await rt.collections.settings.findOne({_id:'managed-owner-allowlist'}))?.ids||[];next(); } catch { res.status(503).json({ok:false}); } } : autonomyOwner, wrap(async (req, res, rt) => res.json({ ok: true, ownerPolicyEditable: [req.admin?.email, req.admin?.adminId].some(x => x && [...config.autonomy.owners,...(req.managedOwners || [])].includes(String(x).toLowerCase())), ...(await rt.autonomy.status()) })));
   router.put('/admin/autonomy', admin, autonomyOwner, wrap(async (req, res, rt) => {
     try { res.json({ ok: true, policy: await rt.autonomy.save(req.body?.policy, { actor: who(req), expectedVersion: req.body?.expectedVersion }) }); }
     catch (e) { res.status(e.status || 500).json({ ok: false, message: e.status ? e.message : 'Could not save automation policy' }); }
