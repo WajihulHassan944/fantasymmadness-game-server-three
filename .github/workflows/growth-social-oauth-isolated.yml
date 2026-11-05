@@ -35,6 +35,11 @@ jobs:
       GROWTH_TEST_MONGO_URI: mongodb://127.0.0.1:27017/fmgrowthtest
     steps:
       - uses: actions/checkout@v4
+      - name: Probe isolated worker health before regressions
+        if: inputs.worker_url != ''
+        env:
+          WORKER_URL: ${{ inputs.worker_url }}
+        run: node -e 'fetch(process.env.WORKER_URL+"/health").then(async r=>console.log("worker health",r.status,(await r.text()).slice(0,1500)))'
       - uses: actions/setup-node@v4
         with:
           node-version: '22'

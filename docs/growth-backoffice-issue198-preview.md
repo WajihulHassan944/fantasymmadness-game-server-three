@@ -42,3 +42,61 @@ The initial namespace isolation hid the already-authorized Meta connection from 
 The integrated Preview now uses `growth-existing-meta-readonly.js` to read the original isolated owner record without moving it into the department namespace. It reuses `GROWTH_TOKEN_ENCRYPTION_KEY` only on the server. It opens only the existing selected Page token, never exchanges/renews a token, and verifies Facebook via the token's `/me` Page identity. Instagram is checked independently against its stored account ID and current Page relationship. A partial failure remains separate from the other platform's successful verification. Known legacy environment bindings are supported without creating another Meta application. A missing/different original encryption key is reported as a recovery blocker, not a request to replace the app.
 
 Only bounded GET requests to the fixed Meta Graph origin are made; tokens travel in Authorization headers, never URLs or API output. Public health exposes only sanitized status/reason booleans, without account IDs or names. Five-minute sanitized health caching uses `preview198_meta_connection_health`; no credential ciphertext is copied there. Owner-only Connections shows the verified account identities and a read-only recheck button. Meta app creation, reconnect, selection, disconnect and callback mutation are blocked in this Preview; publishing credentials are never released to the publishing subsystem. Original Meta and TikTok/X credential documents remain unchanged. Tests compare their original records byte-for-byte and reject mismatched provider identities.
+
+## Managed sandbox scheduler (November 5, 2026)
+
+The owner authorized autonomous preparation in isolated staging. The separate
+`growth-worker-service` uses Vercel Workflow 5 durable timers and queue handlers.
+It deploys from `feature/growth-sandbox-worker-isolated` as a **Preview**, with a
+per-deployment root override. The existing project's global root, production
+deployments, back-office alias and OAuth callbacks remain unchanged. Vercel Cron
+is deliberately not used: it runs against production deployments.
+
+The configured `GROWTH_MANAGED_SCHEDULER=true` authorizes one idempotent startup
+on the worker's first health check. The check starts a deterministic Workflow
+hook, then subsequent work resumes through durable timers independently of
+HTTP/browser sessions. A bootstrap is never counted as a scheduled execution.
+The first two timers use 65 seconds for verification; the steady schedule is
+15 minutes. Every 96 cycles a child run continues with a deterministic hook to
+bound event history. Mongo job claims, a global expiring lease, generation
+checks and per-cycle records prevent overlap and duplicate completed cycles.
+Failed steps retry three times; job retries and interrupted-job reconciliation
+remain in the existing runtime. `preview198_managed_worker_cycles` stores safe
+execution provenance and outcomes; `preview198_growth_settings` stores state.
+
+All business operations use `fmgrowthtest` and the existing `preview198_`
+namespace. Provider connections remain in their original collections. The
+worker verifies the dedicated project, Preview environment, pinned Atlas host,
+sandbox email capture, sandbox social, and outbound/publishing/live-automation
+flags before opening the runtime. It never invokes the legacy game server,
+payment modules, token exchange or connection mutation endpoints.
+
+The administrator allowlist is derived inside staging from existing
+`growth_social_sso_audit` records that have `issuerConfirmed:true`, the exact
+trusted frontend origin, website-admin method, first-party-assertion transport,
+and a valid administrator ID. These audit records are produced only after the
+existing secure website administrator authority check. IDs stay in private
+staging settings; monitoring exposes only whether the allowlist is configured.
+Authenticated administrator sessions are still required for all back-office
+operations. Missing verified audit evidence fails closed.
+
+Scheduled discovery, research, preparation and reporting reuse the existing
+runtime. Every new draft requires owner approval: the worker cannot call the
+autonomous draft approval path, regardless of policy. Previously owner-approved
+sandbox work can produce capture/simulation receipts, never external delivery.
+Existing Facebook/Instagram checks remain read-only; TikTok/X credentials are
+not modified. A failed workstream is visible in job/execution records and safe
+status rather than silently presented as success.
+
+The Automation status uses persisted **timer** evidence, becomes unhealthy
+when older than 35 minutes, and does not infer uptime from a deployment or manual
+cycle. The owner's emergency-stop action pauses operations and disables the
+managed generation. A public health check cannot re-enable a stopped generation.
+For rollback: first invoke that authenticated owner stop, wait for/inspect any
+in-flight cycle (already issued read requests cannot be recalled), then restore
+the previous dedicated back-office Preview deployment. Leave original connection
+records and all production aliases unchanged. Restart requires a deliberate new
+staging generation; do not erase cycle history or reset job claims. No destructive
+migration is required. Local MongoDB tests cover stop, generation mismatch,
+lease contention, retry and duplicate callback-equivalent cycle behavior; these
+are functional rollback tests, not claims of historic 24-hour uptime.

@@ -234,7 +234,7 @@ function registerIsolatedGrowthRoutes({ app, env = process.env, express, transpo
     try { res.json({ ok: true, policy: await rt.autonomy.save(req.body?.policy, { actor: who(req), expectedVersion: req.body?.expectedVersion }) }); }
     catch (e) { res.status(e.status || 500).json({ ok: false, message: e.status ? e.message : 'Could not save automation policy' }); }
   }));
-  router.post('/admin/autonomy/stop', admin, autonomyOwner, wrap(async (req, res, rt) => res.json({ ok: true, policy: await rt.autonomy.stop(who(req)) })));
+  router.post('/admin/autonomy/stop', admin, autonomyOwner, wrap(async (req, res, rt) => { const policy=await rt.autonomy.stop(who(req)); if(sessionAuth) await rt.collections.settings.updateOne({_id:'managed-scheduler'},{$set:{enabled:false,stoppedAt:new Date().toISOString(),stoppedBy:who(req)}});res.json({ok:true,policy}); }));
   router.get('/admin/overview', admin, wrap(async (req, res, rt) => res.json({ ok: true, overview: await rt.overview() })));
   router.get('/admin/drafts', admin, wrap(async (req, res, rt) => res.json({ ok: true, drafts: await rt.listDrafts({ status: req.query.status, kind: req.query.kind, contestId: req.query.contestId, limit: req.query.limit }) })));
   router.post('/admin/drafts/:id/approve', admin, wrap(async (req, res, rt) => { const r = await rt.approveDraft(req.params.id, { admin: who(req), acceptTextPoster: req.body?.acceptTextPoster === true }); res.status(r.ok ? 200 : 409).json(r); }));
