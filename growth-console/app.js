@@ -1229,7 +1229,7 @@
           list([
             { done: true, text: 'Every Growth Engine link carries the campaign tag the live site already records when someone registers' },
             { done: c.liveRegistrationReport.configured, text: 'Read-only live registration report connected' + (c.liveRegistrationReport.latest ? ' (last pulled ' + c.liveRegistrationReport.latest.day + ')' : '') },
-            { done: c.verifiedEventIngest.configured, text: 'Signed event channel ready for verified registrations and settled paid entries (' + c.verifiedEventIngest.path + ')' },
+            { done: c.verifiedEventIngest.configured, text: c.verifiedEventIngest.previewBlocked ? 'Signed financial/event ingestion is disabled in this isolated Preview' : 'Signed event channel ready for verified registrations and settled paid entries (' + c.verifiedEventIngest.path + ')' },
           ])),
         h('section', { class: 'card' }, h('h2', { text: 'Fight contest list' }), h('p', { class: 'small', text: 'Read-only: ' + c.contestFeed.url }), h('span', { class: 'chip good', text: '✓ Connected' })),
       ]);

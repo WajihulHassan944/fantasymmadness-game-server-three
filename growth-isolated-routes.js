@@ -465,7 +465,7 @@ function registerIsolatedGrowthRoutes({ app, env = process.env, express, transpo
     meta: await metaView(rt),
     email: { provider: resolved.config.delivery.provider, realDelivery: resolved.config.delivery.realDelivery, blockers: resolved.config.delivery.blockers, sender: BUSINESS_SENDER },
     liveRegistrationReport: { configured: resolved.config.liveReport.configured, latest: await rt.collections.liveReports.find({}).sort({ day: -1 }).limit(1).next().then((r) => (r ? { day: r.day, campaigns: r.groups.length } : null)) },
-    verifiedEventIngest: { configured: resolved.config.ingest.configured, path: '/api/growth/events' },
+    verifiedEventIngest: { configured: !sessionAuth && resolved.config.ingest.configured, previewBlocked: Boolean(sessionAuth), path: '/api/growth/events' },
   } })));
 
   app.use('/api/growth', router);
