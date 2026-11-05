@@ -8,6 +8,7 @@ on:
       - 'growth-platform-copy*'
       - 'growth-event-timing*'
       - 'growth-text-quality*'
+      - 'growth-preparation-*'
       - 'growth-poster*'
       - 'growth-managed*'
       - 'growth-worker-service/**'
@@ -82,6 +83,7 @@ jobs:
         run: node --test --test-concurrency=1 growth-existing-meta-readonly.test.js growth-backoffice-preview.integration.test.js growth-autonomy-safety.integration.test.js growth-affiliate-program.test.js growth-affiliate-attribution.test.js growth-fight-urls.integration.test.js growth-backoffice.test.js growth-sandbox-receipt-reporting.test.js growth-registry-refresh.integration.test.js
       - name: Platform copy, PR quality, independent affiliate recruitment and connection persistence
         run: |
+          node growth-preparation-operations.test.js
           node growth-quality-refinement.test.js
           node growth-draft-refinement.integration.test.js
           node growth-social-connection-manager.test.js

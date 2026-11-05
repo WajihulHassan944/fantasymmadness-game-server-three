@@ -50,3 +50,12 @@ test('unattended follow-ups retain evidence, stop after two and hold when the or
   const before=await rt.collections.sandboxMail.countDocuments();const dispatched=await rt.dispatch(new Date());assert.ok(dispatched.held>0);assert.equal(await rt.collections.sandboxMail.countDocuments(),before);assert.equal((await rt.collections.drafts.findOne({id:'queued-after-reply'})).status,'held');
  }finally{await f.close();}
 });
+
+test('managed preparation-only ticks never deliver or publish even previously approved content',{skip,timeout:30000},async()=>{
+ const f=await fixture({posters:false}),{rt}=f;
+ try{
+  await rt.collections.drafts.insertOne({id:'approved-fixture',kind:'pr',genre:'boxing',subject:'Fixture',text:'Hi,\nFixture only',recipient:'business@fixture.invalid',status:'approved',ownerApproved:true,sendPermitted:true});
+  await rt.collections.social.insertOne({id:'scheduled-fixture',status:'scheduled',scheduledAt:new Date(Date.now()-60000).toISOString(),draftId:'approved-fixture',channel:'facebook'});
+  const r=await rt.tick({preparationOnly:true});assert.equal(r.delivery.skipped,'preparation_only_no_delivery');assert.equal(r.social.skipped,'preparation_only_no_publishing');assert.equal(r.autonomy.skipped,'owner_approval_required');assert.equal(await rt.collections.sandboxMail.countDocuments(),0);assert.equal(await rt.collections.deliveries.countDocuments(),0);assert.equal((await rt.collections.drafts.findOne({id:'approved-fixture'})).status,'approved');assert.equal((await rt.collections.social.findOne({id:'scheduled-fixture'})).status,'scheduled');
+ }finally{await f.close();}
+});

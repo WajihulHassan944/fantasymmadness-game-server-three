@@ -37,7 +37,7 @@ function createGrowthRuntime({ db, config, secrets = {}, provider, fetchImpl = g
   if (db.databaseName && db.databaseName !== 'fmgrowthtest') throw Error('Growth runtime only uses the fmgrowthtest database');
   if (!provider || typeof provider.send !== 'function') throw Error('Delivery provider required');
   const col = {
-    recruitment:db.collection('affiliate_prospects'),
+    recruitment:db.collection('affiliate_prospects'),preparationJobs:db.collection('growth_preparation_jobs'),preparationReceipts:db.collection('growth_preparation_receipts'),connectionAlerts:db.collection('growth_connection_alerts'),
     runs: db.collection('isolated_run_claims'), workstreams: db.collection('isolated_workstream_runs'),
     jobs: db.collection('unattended_jobs'), drafts: db.collection('growth_drafts'), prospects: db.collection('growth_prospects'),
     deliveries: db.collection('growth_delivery_claims'), alerts: db.collection('growth_alerts'), reports: db.collection('growth_reports'),
@@ -56,8 +56,9 @@ function createGrowthRuntime({ db, config, secrets = {}, provider, fetchImpl = g
   let socialScheduler = null; // created below once reverifyMarketing exists
   const affiliateProgram = createAffiliateProgram({ col, audit });
   const recruitment=require('./growth-affiliate-recruitment').createRecruitment({col,fetchImpl,isSuppressed:a=>suppression.isSuppressed(a),suppress:(...a)=>suppression.suppress(...a)});
+  const preparation=require('./growth-preparation-operations').createPreparationOperations({col,actions:{marketing:now=>refreshMarketing(now,{trigger:'continuous_preparation'}),pr:(now,payload)=>researchBatch(now,{ids:payload.retryTargets}),affiliate:()=>recruitment.tick()},isPaused:()=>autonomy.isPaused(),isSuppressed:a=>suppression.isSuppressed(a)});
   async function init() {
-    await recruitment.init();
+    await preparation.init();await recruitment.init();
     await claims.init(); await store.init(); await suppression.init(); await socialScheduler.init(); await affiliateProgram.init(); await meta.init(); await urlResolver.init();
     await col.liveReports.createIndex({ day: 1 }, { unique: true });
     await col.drafts.createIndex({ id: 1 }, { unique: true });
@@ -125,12 +126,12 @@ function createGrowthRuntime({ db, config, secrets = {}, provider, fetchImpl = g
   // ---- PR + affiliate research (public sources; drafts need owner approval) ----
   const researcher = createProspectResearch({ fetchImpl, isSuppressed: (a) => suppression.isSuppressed(a) });
   let contestCache = { at: 0, contests: [] };
-  async function researchBatch(now, { limit = config.researchPerRun ?? 4 } = {}) {
-    const out = { researched: 0, drafted: 0, noContact: 0, duplicates: 0, noAngle: 0, errors: 0 };
+  async function researchBatch(now, { limit = config.researchPerRun ?? 4, ids = null } = {}) {
+    const out = { researched: 0, drafted: 0, noContact: 0, duplicates: 0, noAngle: 0, errors: 0, failedProspectIds:[] };
     if (!limit) return out;
     if (now.getTime() - contestCache.at > 30 * 60000) { const f = await loadContests(now); if (f.sourceReachable) contestCache = { at: now.getTime(), contests: f.contests }; }
     const stale = new Date(now.getTime() - 14 * 86400000).toISOString();
-    const todo = await col.prospects.find({ verified: true, optedOut: { $ne: true }, $or: [{ researchedAt: { $exists: false } }, { researchedAt: { $lt: stale } }] }).sort({ firstSeenAt: 1 }).limit(limit * 3).toArray();
+    const todo = await col.prospects.find({ verified: true, optedOut: { $ne: true }, ...(Array.isArray(ids)&&ids.length?{id:{$in:ids.slice(0,limit)}}:{$or: [{ researchedAt: { $exists: false } }, { researchedAt: { $lt: stale } },{researchRetryAt:{$type:'string',$lte:now.toISOString()}}]}) }).sort({ firstSeenAt: 1 }).limit(limit * 3).toArray();
     const done = new Set();
     for (const p of todo) {
       if (out.researched >= limit) break;
@@ -139,7 +140,7 @@ function createGrowthRuntime({ db, config, secrets = {}, provider, fetchImpl = g
       const siblings = await col.prospects.find({ sourceUrl: p.sourceUrl }).toArray(); // same show, both discovery lists
       const r = await researcher.research(p, { contests: contestCache.contests, now });
       out.researched++;
-      if (!r.ok) out.errors++;
+      if (!r.ok) {out.errors++;out.failedProspectIds.push(p.id);}
       const track = outreachComposer.assignTrack({ focuses: siblings.map((x) => x.focus), research: r });
       const lead = siblings.find((x) => x.focus === (track === 'pr' ? 'partners' : 'fans')) || p;
       let outreach = null; let outcome = r.ok ? null : 'research_failed';
@@ -159,8 +160,10 @@ function createGrowthRuntime({ db, config, secrets = {}, provider, fetchImpl = g
           }
         }
       }
-      const set = { researchedAt: now.toISOString(), research: r, track, researchOutcome: outcome, score: r.score, ...(outreach ? { outreach } : {}),
+      const set = { researchedAt: now.toISOString(),...(r.ok?{research:r,researchFailures:0,researchRetryAt:null,researchHold:null,researchVerifiedAt:now.toISOString()}:{...(p.research?.ok?{researchAttempt:r}:{research:r}),researchFailures:(p.researchFailures||0)+1,researchRetryAt:new Date(+now+Math.min(360,15*Math.pow(2,Math.min(p.researchFailures||0,5)))*60000).toISOString(),researchHold:'source_retry_pending'}), track, researchOutcome: outcome, score: r.score, ...(outreach ? { outreach } : {}),
         ...(r.contact ? { contact: r.contact.email, contactVerified: true, consent: true, consentNote: r.contact.basis, contactSource: r.contact.source } : {}) };
+      if(!r.ok)await col.alerts.updateOne({alertKey:'research-source:'+p.id},{$setOnInsert:{alertKey:'research-source:'+p.id,kind:'research_source',id:p.id,createdAt:now.toISOString()},$set:{state:'open',error:(String(r.error||'').match(/(?:feed|lookup|HTTP)[ _-]*(?:http[_ -]*)?\d{3}/i)||[])[0]||'public_source_unavailable_or_invalid',action:'This prospect is held; the same source retries with bounded backoff while other prospects continue.',nextRetryAt:set.researchRetryAt}},{upsert:true});
+      else await col.alerts.updateMany({alertKey:'research-source:'+p.id,state:'open'},{$set:{state:'acknowledged',ackBy:'verified-source-recovery',ackAt:now.toISOString(),resolution:'The same public source was fetched and parsed successfully; contact and draft readiness remain separate checks.'}});
       await col.prospects.updateMany({ id: { $in: siblings.map((x) => x.id) } }, { $set: set });
     }
     return out;
@@ -307,10 +310,10 @@ function createGrowthRuntime({ db, config, secrets = {}, provider, fetchImpl = g
   async function report(now) {
     const by = async (c, field) => Object.fromEntries((await c.aggregate([{ $group: { _id: field, n: { $sum: 1 } } }]).toArray()).map((r) => [String(r._id), r.n]));
     const doc = {
-      day: dayKey(now), at: now.toISOString(),
+      day: dayKey(now), at: now.toISOString(),preparation:await preparation.summary(),
       draftsByStatus: await by(col.drafts, '$status'), draftsByKind: await by(col.drafts, '$kind'),
       deliveries: await by(col.deliveries, '$status'), prospects: await col.prospects.countDocuments(), prospectsWithVerifiedContact: await col.prospects.countDocuments({ contactVerified: true }),
-      suppressions: await col.suppressions.countDocuments(), openAlerts: await col.alerts.countDocuments({ state: 'open' }),
+      suppressions: await col.suppressions.countDocuments(), openAlerts: await col.alerts.countDocuments({ state: 'open' })+await col.connectionAlerts.countDocuments({state:'open'}),
       provider: provider.name, realDelivery: provider.realDelivery === true,
       funnel: {
         prospects: await col.prospects.countDocuments(),
@@ -423,7 +426,7 @@ function createGrowthRuntime({ db, config, secrets = {}, provider, fetchImpl = g
   }
 
   // ---- one scheduled tick ---------------------------------------------------
-  async function tick({ now = new Date() } = {}) {
+  async function tick({ now = new Date(), preparationOnly = false } = {}) {
     if (!(now instanceof Date) || !Number.isFinite(now.getTime())) throw Error('Invalid clock');
     const runId = minuteId(now);
     if (await autonomy.isPaused()) return { runId, skipped: 'emergency_stop' };
@@ -465,12 +468,12 @@ function createGrowthRuntime({ db, config, secrets = {}, provider, fetchImpl = g
           if (settled.state === 'failed') await alert(`job:${job.id}:failed`, 'job', job.id, e.message, now);
         }
       }
-      try { summary.research = await autonomy.isPaused() ? { skipped: 'emergency_stop' } : await researchBatch(now); } catch (e) { summary.errors.push({ id: 'research', message: clean(e.message) }); }
-      try{summary.recruitment=await autonomy.isPaused()?{skipped:'emergency_stop'}:await recruitment.tick();if(summary.recruitment.error)summary.errors.push({id:'affiliate_discovery',message:summary.recruitment.error});}catch{summary.errors.push({id:'affiliate_recruitment',message:'independent_recruitment_cycle_failed'});}
-      summary.autonomy = await autonomy.run(now);
-      summary.delivery = await dispatch(now);
+      try { summary.research = preparationOnly ? {skipped:'durable_preparation_pipeline'} : await autonomy.isPaused() ? { skipped: 'emergency_stop' } : await researchBatch(now); } catch (e) { summary.errors.push({ id: 'research', message: clean(e.message) }); }
+      try{summary.recruitment=preparationOnly?{skipped:'durable_preparation_pipeline'}:await autonomy.isPaused()?{skipped:'emergency_stop'}:await recruitment.tick();if(summary.recruitment.error)summary.errors.push({id:'affiliate_discovery',message:summary.recruitment.error});}catch{summary.errors.push({id:'affiliate_recruitment',message:'independent_recruitment_cycle_failed'});}
+      summary.autonomy = preparationOnly ? {skipped:'owner_approval_required'} : await autonomy.run(now);
+      summary.delivery = preparationOnly ? {skipped:'preparation_only_no_delivery'} : await dispatch(now);
       try { summary.meta = await autonomy.isPaused() ? { skipped: 'emergency_stop' } : await meta.healthCheck({ now }); } catch (e) { summary.errors.push({ id: 'meta-health', message: clean(e.message) }); }
-      summary.social = await autonomy.isPaused() ? { skipped: 'emergency_stop' } : await socialScheduler.dispatch(now);
+      summary.social = preparationOnly ? {skipped:'preparation_only_no_publishing'} : await autonomy.isPaused() ? { skipped: 'emergency_stop' } : await socialScheduler.dispatch(now);
     } catch (e) {
       summary.errors.push({ id: 'tick', message: clean(e.message) });
       await alert(`run:${runId}`, 'run', runId, e.message, now);
@@ -499,6 +502,7 @@ function createGrowthRuntime({ db, config, secrets = {}, provider, fetchImpl = g
   async function approveDraft(id, { admin, acceptTextPoster = false, now = new Date() } = {}) {
     const current = await col.drafts.findOne({ id: clean(id, 160) });
     if(current?.kind==='affiliate'&&(current.approvalBlockers||[]).length)return{ok:false,reason:'affiliate_program_verification_required',details:current.approvalBlockers};
+    if(current&&current.kind!=='marketing'&&(current.autoResearched||current.recruitmentSource)){const blockers=await preparation.quality(current,now);if(blockers.length)return{ok:false,reason:'preparation_quality_review_required',details:blockers};}
     if (current && current.status === 'needs_owner_review' && current.kind === 'marketing') {
       const v = await reverifyMarketing(current, now);
       if (!v.ok) return { ok: false, reason: v.reason, details: v.details };
@@ -551,13 +555,13 @@ function createGrowthRuntime({ db, config, secrets = {}, provider, fetchImpl = g
       approvedAwaitingDelivery: await col.drafts.countDocuments({ status: 'approved' }),
       delivered: await col.drafts.countDocuments({ status: 'delivered' }),
       prospects: await col.prospects.countDocuments(), suppressions: await col.suppressions.countDocuments(),
-      openAlerts: await col.alerts.countDocuments({ state: 'open' }),
+      openAlerts: await col.alerts.countDocuments({ state: 'open' })+await col.connectionAlerts.countDocuments({state:'open'}),
       jobs: await store.summary(),
       lastRuns: last.map(({ _id, ...r }) => r),
       latestReport: await col.reports.find({}).sort({ day: -1 }).limit(1).next().then((r) => (r ? (({ _id, ...x }) => x)(r) : null)),
     };
   }
-  async function listAlerts({ state = 'open' } = {}) { return (await col.alerts.find(state ? { state } : {}).sort({ createdAt: -1 }).limit(200).toArray()).map(({ _id, ...a }) => a); }
+  async function listAlerts({ state = 'open' } = {}) { const ordinary=(await col.alerts.find(state ? { state } : {}).sort({ createdAt: -1 }).limit(200).toArray()).map(({ _id, ...a }) => a);const connections=(await col.connectionAlerts.find(state?{state}:{}).limit(20).toArray()).map(a=>({alertKey:'connection:'+a._id,kind:'connection',id:a.provider,error:a.reason,action:a.action,state:a.state,createdAt:a.createdAt instanceof Date?a.createdAt.toISOString():a.createdAt,requiresProviderRecovery:true}));return [...connections,...ordinary]; }
   async function ackAlert(alertKey, { admin } = {}) { const r = await col.alerts.updateOne({ alertKey: clean(alertKey, 200), state: 'open' }, { $set: { state: 'acknowledged', ackBy: clean(admin, 120), ackAt: new Date().toISOString() } }); return { ok: r.modifiedCount === 1 }; }
   async function requeueJob(id, { admin, now = new Date() } = {}) {
     const r = await col.jobs.updateOne({ id: clean(id, 160), state: 'failed' }, { $set: { state: 'retry', attempts: 0, dueAt: now.toISOString(), lastError: null } });
@@ -568,7 +572,7 @@ function createGrowthRuntime({ db, config, secrets = {}, provider, fetchImpl = g
 
   const autonomy = createAutonomy({ col, config, approveDraft, social: socialScheduler, suppression, audit });
 
-  return { recruitment,refineEmailDrafts,autonomy, init, tick, dispatch, researchBatch, refreshMarketing, ensurePosters, posters: posterStudio, reverifyMarketing, social: socialScheduler, publisher, meta, affiliates: affiliateProgram, listDrafts, approveDraft, rejectDraft, addVerifiedContact, overview, listAlerts, ackAlert, requeueJob, unsubscribe, suppression, collections: col };
+  return { preparation,recruitment,refineEmailDrafts,autonomy, init, tick, dispatch, researchBatch, refreshMarketing, ensurePosters, posters: posterStudio, reverifyMarketing, social: socialScheduler, publisher, meta, affiliates: affiliateProgram, listDrafts, approveDraft, rejectDraft, addVerifiedContact, overview, listAlerts, ackAlert, requeueJob, unsubscribe, suppression, collections: col };
 }
 
 module.exports = { createGrowthRuntime };

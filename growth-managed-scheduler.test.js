@@ -50,3 +50,17 @@ test('scheduled execution is durable, duplicate-safe, recoverable, generation-bo
   await settings.updateOne({_id:'managed-scheduler'},{$set:{enabled:false}});assert.equal((await cycle('test',6,{},ctx)).stop,true);
  }finally{await settings.drop();await cycles.drop();await c.close();}
 });
+
+test('a replaced worker lease cannot finish a cycle or advance scheduler evidence',{skip},async()=>{
+ const c=await new MongoClient(uri).connect(),db=c.db('fmgrowthtest'),prefix='fence202_'+crypto.randomBytes(6).toString('hex'),settings=db.collection(prefix+'_settings'),cycles=db.collection(prefix+'_cycles');let entered,release;const started=new Promise(r=>entered=r),gate=new Promise(r=>release=r);
+ const ctx={settings,cycles,rt:{autonomy:{heartbeat:async()=>{}},tick:async()=>{entered();await gate;return{runId:'fixture',jobs:[],errors:[]};}}};
+ try{await settings.insertOne({_id:'managed-scheduler',enabled:true,generation:'fenced'});const old=cycle('fenced',1,{workflowRunId:'fixture'},ctx);await started;await settings.updateOne({_id:'managed-scheduler'},{$set:{leaseOwner:'replacement',leaseToken:'fixture-replacement-token',leaseUntil:new Date(Date.now()+600000).toISOString()}});release();assert.equal((await old).leaseLost,true);const s=await settings.findOne({_id:'managed-scheduler'});assert.equal(s.scheduledExecutions,undefined);assert.equal(s.leaseOwner,'replacement');assert.equal((await cycles.findOne({_id:'fenced:1'})).finishedAt,undefined);
+ }finally{await settings.drop();await cycles.drop();await c.close();}
+});
+
+test('owner controls retain the established verified binding instead of admitting later administrator logins',{skip},async()=>{
+ const client=await new MongoClient(uri).connect(),db=client.db('fmgrowthtest'),prefix='owner202_'+crypto.randomBytes(6).toString('hex'),audits=db.collection(prefix+'_audit'),settings=db.collection(prefix+'_settings');
+ const raw={collection:()=>audits},{pinnedOwners}=require('./growth-managed-scheduler');
+ try{const trusted={action:'sso_login',method:'website_admin',transport:'first_party_assertion',issuerConfirmed:true,site:SITE};await audits.insertMany([{...trusted,adminId:'1'.repeat(24)},{...trusted,adminId:'2'.repeat(24)}]);await assert.rejects(()=>pinnedOwners(raw,settings,[]),/explicit_verified_owner/);await settings.insertOne({_id:'managed-owner-allowlist',ids:['1'.repeat(24)]});assert.deepEqual(await pinnedOwners(raw,settings,[]),['1'.repeat(24)]);
+ }finally{await audits.drop();await settings.drop();await client.close();}
+});

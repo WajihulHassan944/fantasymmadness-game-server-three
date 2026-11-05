@@ -65,6 +65,10 @@
     var rel = mins < 1 ? 'just now' : mins < 60 ? mins + ' min ago' : mins < 1440 ? Math.round(mins / 60) + ' hr ago' : Math.round(mins / 1440) === 1 ? '1 day ago' : Math.round(mins / 1440) + ' days ago';
     return d.toLocaleString('en-US', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' }) + ' (' + rel + ')';
   }
+  function expiryWhen(iso) {
+    if(!iso)return 'unknown';var d=new Date(iso);if(isNaN(d))return 'unknown';
+    return d.toLocaleString('en-US',{year:'numeric',month:'short',day:'numeric',hour:'numeric',minute:'2-digit',timeZoneName:'short'})+' ['+Intl.DateTimeFormat().resolvedOptions().timeZone+']';
+  }
   function chip(status) {
     var s = STATUS[status] || [status || 'unknown', '', ''];
     return h('span', { class: 'chip ' + s[1], testid: 'status-chip' }, s[2] ? h('span', { 'aria-hidden': 'true', text: s[2] }) : null, s[0]);
@@ -305,7 +309,8 @@
         var name = p.provider === 'tiktok' ? 'TikTok' : 'X';
         var box = h('section', { testid: 'oauth-' + p.provider }, h('h3', { text: name }), h('p', { text: 'Status: ' + (account?.status || 'not connected') }), h('p', { class: 'small', text: 'Callback: ' + p.callbackUrl }));
         if (account) box.appendChild(h('p', { text: (account.username ? '@' + account.username + ' · ' : '') + (account.displayName || '') + ' · ID: ' + account.identity }));
-        if(account)box.appendChild(h('p',{class:'small',text:'Access expiry: '+when(account.tokenExpiresAt)+' · Refresh expiry: '+(account.refreshExpiryKnown?when(account.refreshExpiresAt):'provider expiry unknown; not assumed indefinite')+' · Granted scopes: '+((account.grantedScopes||[]).join(', ')||'not yet checked')+(account.reason?' · Action: '+account.reason:'')}));
+        if(account)box.appendChild(h('p',{class:'small',text:'Access expiry: '+expiryWhen(account.tokenExpiresAt)+' · Refresh expiry: '+(account.refreshExpiryKnown?expiryWhen(account.refreshExpiresAt):'provider expiry unknown; not assumed indefinite')+' · Granted scopes: '+((account.grantedScopes||[]).join(', ')||'not yet checked')+(account.reason?' · Action: '+account.reason:'')}));
+        if(account)box.appendChild(h('p',{class:account.renewalStatus==='expired'?'banner warn':'small',testid:'renewal-'+p.provider,text:'Access: '+(account.accessStatus||'not yet checked')+' · Renewal: '+(account.renewalStatus||'not yet checked')+(account.renewalStatus==='expired'?' — Access can remain connected, but the expired refresh grant requires account-holder reauthorization before access expires. No token was revoked.':'')+(account.expiryEvidence?.source?' · Expiry source: '+account.expiryEvidence.source:'')}));
         if (p.blockers.length) box.appendChild(h('p', { text: 'Configuration required: ' + p.blockers.join(', ') }));
         box.appendChild(h('button', { class: 'btn primary', disabled: !p.configured, text: 'Connect ' + name, onclick: function () {
           if (EMBEDDED) return secureConnectionsWindow();
@@ -317,7 +322,7 @@
           box.appendChild(h('button', { class: 'btn', text: 'Confirm ' + name + ' account', onclick: function () { if (EMBEDDED) return secureConnectionsWindow(); api('POST', '/social/' + p.provider + '/confirm', { candidateId: candidate.candidateId, identity: candidate.identity }).then(route).catch(fail); } }));
         }
         if (account && account.status !== 'disconnected') {
-          box.appendChild(h('button', { class: 'btn', disabled: !account.refreshAvailable, text: 'Refresh ' + name + ' token', onclick: function () { api('POST', '/social/' + p.provider + '/refresh', {}).then(route).catch(fail); } }));
+          box.appendChild(h('button', { class: 'btn', disabled: !account.refreshAvailable || account.renewalAvailable === false, text: 'Refresh ' + name + ' token', onclick: function () { api('POST', '/social/' + p.provider + '/refresh', {}).then(route).catch(fail); } }));
           box.appendChild(h('button', { class: 'btn danger', text: 'Disconnect ' + name, onclick: function () { modal({ title: 'Disconnect ' + name + '?', body: h('p', { text: 'This removes stored credentials. Publishing remains disabled.' }), onConfirm: function () { return api('POST', '/social/' + p.provider + '/disconnect', {}); } }).then(function (yes) { if (yes) route(); }).catch(fail); } }));
         }
         card.appendChild(box);
@@ -900,6 +905,15 @@
     });
   };
 
+  function preparationPanel(p) {
+    if(!p)return null;
+    var names={marketing:'Marketing',pr:'Public Relations',affiliate:'Affiliate Recruitment'};
+    return h('section',{class:'card',testid:'preparation-operations'},h('h2',{text:'Autonomous preparation — owner approval required'}),h('p',{class:'sub',text:p.receiptMeaning}),
+      h('div',{class:'grid tiles'},Object.keys(names).map(function(k){var d=p.departments[k];return h('div',{class:'tile','data-department':k},h('h3',{text:names[k]}),h('p',{text:d.awaitingOwnerReview+' awaiting owner review · '+d.ready+' ready · '+d.held+' held · '+d.awaitingReceipt+' not yet checked'}),h('p',{class:'small',text:d.receipts+' preparation receipts (content versions); '+d.approvedDrafts+' owner-approved drafts'}));})),
+      h('p',{text:'Preparation queue: '+(p.jobs.pending||0)+' pending · '+(p.jobs.retry||0)+' retrying · '+(p.jobs.running||0)+' running · '+(p.jobs.failed||0)+' historical failures · '+(p.jobs.completed||0)+' completed. These are distinct from scheduled runs and deliveries.'}),
+      h('p',{text:'Observed real deliveries: '+p.realDeliveriesObserved+' · observed live social posts: '+p.liveSocialPostsObserved+' · paying conversion attribution: not connected in staging.'}),
+      (p.recentJobs||[]).length?h('details',null,h('summary',{text:'Preparation job history and recovery'}),p.recentJobs.slice(0,12).map(function(j){return h('div',{class:'notice'},h('strong',{text:j.payload.department+' · '+j.state}),h('span',{text:' · '+j.attempts+' attempts · due '+expiryWhen(j.dueAt)}),j.lastError?h('p',{text:j.lastError}):null,j.state==='failed'?h('button',{class:'btn small',text:'Retry preparation job',onclick:function(){api('POST','/admin/preparation/jobs/'+encodeURIComponent(j.id)+'/requeue').then(route).catch(fail);}}):null);})):null);
+  }
   pages.automation = function (main, params) {
     var alertState = params.alerts === 'all' ? 'all' : 'open';
     return Promise.all([api('GET', '/admin/status'), api('GET', '/admin/alerts?state=' + alertState), api('GET', '/admin/jobs?limit=40'), api('GET', '/admin/runs?limit=40'), api('GET', '/admin/suppressions?limit=100'), api('GET', '/admin/audit?limit=40')]).then(function (r) {
@@ -924,6 +938,7 @@
       } }, supEmail, supReason, h('button', { class: 'btn', type: 'submit', testid: 'btn-add-optout', text: 'Add to do-not-contact list' }));
       add(main, [
         head('Automation', 'The scheduler, background jobs, alerts and safety lists.', runNow),
+        preparationPanel(st.preparation),
         h('div', { class: 'grid tiles' },
           h('div', { class: 'tile', testid: 'sched-tile' }, h('div', { class: 'label', text: 'Scheduler' }), h('div', { class: 'value text', text: sc.healthy ? 'Running' : 'Check' }), h('div', { class: 'hint', text: sc.schedule + ' · last run ' + when(sc.lastRunAt) })),
           h('div', { class: 'tile' }, h('div', { class: 'label', text: 'Runs in last 24 h' }), h('div', { class: 'value', text: fmtNum(sc.runsLast24h) }), h('div', { class: 'hint', text: 'About 96 expected per day' })),
@@ -937,8 +952,8 @@
           alerts.length ? h('div', { class: 'table-wrap' }, h('table', { class: 'data', testid: 'alerts-table' },
             h('thead', null, h('tr', null, h('th', { text: 'What happened' }), h('th', { text: 'When' }), h('th', { text: 'State' }), h('th', { text: '' }))),
             h('tbody', null, alerts.map(function (a) {
-              return h('tr', { testid: 'alert-row', 'data-alert-key': a.alertKey }, h('td', null, h('strong', { text: a.kind + ': ' + a.id }), h('div', { class: 'small muted', text: a.error })), h('td', { class: 'nowrap small', text: when(a.createdAt) }), h('td', null, chip(a.state)),
-                h('td', null, a.state === 'open' ? h('button', { class: 'btn small', testid: 'btn-ack', text: 'Acknowledge', onclick: function () {
+              return h('tr', { testid: 'alert-row', 'data-alert-key': a.alertKey }, h('td', null, h('strong', { text: a.kind + ': ' + a.id }), h('div', { class: 'small muted', text: a.error }),a.action?h('div',{class:'small',text:a.action}):null), h('td', { class: 'nowrap small', text: when(a.createdAt) }), h('td', null, chip(a.state)),
+                h('td', null, a.requiresProviderRecovery ? h('a',{class:'btn small',href:'#/connections',text:'Review connection'}) : a.state === 'open' ? h('button', { class: 'btn small', testid: 'btn-ack', text: 'Acknowledge', onclick: function () {
                   api('POST', '/admin/alerts/' + encodeURIComponent(a.alertKey) + '/ack').then(function (res) { toast(res.ok ? 'Alert acknowledged.' : 'Already acknowledged.', 'good'); refreshCounts(); route(); }).catch(fail);
                 } }) : h('span', { class: 'small muted', text: a.ackBy ? 'by ' + a.ackBy : '' })));
             })))) : h('div', { class: 'empty', testid: 'alerts-empty', text: alertState === 'open' ? 'No open alerts. Everything is running normally.' : 'No alerts recorded.' })),

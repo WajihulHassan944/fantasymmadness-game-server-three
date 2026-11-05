@@ -22,6 +22,18 @@ test('durable OAuth persistence, atomic rotation, identity/scopes, retries, conc
    assert.equal((await tk.renew('tiktok')).error,'refresh_identity_mismatch');assert.deepEqual((await accounts.findOne({_id:'tiktok'})).credentials,original);
    await accounts.updateOne({_id:'tiktok'},{$set:{refreshExpiresAt:new Date(+now-1000)}});openId='verified-tiktok-open-id';const result=await tk.renew('tiktok',{force:true});assert.equal(result.ok,true);assert.equal(result.connection.refreshExpiryKnown,true);assert.equal(result.connection.status,'connected');assert.equal(exchanges,1);assert.equal(decrypt((await accounts.findOne({_id:'tiktok'})).credentials,key).refresh_token,'fixture-tiktok-rotated');
   });
+  await t.test('short expired refresh grant leaves valid access connected, creates warning and makes no token exchange',async()=>{
+   await reset();await accounts.updateOne({_id:'x'},{$set:{credentials:encrypt({access_token:'fixture-active-access',refresh_token:'fixture-expired-refresh',expires_in:86400,refresh_expires_in:3600,scope:newScopes},key),tokenExpiresAt:new Date(+now+23*3600000)}});
+   const before=(await accounts.findOne({_id:'x'})).credentials,report=await manager().maintain();const x=report.connections.find(x=>x.provider==='x');assert.equal(x.status,'connected');assert.equal(x.accessStatus,'valid');assert.equal(x.renewalStatus,'expired');assert.equal(x.renewalAvailable,false);assert.ok(x.warnings.includes('refresh_grant_expired_access_still_valid'));assert.equal(calls.filter(x=>x.includes('/token')).length,0);assert.deepEqual((await accounts.findOne({_id:'x'})).credentials,before);assert.equal(x.expiryEvidence.source,'encrypted_provider_response');
+  });
+  await t.test('renewal is due before a shorter refresh grant expires, not only before access expiry',async()=>{
+   await reset();await accounts.updateOne({_id:'x'},{$set:{credentials:encrypt({access_token:'fixture-active-access',refresh_token:'fixture-short-refresh',expires_in:86400,refresh_expires_in:3600,scope:newScopes},key),tokenExpiresAt:new Date(+now+23*3600000+20*60000)}});
+   assert.equal((await manager().renew('x')).ok,true);assert.equal(calls.filter(x=>x.includes('/token')).length,1);
+  });
+  await t.test('provider response evidence corrects display of stale expiry metadata without overwriting credentials',async()=>{
+   await reset();await accounts.updateOne({_id:'x'},{$set:{credentials:encrypt({access_token:'fixture-active-access',refresh_token:'fixture-long-refresh',expires_in:86400,refresh_expires_in:31536000,scope:newScopes},key),tokenExpiresAt:new Date(+now+86400000),refreshExpiresAt:new Date(+now-3600000)}});
+   const a=await accounts.findOne({_id:'x'}),s=manager().summary(a);assert.equal(s.renewalStatus,'available');assert.equal(s.expiryEvidence.metadataMismatch,true);assert.equal(new Date(s.refreshExpiresAt)-now,31536000000);assert.equal((await manager().renew('x')).skipped,'not_due');assert.deepEqual((await accounts.findOne({_id:'x'})).credentials,a.credentials);
+  });
   await t.test('expired refresh grants require reconnection and do not assume indefinite renewal',async()=>{await reset();await accounts.updateOne({_id:'x'},{$set:{refreshExpiresAt:new Date(+now-1000)}});assert.equal((await manager().renew('x')).error,'refresh_token_expired');assert.equal(calls.length,0);});
  }finally{for(const c of await base.listCollections({name:{$regex:'^'+prefix}}).toArray())await base.collection(c.name).drop();await client.close();}
 });
