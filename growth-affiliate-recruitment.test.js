@@ -5,6 +5,8 @@ const uri=process.env.GROWTH_TEST_MONGO_URI,skip=!/^mongodb:\/\/(127\.0\.0\.1|lo
 test('public research rejects private-network targets and private redirects',async()=>{
  await assert.rejects(()=>publicGet('https://example.test/',{lookup:async()=>[{address:'127.0.0.1',family:4}]}),/private_source_blocked/);
  await assert.rejects(()=>publicGet('http://example.test/'),/public_https_source_required/);
+ const lookup=async()=>[{address:'8.8.8.8',family:4}];await assert.rejects(()=>publicGet('https://example.test/',{lookup,fetchImpl:async()=>({status:302,headers:new Headers({location:'https://127.0.0.1/private'})})}),/cross_site_redirect_requires_review/);
+ await assert.rejects(()=>publicGet('https://example.test/',{lookup,allowPath:u=>!u.includes('/blocked'),fetchImpl:async()=>({status:302,headers:new Headers({location:'https://www.example.test/blocked'})})}),/publisher_disallows_research/);
 });
 test('independent affiliates span sports/roles, require public contact evidence, preserve approvals and never send',{skip,timeout:30000},async()=>{
  const client=await new MongoClient(uri).connect(),db=client.db('fmgrowthtest'),prefix='recruittest_'+crypto.randomBytes(5).toString('hex')+'_',col=Object.fromEntries(['recruitment','settings','drafts','suppressions'].map(n=>[n,db.collection(prefix+n)]));const calls=[];let q=100,country='United Kingdom';

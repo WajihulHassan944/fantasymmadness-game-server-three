@@ -79,7 +79,7 @@ test('poster with the official contest artwork, and the text poster when there i
   const r = await P.renderPoster({ contest: c, format: 'portrait', artwork: { mode: 'contest_artwork', contestArt: art }, qrUrl: P.qrLink(c) });
   const im = r.layout.images[0]; assert.ok((await regionMad(r.buffer, im, art.buffer)) < 6);
   assert.equal((await P.decodeQr(r.buffer)).text, 'https://www.fantasymmadness.com/fight/naoya-inoue-vs-murodjon-akhmadaliev?utm_source=fan_acquisition&utm_medium=partner_outreach&utm_campaign=combat_fans_gs_boxing&utm_content=poster_qr');
-  const t = contest({ posterUrl: null, timeTba: false, matchTime: '22:00', timeZone: 'America/Los_Angeles', eventName: 'UFC 323', sport: 'mma-ufc', fighterA: 'Superbon Singha Mawynn Banchamek', fighterB: 'Tawanchai PK Saenchai Muaythaigym' });
+  const t = contest({ posterUrl: null, timeTba: false, matchTime: '22:00', timeZone: 'America/Los_Angeles',timing:{eventTimeVerified:true,eventStartAt:'2026-11-09T06:00:00Z',eventTimeZone:'America/Los_Angeles',eventTimeSourceUrl:'https://official.example/event'}, eventName: 'UFC 323', sport: 'mma-ufc', fighterA: 'Superbon Singha Mawynn Banchamek', fighterB: 'Tawanchai PK Saenchai Muaythaigym' });
   const tr = await P.renderPoster({ contest: t, format: 'story', artwork: { mode: 'text' }, qrUrl: P.qrLink(t) });
   assert.equal(tr.layout.images.length, 0);
   assert.equal(tr.facts.time, '10:00 PM PST'); assert.equal(tr.facts.event, 'UFC 323');

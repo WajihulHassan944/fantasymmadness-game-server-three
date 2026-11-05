@@ -97,7 +97,7 @@ test('affiliate links use the live site mechanisms; tracked link only once activ
   const code = codeFor('p-abc', 'Fight Talk Boxing Show');
   assert.match(campaignFor(code), /^combat_fans_[a-z0-9_-]{1,60}$/);
   const a = { code, status: 'invited', liveAffiliateId: null };
-  assert.match(onboardingLink(a), /^https:\/\/www\.fantasymmadness\.com\/affiliate-create-account\?utm_source=fan_acquisition&utm_medium=partner_outreach&utm_campaign=combat_fans_aff_/);
+  assert.match(onboardingLink(a), /^https:\/\/www\.fantasymmadness\.com\/auth\?mode=signup&role=affiliate&utm_source=fan_acquisition&utm_medium=partner_outreach&utm_campaign=combat_fans_aff_/);
   const contest = { id: 'bx0000000001', sport: 'boxing' };
   assert.equal(playerLink(a, contest), null);
   const live = { ...a, status: 'active', liveAffiliateId: '0123456789abcdef01234567' };

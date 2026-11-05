@@ -4,9 +4,8 @@ function readable(value){let s=String(value??'');for(let i=0;i<3;i++){const next
 const GENERIC=/^(?:open|info|support|contact|hello|team|admin|office|sales|press|media|editor|editorial|booking|bookings|business|marketing|podcast|show|company|partners?|partnerships?|mail|enquiries|inquiries|noreply|no-reply)$/i;
 function personalFirstName(contact,show={}){
  if(!contact||contact.nameVerified!==true||contact.type!=='person'||!/^https:\/\//.test(contact.nameSource||''))return null;
- const name=readable(contact.name).trim(),first=name.split(/\s+/)[0];
- const mailbox=String(contact.email||'').split('@')[0].replace(/[+._-].*$/,'');
- if(GENERIC.test(mailbox)||GENERIC.test(first)||/\b(?:podcast|media|network|company|inc|llc|studio|productions?|radio|support|contact|team)\b/i.test(name)||name.toLowerCase()===readable(show.title).trim().toLowerCase())return null;
+ const name=readable(contact.name).trim(),first=name.replace(/^(?:(?:Mr|Mrs|Ms|Dr|Prof|Professor|Coach)\.?\s+)+/i,'').split(/\s+/)[0];
+ if(GENERIC.test(first)||/\b(?:podcast|media|network|company|inc|llc|studio|productions?|radio|support|contact|team|gym|academy|management|promotions?)\b/i.test(name)||name.toLowerCase()===readable(show.title).trim().toLowerCase())return null;
  if(!/^[\p{L}\p{M}'’ -]+$/u.test(name)||!/^\p{L}[\p{L}\p{M}'’-]{1,39}$/u.test(first))return null;
  return first;
 }

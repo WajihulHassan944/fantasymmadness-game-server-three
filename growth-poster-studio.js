@@ -42,7 +42,7 @@ function dayText(c) {
 }
 function timeText(c) {
   if (!c.timing?.eventTimeVerified) return null;
-  return require('./growth-event-timing').timeLabel(c).replace(/^Event start: /,'');
+  return new Intl.DateTimeFormat('en-US',{timeZone:c.timing.eventTimeZone,hour:'numeric',minute:'2-digit',timeZoneName:'short'}).format(new Date(c.timing.eventStartAt));
 
 }
 function canonicalUrl(c) { return c.cleanUrl || c.contestUrl; }

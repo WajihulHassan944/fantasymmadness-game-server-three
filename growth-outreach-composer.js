@@ -42,7 +42,7 @@ function compose({ prospect, research, contests = [], track }) {
   const show = research.show.title;
   const greeting = greetingFor(research.contact,research.show);
   const ep = research.recentEpisodes[0];
-  const epLine = ep?.title ? `I came across your recent episode “${ep.title}”${fmtDate(ep.date) ? ` (${fmtDate(ep.date)})` : ''}.` : `I have been following ${show}.`;
+  const epLine = ep?.title ? `I came across your recent episode “${ep.title}”${fmtDate(ep.date) ? ` (${fmtDate(ep.date)})` : ''}.` : `I came across ${show} while researching combat-sports coverage.`;
   const c = angle.contest;
   const fight = c ? `${c.fighterA} vs ${c.fighterB}${fmtDate(`${c.dateKey}T12:00:00Z`) ? ` on ${fmtDate(`${c.dateKey}T12:00:00Z`)}` : ''}` : null;
   const paragraphs = []; let subject; let cta = null; let eyebrow;
@@ -59,8 +59,8 @@ function compose({ prospect, research, contests = [], track }) {
     paragraphs.push(`${epLine} ${angle.kind === 'fight_mentioned' ? `${angle.why}.` : `Your published coverage focuses on ${SPORT[sport]} closely.`}`);
     paragraphs.push(`We would like to set up a ${show} fan league on FANTASY MMADNESS: your own league page and tracked link, a QR code and a ready-to-share fight kit, so your audience can call fights round by round and see where they rank against each other.${fight ? ` ${fight} would be a natural first fight for the league.` : ''}`);
     paragraphs.push('Potential commissions from qualifying referred paying players depend on the approved affiliate terms and eligibility. We can review those terms together; no rates or earnings are promised. Your tracked link and QR code, promotional posters and fight kit can help you invite your community, with performance and attribution reporting where available.');
-    paragraphs.push('Would you like me to set it up, or walk you through it on a quick call?');
-    cta = { label: 'See the affiliate program', url: onboardingLink({ code: codeFor(prospect.id, prospect.name) }) }; // same code the program assigns on approval
+    paragraphs.push('Would you be open to reviewing how a fan league could work for your audience?');
+    cta = { label:'Join the FANTASY MMADNESS Affiliate Program', url: onboardingLink({ code: codeFor(prospect.id, prospect.name) }) }; // same code the program assigns on approval
   }
   const email = renderPersonalEmail({ eyebrow, subject, greeting, paragraphs, cta });
   // Final safeguard: nothing about money/prizes/commission, and the show + evidence are in the text.

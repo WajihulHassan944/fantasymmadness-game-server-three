@@ -76,7 +76,7 @@ promoter/creator/commentator categories. No gender filter excludes women or men;
 unknown country, audience, engagement and conversion ability remain unknown.
 Existing active affiliates' explicitly sourced opportunities are also supported.
 Public official-site contact research respects robots, rejects private networks,
-pins DNS, disallows redirects, limits responses and extracts only explicitly
+pins DNS, follows only bounded same-site HTTPS redirects with fresh DNS/publisher-policy checks, limits responses and extracts only explicitly
 published business email links with MX validation. No address is guessed.
 Wikidata data-access/licensing references: https://www.wikidata.org/wiki/Help:Data_access
 and https://www.wikidata.org/wiki/Wikidata:Licensing .
