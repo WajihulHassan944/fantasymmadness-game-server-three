@@ -28,7 +28,7 @@ function tags(code, content) {
   if (content) q.set('utm_content', String(content).replace(/[^a-z0-9_-]/gi, '').slice(0, 32));
   return q.toString();
 }
-function onboardingLink(a) { return `${SITE}/affiliate-create-account?${tags(a.code, 'onboarding')}`; }
+function onboardingLink(a) { return `${SITE}/auth?mode=signup&role=affiliate&${tags(a.code, 'onboarding')}`; }
 function playerLink(a, contest) {
   if (a.status !== 'active' || !/^[a-f0-9]{24}$/.test(String(a.liveAffiliateId || ''))) return null;
   // The website's fighter-name address when it has one (growth-fight-urls.js), else the ID address.
@@ -59,7 +59,7 @@ function createAffiliateProgram({ col, audit }) {
   // Called when the owner approves an affiliate invitation.
   async function fromApprovedInvite(draft, { admin, now = new Date() } = {}) {
     if (draft.kind !== 'affiliate' || !draft.prospectId) return null;
-    const p = await col.prospects.findOne({ id: draft.prospectId });
+    const p = await col.prospects.findOne({ id: draft.prospectId }) || (col.recruitment ? await col.recruitment.findOne({id:draft.prospectId}) : null);
     const name = p?.name || draft.prospectId;
     const doc = { id: draft.prospectId, name, genre: draft.genre, email: draft.recipient || null, code: codeFor(draft.prospectId, name), status: 'invite_prepared', inviteDraftId: draft.id, liveAffiliateId: null, createdAt: now.toISOString(), history: [hist('invite_prepared', admin, 'invitation approved', now)] };
     await col.affiliates.updateOne({ id: doc.id }, { $setOnInsert: doc }, { upsert: true });

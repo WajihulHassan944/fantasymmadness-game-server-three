@@ -305,6 +305,7 @@
         var name = p.provider === 'tiktok' ? 'TikTok' : 'X';
         var box = h('section', { testid: 'oauth-' + p.provider }, h('h3', { text: name }), h('p', { text: 'Status: ' + (account?.status || 'not connected') }), h('p', { class: 'small', text: 'Callback: ' + p.callbackUrl }));
         if (account) box.appendChild(h('p', { text: (account.username ? '@' + account.username + ' · ' : '') + (account.displayName || '') + ' · ID: ' + account.identity }));
+        if(account)box.appendChild(h('p',{class:'small',text:'Access expiry: '+when(account.tokenExpiresAt)+' · Refresh expiry: '+(account.refreshExpiryKnown?when(account.refreshExpiresAt):'provider expiry unknown; not assumed indefinite')+' · Granted scopes: '+((account.grantedScopes||[]).join(', ')||'not yet checked')+(account.reason?' · Action: '+account.reason:'')}));
         if (p.blockers.length) box.appendChild(h('p', { text: 'Configuration required: ' + p.blockers.join(', ') }));
         box.appendChild(h('button', { class: 'btn primary', disabled: !p.configured, text: 'Connect ' + name, onclick: function () {
           if (EMBEDDED) return secureConnectionsWindow();
@@ -436,25 +437,26 @@
     }).then(function (ok) { if (ok) { toast(status === 'blocked' ? 'Artwork blocked; poster rebuilt.' : 'Artwork allowed; poster rebuilt.', 'good'); reload(); } }).catch(fail);
   }
   function fightFacts(c) {
-    var when = c.dateKey + (c.timeTba || !c.matchTime ? ' (time TBA)' : ' ' + c.matchTime + (c.timeZone ? ' ' + c.timeZone : ''));
+    var when = c.dateKey + (c.timing?.eventTimeVerified ? ' · Verified event start: '+String(c.timing.eventStartAt) : ' · Event start time unconfirmed');
     return h('div', { class: 'facts', testid: 'fight-facts' },
       h('span', { class: 'chip good', text: '✓ Verified contest' }),
       h('span', null, h('strong', { text: c.fighterA + ' vs ' + c.fighterB })),
-      h('span', { text: sport(c.sport) }), h('span', { text: when }),
+      h('span', { text: sport(c.sport) }), h('span', { text: when }),c.timing?.entryCutoffAt?h('span',{text:'Registry entry cutoff (UTC): '+c.timing.entryCutoffAt}):null,c.timing?.errors?.length?h('span',{class:'chip warn',text:'Approval blocked: '+c.timing.errors.join('; ')}):null,
       c.eventName ? h('span', { text: c.eventName }) : null, c.venue ? h('span', { text: [c.venue, c.city].filter(Boolean).join(', ') }) : null,
       h('a', { href: c.contestUrl, target: '_blank', rel: 'noopener noreferrer', text: 'Open contest' }));
   }
   function channelPosts(d) {
-    var names = { instagram: 'Instagram', facebook: 'Facebook', x: 'X', tiktok: 'TikTok' };
+    var names = { instagram: 'Instagram', facebook: 'Facebook', x: 'X', tiktok: 'TikTok',youtube_shorts:'YouTube Shorts (draft)' };
     var body = h('div', { class: 'body', testid: 'draft-text', text: d.posts.instagram || d.text || '' });
+    var readiness=h('p',{class:'small muted',testid:'caption-readiness',text:(d.platformCopy?.instagram?.blockers||[]).join('; ')||'Review this platform caption before approval.'});
     var tabs = h('div', { class: 'channel-tabs', role: 'tablist' });
     Object.keys(names).forEach(function (ch, i) {
       if (!d.posts[ch]) return;
       tabs.appendChild(h('button', { type: 'button', class: 'btn small' + (i === 0 ? ' active' : ''), 'data-channel': ch, testid: 'channel-' + ch, text: names[ch], onclick: function (e) {
-        tabs.querySelectorAll('button').forEach(function (b) { b.classList.remove('active'); }); e.target.classList.add('active'); body.textContent = d.posts[ch];
+        tabs.querySelectorAll('button').forEach(function (b) { b.classList.remove('active'); }); e.target.classList.add('active'); body.textContent = d.posts[ch];readiness.textContent=(d.platformCopy?.[ch]?.blockers||[]).join('; ')||'Tracked destination ready for owner review.';
       } }));
     });
-    return h('div', null, tabs, body);
+    return h('div', null, tabs, body,readiness);
   }
   function approve(d, reload) {
     var isEmail = d.kind !== 'marketing';
@@ -481,13 +483,14 @@
   function edit(d, reload) {
     var isEmail = d.kind !== 'marketing';
     var title = h('input', { type: 'text', maxlength: isEmail ? '200' : '180', testid: 'edit-title' }); title.value = isEmail ? (d.subject || '') : (d.headline || '');
-    var text = h('textarea', { maxlength: '4000', testid: 'edit-text' }); text.value = d.text || '';
+    var channel=h('select',{testid:'edit-caption-platform'});Object.keys(d.posts||{}).forEach(function(ch){channel.appendChild(h('option',{value:ch,text:ch}));});channel.value='facebook';
+    var text = h('textarea', { maxlength: '5000', testid: 'edit-text' });text.value=isEmail?(d.text||''):(d.posts?.facebook||d.text||'');channel.onchange=function(){text.value=d.posts[channel.value]||'';};
     return modal({
       title: 'Edit before approving', confirmLabel: 'Save changes',
-      body: h('div', null, h('label', { class: 'field' }, h('span', { text: isEmail ? 'Subject' : 'Headline' }), title),
-        h('label', { class: 'field' }, h('span', { text: isEmail ? 'Email text' : 'Instagram / Facebook caption' }), text, h('small', { text: isEmail ? 'Saving rebuilds the email from this text.' : 'Keep both fighter names and the contest link. The safeguard checks your edit again.' }))),
+      body: h('div', null, !isEmail?channel:null,h('label', { class: 'field' }, h('span', { text: isEmail ? 'Subject' : 'Headline' }), title),
+        h('label', { class: 'field' }, h('span', { text: isEmail ? 'Email text' : 'Platform caption' }), text, h('small', { text: isEmail ? 'Saving rebuilds the email from this text.' : 'Edit one platform at a time. Names, tracking, length, hashtags and verified destinations are checked.' }))),
       onConfirm: function () {
-        var body = { text: text.value }; if (isEmail) body.subject = title.value; else body.headline = title.value;
+        var body = { text: text.value };if(!isEmail)body.channel=channel.value; if (isEmail) body.subject = title.value; else body.headline = title.value;
         return api('POST', '/admin/drafts/' + encodeURIComponent(d.id) + '/edit', body);
       },
     }).then(function (ok) { if (ok) { toast('Changes saved. It is still waiting for your approval.', 'good'); reload(); } }).catch(fail);
@@ -497,7 +500,7 @@
     return Promise.all([api('GET', '/admin/social'), api('GET', '/admin/affiliates').catch(function () { return { affiliates: [] }; })]).then(function (both) {
       var info = both[0]; var affs = (both[1].affiliates || []).filter(function (a) { return a.status === 'active' && a.liveAffiliateId && (!a.genre || a.genre === d.genre); });
       var affSel = h('select', { testid: 'schedule-affiliate', 'aria-label': 'Credit an affiliate' }, [h('option', { value: '', text: 'No: use the standard FANTASY MMADNESS link' })].concat(affs.map(function (a) { return h('option', { value: a.id, text: a.name + ' (' + a.code + ')' }); })));
-      var boxes = {}; var names = { facebook: 'Facebook', instagram: 'Instagram', x: 'X', tiktok: 'TikTok' };
+      var boxes = {}; var names = { facebook: 'Facebook', instagram: 'Instagram', x: 'X', tiktok: 'TikTok',youtube_shorts:'YouTube Shorts (draft)' };
       var when = h('input', { type: 'datetime-local', testid: 'schedule-time' }); when.value = localInput(new Date(Date.now() + 10 * 60000));
       var rows = Object.keys(names).filter(function (ch) { return d.posts && d.posts[ch]; }).map(function (ch) {
         var c = info.channels[ch] || {}; var noImg = c.needsImage && !((d.poster && d.poster.portrait) || (d.contest && d.contest.posterUrl));
@@ -877,8 +880,24 @@
   pages.pr = function (main, params) {
     return outreachPage(main, params, { kind: 'pr', department: 'public-relations', route: 'pr', title: 'Public Relations', noun: 'media outreach', subtitle: 'Media coverage outreach to combat-sports podcasts and shows.' }).then(function () { if (INTEGRATED) main.appendChild(departmentReceipts('pr')); });
   };
-  pages.affiliates = function (main, params) {
-    return outreachPage(main, params, { kind: 'affiliate', department: 'affiliate-recruitment', route: 'affiliates', title: 'Affiliate Recruitment', noun: 'affiliate invitation', subtitle: 'Invitations for creators to run their own FANTASY MMADNESS fan leagues. Approved affiliates get tracked links (see Revenue Attribution).' }).then(function () { if (INTEGRATED) main.appendChild(departmentReceipts('affiliate')); });
+  pages.affiliates = function(main,params){
+    var query=new URLSearchParams();['sport','partnerType','country','platform','status','expectedPartnershipValue','contactVerified','audienceVerified','engagementQuality','minAudience'].forEach(function(k){if(params[k])query.set(k,params[k]);});
+    return api('GET','/admin/recruitment?'+query).then(function(r){
+      clear(main);var c=r.counters,filters=h('div',{class:'form-row',testid:'recruitment-filters'});
+      function choose(key,label,values){var select=h('select',{'aria-label':label,testid:'recruitment-'+key},h('option',{value:'',text:'All '+label}));values.forEach(function(v){select.appendChild(h('option',{value:v,text:v.replace(/_/g,' ')}));});select.value=params[key]||'';select.onchange=function(){var p=new URLSearchParams(query);if(select.value)p.set(key,select.value);else p.delete(key);location.hash='#/affiliates?'+p;};filters.appendChild(select);}
+      choose('sport','sports',SPORTS);choose('partnerType','partner types',['fighter','wrestler','trainer','gym','manager','promoter','creator','commentator']);choose('status','statuses',['discovered','researched','contact_verified','awaiting_approval','approved','responded','onboarding','active','rejected','opted_out']);choose('platform','platforms',['official_website']);choose('contactVerified','verified contacts',['true']);choose('audienceVerified','verified audiences',['true']);choose('engagementQuality','engagement evidence',['verified']);choose('expectedPartnershipValue','partnership values',['qualified_review','research_needed']);
+      var country=h('input',{type:'text',placeholder:'Country / region','aria-label':'Country or region',value:params.country||''});country.onchange=function(){var p=new URLSearchParams(query);if(country.value)p.set('country',country.value);else p.delete('country');location.hash='#/affiliates?'+p;};filters.appendChild(country);
+      var list=h('div'),pipeline=h('div');
+      add(main,[head('Affiliate Recruitment','Independent, source-backed partnership acquisition across all five sports.'),
+       h('div',{class:'grid tiles'},tile('Prospects researched',c.researched,'Independent partner research','#/affiliates'),tile('Verified business contacts',c.verifiedContacts,'Explicitly published contacts','#/affiliates'),tile('Invitations drafted',c.drafted,'Separate from PR podcasts','#/affiliates'),tile('Awaiting approval',c.awaitingApproval,'No external messages sent','#/approvals?kind=affiliate')),
+       h('p',{class:'small muted',testid:'recruitment-schedule',text:'Last research: '+when(r.lastResearch?.lastAt)+' · Next scheduled activity: '+when(r.nextScheduledAt)}),
+       r.lastResearch?.error?h('p',{class:'error',role:'alert',text:'Discovery error: '+r.lastResearch.error}):null,
+       h('div',{class:'banner info',text:'Public structured sources identify fighters, wrestlers, trainers, gyms, managers, promoters and creators. Official website evidence is required for contacts. Audience, engagement and conversion potential remain unknown unless verified. Podcasts remain in PR unless independently qualified.'}),filters,
+       h('section',{class:'card',testid:'recruitment-prospects'},h('h2',{text:'Partner research'}),r.prospects.length?h('div',null,...r.prospects.map(function(p){return h('article',{class:'card',testid:'recruitment-prospect'},h('h3',{text:p.name}),h('p',{text:sport(p.sport)+' · '+p.partnerType+' · '+(p.country||'Country unverified')+' · '+p.status}),h('p',{text:'Review score: '+(p.score||0)+' (heuristic) · Audience: '+(p.audienceSize==null?'unverified':p.audienceSize)+' · Engagement: '+(p.engagementQuality==null?'unverified':p.engagementQuality)}),h('p',{text:p.contact?.verified?'Verified business contact: '+p.contact.email:'No verified business contact'}),...(p.evidence||[]).map(function(e){return h('p',{class:'small'},h('a',{href:e.sourceUrl,target:'_blank',rel:'noopener noreferrer',text:(e.text||e.kind)+' · '+when(e.retrievedAt)}));}),p.error?h('p',{class:'error',text:p.error}):null,h('button',{class:'btn small',text:'Record correction',onclick:function(){var source=h('input',{type:'url',placeholder:'Source URL',value:p.sourceUrl}),note=h('input',{type:'text',placeholder:'Verified correction note',maxlength:'300'});modal({title:'Record a source-backed correction',body:h('div',null,source,note),onConfirm:function(){return api('POST','/admin/recruitment/'+encodeURIComponent(p.id)+'/correct',{sourceUrl:source.value,note:note.value});}}).then(route).catch(fail);}}),h('button',{class:'btn small danger',text:'Reject prospect',onclick:function(){api('POST','/admin/recruitment/'+encodeURIComponent(p.id)+'/status',{status:'rejected'}).then(route).catch(fail);}}),h('button',{class:'btn small',text:'Opt out',onclick:function(){api('POST','/admin/recruitment/'+encodeURIComponent(p.id)+'/status',{status:'opted_out'}).then(route).catch(fail);}}));})):h('p',{class:'empty',text:'No independently qualified partners match these filters. Sources and errors are recorded; no prospects are invented.'})),
+       h('section',{class:'card'},h('h2',{text:'Invitation review'}),h('p',{text:'Signup destination: '+(r.program.signupVerified?'verified':'not yet verified')+'. Approved affiliate terms require owner review. No rates, earnings or free setup are promised.'}),list),
+       h('section',{class:'card'},h('h2',{text:'Lifecycle and reporting'}),h('p',{text:'Discovered → Researched → Contact Verified → Draft Prepared → Awaiting Approval → Approved → Invited → Responded → Onboarding → Active → Attributed Conversions'}),h('p',{text:'Approved: '+c.approved+' · Sandbox captures (not sent): '+c.sandboxCaptures+' · Responses: '+c.responses+' · Onboarded: '+c.onboarded+' · Active: '+c.active+' · Paying conversions: not connected in staging'}),pipeline)]);
+      draftList(list,{kind:'affiliate',limit:200},'No invitations awaiting research yet.');onboarding(pipeline);if(INTEGRATED)main.appendChild(departmentReceipts('affiliate'));
+    });
   };
 
   pages.automation = function (main, params) {
@@ -1162,7 +1181,7 @@
   pages.publishing = function (main) {
     return api('GET', '/admin/social').then(function (r) {
       clear(main);
-      var names = { facebook: 'Facebook', instagram: 'Instagram', x: 'X', tiktok: 'TikTok' };
+      var names = { facebook: 'Facebook', instagram: 'Instagram', x: 'X', tiktok: 'TikTok',youtube_shorts:'YouTube Shorts (draft)' };
       var paused = r.paused.paused;
       var toggle = h('button', { class: 'btn ' + (paused ? 'approve' : 'danger'), testid: 'btn-toggle-pause', text: paused ? '▶ Resume publishing' : '⏸ Pause all publishing', onclick: function () {
         modal({ title: paused ? 'Resume publishing?' : 'Pause all publishing?', confirmLabel: paused ? 'Resume' : 'Pause', confirmClass: paused ? 'approve' : 'danger',

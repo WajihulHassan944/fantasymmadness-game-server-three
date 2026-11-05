@@ -102,7 +102,9 @@ function verifyContest(item, { now = new Date(), horizonDays = 21, mediaNames = 
   }
   if (reasons.length) return { ok: false, id: id || null, sport, reasons, label: a && b ? `${a} vs ${b}` : (title || id || 'unknown') };
   const timeTba = item.timeTba === true || !/^\d{1,2}:\d{2}$/.test(String(item.matchTime || ''));
+  const timing=require('./growth-event-timing').timingFromRegistry(item);
   const contest = {
+    timing,
     id, sport, fighterA: a, fighterB: b, eventName: title && norm(title) !== norm(`${a} vs ${b}`) ? title : null,
     dateKey, timeTba, matchTime: timeTba ? null : item.matchTime, timeZone: tz,
     venue: clean(item.venue, 80) || null, city: clean(item.eventCity, 60) || null,
@@ -172,11 +174,9 @@ function tags(c) {
 function whenText(c) {
   const [y, m, d] = c.dateKey.split('-').map(Number);
   const day = new Date(Date.UTC(y, m - 1, d, 12)).toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric', timeZone: 'UTC' });
-  if (c.timeTba || !c.timeZone) return day;
-  const [hh, mm] = c.matchTime.split(':').map(Number);
-  const h12 = ((hh + 11) % 12) + 1; const ampm = hh >= 12 ? 'PM' : 'AM';
-  const abbr = new Intl.DateTimeFormat('en-US', { timeZone: c.timeZone, timeZoneName: 'short' }).formatToParts(new Date(Date.UTC(y, m - 1, d, 12))).find((p) => p.type === 'timeZoneName')?.value || '';
-  return `${day}, ${h12}:${String(mm).padStart(2, '0')} ${ampm}${abbr ? ' ' + abbr : ''}`;
+  if (!c.timing?.eventTimeVerified) return day+' · event start time unconfirmed';
+  return day+' · '+require('./growth-event-timing').timeLabel(c);
+
 }
 function link(c, channel) {
   const sep = c.contestUrl.includes('?') ? '&' : '?';
@@ -193,29 +193,9 @@ const PLAY = {
   'bare-knuckle': ['Call it round by round: punches, knockdowns and round winners.', 'No gloves. Score every round and call the finish.', 'Think you can read every round? Fill out your round-by-round card.'],
   'pro-wrestling': ['Make your picks for this match.', 'Who walks out the winner? Lock in your picks.', 'Call it before the bell. Make your picks.'],
 };
-function buildCampaign(c) {
-  const pick = parseInt(hash(c.id).slice(0, 8), 16) % 3;
-  const vs = `${c.fighterA} vs ${c.fighterB}`;
-  const e = EMOJI[c.sport];
-  const when = whenText(c);
-  const where = [c.venue, c.city].filter(Boolean).join(', ');
-  const details = [c.eventName, c.weightClass, c.maxRounds ? `${c.maxRounds} rounds` : null, c.promotion].filter(Boolean).join(' · ');
-  const play = PLAY[c.sport][pick];
-  const headline = `${SPORT_LABEL[c.sport]}: ${vs} — ${when}`;
-  const long = (ch) => [
-    `${e} ${vs}`, `📅 ${when}${where ? `\n📍 ${where}` : ''}`, details || null,
-    `${play} Your FANTASY MMADNESS contest for this ${c.sport === 'pro-wrestling' ? 'match' : 'fight'} is open now.`,
-    `Make your picks 👉 ${link(c, ch)}`, tags(c),
-  ].filter(Boolean).join('\n\n');
-  const x = [`${e} ${vs} | ${when}`, `${play}`, `Picks open on FANTASY MMADNESS 👇`, link(c, 'x'), tags(c)].join('\n');
-  // TikTok captions are not clickable: when the website has a fighter-name address, show it readably.
-  const tiktok = require('./growth-fight-urls').tiktokLine(`${e} ${vs} — ${when}. ${play} Link in bio → FANTASY MMADNESS contest is open. ${tags(c)}`, c);
-  return {
-    headline: clean(headline, 180),
-    posts: { instagram: long('instagram'), facebook: long('facebook'), x, tiktok },
-    text: long('instagram'),
-    link: link(c, 'instagram'),
-  };
+function buildCampaign(c, options={}) {
+  const k=require('./growth-platform-copy').buildPlatformCopy(c,options);
+  return {headline:clean(`${SPORT_LABEL[c.sport]}: ${c.fighterA} vs ${c.fighterB} — ${whenText(c)}`,180),...k};
 }
 
 // ---- final safeguard -----------------------------------------------------------
@@ -232,13 +212,15 @@ function checkCampaign(draft, contest, { now = new Date(), mediaNames = new Set(
     if (!s.includes(contest.fighterA) || !s.includes(contest.fighterB)) reasons.push(`${ch}_missing_fighter_names`);
     // Either form of this fight's address is accepted: the fighter-name address or the ID address (fallback).
     const bases = [contest.contestUrl, contest.idUrl, contest.cleanUrl].filter(Boolean).map((u) => u.split('?')[0]);
-    if (ch !== 'tiktok' && !bases.some((b) => s.includes(b))) reasons.push(`${ch}_missing_contest_link`);
+    if (!draft.platformCopy && ch !== 'tiktok' && !bases.some((b) => s.includes(b))) reasons.push(`${ch}_missing_contest_link`);
     if (MONEY_WORDS.test(s)) reasons.push(`${ch}_mentions_money_or_prizes`);
     if (HYPE_CLAIMS.test(s) && !(contest.eventName && HYPE_CLAIMS.test(contest.eventName))) reasons.push(`${ch}_claims_title_or_main_event_not_in_contest`);
     if (/\bpodcast\b/i.test(s)) reasons.push(`${ch}_mentions_podcast`);
     for (const m of mediaNames) if (m.length > 5 && norm(s).includes(m) && !norm(`${contest.fighterA} ${contest.fighterB} ${contest.eventName || ''}`).includes(m)) { reasons.push(`${ch}_contains_media_name`); break; }
   }
-  if ((draft.posts?.x || '').replace(/https?:\/\/\S+/g, 'x'.repeat(23)).length > 280) reasons.push('x_post_too_long');
+  if (draft.platformCopy) reasons.push(...require('./growth-platform-copy').validatePlatformCopy(draft,contest,{now}));
+  else if (require('twitter-text').parseTweet(draft.posts?.x||'').weightedLength>280) reasons.push('x_post_too_long');
+  reasons.push(...require('./growth-event-timing').validateTiming(contest));
   const today = dateKeyIn(now, contest.timeZone || 'America/New_York');
   if (contest.dateKey < today) reasons.push('event_date_in_past');
   return reasons;

@@ -8,6 +8,7 @@
   },
   "dependencies": {
     "express": "4.22.1",
+    "he": "1.2.0",
     "jsonwebtoken": "9.0.2",
     "mongodb": "6.21.0",
     "nitro": "3.0.261103-rc",
@@ -16,6 +17,8 @@
     "rollup": "4.67.5",
     "rss-parser": "3.13.0",
     "sharp": "0.35.5",
+    "twitter-text": "3.1.0",
+    "undici": "7.30.2",
     "workflow": "5.4.0"
   },
   "devDependencies": {

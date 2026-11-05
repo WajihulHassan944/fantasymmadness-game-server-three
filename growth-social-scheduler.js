@@ -67,6 +67,7 @@ function createSocialScheduler({ col, social, publisher, reverifyMarketing, affi
     }
     const results = [];
     for (const ch of list) {
+      if(d.platformCopy?.[ch]&&!d.platformCopy[ch].ready){results.push({channel:ch,ok:false,reason:'verified_platform_destination_required'});continue;}
       let text = d.posts?.[ch];
       if (!text) { results.push({ channel: ch, ok: false, reason: 'no_post_for_this_channel' }); continue; }
       if (aff) {

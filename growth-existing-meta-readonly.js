@@ -13,10 +13,10 @@ function createExistingMetaReadOnly({ db, env, fetchImpl=globalThis.fetch, clock
  const graphUrl='https://graph.facebook.com/'+cfg.version;
  async function read(path,fields,token) {
   try {
-   const u=new URL(graphUrl+'/'+path);u.searchParams.set('fields',fields);
+   const u=new URL(graphUrl+'/'+path);if(fields)u.searchParams.set('fields',fields);
    const r=await fetchImpl(u.toString(),{method:'GET',redirect:'error',headers:{Accept:'application/json',Authorization:'Bearer '+token},signal:AbortSignal.timeout(6000)});
    const j=await r.json();
-   if(!r.ok||j?.error){const code=Number(j?.error?.code)||null;return{ok:false,reason:code===190?'existing_authorization_expired_or_revoked':[10,200].includes(code)?'existing_authorization_permissions_missing':[4,17,32,613].includes(code)||r.status===429?'provider_rate_limited':r.status>=500?'provider_temporarily_unavailable':'provider_rejected_existing_authorization',providerCode:code};}
+   if(!r.ok||j?.error){const code=Number(j?.error?.code)||null;return{ok:false,reason:code===190?'existing_authorization_expired_or_revoked':[10,200].includes(code)?'existing_authorization_permissions_missing':[4,17,32,613].includes(code)||r.status===429?'provider_rate_limited':r.status>=500?'provider_temporarily_unavailable':'provider_rejected_existing_authorization',providerCode:code,connectionState:code===190?(Number(j?.error?.error_subcode)===463?'expired':[458,467].includes(Number(j?.error?.error_subcode))?'revoked':'refresh-needed'):[10,200].includes(code)?'insufficient-permissions':'refresh-needed'};}
    return{ok:true,data:j};
   }catch{return{ok:false,reason:'provider_verification_unavailable',providerCode:null};}
  }
@@ -43,18 +43,35 @@ function createExistingMetaReadOnly({ db, env, fetchImpl=globalThis.fetch, clock
    const ig={verified:false,state:'not_verified',reason:tokenProblem||(!validId(igId)?'existing_instagram_account_id_missing':!igToken?'existing_instagram_authorization_missing':null)};
    if(cfg.expected.pageId&&pageId!==cfg.expected.pageId)fb.reason='existing_facebook_identity_does_not_match_pin';
    await Promise.all([
-    (async()=>{if(fb.reason)return;const r=await read('me','id,name',pageToken);if(!r.ok){Object.assign(fb,r);delete fb.ok;return;}if(String(r.data?.id)!==String(pageId)){fb.reason='facebook_provider_identity_mismatch';return;}Object.assign(fb,{verified:true,state:'connected',reason:null,id:String(pageId),name:clean(r.data.name)});})(),
-    (async()=>{if(ig.reason)return;const r=await read(igId,'id,username',igToken);if(!r.ok){Object.assign(ig,r);delete ig.ok;return;}if(String(r.data?.id)!==String(igId)){ig.reason='instagram_provider_identity_mismatch';return;}if(cfg.expected.igUsername&&String(r.data.username||'').toLowerCase()!==cfg.expected.igUsername){ig.reason='instagram_provider_username_does_not_match_pin';return;}Object.assign(ig,{verified:true,state:'connected',reason:null,id:String(igId),username:clean(r.data.username,60)});})()
+    (async()=>{if(fb.reason)return;const r=await read('me','id,name',pageToken);if(!r.ok){Object.assign(fb,r,{state:r.connectionState||'not_verified'});delete fb.ok;return;}if(String(r.data?.id)!==String(pageId)){fb.reason='facebook_provider_identity_mismatch';return;}Object.assign(fb,{verified:true,state:'connected',reason:null,id:String(pageId),name:clean(r.data.name)});})(),
+    (async()=>{if(ig.reason)return;const r=await read(igId,'id,username',igToken);if(!r.ok){Object.assign(ig,r,{state:r.connectionState||'not_verified'});delete ig.ok;return;}if(String(r.data?.id)!==String(igId)){ig.reason='instagram_provider_identity_mismatch';return;}if(cfg.expected.igUsername&&String(r.data.username||'').toLowerCase()!==cfg.expected.igUsername){ig.reason='instagram_provider_username_does_not_match_pin';return;}Object.assign(ig,{verified:true,state:'connected',reason:null,id:String(igId),username:clean(r.data.username,60)});})()
    ]);
    if(ig.verified&&fb.reason==='facebook_provider_identity_mismatch'&&igToken===pageToken){ig.verified=false;ig.state='not_verified';ig.reason='existing_page_token_identity_mismatch';}
    if(ig.verified&&validId(pageId)&&pageToken){const linked=await read(pageId,'instagram_business_account{id}',pageToken);if(!linked.ok){ig.verified=false;ig.state='not_verified';ig.reason='instagram_page_link_verification_unavailable';}else if(String(linked.data?.instagram_business_account?.id)!==String(igId)){ig.verified=false;ig.state='not_verified';ig.reason='instagram_page_link_changed';}}
    const ok=fb.verified&&ig.verified;
    const problems=[!fb.verified&&'Facebook: '+fb.reason,!ig.verified&&'Instagram: '+ig.reason].filter(Boolean);
-   const out={readOnlyExisting:true,state:ok?'connected':fb.verified||ig.verified?'partially_connected':'verification_required',connectionLabel:ok?'Existing Facebook & Instagram verified':fb.verified||ig.verified?'Existing connection partially verified':'Existing connection investigation',source,existingRecordFound:Boolean(doc),encryptionConfigured:vault.configured,appId:doc?.app?.appId||env.GROWTH_META_APP_ID||null,setup:[{done:vault.configured,text:'Original encryption key binding available'},{done:Boolean(doc?.app?.appSecretSealed||env.GROWTH_META_APP_SECRET),text:'Existing Meta application configuration found'}],selected:doc?.selected?{pageId:clean(doc.selected.pageId,40),pageName:clean(doc.selected.pageName),igUserId:clean(doc.selected.igUserId,40),igUsername:clean(doc.selected.igUsername,60)}:null,platforms:{facebook:fb,instagram:ig},health:{checkedAt:clock().toISOString(),ok,problems,warnings:[]},redirectUri:cfg.redirectUri,publishingEnabled:false};
+   const out={grantedScopes:doc?.granted||[],scopesVerification:doc?.granted?'stored_provider_authorization':'not_available',userTokenExpiresAt:doc?.userTokenExpiresAt||null,pageTokenExpiryKnown:false,readOnlyExisting:true,state:ok?'connected':fb.verified||ig.verified?'partially_connected':'verification_required',connectionLabel:ok?'Existing Facebook & Instagram verified':fb.verified||ig.verified?'Existing connection partially verified':'Existing connection investigation',source,existingRecordFound:Boolean(doc),encryptionConfigured:vault.configured,appId:doc?.app?.appId||env.GROWTH_META_APP_ID||null,setup:[{done:vault.configured,text:'Original encryption key binding available'},{done:Boolean(doc?.app?.appSecretSealed||env.GROWTH_META_APP_SECRET),text:'Existing Meta application configuration found'}],selected:doc?.selected?{pageId:clean(doc.selected.pageId,40),pageName:clean(doc.selected.pageName),igUserId:clean(doc.selected.igUserId,40),igUsername:clean(doc.selected.igUsername,60)}:null,platforms:{facebook:fb,instagram:ig},health:{checkedAt:clock().toISOString(),ok,problems,warnings:[]},redirectUri:cfg.redirectUri,publishingEnabled:false};
    await cache.updateOne({_id:'meta-existing'},{$set:{stamp,checkedAt:out.health.checkedAt,status:out}},{upsert:true});return out;
   })();try{return await inFlight;}finally{inFlight=null;}
  }
+ async function permissions(){
+  const scoped=await local.findOne({key:'meta'}),prior=await original.findOne({key:'meta'}),doc=scoped?.selected||scoped?.disconnectedAt?scoped:prior||scoped;
+  if(!doc?.userTokenSealed)return{verified:false,reason:'original_meta_permission_token_not_available',granted:doc?.granted||[],expiresAt:doc?.userTokenExpiresAt||null,refreshSupported:false};
+  let token;try{token=vault.open(doc.userTokenSealed,'meta:user');}catch{return{verified:false,reason:'original_meta_permission_key_unavailable',refreshSupported:false};}
+  const result=await read('me/permissions',null,token);if(!result.ok)return{verified:false,reason:result.reason,granted:doc.granted||[],expiresAt:doc.userTokenExpiresAt||null,refreshSupported:false};
+  return{verified:true,granted:(result.data.data||[]).filter(x=>x.status==='granted').map(x=>x.permission),declined:(result.data.data||[]).filter(x=>x.status!=='granted').map(x=>x.permission),checkedAt:clock().toISOString(),expiresAt:doc.userTokenExpiresAt||null,refreshSupported:false,lifecycle:'Facebook Page authorization has no generic OAuth refresh token; retain working Page tokens and reconnect only when provider validation requires it.'};
+ }
+ async function profileWebsite(){
+  const s=await status();if(!s.platforms.instagram.verified)return{verified:false,reason:'instagram_identity_not_verified'};
+  const scoped=await local.findOne({key:'meta'}),prior=await original.findOne({key:'meta'});
+  const doc=scoped?.selected||scoped?.disconnectedAt?scoped:prior||scoped;
+  const id=s.platforms.instagram.id;let token;
+  try{if(doc?.selected){const page=(doc.pages||[]).find(p=>p.id===doc.selected.pageId);token=vault.open(page.tokenSealed,'meta:page:'+doc.selected.pageId);}else token=env.GROWTH_IG_ACCESS_TOKEN||env.INSTAGRAM_ACCESS_TOKEN||env.GROWTH_FB_PAGE_ACCESS_TOKEN||env.FACEBOOK_PAGE_ACCESS_TOKEN||env.META_PAGE_ACCESS_TOKEN;}catch{return{verified:false,reason:'existing_website_lookup_key_unavailable'};}
+  const r=await read(id,'id,website',token);
+  if(!r.ok||String(r.data?.id)!==String(id))return{verified:false,reason:r.reason||'profile_website_identity_mismatch'};
+  return{verified:true,accountId:id,website:typeof r.data.website==='string'?r.data.website:null,checkedAt:clock().toISOString(),reason:r.data.website?null:'provider_profile_website_empty'};
+ }
  async function summary(){const s=await status();return{existingRecordFound:s.existingRecordFound,source:s.source,encryptionConfigured:s.encryptionConfigured,checkedAt:s.health.checkedAt,facebook:{verified:s.platforms.facebook.verified,state:s.platforms.facebook.state,reason:s.platforms.facebook.reason},instagram:{verified:s.platforms.instagram.verified,state:s.platforms.instagram.state,reason:s.platforms.instagram.reason},credentialsChanged:false,publishingEnabled:false};}
- return{init:async()=>{},status,summary,healthCheck:async options=>{const s=await status(options);return{...s.health,readOnly:true};},setApp:blocked,startAuthorization:blocked,handleCallback:blocked,selectPage:blocked,disconnect:blocked,credentials:async()=>null,graphUrl,liveTestApproved:false};
+ return{init:async()=>{},status,summary,profileWebsite,permissions,healthCheck:async options=>{const s=await status(options);return{...s.health,readOnly:true};},setApp:blocked,startAuthorization:blocked,handleCallback:blocked,selectPage:blocked,disconnect:blocked,credentials:async()=>null,graphUrl,liveTestApproved:false};
 }
 module.exports={createExistingMetaReadOnly};

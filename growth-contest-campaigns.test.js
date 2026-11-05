@@ -71,12 +71,12 @@ test('all five sports map, including pro wrestling from its own feed', () => {
 });
 
 test('campaign copy is event-specific, factual, and passes the safeguard', () => {
-  const c = verifyContest(fight({ venue: 'Ariake Arena', eventCity: 'Tokyo', maxRounds: 12, matchTime: '19:00', eventTimeZone: 'Asia/Tokyo' }), { now: NOW }).contest;
+  const c = verifyContest(fight({ venue: 'Ariake Arena', eventCity: 'Tokyo', maxRounds: 12, matchTime: '19:00', eventTimeZone: 'Asia/Tokyo',eventStartAt:day(5)+'T10:00:00Z',eventTimeVerified:true,eventTimeSourceUrl:'https://official.example/event' }), { now: NOW }).contest;
   const k = buildCampaign(c);
   for (const t of Object.values(k.posts)) { assert.match(t, /Naoya Inoue vs Murodjon Akhmadaliev/); assert.match(t, /round/i); assert.doesNotMatch(t, /prize|\$|podcast|title fight|main event/i); }
   assert.match(k.posts.instagram, /Ariake Arena, Tokyo/); assert.match(k.posts.instagram, /12 rounds/); assert.match(k.posts.instagram, /7:00 PM GMT\+9|7:00 PM JST/);
   assert.match(k.posts.x, /#Boxing #FANTASYMMADNESS/);
-  const draft = { kind: 'marketing', genre: 'boxing', contestId: c.id, text: k.text, posts: k.posts };
+  const draft = { kind: 'marketing', genre: 'boxing', contestId: c.id, ...k,text: k.text, posts: k.posts };
   assert.deepEqual(checkCampaign(draft, c, { now: NOW, mediaNames: media }), []);
   // No venue/time given -> none invented
   const bare = buildCampaign(verifyContest(fight(), { now: NOW }).contest);
@@ -86,7 +86,7 @@ test('campaign copy is event-specific, factual, and passes the safeguard', () =>
 test('safeguard blocks wrong, invented or media-based campaigns', () => {
   const c = verifyContest(fight(), { now: NOW }).contest;
   const ok = buildCampaign(c);
-  const base = { kind: 'marketing', genre: 'boxing', contestId: c.id, text: ok.text, posts: ok.posts };
+  const base = { kind: 'marketing', genre: 'boxing', contestId: c.id, ...ok,text: ok.text, posts: ok.posts };
   const bad = (patch) => checkCampaign({ ...base, ...patch }, c, { now: NOW, mediaNames: media });
   assert.ok(bad({ text: 'Mannix and Mora: fight-week prediction challenge — make your picks' }).length);
   assert.ok(bad({ text: ok.text + ' Win a $500 prize!' }).some((r) => /money/.test(r)));

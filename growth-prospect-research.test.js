@@ -52,10 +52,10 @@ test('no guessed contacts: hosting-platform, no-reply, missing, opted-out and un
   assert.equal(extractContact({ managingEditor: 'editor@show.example (Pat Lee)' }).email, 'editor@show.example');
 });
 
-test('department by what the show is: news/interview -> PR, fan/picks -> affiliate (never both)', async () => {
+test('podcasts stay in PR unless independent affiliate suitability is evidenced', async () => {
   const { fetchImpl, boxing, mma } = await setup();
   const rs = createProspectResearch({ fetchImpl });
-  assert.equal(assignTrack({ focuses: ['fans', 'partners'], research: await rs.research(boxing[0], { contests, now: NOW }) }), 'affiliate');
+  assert.equal(assignTrack({ focuses: ['fans', 'partners'], research: await rs.research(boxing[0], { contests, now: NOW }) }), 'pr');
   assert.equal(assignTrack({ focuses: ['fans', 'partners'], research: await rs.research(mma[0], { contests, now: NOW }) }), 'pr');
 });
 
@@ -66,8 +66,8 @@ test('personalized PR pitch and affiliate proposal: show, episode, fight evidenc
   const aff = compose({ prospect: boxing[0], research: rb, contests, track: 'affiliate' });
   assert.equal(aff.ok, true, aff.reason);
   assert.match(aff.subject, /boxing podcast show 1 fan league for Naoya Inoue vs Murodjon Akhmadaliev/);
-  assert.match(aff.text, /^Hi Dana,/); assert.match(aff.text, /Inoue preview and boxing picks/); assert.match(aff.text, /Mentioned Naoya Inoue/);
-  assert.match(aff.text, /affiliate-create-account\?utm_source=fan_acquisition&utm_medium=partner_outreach&utm_campaign=combat_fans_aff_/);
+  assert.match(aff.text, /^Hi,/); assert.match(aff.text, /Inoue preview and boxing picks/); assert.match(aff.text, /Mentioned Naoya Inoue/);
+  assert.match(aff.text, /auth\?mode=signup&role=affiliate&utm_source=fan_acquisition&utm_medium=partner_outreach&utm_campaign=combat_fans_aff_/);
   assert.match(aff.html, /fantasy-mmadness-main-logo/); assert.match(aff.html, /contact@fantasymmadnesscom\.com/);
   assert.equal(aff.angle.kind, 'fight_mentioned'); assert.equal(aff.angle.contestId, 'bx0000000001');
   for (const m of [aff]) { assert.ok(!MONEY_WORDS.test(m.text.replace(/nothing to pay/gi, ''))); assert.ok(!/\d+\s*%|commission of|\$\d/.test(m.text)); }

@@ -188,38 +188,14 @@ function installGrowthSocialOAuth({ router, env, db, fetchImpl = globalThis.fetc
     if (!c) return res.status(409).json({ ok: false, error: 'confirmation_expired_or_invalid' });
     if (configs[p].expected && configs[p].expected !== c.identity) return res.status(403).json({ ok: false, error: 'account_mismatch' });
     try {
-      const saved = await accounts.updateOne({ _id: p, generation:c.generation, $or:[{identity:c.identity},{confirmed:{$ne:true}}] }, { $set: { provider: p, identity: c.identity, username: c.username, displayName: c.displayName, credentials: encrypt(proof.tokens, key), refreshAvailable: Boolean(proof.tokens.refresh_token), revision: random(), verifiedAt: c.verifiedAt, tokenExpiresAt: c.tokenExpiresAt, confirmedBy: req.socialAdmin.email, connectedAt: clock(), status: 'connected', confirmed:true, publishingEnabled: false } });
+      const saved = await accounts.updateOne({ _id: p, generation:c.generation, $or:[{identity:c.identity},{confirmed:{$ne:true}}] }, { $set: { provider: p, identity: c.identity, username: c.username, displayName: c.displayName, credentials: encrypt(proof.tokens, key), refreshAvailable: Boolean(proof.tokens.refresh_token), revision: random(), verifiedAt: c.verifiedAt, tokenExpiresAt: c.tokenExpiresAt, confirmedBy: req.socialAdmin.email, connectedAt: clock(), grantedScopes:String(proof.tokens.scope||'').split(/[ ,]+/).filter(Boolean), scopesVerifiedAt:clock(), identityVerifiedAt:clock(), ...(Number.isFinite(proof.tokens.refresh_expires_in)?{refreshExpiresAt:new Date(clock().getTime()+proof.tokens.refresh_expires_in*1000)}:{}), status: 'connected', confirmed:true, publishingEnabled: false } });
       if (!saved.modifiedCount) return res.status(409).json({ok:false,error:'approved_account_changed_or_disconnected'});
     } catch (e) { if (e.code === 11000) return res.status(409).json({ ok: false, error: 'approved_account_changed' }); throw e; }
     res.json({ ok: true, identity: c.identity, publishingEnabled: false });
   }));
-  // Administrator-triggered refresh only; tokens are never used to publish.
-  router.post('/social/:provider/refresh', sameOrigin, auth, wrap(async (req, res) => {
-    const p = selected(req, res); if (!p) return;
-    const lock = random();
-    const account = await accounts.findOneAndUpdate({ _id: p, confirmed:true, status: 'connected', credentials: { $exists: true }, $or: [{ refreshLockUntil: { $exists: false } }, { refreshLockUntil: { $lte: clock() } }] }, { $set: { refreshLock: lock, refreshLockUntil: new Date(clock().getTime() + 60000) } }, { returnDocument: 'after' });
-    if (!account) return res.status(409).json({ok:false,error:'not_connected_or_refresh_in_progress'});
-    try {
-      const previous = decrypt(account.credentials, key);
-      if (!previous.refresh_token) return res.status(409).json({ok:false,error:'reauthorization_required'});
-      const body = new URLSearchParams({ grant_type:'refresh_token',refresh_token:previous.refresh_token });
-      const headers = {'Content-Type':'application/x-www-form-urlencoded',Accept:'application/json'};
-      body.set(p==='tiktok'?'client_key':'client_id',configs[p].clientId);
-      if(p==='x')headers.Authorization='Basic '+Buffer.from(encodeURIComponent(configs[p].clientId)+':'+encodeURIComponent(configs[p].secret)).toString('base64');else body.set('client_secret',configs[p].secret);
-      let tokens,profile;
-      try {
-        const r=await remote(PROVIDERS[p].token,{method:'POST',headers,body:body.toString()});if(!r.ok)throw Error();tokens=await r.json();
-        if(tokens.error||typeof tokens.access_token!=='string'||!/^[^\s]{8,4096}$/.test(tokens.access_token)||String(tokens.token_type).toLowerCase()!=='bearer'||!Number.isFinite(tokens.expires_in)||tokens.expires_in<=0||tokens.expires_in>2678400||(tokens.refresh_token!==undefined&&(typeof tokens.refresh_token!=='string'||!/^[^\s]{8,4096}$/.test(tokens.refresh_token)))||!String(tokens.scope||'').split(/[ ,]+/).includes(p==='tiktok'?'user.info.basic':'users.read'))throw Error();
-        const m=await remote(PROVIDERS[p].me,{headers:{Authorization:'Bearer '+tokens.access_token,Accept:'application/json'}});if(!m.ok)throw Error();profile=await m.json();
-      }catch{return res.status(400).json({ok:false,error:'refresh_or_identity_verification_failed'});}
-      const identity=p==='tiktok'?profile.data?.user?.open_id:profile.data?.id;
-      if(identity!==account.identity || (p==='tiktok' && (tokens.open_id!==identity || profile.error?.code && profile.error.code!=='ok')) || (p==='x' && String(profile.data?.username||'').toLowerCase()!=='fmmadness2024'))return res.status(403).json({ok:false,error:'refresh_identity_mismatch'});
-      if(!tokens.refresh_token)tokens.refresh_token=previous.refresh_token;
-      const r=await accounts.updateOne({_id:p,status:'connected',revision:account.revision,refreshLock:lock},{$set:{credentials:encrypt(tokens,key),refreshAvailable:true,tokenExpiresAt:new Date(clock().getTime()+tokens.expires_in*1000),refreshedAt:clock(),revision:random(),publishingEnabled:false}});
-      if(!r.modifiedCount)return res.status(409).json({ok:false,error:'account_changed_during_refresh'});
-      res.json({ok:true,publishingEnabled:false});
-    } finally { await accounts.updateOne({_id:p,refreshLock:lock},{$unset:{refreshLock:'',refreshLockUntil:''}}); }
-  }));
+  const manager=require('./growth-social-connection-manager').createConnectionManager({db,env,fetchImpl,clock});
+  router.post('/social/:provider/refresh',sameOrigin,auth,wrap(async(req,res)=>{const p=selected(req,res);if(!p)return;const out=await manager.renew(p,{force:true});res.status(out.status||200).json(out);}));
+  router.post('/internal/connections/maintenance',wrap(async(req,res)=>{const x=Buffer.from(String(req.headers.authorization||'')),y=Buffer.from('Bearer '+String(env.CRON_SECRET||''));if(!env.CRON_SECRET||x.length!==y.length||!crypto.timingSafeEqual(x,y))return res.status(401).json({ok:false});const policy=await db.collection('preview198_growth_settings').findOne({_id:'autonomy:policy'});const maintenance=await manager.maintain({paused:policy?.paused===true});const meta=require('./growth-existing-meta-readonly').createExistingMetaReadOnly({db,env,fetchImpl});const metaStatus=policy?.paused?null:await meta.summary();const permissions=policy?.paused?null:await meta.permissions();res.json({ok:true,...maintenance,meta:metaStatus,metaPermissions:permissions});}));
   router.post('/social/:provider/disconnect', sameOrigin, auth, wrap(async (req, res) => {
     const p = selected(req, res); if (!p) return;
     await accounts.updateOne({ _id: p }, { $inc:{generation:1}, $unset: { credentials: '' }, $set: { provider:p, status: 'disconnected', refreshAvailable: false, revision: random(), publishingEnabled: false, disconnectedAt: clock() } }, {upsert:true});
@@ -230,7 +206,7 @@ function installGrowthSocialOAuth({ router, env, db, fetchImpl = globalThis.fetc
   router.get('/social/connections', auth, wrap(async (req, res) => {
     const docs = await accounts.find({}).toArray();
     const list = await candidates.find({ session: req.socialSession, expiresAt: { $gt: clock() } }).toArray();
-    res.json({ ok: true, database: 'fmgrowthtest', publishingEnabled: false, providers: Object.keys(PROVIDERS).map(provider => ({ provider, configured: !config.errors(provider).length, blockers: config.errors(provider), callbackUrl: callback(provider) })), connections: docs.filter(d=>d.confirmed===true && d.identity).map(d => ({ provider: d.provider, identity: d.identity, displayName: d.displayName, username: d.username, refreshAvailable: d.refreshAvailable === true, status: d.status === 'connected' && d.tokenExpiresAt > clock() ? 'connected' : d.status === 'connected' ? 'expired' : 'disconnected', publishingEnabled: false })), pending: list.map(d => ({ candidateId: d._id, provider: d.provider, identity: d.identity, username: d.username, displayName: d.displayName, expiresAt: d.expiresAt })) });
+    res.json({ ok: true, database: 'fmgrowthtest', publishingEnabled: false, providers: Object.keys(PROVIDERS).map(provider => ({ provider, configured: !config.errors(provider).length, blockers: config.errors(provider), callbackUrl: callback(provider) })), connections: docs.filter(d=>d.confirmed===true && d.identity).map(d => ({ provider: d.provider, identity: d.identity, displayName: d.displayName, username: d.username, refreshAvailable: d.refreshAvailable === true, ...manager.summary(d), publishingEnabled: false })), pending: list.map(d => ({ candidateId: d._id, provider: d.provider, identity: d.identity, username: d.username, displayName: d.displayName, expiresAt: d.expiresAt })) });
   }));
   const ui = require('./growth-social-oauth-console');
   const nextIntegratedConsole = (req, res) => {

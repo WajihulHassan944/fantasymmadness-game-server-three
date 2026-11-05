@@ -115,7 +115,7 @@ function createBackoffice({ runtime, manualOnly = false }) {
   }
 
   // ---- campaign approvals: safe edits + manual publishing record -----------
-  async function editDraft(id, { headline, text, subject, admin, now = new Date() } = {}) {
+  async function editDraft(id, { headline, text, subject, channel='facebook', admin, now = new Date() } = {}) {
     const set = {};
     if (headline !== undefined) { if (!oneLine(headline, 180)) return { ok: false, reason: 'headline_required' }; set.headline = oneLine(headline, 180); }
     if (text !== undefined) { if (!clean(text, 4000)) return { ok: false, reason: 'text_required' }; set.text = clean(text, 4000); }
@@ -136,8 +136,10 @@ function createBackoffice({ runtime, manualOnly = false }) {
       if (!current.contestId || !current.contest) return { ok: false, reason: 'not_based_on_a_verified_contest' };
       // The edited caption is used for Instagram and Facebook; each keeps its own campaign tags.
       if (set.text) {
-        set.posts = { ...(current.posts || {}), instagram: contestCampaigns.tagCampaignLinks(set.text, current.contest, 'instagram'), facebook: contestCampaigns.tagCampaignLinks(set.text, current.contest, 'facebook') };
-        set.text = set.posts.instagram;
+        if(!require('./growth-platform-copy').RULES[channel])return{ok:false,reason:'invalid_caption_platform'};
+        set.posts={...(current.posts||{}),[channel]:['facebook','x'].includes(channel)?contestCampaigns.tagCampaignLinks(set.text,current.contest,channel):set.text};
+        set.text=channel==='instagram'?set.posts.instagram:current.text;
+        if(current.platformCopy)set.platformCopy={...current.platformCopy,[channel]:{...current.platformCopy[channel],caption:set.posts[channel]}};
       }
       const rows = await col.prospects.find({}, { projection: { name: 1 } }).toArray();
       const mediaNames = new Set(rows.map((r) => contestCampaigns.norm(r.name)).filter((n) => n.length >= 4));

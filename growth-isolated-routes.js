@@ -79,8 +79,8 @@ function registerIsolatedGrowthRoutes({ app, env = process.env, express, transpo
       const rt = await getRuntime();
       if (sessionAuth && req.admin) {
         previewBootstrap ||= (async () => {
-          if (await rt.collections.drafts.countDocuments({ kind: 'marketing' }) !== 0) return;
-          try { await rt.refreshMarketing(new Date(), { trigger: 'isolated_preview_bootstrap' }); }
+          if(await rt.collections.settings.findOne({_id:'ui-quality-refinement-v2'}))return;
+          try {const marketing=await rt.refreshMarketing(new Date(), { trigger: 'isolated_preview_bootstrap' });const emails=await rt.refineEmailDrafts();await rt.collections.settings.updateOne({_id:'ui-quality-refinement-v2'},{$set:{marketing:marketing.refinement,emails,at:new Date().toISOString()}},{upsert:true}); }
           catch { await rt.collections.audit.insertOne({ action: 'preview_bootstrap_source_unavailable', at: new Date().toISOString() }); }
         })().catch(error => { previewBootstrap = null; throw error; });
         await previewBootstrap;
@@ -286,6 +286,7 @@ function registerIsolatedGrowthRoutes({ app, env = process.env, express, transpo
     const failedMail = await n(c.drafts, { status: 'delivery_failed' });
     const k = { mk: { open: await n(c.drafts, { kind: 'marketing', status: { $in: ['needs_owner_review', 'approved'] } }), waiting: await n(c.drafts, { kind: 'marketing', status: 'needs_owner_review' }), scheduled: await n(c.social, { status: 'scheduled' }), sandboxPosts: await n(c.social, { status: 'published', sandbox: true }), livePosts: await n(c.social, { status: 'published', sandbox: { $ne: true } }) } };
     for (const t of ['pr', 'affiliate']) k[t] = { researched: await n(c.prospects, { track: t }), contacts: await n(c.prospects, { track: t, contactSource: { $exists: true } }), drafted: await n(c.drafts, { kind: t, autoResearched: true }), waiting: await n(c.drafts, { kind: t, status: 'needs_owner_review' }), approved: await n(c.drafts, { kind: t, status: { $in: ['approved', 'delivered'] } }), sandboxSent: await n(c.drafts, { kind: t, status: 'delivered', realDelivery: { $ne: true } }), realSent: await n(c.drafts, { kind: t, status: 'delivered', realDelivery: true }) };
+    k.affiliate.researched=await n(c.recruitment,{researchedAt:{$exists:true}});k.affiliate.contacts=await n(c.recruitment,{'contact.verified':true});
     const mode = (x) => (x.mode === 'live' ? 'Live' : x.mode === 'sandbox' ? 'Sandbox' : 'Off');
     const dep = (key, label, status, headline, facts, next) => ({ key, label, status, headline, facts, next });
     const departments = [
@@ -303,7 +304,7 @@ function registerIsolatedGrowthRoutes({ app, env = process.env, express, transpo
       ...(failedMail ? [{ kind: 'email', text: `${failedMail} email(s) failed in the sandbox/provider`, route: 'approvals' }] : []),
     ];
     const autonomy = {
-      automatic: ['Finding verified fights and preparing fight campaigns', 'Researching shows, finding published business contacts, writing personalized PR and affiliate drafts', 'Re-checking fights before posting, scheduling, retries, duplicate prevention', 'Connection health checks and interrupted-run recovery', 'Building approved emails in the sandbox outbox'],
+      automatic: ['Finding verified fights and preparing fight campaigns', 'Researching PR shows and independent fighters, trainers, gyms, managers, promoters and creators; preparing sourced drafts', 'Re-checking fights before posting, scheduling, retries, duplicate prevention', 'Connection health checks and interrupted-run recovery', 'Building approved emails in the sandbox outbox'],
       needsOwner: ['Approving every campaign, pitch and proposal', 'Authorizing any real post (controlled live test) or real email sending', 'Connecting Meta and choosing the Page', 'Linking an affiliate’s live affiliate ID after they join'],
       notConnected: [att.paymentSource.connected ? null : 'Real payments and registrations (staging uses signed test events only)', resolved.config.delivery.realDelivery ? null : 'Real email sending'].filter(Boolean),
     };
@@ -349,7 +350,7 @@ function registerIsolatedGrowthRoutes({ app, env = process.env, express, transpo
   router.get('/admin/jobs', admin, wrap(async (req, res, rt) => res.json({ ok: true, jobs: await bo(rt).jobs({ state: req.query.state, limit: req.query.limit }) })));
   router.get('/admin/workstreams', admin, wrap(async (req, res, rt) => res.json({ ok: true, ...(await bo(rt).workstreams({ runId: req.query.runId, department: req.query.department })) })));
   router.get('/admin/workstreams/:runId/:workstreamId', admin, wrap(async (req, res, rt) => { const w = await bo(rt).workstreamDetail(req.params.runId, req.params.workstreamId); res.status(w ? 200 : 404).json(w ? { ok: true, workstream: w } : { ok: false, reason: 'not_found' }); }));
-  router.post('/admin/drafts/:id/edit', admin, wrap(async (req, res, rt) => { const r = await bo(rt).editDraft(req.params.id, { headline: req.body?.headline, text: req.body?.text, subject: req.body?.subject, admin: who(req) }); res.status(r.ok ? 200 : (r.reason === 'not_found' ? 404 : 409)).json(r); }));
+  router.post('/admin/drafts/:id/edit', admin, wrap(async (req, res, rt) => { const r = await bo(rt).editDraft(req.params.id, { headline: req.body?.headline, text: req.body?.text, subject: req.body?.subject, channel:req.body?.channel,admin: who(req) }); res.status(r.ok ? 200 : (r.reason === 'not_found' ? 404 : 409)).json(r); }));
   router.post('/admin/drafts/:id/mark-published', admin, wrap(async (req, res, rt) => { const r = await bo(rt).markPublished(req.params.id, { postUrl: req.body?.postUrl, admin: who(req) }); res.status(r.ok ? 200 : 409).json(r); }));
   router.get('/admin/marketing/coverage', admin, wrap(async (req, res, rt) => res.json({ ok: true, coverage: await bo(rt).marketingCoverage() })));
   router.post('/admin/marketing/refresh', admin, wrap(async (req, res, rt) => { const r = await rt.refreshMarketing(new Date(), { trigger: `owner:${who(req)}` }); res.json({ ok: true, result: { created: r.created, withdrawn: r.withdrawn, blocked: r.blocked, verifiedContests: r.contests.length, sourceReachable: r.sourceReachable } }); }));
@@ -455,6 +456,9 @@ function registerIsolatedGrowthRoutes({ app, env = process.env, express, transpo
   router.post('/admin/social/:id/retry', admin, wrap(async (req, res, rt) => { const r = await rt.social.retry(req.params.id, { admin: who(req), confirmNotPublished: req.body?.confirmNotPublished === true }); res.status(r.ok ? 200 : 409).json(r); }));
 
   // ---- affiliates ----
+  router.get('/admin/recruitment',admin,wrap(async(req,res,rt)=>{const prospects=await rt.recruitment.list(req.query);const state=await rt.collections.settings.findOne({_id:'affiliate-discovery-cursor'});const c=rt.collections;const counters={discovered:await c.recruitment.countDocuments({}),researched:await c.recruitment.countDocuments({researchedAt:{$exists:true}}),verifiedContacts:await c.recruitment.countDocuments({'contact.verified':true}),drafted:await c.drafts.countDocuments({kind:'affiliate',recruitmentSource:'independent_public_partner'}),awaitingApproval:await c.drafts.countDocuments({kind:'affiliate',status:'needs_owner_review'}),approved:await c.drafts.countDocuments({kind:'affiliate',ownerApproved:true}),sandboxCaptures:await c.sandboxMail.countDocuments({kind:'affiliate'}),externalMessagesSent:0,responses:await c.recruitment.countDocuments({status:'responded'}),onboarded:await c.recruitment.countDocuments({status:{$in:['onboarding','active']}}),active:await c.affiliates.countDocuments({status:'active',liveAffiliateId:{$regex:'^[a-f0-9]{24}$'}}),attributedPayingConversions:null};res.json({ok:true,prospects,counters,program:await rt.recruitment.readiness(),lastResearch:state,nextScheduledAt:(await bo(rt).schedulerStatus()).nextWakeAt||null,publishingEnabled:false,outboundEnabled:false});}));
+  router.post('/admin/recruitment/:id/status',admin,autonomyOwner,wrap(async(req,res,rt)=>{const r=await rt.recruitment.transition(req.params.id,req.body?.status,{evidenceUrl:req.body?.evidenceUrl,note:req.body?.note});res.status(r.ok?200:409).json(r);}));
+  router.post('/admin/recruitment/:id/correct',admin,autonomyOwner,wrap(async(req,res,rt)=>{const r=await rt.recruitment.correct(req.params.id,{...req.body,actor:who(req)});res.status(r.ok?200:409).json(r);}));
   router.get('/admin/affiliates', admin, wrap(async (req, res, rt) => res.json({ ok: true, affiliates: await rt.affiliates.list(await bo(rt).activeContests()) })));
   router.post('/admin/affiliates/:id/status', admin, wrap(async (req, res, rt) => { const r = await rt.affiliates.transition(req.params.id, String(req.body?.status || ''), { admin: who(req), note: req.body?.note, liveAffiliateId: req.body?.liveAffiliateId }); res.status(r.ok ? 200 : 409).json(r); }));
 

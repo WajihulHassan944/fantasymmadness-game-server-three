@@ -29,7 +29,7 @@ const SITE_HOST = 'www.fantasymmadness.com';
 const BRAND = 'FANTASY MMADNESS';
 const FORMATS = Object.freeze({ portrait: { width: 1080, height: 1350, use: ['instagram', 'facebook', 'x'] }, story: { width: 1080, height: 1920, use: ['tiktok'] } });
 const SPORT_LABEL = { boxing: 'BOXING', 'mma-ufc': 'MMA / UFC', kickboxing: 'KICKBOXING', 'bare-knuckle': 'BARE-KNUCKLE', 'pro-wrestling': 'PRO WRESTLING' };
-const RENDER_VERSION = 'v8-original-art';
+const RENDER_VERSION = 'v9-verified-event-time';
 
 const sha = (b) => crypto.createHash('sha256').update(b).digest('hex');
 const esc = (s) => String(s ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
@@ -41,11 +41,9 @@ function dayText(c) {
   return new Date(Date.UTC(y, m - 1, d, 12)).toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric', year: 'numeric', timeZone: 'UTC' }).toUpperCase();
 }
 function timeText(c) {
-  if (c.timeTba || !c.matchTime || !c.timeZone) return null;
-  const [y, m, d] = c.dateKey.split('-').map(Number);
-  const [hh, mm] = c.matchTime.split(':').map(Number);
-  const abbr = new Intl.DateTimeFormat('en-US', { timeZone: c.timeZone, timeZoneName: 'short' }).formatToParts(new Date(Date.UTC(y, m - 1, d, 12))).find((p) => p.type === 'timeZoneName')?.value || '';
-  return `${((hh + 11) % 12) + 1}:${String(mm).padStart(2, '0')} ${hh >= 12 ? 'PM' : 'AM'}${abbr ? ' ' + abbr : ''}`;
+  if (!c.timing?.eventTimeVerified) return null;
+  return require('./growth-event-timing').timeLabel(c).replace(/^Event start: /,'');
+
 }
 function canonicalUrl(c) { return c.cleanUrl || c.contestUrl; }
 function posterFacts(c, qrUrl) {

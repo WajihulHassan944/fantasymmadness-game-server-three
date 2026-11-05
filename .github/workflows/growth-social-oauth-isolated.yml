@@ -59,6 +59,15 @@ jobs:
         run: node growth-social-oauth-console.browser.test.js
       - name: Integrated back office, affiliate QR parity and sandbox receipt regressions
         run: node --test --test-concurrency=1 growth-existing-meta-readonly.test.js growth-backoffice-preview.integration.test.js growth-autonomy-safety.integration.test.js growth-affiliate-program.test.js growth-affiliate-attribution.test.js growth-fight-urls.integration.test.js growth-backoffice.test.js growth-sandbox-receipt-reporting.test.js growth-registry-refresh.integration.test.js
+      - name: Platform copy, PR quality, independent affiliate recruitment and connection persistence
+        run: |
+          node growth-quality-refinement.test.js
+          node growth-draft-refinement.integration.test.js
+          node growth-social-connection-manager.test.js
+          node growth-affiliate-recruitment.test.js
+          node growth-prospect-research.test.js
+          node growth-contest-campaigns.test.js
+          node growth-fight-urls.test.js
       - run: npm audit --omit=dev --audit-level=high
 
       - name: Verify deployed isolated Preview without provider authorization

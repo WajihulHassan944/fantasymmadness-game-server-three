@@ -75,7 +75,7 @@ function relinkCampaign(draft, c) {
   const to = c.cleanUrl || c.idBase || idBaseFor(c);
   const swap = (t) => from.reduce((acc, f) => relink(acc, f, to), t);
   const posts = {};
-  for (const [ch, t] of Object.entries(draft.posts || {})) posts[ch] = ch === 'tiktok' ? tiktokLine(t, c) : swap(t);
+  for (const [ch, t] of Object.entries(draft.posts || {})) posts[ch] = draft.copyVersion===2?(['facebook','x'].includes(ch)?swap(t):t):ch === 'tiktok' ? tiktokLine(t, c) : swap(t);
   return { text: swap(draft.text), posts, link: swap(draft.link) };
 }
 

@@ -53,12 +53,13 @@ test('fighter-name URLs in every campaign, with the ID address as fallback', { s
   const drafts = client.db('fmgrowthtest').collection('growth_drafts');
   const expire = () => client.db('fmgrowthtest').collection('growth_fight_urls').updateMany({}, { $set: { checkedAt: new Date(0).toISOString() } });
   const BX = 'bx0000000001';
+  let approvedId,scheduledPostId;
   try {
     await t.test('website without clean URLs (today): campaigns use the working ID address', async () => {
       await rt.refreshMarketing(new Date());
       const d = await drafts.findOne({ contestId: BX });
       assert.ok(d, 'campaign created');
-      for (const ch of ['facebook', 'instagram', 'x']) assert.ok(d.posts[ch].includes(`${SITE}/fight/${BX}?play=1&utm_source=fan_acquisition`), ch);
+      for (const ch of ['facebook','x']) assert.ok(d.posts[ch].includes(`${SITE}/fight/${BX}?play=1&utm_source=fan_acquisition`), ch);
       assert.equal(d.contest.urlSource, 'id'); assert.equal(d.contest.cleanUrl, null);
       assert.ok(siteCalls.some((c) => c.url === `${SITE}/fight/${BX}`), 'the website was asked');
     });
@@ -72,22 +73,14 @@ test('fighter-name URLs in every campaign, with the ID address as fallback', { s
       assert.equal(after.posts.facebook, d.posts.facebook); assert.equal((after.linkHistory || []).length, 0);
     });
 
-    await t.test('an owner edit that drops the tracking tags gets them back (attribution kept)', async () => {
-      const d = await drafts.findOne({ contestId: 'kb0000000002' });
-      const bare = d.posts.instagram.replace(/\?play=1&\S+/, '');
-      assert.ok(!/utm_/.test(bare));
-      const r = await call('POST', `/admin/drafts/${encodeURIComponent(d.id)}/edit`, { text: bare });
-      assert.equal(r.status, 200, JSON.stringify(r.json));
-      const after = await drafts.findOne({ id: d.id });
-      assert.match(after.posts.instagram, /\?play=1&utm_source=fan_acquisition&utm_medium=partner_outreach&utm_campaign=combat_fans_gs_kickboxing&utm_content=instagram/);
-      assert.match(after.posts.facebook, /utm_content=facebook/);
-      // an older edited campaign without tags is repaired by the next refresh
-      await drafts.updateOne({ id: d.id }, { $set: { 'posts.facebook': bare, editedAt: new Date().toISOString() } });
-      await rt.refreshMarketing(new Date());
-      assert.match((await drafts.findOne({ id: d.id })).posts.facebook, /utm_campaign=combat_fans_gs_kickboxing&utm_content=facebook/);
+    await t.test('platform editing restores tracking; refresh never overwrites owner work',async()=>{
+      const d=await drafts.findOne({contestId:'kb0000000002'}),bare=d.posts.facebook.replace(/\?play=1&\S+/,'');
+      const r=await call('POST',`/admin/drafts/${encodeURIComponent(d.id)}/edit`,{text:bare,channel:'facebook'});assert.equal(r.status,200,JSON.stringify(r.json));
+      const after=await drafts.findOne({id:d.id});assert.match(after.posts.facebook,/utm_content=facebook/);assert.equal(after.posts.instagram,d.posts.instagram);
+      await drafts.updateOne({id:d.id},{$set:{'posts.facebook':bare,editedAt:new Date().toISOString()}});await rt.refreshMarketing(new Date());assert.equal((await drafts.findOne({id:d.id})).posts.facebook,bare);
+      assert.equal((await rt.approveDraft(d.id,{admin:'owner@fixture.invalid'})).ok,false,'owner work with broken attribution must await correction');
     });
 
-    let approvedId; let scheduledPostId;
     await t.test('an approved campaign is scheduled while only the ID address exists', async () => {
       const d = await drafts.findOne({ contestId: BX });
       approvedId = d.id;
@@ -106,14 +99,14 @@ test('fighter-name URLs in every campaign, with the ID address as fallback', { s
       assert.ok(all.length >= 6);
       for (const d of all) {
         const clean = `${SITE}/fight/${NAMES[d.contestId]}`;
-        assert.equal(d.contest.cleanUrl, clean, d.id); assert.equal(d.contest.urlSource, 'redirect');
-        for (const ch of ['facebook', 'instagram', 'x']) {
+        if(d.status==='approved'||d.editedBy){assert.ok(d.posts.facebook.includes('/fight/'));continue;}assert.equal(d.contest.cleanUrl, clean, d.id); assert.equal(d.contest.urlSource, 'redirect');
+        for (const ch of ['facebook','x']) {
           assert.ok(d.posts[ch].includes(`${clean}?play=1&utm_source=fan_acquisition&utm_medium=partner_outreach&utm_campaign=combat_fans_gs_`), `${d.id} ${ch}`);
           assert.ok(!d.posts[ch].includes(`/fight/${d.contestId}`), `${d.id} ${ch} still has the ID address`);
           assert.match(d.posts[ch], new RegExp(`utm_content=${ch}`));
         }
-        assert.ok(d.posts.tiktok.includes(`🔗 fantasymmadness.com/fight/${NAMES[d.contestId]}`), `${d.id} tiktok`);
-        assert.ok((d.linkHistory || []).some((h) => h.source === 'redirect'));
+        assert.ok(!/Link in bio|https?:\/\//.test(d.posts.tiktok));
+        assert.ok((d.contentHistory||[]).some(h=>h.reason==='verified_address_changed'));
       }
       // nothing was withdrawn by the safeguard because of the new address
       assert.equal(await drafts.countDocuments({ contestId: { $in: Object.keys(NAMES) }, status: 'rejected' }), 0);
@@ -133,7 +126,7 @@ test('fighter-name URLs in every campaign, with the ID address as fallback', { s
       const d2 = await drafts.findOne({ contestId: 'bx0000000002' });
       await call('POST', `/admin/drafts/${encodeURIComponent(d2.id)}/approve`);
       await client.db('fmgrowthtest').collection('growth_affiliates').insertOne({ id: 'aff-1', name: 'Coach Rivera', genre: 'boxing', code: 'aff_coach_rivera_ab12', status: 'active', liveAffiliateId: 'b'.repeat(24), createdAt: new Date().toISOString(), history: [] });
-      const s = await call('POST', `/admin/drafts/${encodeURIComponent(d2.id)}/schedule`, { channels: ['instagram'], scheduledAt: new Date(Date.now() + 60000).toISOString(), affiliateId: 'aff-1' });
+      const s = await call('POST', `/admin/drafts/${encodeURIComponent(d2.id)}/schedule`, { channels: ['facebook'], scheduledAt: new Date(Date.now() + 60000).toISOString(), affiliateId: 'aff-1' });
       assert.equal(s.json.results[0].ok, false, JSON.stringify(s.json));
       assert.equal(s.json.results[0].reason, 'affiliate_identity_or_approved_poster_unavailable');
       assert.equal(await client.db('fmgrowthtest').collection('growth_social_posts').countDocuments({ 'affiliate.id': 'aff-1' }), 0);
