@@ -5,6 +5,8 @@ on:
       - 'growth-social-oauth*'
       - 'growth-social-connection-*'
       - 'growth-affiliate-*'
+      - 'growth-production-*'
+      - 'growth-runtime.js'
       - 'growth-link-audit*'
       - 'scripts/growth-affiliate-mobile-audit.js'
       - 'docs/evidence/growth-affiliate-links-*'
@@ -96,6 +98,8 @@ jobs:
           node growth-affiliate-acceptance.test.js
           node growth-affiliate-acceptance-http.test.js
           node growth-affiliate-hold-review.test.js
+          node growth-production-preparation.test.js
+          node growth-production-launch-audit.test.js
       - name: Platform copy, PR quality, independent affiliate recruitment and connection persistence
         run: |
           node growth-preparation-operations.test.js

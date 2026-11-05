@@ -1,0 +1,30 @@
+'use strict';
+// Separate production contract. Never relax the isolated runtime's test-DB gate.
+const crypto=require('node:crypto');
+const PROJECT=require('./growth-runtime-config').ISOLATED_PROJECT_ID;
+const DATABASE='fmgrowthproduction',PREFIX='production_preparation_';
+const approved=new WeakSet();
+function resolveProductionPreparationConfig(env=process.env){
+ const errors=[],uri=String(env.GROWTH_PREPARATION_MONGODB_URI||''),host=String(env.GROWTH_PREPARATION_ATLAS_HOST||'').toLowerCase(),owners=[...new Set(String(env.GROWTH_PREPARATION_OWNER_IDS||'').split(',').map(s=>s.trim().toLowerCase()).filter(Boolean))];
+ if(env.VERCEL_ENV!=='production'||env.VERCEL_PROJECT_ID!==PROJECT)errors.push('dedicated_growth_production_target_required');
+ if(env.GROWTH_PREPARATION_MODE!=='production_preparation')errors.push('explicit_production_preparation_mode_required');
+ if(env.GROWTH_PREPARATION_APPROVED!=='true')errors.push('production_preparation_authorization_binding_required');
+ if(!/^[a-f0-9]{40}$/.test(env.GROWTH_PREPARATION_VERIFIED_SHA||'')||env.GROWTH_PREPARATION_VERIFIED_SHA!==env.VERCEL_GIT_COMMIT_SHA)errors.push('verified_production_release_commit_required');
+ let parsed;try{parsed=new URL(uri);}catch{}
+ if(!parsed||parsed.protocol!=='mongodb+srv:'||parsed.pathname!=='/'+DATABASE)errors.push('dedicated_production_growth_database_binding_required');
+ if(!host||!parsed||parsed.hostname.toLowerCase()!==host||host==='fmgrowthtest.zxhtsfa.mongodb.net')errors.push('independent_production_atlas_host_pin_required');
+ if(!owners.length||owners.some(x=>!/^[a-f\d]{24}$/.test(x)))errors.push('verified_production_owner_ids_required');
+ for(const k of ['GROWTH_OUTBOUND_ENABLED','GROWTH_SOCIAL_PUBLISHING_APPROVED','GROWTH_AUTOMATION_LIVE_APPROVED','GROWTH_AUTOMATIC_APPROVAL_ENABLED','GROWTH_PAYMENT_MUTATIONS_ENABLED'])if(env[k]!=='false')errors.push(k+'_must_be_false');
+ if(env.GROWTH_DELIVERY_PROVIDER!=='none'||env.GROWTH_SOCIAL_PROVIDER!=='none')errors.push('production_delivery_and_publishing_providers_must_be_none');
+ for(const k of ['JWT_SECRET_ADMIN','GROWTH_UNSUBSCRIBE_SECRET','CRON_SECRET'])if(String(env[k]||'').length<32)errors.push(k+'_required');
+ const sso=require('./growth-admin-sso').resolveSsoConfig(env);
+ if(!sso.enabled||sso.errors.length||!['https://fantasymmadness.com','https://www.fantasymmadness.com'].every(o=>sso.siteOrigins.includes(o))||sso.siteOrigins.some(o=>!['https://fantasymmadness.com','https://www.fantasymmadness.com'].includes(o)))errors.push('production_website_sso_required');
+ const config={mode:'production_preparation',onVercel:true,autonomy:{liveApproved:false,owners},database:{kind:'atlas',name:DATABASE,host,hostPinned:Boolean(host)},collectionPrefix:PREFIX,delivery:{provider:'none',realDelivery:false,blockers:['owner_delivery_approval_not_granted']},discoveryEnabled:true,discoveryCountries:['US','GB','CA','AU','BR','MX','JP','DE','FR','ZA'],discoveryLimitPerWorker:10,unsubscribeBaseUrl:'',staleRunMinutes:35,contestSourceUrl:'https://fantasymmadness-game-server-three-taupe.vercel.app',marketingHorizonDays:21,maxCampaignsPerSport:3,liveReport:{configured:false},ingest:{configured:false},social:{provider:'none',approved:false,paused:true,channels:{}},fightUrlDiscovery:true,researchPerRun:4,posters:{enabled:false},sso:{...sso,allow:owners},meta:{liveTestApproved:false}};
+ const secrets={mongoUri:uri,adminJwtSecret:env.JWT_SECRET_ADMIN,unsubscribeSecret:env.GROWTH_UNSUBSCRIBE_SECRET,cronSecret:env.CRON_SECRET,tokenEncryptionKey:env.GROWTH_TOKEN_ENCRYPTION_KEY||'',social:{}};
+ if(!errors.length)approved.add(config);
+ return{ok:!errors.length,errors,config,secrets};
+}
+function assertProductionDatabase(db,config){if(!approved.has(config)||db?.databaseName!==DATABASE||config.collectionPrefix!==PREFIX)throw Error('validated_production_preparation_database_required');}
+function productionReadOnlyFetch(fetchImpl=globalThis.fetch){return async(url,options={})=>{const u=new URL(url),method=String(options.method||'GET').toUpperCase();if(u.protocol!=='https:'||u.username||u.password||!['GET','HEAD'].includes(method)||options.body!==undefined)throw Error('production_preparation_read_only_network_required');return fetchImpl(url,{...options,method,redirect:'error',signal:options.signal||AbortSignal.timeout(15000)});};}
+function deploymentFingerprint(config){return crypto.createHash('sha256').update(JSON.stringify({mode:config.mode,database:config.database,prefix:config.collectionPrefix,owners:config.autonomy.owners})).digest('hex');}
+module.exports={resolveProductionPreparationConfig,assertProductionDatabase,productionReadOnlyFetch,deploymentFingerprint,DATABASE,PREFIX,PROJECT};

@@ -34,7 +34,8 @@ const hash = (s) => crypto.createHash('sha256').update(String(s).toLowerCase()).
 
 function createGrowthRuntime({ db, config, secrets = {}, provider, fetchImpl = globalThis.fetch, alertSender = null, metaConnection = null } = {}) {
   if (!db || typeof db.collection !== 'function') throw Error('Dedicated fmgrowthtest database handle required');
-  if (db.databaseName && db.databaseName !== 'fmgrowthtest') throw Error('Growth runtime only uses the fmgrowthtest database');
+  if (config?.mode === 'production_preparation') require('./growth-production-preparation-config').assertProductionDatabase(db, config);
+  else if (db.databaseName && db.databaseName !== 'fmgrowthtest') throw Error('Growth runtime only uses the fmgrowthtest database');
   if (!provider || typeof provider.send !== 'function') throw Error('Delivery provider required');
   const col = {
     contestVerifications:db.collection('growth_contest_verifications'),recruitment:db.collection('affiliate_prospects'),preparationJobs:db.collection('growth_preparation_jobs'),preparationReceipts:db.collection('growth_preparation_receipts'),connectionAlerts:db.collection('growth_connection_alerts'),
