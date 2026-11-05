@@ -32,7 +32,7 @@ const minuteId = (d) => 'growth_' + d.toISOString().replace(/[^0-9]/g, '').slice
 const dayKey = (d) => d.toISOString().slice(0, 10).replace(/-/g, '');
 const hash = (s) => crypto.createHash('sha256').update(String(s).toLowerCase()).digest('hex').slice(0, 16);
 
-function createGrowthRuntime({ db, config, secrets = {}, provider, fetchImpl = globalThis.fetch, alertSender = null } = {}) {
+function createGrowthRuntime({ db, config, secrets = {}, provider, fetchImpl = globalThis.fetch, alertSender = null, metaConnection = null } = {}) {
   if (!db || typeof db.collection !== 'function') throw Error('Dedicated fmgrowthtest database handle required');
   if (db.databaseName && db.databaseName !== 'fmgrowthtest') throw Error('Growth runtime only uses the fmgrowthtest database');
   if (!provider || typeof provider.send !== 'function') throw Error('Delivery provider required');
@@ -285,7 +285,7 @@ function createGrowthRuntime({ db, config, secrets = {}, provider, fetchImpl = g
 
   const socialConfig = { ...(config.social || { provider: 'none', channels: {} }), secrets: secrets.social || {} };
   const vault = createTokenVault(secrets.tokenEncryptionKey);
-  const meta = createMetaConnect({ col, config: secrets.meta || resolveMetaConfig({}), vault, fetchImpl, alert, audit });
+  const meta = metaConnection || createMetaConnect({ col, config: secrets.meta || resolveMetaConfig({}), vault, fetchImpl, alert, audit });
   const publisher = createSocialPublisher({ social: socialConfig, fetchImpl, sandboxCollection: col.socialSandbox, meta, graphUrl: meta.graphUrl });
   socialScheduler = createSocialScheduler({ col, social: socialConfig, publisher, reverifyMarketing, affiliatePoster, alert, audit, liveTestApproved: Boolean(secrets.meta?.liveTestApproved) });
 

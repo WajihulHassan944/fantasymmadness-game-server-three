@@ -1057,7 +1057,15 @@
 
   // Facebook Page + Instagram connection (Meta sign-in; tokens stay on the server).
   function metaModeChip(label, mode) { return h('span', { class: 'chip ' + (mode === 'live' ? 'good' : mode === 'sandbox' ? 'info' : ''), testid: 'meta-mode-' + label.toLowerCase(), text: label + ': ' + (mode === 'live' ? 'Live' : mode === 'sandbox' ? 'Sandbox' : 'Off') }); }
+  function existingMetaCard(m) {
+    var card = h('section', { class: 'card', testid: 'meta-card' }, h('h2', { text: 'Facebook & Instagram · existing connection' }), h('p', { text: 'Reuses the existing authorized configuration. Publishing is disabled; verification does not renew or change credentials.' }));
+    ['facebook', 'instagram'].forEach(function (platform) { var x = m.platforms[platform];card.appendChild(h('div', { testid: 'meta-existing-' + platform }, h('h3', { text: platform === 'facebook' ? 'Facebook Page' : 'Instagram account' }), h('span', { class: 'chip ' + (x.verified ? 'good' : 'warn'), text: x.verified ? 'Verified existing connection' : 'Verification unresolved' }), h('p', { text: x.verified ? (x.username ? '@' + x.username : x.name || '') + ' · ID: ' + x.id : x.reason }))); });
+    card.appendChild(h('p', { class: 'small', text: 'Source: ' + m.source + ' · checked: ' + when(m.health.checkedAt) }));
+    card.appendChild(h('button', { class: 'btn small', testid: 'btn-meta-check', text: 'Verify existing Facebook & Instagram', onclick: function () { api('POST', '/admin/meta/check').then(route).catch(fail); } }));
+    return card;
+  }
   function metaCard(m) {
+    if (m.readOnlyExisting) return existingMetaCard(m);
     var card = h('section', { class: 'card', testid: 'conn-meta', 'data-state': m.state });
     var list = function (items) { return h('ul', { class: 'checklist' }, items.map(function (it) { return h('li', { class: it.done ? 'done' : 'todo' }, h('span', { 'aria-hidden': 'true', text: it.done ? '✓ ' : '○ ' }), it.text); })); };
     var stateChip = h('span', { class: 'chip ' + (m.state === 'connected' ? 'good' : 'warn'), testid: 'meta-state', text: (m.state === 'connected' ? '✓ ' : '') + m.connectionLabel });

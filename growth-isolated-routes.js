@@ -41,7 +41,7 @@ function safeEqual(a, b) {
   return x.length === y.length && crypto.timingSafeEqual(x, y);
 }
 
-function registerIsolatedGrowthRoutes({ app, env = process.env, express, transport, fetchImpl, connect, sessionAuth } = {}) {
+function registerIsolatedGrowthRoutes({ app, env = process.env, express, transport, fetchImpl, connect, sessionAuth, metaConnection } = {}) {
   const resolved = resolveGrowthRuntimeConfig(env);
   const router = express.Router();
   router.use(express.json({ limit: '32kb' }));
@@ -66,7 +66,7 @@ function registerIsolatedGrowthRoutes({ app, env = process.env, express, transpo
         const alertSender = provider.name === 'sandbox-smtp' && transport
           ? (m) => transport.sendMail({ from: 'growth-alerts@localhost', to: 'growth-owner@sandbox.localhost', ...m })
           : (provider.realDelivery && alertTo ? (m) => provider.send({ id: `alert-${Date.now()}`, status: 'approved', ownerApproved: true, sendPermitted: true, recipient: alertTo, listUnsubscribe: config.unsubscribeBaseUrl, ...m }) : null);
-        const runtime = createGrowthRuntime({ db, config, secrets, provider, fetchImpl, alertSender });
+        const runtime = createGrowthRuntime({ db, config, secrets, provider, fetchImpl, alertSender, metaConnection });
         await runtime.init();
         return runtime;
       })().catch((e) => { runtimePromise = null; throw e; });
@@ -368,7 +368,7 @@ function registerIsolatedGrowthRoutes({ app, env = process.env, express, transpo
   const metaView = async (rt) => {
     const st = await rt.meta.status(); const ch = await liveChannels(rt);
     const mode = (c) => (c.mode === 'live' ? 'live' : c.mode === 'sandbox' ? 'sandbox' : 'off');
-    return { ...st, connectionLabel: st.state === 'connected' ? 'Connected' : st.state === 'not_set_up' ? 'Not set up' : st.state === 'selection_needed' ? 'Choose your Page' : 'Authorization needed', publishing: { provider: resolved.config.social.provider, facebook: mode(ch.facebook), instagram: mode(ch.instagram), liveTestApproved: resolved.config.meta.liveTestApproved } };
+    return { ...st, connectionLabel: st.readOnlyExisting ? st.connectionLabel : st.state === 'connected' ? 'Connected' : st.state === 'not_set_up' ? 'Not set up' : st.state === 'selection_needed' ? 'Choose your Page' : 'Authorization needed', publishing: { provider: resolved.config.social.provider, facebook: mode(ch.facebook), instagram: mode(ch.instagram), liveTestApproved: resolved.config.meta.liveTestApproved } };
   };
   router.get('/admin/meta', admin, wrap(async (req, res, rt) => res.json({ ok: true, meta: await metaView(rt) })));
   router.post('/admin/meta/app', admin, wrap(async (req, res, rt) => { const r = await rt.meta.setApp({ appId: req.body?.appId, appSecret: req.body?.appSecret, loginConfigId: req.body?.loginConfigId, admin: who(req) }); res.status(r.ok ? 200 : 422).json(r); }));

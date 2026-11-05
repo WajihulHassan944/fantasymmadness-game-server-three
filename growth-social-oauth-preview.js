@@ -19,6 +19,7 @@ function createPreviewApp({ env = process.env, fetchImpl = globalThis.fetch, con
   app.use('/api/growth', (req, res, next) => {
     res.set('Cache-Control', 'no-store');
     if (origin && req.headers.origin === origin) res.set({ 'Access-Control-Allow-Origin': origin, Vary: 'Origin', 'Access-Control-Allow-Headers': 'Authorization, Content-Type', 'Access-Control-Allow-Methods': 'GET, POST, PUT, DELETE, OPTIONS' });
+    if (integrated && ((req.method !== 'GET' && /^\/admin\/meta\/(app|connect|select|disconnect)$/.test(req.path)) || req.path === '/meta/callback')) return res.status(409).json({ ok: false, error: 'existing_meta_credentials_preserved_read_only' });
     if (req.method === 'OPTIONS') return res.status(req.headers.origin === origin ? 204 : 403).end();
     if (integrated && (req.path.startsWith('/cron/') || req.path === '/admin/social/live-test' || /\/mark-published$/.test(req.path) || req.path === '/events')) return res.status(404).json({ ok: false, error: 'disabled_in_isolated_preview' });
     next();
@@ -28,16 +29,19 @@ function createPreviewApp({ env = process.env, fetchImpl = globalThis.fetch, con
     const client = connect ? await connect(resolved.secrets.mongoUri) : await new MongoClient(resolved.secrets.mongoUri, { serverSelectionTimeoutMS: 10000, maxPoolSize: 3 }).connect();
     const db = client.db('fmgrowthtest'); if (db.databaseName !== 'fmgrowthtest') throw Error('wrong database'); await db.command({ ping: 1 }); return db;
   })().catch(e => { dbPromise = null; throw e; });
+  let existingMeta;
+  const metaConnection = async () => existingMeta ||= require('./growth-existing-meta-readonly').createExistingMetaReadOnly({ db: await database(), env, fetchImpl });
   app.get('/api/growth/health', async (req, res) => {
     res.set('Cache-Control', 'no-store'); let connected = false;
     if (!errors.length) { try { await database(); connected = true; } catch { /* report only safe status, never connection credentials */ } }
-    res.status(!errors.length && connected ? 200 : 503).json({ ok: !errors.length && connected, service: 'growth-social-oauth-isolated-preview', environment: 'preview', database: { name: 'fmgrowthtest', connected, hostPinned: resolved.config.database.hostPinned }, errors, publishingEnabled: false, outboundEnabled: false, backoffice: { integrated, collectionPrefix: integrated ? PREFIX : null }, console: { embedOrigins: origin ? [origin] : [] }, providers: oauthConfig ? ['tiktok', 'x'].map(provider => ({provider,configured:!oauthConfig.errors(provider).length,blockers:oauthConfig.errors(provider),callbackUrl:oauthConfig.callback(provider)})) : [] });
+    let meta = null; if (integrated && connected) { try { meta = await (await metaConnection()).summary(); } catch { meta = { investigation: 'unavailable', credentialsChanged: false }; } }
+    res.status(!errors.length && connected ? 200 : 503).json({ ok: !errors.length && connected, service: 'growth-social-oauth-isolated-preview', environment: 'preview', database: { name: 'fmgrowthtest', connected, hostPinned: resolved.config.database.hostPinned }, errors, publishingEnabled: false, outboundEnabled: false, existingMeta: meta, backoffice: { integrated, collectionPrefix: integrated ? PREFIX : null }, console: { embedOrigins: origin ? [origin] : [] }, providers: oauthConfig ? ['tiktok', 'x'].map(provider => ({provider,configured:!oauthConfig.errors(provider).length,blockers:oauthConfig.errors(provider),callbackUrl:oauthConfig.callback(provider)})) : [] });
   });
   let installed;
   app.use('/api/growth', async (req, res, next) => {
     if (errors.length) return res.status(503).json({ ok:false,error:'isolated_oauth_configuration_required',blockers:errors });
     try {
-      installed ||= database().then(db => {
+      installed ||= database().then(async db => {
         const router = express.Router();
         const oauth = installGrowthSocialOAuth({router,env,db,adminSecret:resolved.secrets.adminJwtSecret,fetchImpl});
         if (integrated) {
@@ -45,7 +49,7 @@ function createPreviewApp({ env = process.env, fetchImpl = globalThis.fetch, con
           const scopedDb = { databaseName: 'fmgrowthtest', collection: name => { if (!/^[a-z_]+$/.test(name)) throw Error('Invalid staging collection'); return db.collection(PREFIX + name); } };
           const runtimeEnv = { ...env, GROWTH_PUBLIC_ORIGIN: env.GROWTH_SOCIAL_PUBLIC_ORIGIN, GROWTH_CONSOLE_EMBED_ORIGINS: origin || '' };
           const { registerIsolatedGrowthRoutes } = require('./growth-isolated-routes');
-          registerIsolatedGrowthRoutes({ app: { use: (_path, fullRouter) => router.use(fullRouter), post: (path, ...handlers) => router.post(path.replace(/^\/api\/growth/, ''), ...handlers) }, env: runtimeEnv, express, fetchImpl, connect: async () => ({ db: () => scopedDb }), sessionAuth: (req, res, next) => oauth.auth(req, res, () => { req.admin = req.socialAdmin; next(); }) });
+          registerIsolatedGrowthRoutes({ app: { use: (_path, fullRouter) => router.use(fullRouter), post: (path, ...handlers) => router.post(path.replace(/^\/api\/growth/, ''), ...handlers) }, env: runtimeEnv, express, fetchImpl, connect: async () => ({ db: () => scopedDb }), metaConnection: await metaConnection(), sessionAuth: (req, res, next) => oauth.auth(req, res, () => { req.admin = req.socialAdmin; next(); }) });
         }
         return router;
       }).catch(e=>{installed=null;throw e;});
