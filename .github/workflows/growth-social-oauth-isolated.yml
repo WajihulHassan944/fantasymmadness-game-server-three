@@ -109,6 +109,10 @@ jobs:
           node growth-draft-refinement.integration.test.js
           node growth-social-connection-manager.test.js
           node growth-affiliate-recruitment.test.js
+          node growth-affiliate-discovery-retry.test.js
+          node growth-dashboard-lock.test.js
+          node growth-launch-review.test.js
+          node growth-launch-delivery-acceptance.test.js
           node growth-prospect-research.test.js
           node growth-contest-campaigns.test.js
           node growth-fight-urls.test.js
