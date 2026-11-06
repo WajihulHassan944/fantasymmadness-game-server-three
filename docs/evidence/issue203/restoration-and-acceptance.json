@@ -1,0 +1,2387 @@
+{
+  "recordedAt": "2026-11-06T13:17:12.948329+00:00",
+  "decision": "RESTORED_IN_PREVIEW_OWNER_ACCEPTANCE_PENDING",
+  "baseline": {
+    "frontend": "6c21ced7961c3b5ae1f3f642d0d9b01c791e01d6",
+    "frontendDeployment": "dpl_5dcxvo2peJEjcSe8oGZS2vh9LXnj",
+    "backend": "9b181672c18202c2f8af95536c29a7a9f3f37c87",
+    "backendDeployment": "dpl_5WyotJUWM9siSVLCViRMZYkcnzkm"
+  },
+  "restored": {
+    "frontend": "3bd65b1b0aca341c491e137c818f0bf32b1e0515",
+    "frontendDeployment": "dpl_2fSE4HREbWeHhfsmE1uPMo8Yk3Eh",
+    "backend": "c543c6b087fefd3bdbf6a62ae959f15e3342e629",
+    "backendDeployment": "dpl_6NabGrz4Mizq2TeUQyes1fLHoynV",
+    "environment": "preview",
+    "database": "fmgrowthtest",
+    "prefix": "preview198_"
+  },
+  "presentationParity": [
+    {
+      "repository": "tiktok-oauth",
+      "file": "growth-console/index.html",
+      "baselineCommit": "9b181672c18202c2f8af95536c29a7a9f3f37c87",
+      "sha256": "3a33fd98dc991249b00a84cb19586778d6664ce34d46a622cba8ba0edd17b64e",
+      "byteIdentical": true
+    },
+    {
+      "repository": "tiktok-oauth",
+      "file": "growth-console/app.css",
+      "baselineCommit": "9b181672c18202c2f8af95536c29a7a9f3f37c87",
+      "sha256": "cbab989c988580996bd881a9f13db3dbd5e05c05457c74368f14b559a02f81df",
+      "byteIdentical": true
+    },
+    {
+      "repository": "tiktok-oauth",
+      "file": "growth-console/app.js",
+      "baselineCommit": "9b181672c18202c2f8af95536c29a7a9f3f37c87",
+      "sha256": "df6498a69322c843396854023fb93235eb6016483a6720e96182e1801b014926",
+      "byteIdentical": true
+    },
+    {
+      "repository": "frontend-social-preview",
+      "file": "src/Components/Admin/GrowthEngineCommandCenter.jsx",
+      "baselineCommit": "6c21ced7961c3b5ae1f3f642d0d9b01c791e01d6",
+      "sha256": "3515ee3c8981278be726824a75e2b5197cab66934c5b9864033292afe4c1fc5b",
+      "byteIdentical": true
+    },
+    {
+      "repository": "frontend-social-preview",
+      "file": "src/Components/Admin/GrowthEngineCommandCenter.module.css",
+      "baselineCommit": "6c21ced7961c3b5ae1f3f642d0d9b01c791e01d6",
+      "sha256": "cc566838263933b3a6ce15ebb382197e7a11c99f5085bf4f1c979832e0f2cbdc",
+      "byteIdentical": true
+    },
+    {
+      "repository": "frontend-social-preview",
+      "file": "src/Utils/growthEngineEmbed.cjs",
+      "baselineCommit": "6c21ced7961c3b5ae1f3f642d0d9b01c791e01d6",
+      "sha256": "dc38ff497adb9a2046f3fc2af74a6e35b8a09055dc4baad3d6f830e4b326cffa",
+      "byteIdentical": true
+    }
+  ],
+  "productionBefore": {
+    "ok": true,
+    "service": "growth-production-preparation",
+    "environment": "production",
+    "database": "fmgrowthproduction",
+    "databaseIsolation": "separate_database_and_namespace",
+    "sharedAtlasCluster": true,
+    "collectionPrefix": "production_preparation_",
+    "scheduler": {
+      "enabled": true,
+      "generation": "production-preparation-5a99b6f4-d62f-4274-bc12-ad6411896065",
+      "lastCompletedAt": "2026-11-06T12:47:46.985Z",
+      "completedCycles": 53,
+      "scheduledCycles": 52,
+      "healthy": true,
+      "lastError": null
+    },
+    "operations": {
+      "mode": "preparation_only",
+      "departments": {
+        "marketing": {
+          "awaitingOwnerReview": 2,
+          "receipts": 2,
+          "ready": 0,
+          "held": 2,
+          "awaitingReceipt": 0,
+          "sourceHolds": 0,
+          "approvedDrafts": 0
+        },
+        "pr": {
+          "awaitingOwnerReview": 23,
+          "receipts": 23,
+          "ready": 23,
+          "held": 0,
+          "awaitingReceipt": 0,
+          "sourceHolds": 0,
+          "approvedDrafts": 0
+        },
+        "affiliate": {
+          "awaitingOwnerReview": 7,
+          "receipts": 7,
+          "ready": 0,
+          "held": 7,
+          "awaitingReceipt": 0,
+          "sourceHolds": 17,
+          "approvedDrafts": 0
+        }
+      },
+      "jobs": {
+        "completed": 155
+      },
+      "receiptMeaning": "Prepared evidence snapshots only; never messages sent, publication, owner approval or conversion.",
+      "realDeliveriesObserved": 0,
+      "liveSocialPostsObserved": 0,
+      "attributedPayingConversions": null,
+      "publishingEnabled": false,
+      "outboundEnabled": false
+    },
+    "connections": {
+      "source": "existing_authorized_connection_service",
+      "sourceDatabase": "fmgrowthtest",
+      "checkedAt": "2026-11-06T12:46:15.730Z",
+      "statusOnly": true,
+      "verificationStale": false,
+      "productionPublishingAuthorized": false,
+      "oauth": [
+        {
+          "provider": "tiktok",
+          "status": "connected",
+          "accessStatus": "valid",
+          "renewalStatus": "available"
+        },
+        {
+          "provider": "x",
+          "status": "connected",
+          "accessStatus": "valid",
+          "renewalStatus": "expiry-unknown"
+        }
+      ],
+      "meta": {
+        "existingRecordFound": true,
+        "source": "existing_isolated_record",
+        "encryptionConfigured": true,
+        "checkedAt": "2026-11-06T12:46:08.644Z",
+        "facebook": {
+          "verified": true,
+          "state": "connected",
+          "reason": null
+        },
+        "instagram": {
+          "verified": true,
+          "state": "connected",
+          "reason": null
+        },
+        "credentialsChanged": false,
+        "publishingEnabled": false
+      }
+    },
+    "ownerApprovalRequired": true,
+    "publishingEnabled": false,
+    "outboundEnabled": false,
+    "paymentMutationsEnabled": false,
+    "syntheticImportsSupported": false
+  },
+  "productionAfter": {
+    "ok": true,
+    "service": "growth-production-preparation",
+    "environment": "production",
+    "database": "fmgrowthproduction",
+    "databaseIsolation": "separate_database_and_namespace",
+    "sharedAtlasCluster": true,
+    "collectionPrefix": "production_preparation_",
+    "scheduler": {
+      "enabled": true,
+      "generation": "production-preparation-5a99b6f4-d62f-4274-bc12-ad6411896065",
+      "lastCompletedAt": "2026-11-06T13:03:11.761Z",
+      "completedCycles": 54,
+      "scheduledCycles": 53,
+      "healthy": true,
+      "lastError": null
+    },
+    "operations": {
+      "mode": "preparation_only",
+      "departments": {
+        "marketing": {
+          "awaitingOwnerReview": 2,
+          "receipts": 2,
+          "ready": 0,
+          "held": 2,
+          "awaitingReceipt": 0,
+          "sourceHolds": 0,
+          "approvedDrafts": 0
+        },
+        "pr": {
+          "awaitingOwnerReview": 23,
+          "receipts": 23,
+          "ready": 23,
+          "held": 0,
+          "awaitingReceipt": 0,
+          "sourceHolds": 0,
+          "approvedDrafts": 0
+        },
+        "affiliate": {
+          "awaitingOwnerReview": 7,
+          "receipts": 7,
+          "ready": 0,
+          "held": 7,
+          "awaitingReceipt": 0,
+          "sourceHolds": 17,
+          "approvedDrafts": 0
+        }
+      },
+      "jobs": {
+        "completed": 158
+      },
+      "receiptMeaning": "Prepared evidence snapshots only; never messages sent, publication, owner approval or conversion.",
+      "realDeliveriesObserved": 0,
+      "liveSocialPostsObserved": 0,
+      "attributedPayingConversions": null,
+      "publishingEnabled": false,
+      "outboundEnabled": false
+    },
+    "connections": {
+      "source": "existing_authorized_connection_service",
+      "sourceDatabase": "fmgrowthtest",
+      "checkedAt": "2026-11-06T13:01:33.338Z",
+      "statusOnly": true,
+      "verificationStale": false,
+      "productionPublishingAuthorized": false,
+      "oauth": [
+        {
+          "provider": "tiktok",
+          "status": "connected",
+          "accessStatus": "valid",
+          "renewalStatus": "available"
+        },
+        {
+          "provider": "x",
+          "status": "connected",
+          "accessStatus": "valid",
+          "renewalStatus": "expiry-unknown"
+        }
+      ],
+      "meta": {
+        "existingRecordFound": true,
+        "source": "existing_isolated_record",
+        "encryptionConfigured": true,
+        "checkedAt": "2026-11-06T13:01:19.499Z",
+        "facebook": {
+          "verified": true,
+          "state": "connected",
+          "reason": null
+        },
+        "instagram": {
+          "verified": true,
+          "state": "connected",
+          "reason": null
+        },
+        "credentialsChanged": false,
+        "publishingEnabled": false
+      }
+    },
+    "ownerApprovalRequired": true,
+    "publishingEnabled": false,
+    "outboundEnabled": false,
+    "paymentMutationsEnabled": false,
+    "syntheticImportsSupported": false
+  },
+  "productionReadOnlyAudit": {
+    "checkedAt": "2026-11-06T13:04:50.403Z",
+    "readOnly": true,
+    "productionDatabase": "fmgrowthproduction",
+    "collectionPrefix": "production_preparation_",
+    "affiliateSourceHolds": [
+      {
+        "sourceId": "Q205953",
+        "id": "ap-a3a2e4d579589f8bfc7fcb",
+        "status": "researched",
+        "error": "http_526"
+      },
+      {
+        "sourceId": "Q155181",
+        "id": "ap-3b61b747507b5dc282fca3",
+        "status": "researched",
+        "error": "external_source_unavailable"
+      },
+      {
+        "sourceId": "Q2605547",
+        "id": "ap-e1782f01e695b55f9dabf9",
+        "status": "researched",
+        "error": "external_source_unavailable"
+      },
+      {
+        "sourceId": "Q2696749",
+        "id": "ap-8e061a687bbaa60c837204",
+        "status": "researched",
+        "error": "cross_site_redirect_requires_review"
+      },
+      {
+        "sourceId": "Q1057477",
+        "id": "ap-292364adb6ebad9207e10a",
+        "status": "researched",
+        "error": "http_429"
+      },
+      {
+        "sourceId": "Q368711",
+        "id": "ap-593111d53ab8a792a99c13",
+        "status": "researched",
+        "error": "external_source_unavailable"
+      },
+      {
+        "sourceId": "Q444334",
+        "id": "ap-c66c7390833f8c17055525",
+        "status": "researched",
+        "error": "external_source_unavailable"
+      },
+      {
+        "sourceId": "Q361703",
+        "id": "ap-b019a38adc01493445c773",
+        "status": "researched",
+        "error": "external_source_unavailable"
+      },
+      {
+        "sourceId": "Q549808",
+        "id": "ap-2e28d560e21ad0b933a1c1",
+        "status": "researched",
+        "error": "http_403"
+      },
+      {
+        "sourceId": "Q1990784",
+        "id": "ap-20b5821b23d8b3003efa9a",
+        "status": "researched",
+        "error": "external_source_unavailable"
+      },
+      {
+        "sourceId": "Q104523531",
+        "id": "ap-e1eb0e7c517b23bf782958",
+        "status": "researched",
+        "error": "external_source_unavailable"
+      },
+      {
+        "sourceId": "Q51574565",
+        "id": "ap-bc9aa190fa02646ebb3ad7",
+        "status": "researched",
+        "error": "external_source_unavailable"
+      },
+      {
+        "sourceId": "Q230473",
+        "id": "ap-4b49f23e62339b6af5e89a",
+        "status": "researched",
+        "error": "cross_site_redirect_requires_review"
+      },
+      {
+        "sourceId": "Q127846126",
+        "id": "ap-95f9864caaf1c607e8d7b5",
+        "status": "researched",
+        "error": "cross_site_redirect_requires_review"
+      },
+      {
+        "sourceId": "Q11288818",
+        "id": "ap-6367c80c9a72b687cbd851",
+        "status": "researched",
+        "error": "cross_site_redirect_requires_review"
+      },
+      {
+        "sourceId": "Q21857783",
+        "id": "ap-2ad054e0eb5b142acab1a4",
+        "status": "researched",
+        "error": "source_too_large"
+      },
+      {
+        "sourceId": "Q339165",
+        "id": "ap-67dcab5fddb7f454b2d05e",
+        "status": "researched",
+        "error": "http_403"
+      }
+    ],
+    "recruitmentState": [
+      {
+        "_id": "affiliate-program-readiness",
+        "checkedAt": "2026-11-06T12:47:46.757Z",
+        "signupVerified": true,
+        "termsVerified": false
+      }
+    ],
+    "marketingHolds": [
+      {
+        "blockers": [
+          "verified_original_artwork_and_qr_required"
+        ],
+        "draftId": "mkt-6ad629a60df141df46931a8b-49d793654a",
+        "lastCheckedAt": "2026-11-06T13:02:52.908Z"
+      },
+      {
+        "blockers": [
+          "verified_original_artwork_and_qr_required"
+        ],
+        "draftId": "mkt-6adfcba7ee2996e566885594-e498620c94",
+        "lastCheckedAt": "2026-11-06T13:02:52.908Z"
+      }
+    ],
+    "productionSyntheticAffiliates": 0,
+    "productionMappedAffiliates": 0,
+    "productionAttributionEvents": 0,
+    "productionRealDeliveries": 0,
+    "productionLiveSocialPosts": 0,
+    "originalGrowthAffiliates": {
+      "count": 1,
+      "sha256": "cf33f8b3d1895e8d57a41bb374787f1ddc0a412275925e2c3806e07f6f6afec5"
+    },
+    "businessRecordsChangedByObservation": false,
+    "publishingEnabled": false,
+    "outboundEnabled": false
+  },
+  "stagingWorkflow": {
+    "runId": "wrun_41M6RF70770GQ41FZR511GPAVN",
+    "checkedAt": "2026-11-06T13:02:11.988Z",
+    "database": "fmgrowthtest",
+    "liveSignupHandlerUsed": false,
+    "originalRecordsUnchanged": true,
+    "currentFightPosters": {
+      "checked": 4,
+      "passed": 4,
+      "withdrawnExcluded": 8,
+      "imagesExported": false
+    },
+    "scheduler": {
+      "enabled": true,
+      "generation": "autonomous-preparation-v4",
+      "workerDeploymentId": "dpl_3Fzc4Vz8nvWz3EincK2Q5WiTxctC",
+      "cycles": [
+        {
+          "_id": "autonomous-preparation-v4:73",
+          "ordinal": 73,
+          "finishedAt": "2026-11-06T13:01:33.344Z"
+        },
+        {
+          "_id": "autonomous-preparation-v4:72",
+          "ordinal": 72,
+          "finishedAt": "2026-11-06T12:46:15.735Z"
+        },
+        {
+          "_id": "autonomous-preparation-v4:71",
+          "ordinal": 71,
+          "finishedAt": "2026-11-06T12:31:03.451Z"
+        }
+      ]
+    },
+    "journeys": [
+      {
+        "status": "passed",
+        "runId": "issue202-affiliate-final-20261105-6ad629a60df141df46931a8b",
+        "signupTransport": "isolated_http_backend",
+        "attributionPersisted": true,
+        "uniqueIdentityLinks": true,
+        "qrDecodedMatches": true,
+        "replaySameEntry": true,
+        "crossAffiliateRefused": true,
+        "realCharges": 0,
+        "leagues": [
+          {
+            "id": "6aed023bf4dc74dbb593f296",
+            "accountId": "6aed023af4dc74dbb593f291",
+            "fightId": "6ad629a60df141df46931a8b",
+            "link": "https://fmm-ver2-growth-social-preview.vercel.app/league/staging-acceptance-affiliate?affiliateId=6aed023af4dc74dbb593f291&fightId=6ad629a60df141df46931a8b&stagingLeagueId=6aed023bf4dc74dbb593f296&utm_source=fan_acquisition&utm_medium=partner_outreach&utm_campaign=combat_fans_aff_the_dozen_with_liam__7d7a&utm_content=onboarding",
+            "qrUrl": "/api/growth/affiliate-sandbox/leagues/6aed023bf4dc74dbb593f296/qr.png",
+            "qrDecodedMatches": true,
+            "servedQrDecodedMatches": true,
+            "stagingOnly": true,
+            "verified": true,
+            "paymentMode": "TEST"
+          },
+          {
+            "id": "6aed023cf4dc74dbb593f29d",
+            "accountId": "6aed023cf4dc74dbb593f298",
+            "fightId": "6ad629a60df141df46931a8b",
+            "link": "https://fmm-ver2-growth-social-preview.vercel.app/league/staging-acceptance-affiliate?affiliateId=6aed023cf4dc74dbb593f298&fightId=6ad629a60df141df46931a8b&stagingLeagueId=6aed023cf4dc74dbb593f29d&utm_source=fan_acquisition&utm_medium=partner_outreach&utm_campaign=combat_fans_aff_the_dozen_with_liam__7d7a&utm_content=onboarding",
+            "qrUrl": "/api/growth/affiliate-sandbox/leagues/6aed023cf4dc74dbb593f29d/qr.png",
+            "qrDecodedMatches": true,
+            "servedQrDecodedMatches": true,
+            "stagingOnly": true,
+            "verified": true,
+            "paymentMode": "TEST"
+          }
+        ]
+      },
+      {
+        "status": "passed",
+        "runId": "issue202-affiliate-final-20261105-6adfcba7ee2996e566885594",
+        "signupTransport": "isolated_http_backend",
+        "attributionPersisted": true,
+        "uniqueIdentityLinks": true,
+        "qrDecodedMatches": true,
+        "replaySameEntry": true,
+        "crossAffiliateRefused": true,
+        "realCharges": 0,
+        "leagues": [
+          {
+            "id": "6aed023ff4dc74dbb593f2a7",
+            "accountId": "6aed023ff4dc74dbb593f2a2",
+            "fightId": "6adfcba7ee2996e566885594",
+            "link": "https://fmm-ver2-growth-social-preview.vercel.app/league/staging-acceptance-affiliate?affiliateId=6aed023ff4dc74dbb593f2a2&fightId=6adfcba7ee2996e566885594&stagingLeagueId=6aed023ff4dc74dbb593f2a7&utm_source=fan_acquisition&utm_medium=partner_outreach&utm_campaign=combat_fans_aff_the_dozen_with_liam__7d7a&utm_content=onboarding",
+            "qrUrl": "/api/growth/affiliate-sandbox/leagues/6aed023ff4dc74dbb593f2a7/qr.png",
+            "qrDecodedMatches": true,
+            "servedQrDecodedMatches": true,
+            "stagingOnly": true,
+            "verified": true,
+            "paymentMode": "TEST"
+          },
+          {
+            "id": "6aed0240f4dc74dbb593f2ae",
+            "accountId": "6aed0240f4dc74dbb593f2a9",
+            "fightId": "6adfcba7ee2996e566885594",
+            "link": "https://fmm-ver2-growth-social-preview.vercel.app/league/staging-acceptance-affiliate?affiliateId=6aed0240f4dc74dbb593f2a9&fightId=6adfcba7ee2996e566885594&stagingLeagueId=6aed0240f4dc74dbb593f2ae&utm_source=fan_acquisition&utm_medium=partner_outreach&utm_campaign=combat_fans_aff_the_dozen_with_liam__7d7a&utm_content=onboarding",
+            "qrUrl": "/api/growth/affiliate-sandbox/leagues/6aed0240f4dc74dbb593f2ae/qr.png",
+            "qrDecodedMatches": true,
+            "servedQrDecodedMatches": true,
+            "stagingOnly": true,
+            "verified": true,
+            "paymentMode": "TEST"
+          }
+        ]
+      }
+    ]
+  },
+  "holdReview": {
+    "total": 20,
+    "resolvedOrExcluded": 15,
+    "remainingCommercialTermsHolds": 5,
+    "cases": [
+      {
+        "sourceItem": "affiliate-p-1756c6710e383d26",
+        "sourceType": "email_affiliate",
+        "checkedAt": "2026-11-06T13:02:06.877Z",
+        "resolved": true,
+        "disposition": "EXCLUDED_UNVERIFIED_AFFILIATE_SUITABILITY",
+        "reason": "Media episode relevance does not establish a qualified affiliate partner. Retained for owner research; excluded from affiliate approval."
+      },
+      {
+        "sourceItem": "affiliate-p-69fc82b0cae2bb89",
+        "sourceType": "email_affiliate",
+        "checkedAt": "2026-11-06T13:02:06.886Z",
+        "resolved": true,
+        "disposition": "EXCLUDED_UNVERIFIED_AFFILIATE_SUITABILITY",
+        "reason": "Media episode relevance does not establish a qualified affiliate partner. Retained for owner research; excluded from affiliate approval."
+      },
+      {
+        "sourceItem": "affiliate-p-dfcf83a1e2a04eeb",
+        "sourceType": "email_affiliate",
+        "checkedAt": "2026-11-06T13:02:06.896Z",
+        "resolved": true,
+        "disposition": "EXCLUDED_UNVERIFIED_AFFILIATE_SUITABILITY",
+        "reason": "Media episode relevance does not establish a qualified affiliate partner. Retained for owner research; excluded from affiliate approval."
+      },
+      {
+        "sourceItem": "affiliate-p-22505d8dff73cec0",
+        "sourceType": "email_affiliate",
+        "checkedAt": "2026-11-06T13:02:06.905Z",
+        "resolved": true,
+        "disposition": "EXCLUDED_UNVERIFIED_AFFILIATE_SUITABILITY",
+        "reason": "Media episode relevance does not establish a qualified affiliate partner. Retained for owner research; excluded from affiliate approval."
+      },
+      {
+        "sourceItem": "affiliate-ap-d4c8ec180e1bda642e1da3",
+        "sourceType": "email_affiliate",
+        "checkedAt": "2026-11-06T13:02:06.916Z",
+        "resolved": false,
+        "disposition": "HOLD_OWNER_TERMS_AGREEMENT",
+        "recipientRelevant": true,
+        "roleSource": "https://www.wikidata.org/wiki/Q141535259",
+        "contactSource": "https://alaniafightingteam.com/contacts/",
+        "publishedContactMatched": true,
+        "sourceReason": null,
+        "termsPolicyVerified": true,
+        "promoterAgreementReviewedByOwner": false,
+        "commercialActivationApproved": false
+      },
+      {
+        "sourceItem": "affiliate-ap-af07a546ad07dc91d200ee",
+        "sourceType": "email_affiliate",
+        "checkedAt": "2026-11-06T13:02:07.431Z",
+        "resolved": false,
+        "disposition": "HOLD_OWNER_TERMS_AGREEMENT",
+        "recipientRelevant": true,
+        "roleSource": "https://www.wikidata.org/wiki/Q4744294",
+        "contactSource": "https://www.americankickboxingacademy.com/",
+        "publishedContactMatched": true,
+        "sourceReason": null,
+        "termsPolicyVerified": true,
+        "promoterAgreementReviewedByOwner": false,
+        "commercialActivationApproved": false
+      },
+      {
+        "sourceItem": "affiliate-ap-4dd4aa5d41adf65a3fc982",
+        "sourceType": "email_affiliate",
+        "checkedAt": "2026-11-06T13:02:07.532Z",
+        "resolved": false,
+        "disposition": "HOLD_OWNER_TERMS_AGREEMENT",
+        "recipientRelevant": true,
+        "roleSource": "https://www.wikidata.org/wiki/Q140677017",
+        "contactSource": "https://goldenbeltclub.com/contact-us",
+        "publishedContactMatched": true,
+        "sourceReason": null,
+        "termsPolicyVerified": true,
+        "promoterAgreementReviewedByOwner": false,
+        "commercialActivationApproved": false
+      },
+      {
+        "sourceItem": "affiliate-ap-bd96b034cd5a0a7341e991",
+        "sourceType": "email_affiliate",
+        "checkedAt": "2026-11-06T13:02:07.608Z",
+        "resolved": false,
+        "disposition": "HOLD_OWNER_TERMS_AGREEMENT",
+        "recipientRelevant": true,
+        "roleSource": "https://www.wikidata.org/wiki/Q140611031",
+        "contactSource": "https://chicagomma.com/contact",
+        "publishedContactMatched": true,
+        "sourceReason": null,
+        "termsPolicyVerified": true,
+        "promoterAgreementReviewedByOwner": false,
+        "commercialActivationApproved": false
+      },
+      {
+        "sourceItem": "affiliate-ap-e17bd9b8e7a56e9f099425",
+        "sourceType": "email_affiliate",
+        "checkedAt": "2026-11-06T13:02:07.759Z",
+        "resolved": false,
+        "disposition": "HOLD_OWNER_TERMS_AGREEMENT",
+        "recipientRelevant": true,
+        "roleSource": "https://www.wikidata.org/wiki/Q18353422",
+        "contactSource": "https://amcmma.com/",
+        "publishedContactMatched": true,
+        "sourceReason": null,
+        "termsPolicyVerified": true,
+        "promoterAgreementReviewedByOwner": false,
+        "commercialActivationApproved": false
+      },
+      {
+        "sourceItem": "0d293833a235d214a8bb-portrait",
+        "sourceType": "fight_poster_qr",
+        "checkedAt": "2026-11-06T13:02:07.804Z",
+        "resolved": true,
+        "disposition": "EXCLUDED_WITHDRAWN"
+      },
+      {
+        "sourceItem": "0d293833a235d214a8bb-story",
+        "sourceType": "fight_poster_qr",
+        "checkedAt": "2026-11-06T13:02:07.815Z",
+        "resolved": true,
+        "disposition": "EXCLUDED_WITHDRAWN"
+      },
+      {
+        "sourceItem": "5e380f3626308e2f7fa2-portrait",
+        "sourceType": "fight_poster_qr",
+        "checkedAt": "2026-11-06T13:02:07.824Z",
+        "resolved": true,
+        "disposition": "EXCLUDED_WITHDRAWN"
+      },
+      {
+        "sourceItem": "5e380f3626308e2f7fa2-story",
+        "sourceType": "fight_poster_qr",
+        "checkedAt": "2026-11-06T13:02:07.833Z",
+        "resolved": true,
+        "disposition": "EXCLUDED_WITHDRAWN"
+      },
+      {
+        "sourceItem": "bbb25e548fcbcf78d25e-portrait",
+        "sourceType": "fight_poster_qr",
+        "checkedAt": "2026-11-06T13:02:07.842Z",
+        "resolved": true,
+        "disposition": "EXCLUDED_WITHDRAWN"
+      },
+      {
+        "sourceItem": "bbb25e548fcbcf78d25e-story",
+        "sourceType": "fight_poster_qr",
+        "checkedAt": "2026-11-06T13:02:07.851Z",
+        "resolved": true,
+        "disposition": "EXCLUDED_WITHDRAWN"
+      },
+      {
+        "sourceItem": "c324a0c7b19423230dcd-portrait",
+        "sourceType": "fight_poster_qr",
+        "checkedAt": "2026-11-06T13:02:07.862Z",
+        "resolved": true,
+        "disposition": "EXCLUDED_WITHDRAWN"
+      },
+      {
+        "sourceItem": "c324a0c7b19423230dcd-story",
+        "sourceType": "fight_poster_qr",
+        "checkedAt": "2026-11-06T13:02:07.872Z",
+        "resolved": true,
+        "disposition": "EXCLUDED_WITHDRAWN"
+      },
+      {
+        "sourceItem": "syn-affiliate",
+        "sourceType": "affiliate_onboarding_link",
+        "checkedAt": "2026-11-06T13:02:07.882Z",
+        "resolved": true,
+        "disposition": "REPLACED_BY_APPROVED_STAGING_SIGNUP_TEST"
+      },
+      {
+        "sourceItem": "syn-affiliate:6ad629a60df141df46931a8b",
+        "sourceType": "personalized_fight_link",
+        "checkedAt": "2026-11-06T13:02:07.887Z",
+        "resolved": true,
+        "disposition": "REPLACED_BY_APPROVED_STAGING_SIGNUP_TEST"
+      },
+      {
+        "sourceItem": "syn-affiliate:6adfcba7ee2996e566885594",
+        "sourceType": "personalized_fight_link",
+        "checkedAt": "2026-11-06T13:02:07.892Z",
+        "resolved": true,
+        "disposition": "REPLACED_BY_APPROVED_STAGING_SIGNUP_TEST"
+      }
+    ]
+  },
+  "qrAudit": {
+    "workflow": "wrun_41M6RFNMZA0GNC6VS8GAP5NW00",
+    "checkedAt": "2026-11-06T13:10:08.257Z",
+    "readOnly": true,
+    "affiliateRecordsUnchanged": true,
+    "inventory": {
+      "drafts": 19,
+      "affiliateDrafts": 12,
+      "posterImages": 12,
+      "currentPosterImages": 4,
+      "activeMappedAffiliates": 0,
+      "syntheticMappedAffiliates": 1,
+      "socialPosts": 0,
+      "liamTuffsLegacyLinks": 1
+    },
+    "rows": [
+      {
+        "sourceItem": "affiliate-p-1756c6710e383d26",
+        "sourceType": "email_affiliate",
+        "status": "needs_owner_review",
+        "title": "The Darker Side Of Boxing fan league for ELIF NUR TURHAN vs ALYCIA BAUMGARDNER",
+        "decodedUrl": "https://www.fantasymmadness.com/auth?mode=signup&role=affiliate&utm_source=fan_acquisition&utm_medium=partner_outreach&utm_campaign=combat_fans_aff_the_darker_side_of_b_d1a5&utm_content=onboarding",
+        "expectedDestination": "affiliate signup; no existing league asserted",
+        "expectedAffiliateId": null,
+        "expectedFightId": null,
+        "campaignRequired": true,
+        "termsVerified": false,
+        "approvalBlockers": [
+          "independent_affiliate_suitability_requires_evidence"
+        ],
+        "recipientRelevance": {
+          "name": "The Darker Side Of Boxing",
+          "sport": "boxing",
+          "verifiedResearch": true,
+          "sourceUrls": []
+        },
+        "resolution": {
+          "observedDestination": "https://www.fantasymmadness.com/auth?mode=signup&role=affiliate&utm_source=fan_acquisition&utm_medium=partner_outreach&utm_campaign=combat_fans_aff_the_darker_side_of_b_d1a5&utm_content=onboarding",
+          "redirects": [
+            {
+              "url": "https://www.fantasymmadness.com/auth?mode=signup&role=affiliate&utm_source=fan_acquisition&utm_medium=partner_outreach&utm_campaign=combat_fans_aff_the_darker_side_of_b_d1a5&utm_content=onboarding",
+              "status": 200
+            }
+          ],
+          "affiliateIdMatch": "not_applicable",
+          "fightIdMatch": "not_applicable",
+          "attributionResult": "campaign_parameters_preserved",
+          "linkDecision": "PASS",
+          "decision": "HOLD",
+          "reasons": [
+            "independent_affiliate_suitability_requires_evidence",
+            "affiliate_terms_not_verified"
+          ]
+        }
+      },
+      {
+        "sourceItem": "affiliate-p-69fc82b0cae2bb89",
+        "sourceType": "email_affiliate",
+        "status": "needs_owner_review",
+        "title": "A fan league for Cami's Kickboxing Podcast",
+        "decodedUrl": "https://www.fantasymmadness.com/auth?mode=signup&role=affiliate&utm_source=fan_acquisition&utm_medium=partner_outreach&utm_campaign=combat_fans_aff_cami_s_kickboxing_po_ebc4&utm_content=onboarding",
+        "expectedDestination": "affiliate signup; no existing league asserted",
+        "expectedAffiliateId": null,
+        "expectedFightId": null,
+        "campaignRequired": true,
+        "termsVerified": false,
+        "approvalBlockers": [
+          "independent_affiliate_suitability_requires_evidence"
+        ],
+        "recipientRelevance": {
+          "name": "Cami's Kickboxing Podcast",
+          "sport": "kickboxing",
+          "verifiedResearch": true,
+          "sourceUrls": []
+        },
+        "resolution": {
+          "observedDestination": "https://www.fantasymmadness.com/auth?mode=signup&role=affiliate&utm_source=fan_acquisition&utm_medium=partner_outreach&utm_campaign=combat_fans_aff_cami_s_kickboxing_po_ebc4&utm_content=onboarding",
+          "redirects": [
+            {
+              "url": "https://www.fantasymmadness.com/auth?mode=signup&role=affiliate&utm_source=fan_acquisition&utm_medium=partner_outreach&utm_campaign=combat_fans_aff_cami_s_kickboxing_po_ebc4&utm_content=onboarding",
+              "status": 200
+            }
+          ],
+          "affiliateIdMatch": "not_applicable",
+          "fightIdMatch": "not_applicable",
+          "attributionResult": "campaign_parameters_preserved",
+          "linkDecision": "PASS",
+          "decision": "HOLD",
+          "reasons": [
+            "independent_affiliate_suitability_requires_evidence",
+            "affiliate_terms_not_verified"
+          ]
+        }
+      },
+      {
+        "sourceItem": "affiliate-p-dfcf83a1e2a04eeb",
+        "sourceType": "email_affiliate",
+        "status": "needs_owner_review",
+        "title": "A fan league for DEADLOCK: A Pro Wrestling Podcast",
+        "decodedUrl": "https://www.fantasymmadness.com/auth?mode=signup&role=affiliate&utm_source=fan_acquisition&utm_medium=partner_outreach&utm_campaign=combat_fans_aff_deadlock_a_pro_wrest_c29d&utm_content=onboarding",
+        "expectedDestination": "affiliate signup; no existing league asserted",
+        "expectedAffiliateId": null,
+        "expectedFightId": null,
+        "campaignRequired": true,
+        "termsVerified": false,
+        "approvalBlockers": [
+          "independent_affiliate_suitability_requires_evidence"
+        ],
+        "recipientRelevance": {
+          "name": "DEADLOCK: A Pro Wrestling Podcast",
+          "sport": "pro-wrestling",
+          "verifiedResearch": true,
+          "sourceUrls": []
+        },
+        "resolution": {
+          "observedDestination": "https://www.fantasymmadness.com/auth?mode=signup&role=affiliate&utm_source=fan_acquisition&utm_medium=partner_outreach&utm_campaign=combat_fans_aff_deadlock_a_pro_wrest_c29d&utm_content=onboarding",
+          "redirects": [
+            {
+              "url": "https://www.fantasymmadness.com/auth?mode=signup&role=affiliate&utm_source=fan_acquisition&utm_medium=partner_outreach&utm_campaign=combat_fans_aff_deadlock_a_pro_wrest_c29d&utm_content=onboarding",
+              "status": 200
+            }
+          ],
+          "affiliateIdMatch": "not_applicable",
+          "fightIdMatch": "not_applicable",
+          "attributionResult": "campaign_parameters_preserved",
+          "linkDecision": "PASS",
+          "decision": "HOLD",
+          "reasons": [
+            "independent_affiliate_suitability_requires_evidence",
+            "affiliate_terms_not_verified"
+          ]
+        }
+      },
+      {
+        "sourceItem": "affiliate-p-22505d8dff73cec0",
+        "sourceType": "email_affiliate",
+        "status": "needs_owner_review",
+        "title": "A fan league for Fightful Wrestling Podcast with Sean Ross Sapp",
+        "decodedUrl": "https://www.fantasymmadness.com/auth?mode=signup&role=affiliate&utm_source=fan_acquisition&utm_medium=partner_outreach&utm_campaign=combat_fans_aff_fightful_wrestling_p_506c&utm_content=onboarding",
+        "expectedDestination": "affiliate signup; no existing league asserted",
+        "expectedAffiliateId": null,
+        "expectedFightId": null,
+        "campaignRequired": true,
+        "termsVerified": false,
+        "approvalBlockers": [
+          "independent_affiliate_suitability_requires_evidence"
+        ],
+        "recipientRelevance": {
+          "name": "Fightful Wrestling Podcast with Sean Ross Sapp",
+          "sport": "pro-wrestling",
+          "verifiedResearch": true,
+          "sourceUrls": []
+        },
+        "resolution": {
+          "observedDestination": "https://www.fantasymmadness.com/auth?mode=signup&role=affiliate&utm_source=fan_acquisition&utm_medium=partner_outreach&utm_campaign=combat_fans_aff_fightful_wrestling_p_506c&utm_content=onboarding",
+          "redirects": [
+            {
+              "url": "https://www.fantasymmadness.com/auth?mode=signup&role=affiliate&utm_source=fan_acquisition&utm_medium=partner_outreach&utm_campaign=combat_fans_aff_fightful_wrestling_p_506c&utm_content=onboarding",
+              "status": 200
+            }
+          ],
+          "affiliateIdMatch": "not_applicable",
+          "fightIdMatch": "not_applicable",
+          "attributionResult": "campaign_parameters_preserved",
+          "linkDecision": "PASS",
+          "decision": "HOLD",
+          "reasons": [
+            "independent_affiliate_suitability_requires_evidence",
+            "affiliate_terms_not_verified"
+          ]
+        }
+      },
+      {
+        "sourceItem": "affiliate-ap-d4c8ec180e1bda642e1da3",
+        "sourceType": "email_affiliate",
+        "status": "needs_owner_review",
+        "title": "Alania Fighting Team \u2014 FANTASY MMADNESS fan league partnership",
+        "decodedUrl": "https://www.fantasymmadness.com/auth?mode=signup&role=affiliate&utm_source=fan_acquisition&utm_medium=partner_outreach&utm_campaign=combat_fans_aff_alania_fighting_team_d522&utm_content=onboarding",
+        "expectedDestination": "affiliate signup; no existing league asserted",
+        "expectedAffiliateId": null,
+        "expectedFightId": null,
+        "campaignRequired": true,
+        "termsVerified": false,
+        "approvalBlockers": [
+          "affiliate_terms_require_owner_review"
+        ],
+        "recipientRelevance": {
+          "name": "Alania Fighting Team",
+          "sport": "kickboxing",
+          "verifiedResearch": true,
+          "sourceUrls": [
+            "https://www.wikidata.org/wiki/Q141535259",
+            "https://www.wikidata.org/wiki/Q141535259",
+            "https://alaniafightingteam.com/contacts/"
+          ]
+        },
+        "resolution": {
+          "observedDestination": "https://www.fantasymmadness.com/auth?mode=signup&role=affiliate&utm_source=fan_acquisition&utm_medium=partner_outreach&utm_campaign=combat_fans_aff_alania_fighting_team_d522&utm_content=onboarding",
+          "redirects": [
+            {
+              "url": "https://www.fantasymmadness.com/auth?mode=signup&role=affiliate&utm_source=fan_acquisition&utm_medium=partner_outreach&utm_campaign=combat_fans_aff_alania_fighting_team_d522&utm_content=onboarding",
+              "status": 200
+            }
+          ],
+          "affiliateIdMatch": "not_applicable",
+          "fightIdMatch": "not_applicable",
+          "attributionResult": "campaign_parameters_preserved",
+          "linkDecision": "PASS",
+          "decision": "HOLD",
+          "reasons": [
+            "affiliate_terms_require_owner_review",
+            "affiliate_terms_not_verified"
+          ]
+        }
+      },
+      {
+        "sourceItem": "affiliate-ap-af07a546ad07dc91d200ee",
+        "sourceType": "email_affiliate",
+        "status": "needs_owner_review",
+        "title": "American Kickboxing Academy \u2014 FANTASY MMADNESS fan league partnership",
+        "decodedUrl": "https://www.fantasymmadness.com/auth?mode=signup&role=affiliate&utm_source=fan_acquisition&utm_medium=partner_outreach&utm_campaign=combat_fans_aff_american_kickboxing__602a&utm_content=onboarding",
+        "expectedDestination": "affiliate signup; no existing league asserted",
+        "expectedAffiliateId": null,
+        "expectedFightId": null,
+        "campaignRequired": true,
+        "termsVerified": false,
+        "approvalBlockers": [
+          "affiliate_terms_require_owner_review"
+        ],
+        "recipientRelevance": {
+          "name": "American Kickboxing Academy",
+          "sport": "kickboxing",
+          "verifiedResearch": true,
+          "sourceUrls": [
+            "https://www.wikidata.org/wiki/Q4744294",
+            "https://www.wikidata.org/wiki/Q4744294",
+            "https://www.americankickboxingacademy.com/"
+          ]
+        },
+        "resolution": {
+          "observedDestination": "https://www.fantasymmadness.com/auth?mode=signup&role=affiliate&utm_source=fan_acquisition&utm_medium=partner_outreach&utm_campaign=combat_fans_aff_american_kickboxing__602a&utm_content=onboarding",
+          "redirects": [
+            {
+              "url": "https://www.fantasymmadness.com/auth?mode=signup&role=affiliate&utm_source=fan_acquisition&utm_medium=partner_outreach&utm_campaign=combat_fans_aff_american_kickboxing__602a&utm_content=onboarding",
+              "status": 200
+            }
+          ],
+          "affiliateIdMatch": "not_applicable",
+          "fightIdMatch": "not_applicable",
+          "attributionResult": "campaign_parameters_preserved",
+          "linkDecision": "PASS",
+          "decision": "HOLD",
+          "reasons": [
+            "affiliate_terms_require_owner_review",
+            "affiliate_terms_not_verified"
+          ]
+        }
+      },
+      {
+        "sourceItem": "affiliate-ap-4dd4aa5d41adf65a3fc982",
+        "sourceType": "email_affiliate",
+        "status": "needs_owner_review",
+        "title": "Golden Belt Club \u2014 FANTASY MMADNESS fan league partnership",
+        "decodedUrl": "https://www.fantasymmadness.com/auth?mode=signup&role=affiliate&utm_source=fan_acquisition&utm_medium=partner_outreach&utm_campaign=combat_fans_aff_golden_belt_club_d98c&utm_content=onboarding",
+        "expectedDestination": "affiliate signup; no existing league asserted",
+        "expectedAffiliateId": null,
+        "expectedFightId": null,
+        "campaignRequired": true,
+        "termsVerified": false,
+        "approvalBlockers": [
+          "affiliate_terms_require_owner_review"
+        ],
+        "recipientRelevance": {
+          "name": "Golden Belt Club",
+          "sport": "kickboxing",
+          "verifiedResearch": true,
+          "sourceUrls": [
+            "https://www.wikidata.org/wiki/Q140677017",
+            "https://www.wikidata.org/wiki/Q140677017",
+            "https://goldenbeltclub.com/contact-us"
+          ]
+        },
+        "resolution": {
+          "observedDestination": "https://www.fantasymmadness.com/auth?mode=signup&role=affiliate&utm_source=fan_acquisition&utm_medium=partner_outreach&utm_campaign=combat_fans_aff_golden_belt_club_d98c&utm_content=onboarding",
+          "redirects": [
+            {
+              "url": "https://www.fantasymmadness.com/auth?mode=signup&role=affiliate&utm_source=fan_acquisition&utm_medium=partner_outreach&utm_campaign=combat_fans_aff_golden_belt_club_d98c&utm_content=onboarding",
+              "status": 200
+            }
+          ],
+          "affiliateIdMatch": "not_applicable",
+          "fightIdMatch": "not_applicable",
+          "attributionResult": "campaign_parameters_preserved",
+          "linkDecision": "PASS",
+          "decision": "HOLD",
+          "reasons": [
+            "affiliate_terms_require_owner_review",
+            "affiliate_terms_not_verified"
+          ]
+        }
+      },
+      {
+        "sourceItem": "affiliate-ap-bd96b034cd5a0a7341e991",
+        "sourceType": "email_affiliate",
+        "status": "needs_owner_review",
+        "title": "Chicago Mixed Martial Arts \u2014 FANTASY MMADNESS fan league partnership",
+        "decodedUrl": "https://www.fantasymmadness.com/auth?mode=signup&role=affiliate&utm_source=fan_acquisition&utm_medium=partner_outreach&utm_campaign=combat_fans_aff_chicago_mixed_martia_7621&utm_content=onboarding",
+        "expectedDestination": "affiliate signup; no existing league asserted",
+        "expectedAffiliateId": null,
+        "expectedFightId": null,
+        "campaignRequired": true,
+        "termsVerified": false,
+        "approvalBlockers": [
+          "affiliate_terms_require_owner_review"
+        ],
+        "recipientRelevance": {
+          "name": "Chicago Mixed Martial Arts",
+          "sport": "mma-ufc",
+          "verifiedResearch": true,
+          "sourceUrls": [
+            "https://www.wikidata.org/wiki/Q140611031",
+            "https://www.wikidata.org/wiki/Q140611031",
+            "https://chicagomma.com/contact"
+          ]
+        },
+        "resolution": {
+          "observedDestination": "https://www.fantasymmadness.com/auth?mode=signup&role=affiliate&utm_source=fan_acquisition&utm_medium=partner_outreach&utm_campaign=combat_fans_aff_chicago_mixed_martia_7621&utm_content=onboarding",
+          "redirects": [
+            {
+              "url": "https://www.fantasymmadness.com/auth?mode=signup&role=affiliate&utm_source=fan_acquisition&utm_medium=partner_outreach&utm_campaign=combat_fans_aff_chicago_mixed_martia_7621&utm_content=onboarding",
+              "status": 200
+            }
+          ],
+          "affiliateIdMatch": "not_applicable",
+          "fightIdMatch": "not_applicable",
+          "attributionResult": "campaign_parameters_preserved",
+          "linkDecision": "PASS",
+          "decision": "HOLD",
+          "reasons": [
+            "affiliate_terms_require_owner_review",
+            "affiliate_terms_not_verified"
+          ]
+        }
+      },
+      {
+        "sourceItem": "affiliate-ap-e17bd9b8e7a56e9f099425",
+        "sourceType": "email_affiliate",
+        "status": "needs_owner_review",
+        "title": "AMC Kickboxing and Pankration \u2014 FANTASY MMADNESS fan league partnership",
+        "decodedUrl": "https://www.fantasymmadness.com/auth?mode=signup&role=affiliate&utm_source=fan_acquisition&utm_medium=partner_outreach&utm_campaign=combat_fans_aff_amc_kickboxing_and_p_ae6d&utm_content=onboarding",
+        "expectedDestination": "affiliate signup; no existing league asserted",
+        "expectedAffiliateId": null,
+        "expectedFightId": null,
+        "campaignRequired": true,
+        "termsVerified": false,
+        "approvalBlockers": [
+          "affiliate_terms_require_owner_review"
+        ],
+        "recipientRelevance": {
+          "name": "AMC Kickboxing and Pankration",
+          "sport": "mma-ufc",
+          "verifiedResearch": true,
+          "sourceUrls": [
+            "https://www.wikidata.org/wiki/Q18353422",
+            "https://www.wikidata.org/wiki/Q18353422",
+            "https://amcmma.com/"
+          ]
+        },
+        "resolution": {
+          "observedDestination": "https://www.fantasymmadness.com/auth?mode=signup&role=affiliate&utm_source=fan_acquisition&utm_medium=partner_outreach&utm_campaign=combat_fans_aff_amc_kickboxing_and_p_ae6d&utm_content=onboarding",
+          "redirects": [
+            {
+              "url": "https://www.fantasymmadness.com/auth?mode=signup&role=affiliate&utm_source=fan_acquisition&utm_medium=partner_outreach&utm_campaign=combat_fans_aff_amc_kickboxing_and_p_ae6d&utm_content=onboarding",
+              "status": 200
+            }
+          ],
+          "affiliateIdMatch": "not_applicable",
+          "fightIdMatch": "not_applicable",
+          "attributionResult": "campaign_parameters_preserved",
+          "linkDecision": "PASS",
+          "decision": "HOLD",
+          "reasons": [
+            "affiliate_terms_require_owner_review",
+            "affiliate_terms_not_verified"
+          ]
+        }
+      },
+      {
+        "sourceItem": "affiliate-ap-586daface6235e003361fb",
+        "sourceType": "email_affiliate",
+        "status": "needs_owner_review",
+        "title": "Paul Bearer \u2014 FANTASY MMADNESS fan league partnership",
+        "decodedUrl": "https://www.fantasymmadness.com/auth?mode=signup&role=affiliate&utm_source=fan_acquisition&utm_medium=partner_outreach&utm_campaign=combat_fans_aff_paul_bearer_dd2b&utm_content=onboarding",
+        "expectedDestination": "affiliate signup; no existing league asserted",
+        "expectedAffiliateId": null,
+        "expectedFightId": null,
+        "campaignRequired": true,
+        "termsVerified": false,
+        "approvalBlockers": [
+          "affiliate_terms_require_owner_review"
+        ],
+        "recipientRelevance": {
+          "name": "Paul Bearer",
+          "sport": "pro-wrestling",
+          "verifiedResearch": true,
+          "sourceUrls": [
+            "https://www.wikidata.org/wiki/Q714222",
+            "https://www.wikidata.org/wiki/Q714222",
+            "https://www.percypringle.com/"
+          ]
+        },
+        "resolution": {
+          "observedDestination": "https://www.fantasymmadness.com/auth?mode=signup&role=affiliate&utm_source=fan_acquisition&utm_medium=partner_outreach&utm_campaign=combat_fans_aff_paul_bearer_dd2b&utm_content=onboarding",
+          "redirects": [
+            {
+              "url": "https://www.fantasymmadness.com/auth?mode=signup&role=affiliate&utm_source=fan_acquisition&utm_medium=partner_outreach&utm_campaign=combat_fans_aff_paul_bearer_dd2b&utm_content=onboarding",
+              "status": 200
+            }
+          ],
+          "affiliateIdMatch": "not_applicable",
+          "fightIdMatch": "not_applicable",
+          "attributionResult": "campaign_parameters_preserved",
+          "linkDecision": "PASS",
+          "decision": "HOLD",
+          "reasons": [
+            "affiliate_terms_require_owner_review",
+            "affiliate_terms_not_verified"
+          ]
+        }
+      },
+      {
+        "sourceItem": "affiliate-ap-33fdb7312f36d5f1af5e52",
+        "sourceType": "email_affiliate",
+        "status": "needs_owner_review",
+        "title": "Deen the Great \u2014 FANTASY MMADNESS fan league partnership",
+        "decodedUrl": "https://www.fantasymmadness.com/auth?mode=signup&role=affiliate&utm_source=fan_acquisition&utm_medium=partner_outreach&utm_campaign=combat_fans_aff_deen_the_great_6bb4&utm_content=onboarding",
+        "expectedDestination": "affiliate signup; no existing league asserted",
+        "expectedAffiliateId": null,
+        "expectedFightId": null,
+        "campaignRequired": true,
+        "termsVerified": false,
+        "approvalBlockers": [
+          "affiliate_terms_require_owner_review"
+        ],
+        "recipientRelevance": {
+          "name": "Deen the Great",
+          "sport": "boxing",
+          "verifiedResearch": true,
+          "sourceUrls": [
+            "https://www.wikidata.org/wiki/Q138569039",
+            "https://www.wikidata.org/wiki/Q138569039",
+            "https://link.me/deenthegreat"
+          ]
+        },
+        "resolution": {
+          "observedDestination": "https://www.fantasymmadness.com/auth?mode=signup&role=affiliate&utm_source=fan_acquisition&utm_medium=partner_outreach&utm_campaign=combat_fans_aff_deen_the_great_6bb4&utm_content=onboarding",
+          "redirects": [
+            {
+              "url": "https://www.fantasymmadness.com/auth?mode=signup&role=affiliate&utm_source=fan_acquisition&utm_medium=partner_outreach&utm_campaign=combat_fans_aff_deen_the_great_6bb4&utm_content=onboarding",
+              "status": 200
+            }
+          ],
+          "affiliateIdMatch": "not_applicable",
+          "fightIdMatch": "not_applicable",
+          "attributionResult": "campaign_parameters_preserved",
+          "linkDecision": "PASS",
+          "decision": "HOLD",
+          "reasons": [
+            "affiliate_terms_require_owner_review",
+            "affiliate_terms_not_verified"
+          ]
+        }
+      },
+      {
+        "sourceItem": "affiliate-ap-f592236900275060b4435f",
+        "sourceType": "email_affiliate",
+        "status": "needs_owner_review",
+        "title": "Dory Funk Jr. \u2014 FANTASY MMADNESS fan league partnership",
+        "decodedUrl": "https://www.fantasymmadness.com/auth?mode=signup&role=affiliate&utm_source=fan_acquisition&utm_medium=partner_outreach&utm_campaign=combat_fans_aff_dory_funk_jr_7149&utm_content=onboarding",
+        "expectedDestination": "affiliate signup; no existing league asserted",
+        "expectedAffiliateId": null,
+        "expectedFightId": null,
+        "campaignRequired": true,
+        "termsVerified": false,
+        "approvalBlockers": [
+          "affiliate_terms_require_owner_review"
+        ],
+        "recipientRelevance": {
+          "name": "Dory Funk Jr.",
+          "sport": "pro-wrestling",
+          "verifiedResearch": true,
+          "sourceUrls": [
+            "https://www.wikidata.org/wiki/Q631530",
+            "https://www.wikidata.org/wiki/Q631530",
+            "https://dory-funk.com/contacts/"
+          ]
+        },
+        "resolution": {
+          "observedDestination": "https://www.fantasymmadness.com/auth?mode=signup&role=affiliate&utm_source=fan_acquisition&utm_medium=partner_outreach&utm_campaign=combat_fans_aff_dory_funk_jr_7149&utm_content=onboarding",
+          "redirects": [
+            {
+              "url": "https://www.fantasymmadness.com/auth?mode=signup&role=affiliate&utm_source=fan_acquisition&utm_medium=partner_outreach&utm_campaign=combat_fans_aff_dory_funk_jr_7149&utm_content=onboarding",
+              "status": 200
+            }
+          ],
+          "affiliateIdMatch": "not_applicable",
+          "fightIdMatch": "not_applicable",
+          "attributionResult": "campaign_parameters_preserved",
+          "linkDecision": "PASS",
+          "decision": "HOLD",
+          "reasons": [
+            "affiliate_terms_require_owner_review",
+            "affiliate_terms_not_verified"
+          ]
+        }
+      },
+      {
+        "sourceItem": "0d293833a235d214a8bb-portrait",
+        "sourceType": "fight_poster_qr",
+        "status": "withdrawn",
+        "format": "portrait",
+        "decodedUrl": "https://www.fantasymmadness.com/fight/6adfcba7ee2996e566885594?play=1&utm_source=fan_acquisition&utm_medium=partner_outreach&utm_campaign=combat_fans_gs_mma_ufc&utm_content=poster_qr",
+        "decodeError": null,
+        "expectedUrl": "https://www.fantasymmadness.com/fight/6adfcba7ee2996e566885594?play=1&utm_source=fan_acquisition&utm_medium=partner_outreach&utm_campaign=combat_fans_gs_mma_ufc&utm_content=poster_qr",
+        "expectedDestination": "fight entry",
+        "expectedFightId": "6adfcba7ee2996e566885594",
+        "expectedAffiliateId": null,
+        "qrMetadataMatch": true,
+        "attributionRequired": true,
+        "resolution": {
+          "observedDestination": "https://www.fantasymmadness.com/fight/6adfcba7ee2996e566885594?play=1&utm_source=fan_acquisition&utm_medium=partner_outreach&utm_campaign=combat_fans_gs_mma_ufc&utm_content=poster_qr",
+          "redirects": [
+            {
+              "url": "https://www.fantasymmadness.com/fight/6adfcba7ee2996e566885594?play=1&utm_source=fan_acquisition&utm_medium=partner_outreach&utm_campaign=combat_fans_gs_mma_ufc&utm_content=poster_qr",
+              "status": 200
+            }
+          ],
+          "affiliateIdMatch": "not_applicable",
+          "fightIdMatch": true,
+          "attributionResult": "campaign_parameters_preserved",
+          "linkDecision": "PASS",
+          "decision": "HOLD",
+          "reasons": [
+            "withdrawn_artwork_not_eligible"
+          ]
+        }
+      },
+      {
+        "sourceItem": "0d293833a235d214a8bb-story",
+        "sourceType": "fight_poster_qr",
+        "status": "withdrawn",
+        "format": "story",
+        "decodedUrl": "https://www.fantasymmadness.com/fight/6adfcba7ee2996e566885594?play=1&utm_source=fan_acquisition&utm_medium=partner_outreach&utm_campaign=combat_fans_gs_mma_ufc&utm_content=poster_qr",
+        "decodeError": null,
+        "expectedUrl": "https://www.fantasymmadness.com/fight/6adfcba7ee2996e566885594?play=1&utm_source=fan_acquisition&utm_medium=partner_outreach&utm_campaign=combat_fans_gs_mma_ufc&utm_content=poster_qr",
+        "expectedDestination": "fight entry",
+        "expectedFightId": "6adfcba7ee2996e566885594",
+        "expectedAffiliateId": null,
+        "qrMetadataMatch": true,
+        "attributionRequired": true,
+        "resolution": {
+          "observedDestination": "https://www.fantasymmadness.com/fight/6adfcba7ee2996e566885594?play=1&utm_source=fan_acquisition&utm_medium=partner_outreach&utm_campaign=combat_fans_gs_mma_ufc&utm_content=poster_qr",
+          "redirects": [
+            {
+              "url": "https://www.fantasymmadness.com/fight/6adfcba7ee2996e566885594?play=1&utm_source=fan_acquisition&utm_medium=partner_outreach&utm_campaign=combat_fans_gs_mma_ufc&utm_content=poster_qr",
+              "status": 200
+            }
+          ],
+          "affiliateIdMatch": "not_applicable",
+          "fightIdMatch": true,
+          "attributionResult": "campaign_parameters_preserved",
+          "linkDecision": "PASS",
+          "decision": "HOLD",
+          "reasons": [
+            "withdrawn_artwork_not_eligible"
+          ]
+        }
+      },
+      {
+        "sourceItem": "13a0aa47fc413fb5f710-portrait",
+        "sourceType": "fight_poster_qr",
+        "status": "generated",
+        "format": "portrait",
+        "decodedUrl": "https://www.fantasymmadness.com/fight/6ad629a60df141df46931a8b?play=1&utm_source=fan_acquisition&utm_medium=partner_outreach&utm_campaign=combat_fans_gs_boxing&utm_content=poster_qr",
+        "decodeError": null,
+        "expectedUrl": "https://www.fantasymmadness.com/fight/6ad629a60df141df46931a8b?play=1&utm_source=fan_acquisition&utm_medium=partner_outreach&utm_campaign=combat_fans_gs_boxing&utm_content=poster_qr",
+        "expectedDestination": "fight entry",
+        "expectedFightId": "6ad629a60df141df46931a8b",
+        "expectedAffiliateId": null,
+        "qrMetadataMatch": true,
+        "attributionRequired": true,
+        "resolution": {
+          "observedDestination": "https://www.fantasymmadness.com/fight/6ad629a60df141df46931a8b?play=1&utm_source=fan_acquisition&utm_medium=partner_outreach&utm_campaign=combat_fans_gs_boxing&utm_content=poster_qr",
+          "redirects": [
+            {
+              "url": "https://www.fantasymmadness.com/fight/6ad629a60df141df46931a8b?play=1&utm_source=fan_acquisition&utm_medium=partner_outreach&utm_campaign=combat_fans_gs_boxing&utm_content=poster_qr",
+              "status": 200
+            }
+          ],
+          "affiliateIdMatch": "not_applicable",
+          "fightIdMatch": true,
+          "attributionResult": "campaign_parameters_preserved",
+          "linkDecision": "PASS",
+          "decision": "PASS",
+          "reasons": []
+        }
+      },
+      {
+        "sourceItem": "13a0aa47fc413fb5f710-story",
+        "sourceType": "fight_poster_qr",
+        "status": "generated",
+        "format": "story",
+        "decodedUrl": "https://www.fantasymmadness.com/fight/6ad629a60df141df46931a8b?play=1&utm_source=fan_acquisition&utm_medium=partner_outreach&utm_campaign=combat_fans_gs_boxing&utm_content=poster_qr",
+        "decodeError": null,
+        "expectedUrl": "https://www.fantasymmadness.com/fight/6ad629a60df141df46931a8b?play=1&utm_source=fan_acquisition&utm_medium=partner_outreach&utm_campaign=combat_fans_gs_boxing&utm_content=poster_qr",
+        "expectedDestination": "fight entry",
+        "expectedFightId": "6ad629a60df141df46931a8b",
+        "expectedAffiliateId": null,
+        "qrMetadataMatch": true,
+        "attributionRequired": true,
+        "resolution": {
+          "observedDestination": "https://www.fantasymmadness.com/fight/6ad629a60df141df46931a8b?play=1&utm_source=fan_acquisition&utm_medium=partner_outreach&utm_campaign=combat_fans_gs_boxing&utm_content=poster_qr",
+          "redirects": [
+            {
+              "url": "https://www.fantasymmadness.com/fight/6ad629a60df141df46931a8b?play=1&utm_source=fan_acquisition&utm_medium=partner_outreach&utm_campaign=combat_fans_gs_boxing&utm_content=poster_qr",
+              "status": 200
+            }
+          ],
+          "affiliateIdMatch": "not_applicable",
+          "fightIdMatch": true,
+          "attributionResult": "campaign_parameters_preserved",
+          "linkDecision": "PASS",
+          "decision": "PASS",
+          "reasons": []
+        }
+      },
+      {
+        "sourceItem": "1dff70804146b2b5f723-portrait",
+        "sourceType": "fight_poster_qr",
+        "status": "generated",
+        "format": "portrait",
+        "decodedUrl": "https://www.fantasymmadness.com/fight/6adfcba7ee2996e566885594?play=1&utm_source=fan_acquisition&utm_medium=partner_outreach&utm_campaign=combat_fans_gs_mma_ufc&utm_content=poster_qr",
+        "decodeError": null,
+        "expectedUrl": "https://www.fantasymmadness.com/fight/6adfcba7ee2996e566885594?play=1&utm_source=fan_acquisition&utm_medium=partner_outreach&utm_campaign=combat_fans_gs_mma_ufc&utm_content=poster_qr",
+        "expectedDestination": "fight entry",
+        "expectedFightId": "6adfcba7ee2996e566885594",
+        "expectedAffiliateId": null,
+        "qrMetadataMatch": true,
+        "attributionRequired": true,
+        "resolution": {
+          "observedDestination": "https://www.fantasymmadness.com/fight/6adfcba7ee2996e566885594?play=1&utm_source=fan_acquisition&utm_medium=partner_outreach&utm_campaign=combat_fans_gs_mma_ufc&utm_content=poster_qr",
+          "redirects": [
+            {
+              "url": "https://www.fantasymmadness.com/fight/6adfcba7ee2996e566885594?play=1&utm_source=fan_acquisition&utm_medium=partner_outreach&utm_campaign=combat_fans_gs_mma_ufc&utm_content=poster_qr",
+              "status": 200
+            }
+          ],
+          "affiliateIdMatch": "not_applicable",
+          "fightIdMatch": true,
+          "attributionResult": "campaign_parameters_preserved",
+          "linkDecision": "PASS",
+          "decision": "PASS",
+          "reasons": []
+        }
+      },
+      {
+        "sourceItem": "1dff70804146b2b5f723-story",
+        "sourceType": "fight_poster_qr",
+        "status": "generated",
+        "format": "story",
+        "decodedUrl": "https://www.fantasymmadness.com/fight/6adfcba7ee2996e566885594?play=1&utm_source=fan_acquisition&utm_medium=partner_outreach&utm_campaign=combat_fans_gs_mma_ufc&utm_content=poster_qr",
+        "decodeError": null,
+        "expectedUrl": "https://www.fantasymmadness.com/fight/6adfcba7ee2996e566885594?play=1&utm_source=fan_acquisition&utm_medium=partner_outreach&utm_campaign=combat_fans_gs_mma_ufc&utm_content=poster_qr",
+        "expectedDestination": "fight entry",
+        "expectedFightId": "6adfcba7ee2996e566885594",
+        "expectedAffiliateId": null,
+        "qrMetadataMatch": true,
+        "attributionRequired": true,
+        "resolution": {
+          "observedDestination": "https://www.fantasymmadness.com/fight/6adfcba7ee2996e566885594?play=1&utm_source=fan_acquisition&utm_medium=partner_outreach&utm_campaign=combat_fans_gs_mma_ufc&utm_content=poster_qr",
+          "redirects": [
+            {
+              "url": "https://www.fantasymmadness.com/fight/6adfcba7ee2996e566885594?play=1&utm_source=fan_acquisition&utm_medium=partner_outreach&utm_campaign=combat_fans_gs_mma_ufc&utm_content=poster_qr",
+              "status": 200
+            }
+          ],
+          "affiliateIdMatch": "not_applicable",
+          "fightIdMatch": true,
+          "attributionResult": "campaign_parameters_preserved",
+          "linkDecision": "PASS",
+          "decision": "PASS",
+          "reasons": []
+        }
+      },
+      {
+        "sourceItem": "5e380f3626308e2f7fa2-portrait",
+        "sourceType": "fight_poster_qr",
+        "status": "withdrawn",
+        "format": "portrait",
+        "decodedUrl": "https://www.fantasymmadness.com/fight/6ad629a60df141df46931a8b?play=1&utm_source=fan_acquisition&utm_medium=partner_outreach&utm_campaign=combat_fans_gs_boxing&utm_content=poster_qr",
+        "decodeError": null,
+        "expectedUrl": "https://www.fantasymmadness.com/fight/6ad629a60df141df46931a8b?play=1&utm_source=fan_acquisition&utm_medium=partner_outreach&utm_campaign=combat_fans_gs_boxing&utm_content=poster_qr",
+        "expectedDestination": "fight entry",
+        "expectedFightId": "6ad629a60df141df46931a8b",
+        "expectedAffiliateId": null,
+        "qrMetadataMatch": true,
+        "attributionRequired": true,
+        "resolution": {
+          "observedDestination": "https://www.fantasymmadness.com/fight/6ad629a60df141df46931a8b?play=1&utm_source=fan_acquisition&utm_medium=partner_outreach&utm_campaign=combat_fans_gs_boxing&utm_content=poster_qr",
+          "redirects": [
+            {
+              "url": "https://www.fantasymmadness.com/fight/6ad629a60df141df46931a8b?play=1&utm_source=fan_acquisition&utm_medium=partner_outreach&utm_campaign=combat_fans_gs_boxing&utm_content=poster_qr",
+              "status": 200
+            }
+          ],
+          "affiliateIdMatch": "not_applicable",
+          "fightIdMatch": true,
+          "attributionResult": "campaign_parameters_preserved",
+          "linkDecision": "PASS",
+          "decision": "HOLD",
+          "reasons": [
+            "withdrawn_artwork_not_eligible"
+          ]
+        }
+      },
+      {
+        "sourceItem": "5e380f3626308e2f7fa2-story",
+        "sourceType": "fight_poster_qr",
+        "status": "withdrawn",
+        "format": "story",
+        "decodedUrl": "https://www.fantasymmadness.com/fight/6ad629a60df141df46931a8b?play=1&utm_source=fan_acquisition&utm_medium=partner_outreach&utm_campaign=combat_fans_gs_boxing&utm_content=poster_qr",
+        "decodeError": null,
+        "expectedUrl": "https://www.fantasymmadness.com/fight/6ad629a60df141df46931a8b?play=1&utm_source=fan_acquisition&utm_medium=partner_outreach&utm_campaign=combat_fans_gs_boxing&utm_content=poster_qr",
+        "expectedDestination": "fight entry",
+        "expectedFightId": "6ad629a60df141df46931a8b",
+        "expectedAffiliateId": null,
+        "qrMetadataMatch": true,
+        "attributionRequired": true,
+        "resolution": {
+          "observedDestination": "https://www.fantasymmadness.com/fight/6ad629a60df141df46931a8b?play=1&utm_source=fan_acquisition&utm_medium=partner_outreach&utm_campaign=combat_fans_gs_boxing&utm_content=poster_qr",
+          "redirects": [
+            {
+              "url": "https://www.fantasymmadness.com/fight/6ad629a60df141df46931a8b?play=1&utm_source=fan_acquisition&utm_medium=partner_outreach&utm_campaign=combat_fans_gs_boxing&utm_content=poster_qr",
+              "status": 200
+            }
+          ],
+          "affiliateIdMatch": "not_applicable",
+          "fightIdMatch": true,
+          "attributionResult": "campaign_parameters_preserved",
+          "linkDecision": "PASS",
+          "decision": "HOLD",
+          "reasons": [
+            "withdrawn_artwork_not_eligible"
+          ]
+        }
+      },
+      {
+        "sourceItem": "bbb25e548fcbcf78d25e-portrait",
+        "sourceType": "fight_poster_qr",
+        "status": "withdrawn",
+        "format": "portrait",
+        "decodedUrl": "https://www.fantasymmadness.com/fight/6adfcba7ee2996e566885594?play=1&utm_source=fan_acquisition&utm_medium=partner_outreach&utm_campaign=combat_fans_gs_mma_ufc&utm_content=poster_qr",
+        "decodeError": null,
+        "expectedUrl": "https://www.fantasymmadness.com/fight/6adfcba7ee2996e566885594?play=1&utm_source=fan_acquisition&utm_medium=partner_outreach&utm_campaign=combat_fans_gs_mma_ufc&utm_content=poster_qr",
+        "expectedDestination": "fight entry",
+        "expectedFightId": "6adfcba7ee2996e566885594",
+        "expectedAffiliateId": null,
+        "qrMetadataMatch": true,
+        "attributionRequired": true,
+        "resolution": {
+          "observedDestination": "https://www.fantasymmadness.com/fight/6adfcba7ee2996e566885594?play=1&utm_source=fan_acquisition&utm_medium=partner_outreach&utm_campaign=combat_fans_gs_mma_ufc&utm_content=poster_qr",
+          "redirects": [
+            {
+              "url": "https://www.fantasymmadness.com/fight/6adfcba7ee2996e566885594?play=1&utm_source=fan_acquisition&utm_medium=partner_outreach&utm_campaign=combat_fans_gs_mma_ufc&utm_content=poster_qr",
+              "status": 200
+            }
+          ],
+          "affiliateIdMatch": "not_applicable",
+          "fightIdMatch": true,
+          "attributionResult": "campaign_parameters_preserved",
+          "linkDecision": "PASS",
+          "decision": "HOLD",
+          "reasons": [
+            "withdrawn_artwork_not_eligible"
+          ]
+        }
+      },
+      {
+        "sourceItem": "bbb25e548fcbcf78d25e-story",
+        "sourceType": "fight_poster_qr",
+        "status": "withdrawn",
+        "format": "story",
+        "decodedUrl": "https://www.fantasymmadness.com/fight/6adfcba7ee2996e566885594?play=1&utm_source=fan_acquisition&utm_medium=partner_outreach&utm_campaign=combat_fans_gs_mma_ufc&utm_content=poster_qr",
+        "decodeError": null,
+        "expectedUrl": "https://www.fantasymmadness.com/fight/6adfcba7ee2996e566885594?play=1&utm_source=fan_acquisition&utm_medium=partner_outreach&utm_campaign=combat_fans_gs_mma_ufc&utm_content=poster_qr",
+        "expectedDestination": "fight entry",
+        "expectedFightId": "6adfcba7ee2996e566885594",
+        "expectedAffiliateId": null,
+        "qrMetadataMatch": true,
+        "attributionRequired": true,
+        "resolution": {
+          "observedDestination": "https://www.fantasymmadness.com/fight/6adfcba7ee2996e566885594?play=1&utm_source=fan_acquisition&utm_medium=partner_outreach&utm_campaign=combat_fans_gs_mma_ufc&utm_content=poster_qr",
+          "redirects": [
+            {
+              "url": "https://www.fantasymmadness.com/fight/6adfcba7ee2996e566885594?play=1&utm_source=fan_acquisition&utm_medium=partner_outreach&utm_campaign=combat_fans_gs_mma_ufc&utm_content=poster_qr",
+              "status": 200
+            }
+          ],
+          "affiliateIdMatch": "not_applicable",
+          "fightIdMatch": true,
+          "attributionResult": "campaign_parameters_preserved",
+          "linkDecision": "PASS",
+          "decision": "HOLD",
+          "reasons": [
+            "withdrawn_artwork_not_eligible"
+          ]
+        }
+      },
+      {
+        "sourceItem": "c324a0c7b19423230dcd-portrait",
+        "sourceType": "fight_poster_qr",
+        "status": "withdrawn",
+        "format": "portrait",
+        "decodedUrl": "https://www.fantasymmadness.com/fight/6ad629a60df141df46931a8b?play=1&utm_source=fan_acquisition&utm_medium=partner_outreach&utm_campaign=combat_fans_gs_boxing&utm_content=poster_qr",
+        "decodeError": null,
+        "expectedUrl": "https://www.fantasymmadness.com/fight/6ad629a60df141df46931a8b?play=1&utm_source=fan_acquisition&utm_medium=partner_outreach&utm_campaign=combat_fans_gs_boxing&utm_content=poster_qr",
+        "expectedDestination": "fight entry",
+        "expectedFightId": "6ad629a60df141df46931a8b",
+        "expectedAffiliateId": null,
+        "qrMetadataMatch": true,
+        "attributionRequired": true,
+        "resolution": {
+          "observedDestination": "https://www.fantasymmadness.com/fight/6ad629a60df141df46931a8b?play=1&utm_source=fan_acquisition&utm_medium=partner_outreach&utm_campaign=combat_fans_gs_boxing&utm_content=poster_qr",
+          "redirects": [
+            {
+              "url": "https://www.fantasymmadness.com/fight/6ad629a60df141df46931a8b?play=1&utm_source=fan_acquisition&utm_medium=partner_outreach&utm_campaign=combat_fans_gs_boxing&utm_content=poster_qr",
+              "status": 200
+            }
+          ],
+          "affiliateIdMatch": "not_applicable",
+          "fightIdMatch": true,
+          "attributionResult": "campaign_parameters_preserved",
+          "linkDecision": "PASS",
+          "decision": "HOLD",
+          "reasons": [
+            "withdrawn_artwork_not_eligible"
+          ]
+        }
+      },
+      {
+        "sourceItem": "c324a0c7b19423230dcd-story",
+        "sourceType": "fight_poster_qr",
+        "status": "withdrawn",
+        "format": "story",
+        "decodedUrl": "https://www.fantasymmadness.com/fight/6ad629a60df141df46931a8b?play=1&utm_source=fan_acquisition&utm_medium=partner_outreach&utm_campaign=combat_fans_gs_boxing&utm_content=poster_qr",
+        "decodeError": null,
+        "expectedUrl": "https://www.fantasymmadness.com/fight/6ad629a60df141df46931a8b?play=1&utm_source=fan_acquisition&utm_medium=partner_outreach&utm_campaign=combat_fans_gs_boxing&utm_content=poster_qr",
+        "expectedDestination": "fight entry",
+        "expectedFightId": "6ad629a60df141df46931a8b",
+        "expectedAffiliateId": null,
+        "qrMetadataMatch": true,
+        "attributionRequired": true,
+        "resolution": {
+          "observedDestination": "https://www.fantasymmadness.com/fight/6ad629a60df141df46931a8b?play=1&utm_source=fan_acquisition&utm_medium=partner_outreach&utm_campaign=combat_fans_gs_boxing&utm_content=poster_qr",
+          "redirects": [
+            {
+              "url": "https://www.fantasymmadness.com/fight/6ad629a60df141df46931a8b?play=1&utm_source=fan_acquisition&utm_medium=partner_outreach&utm_campaign=combat_fans_gs_boxing&utm_content=poster_qr",
+              "status": 200
+            }
+          ],
+          "affiliateIdMatch": "not_applicable",
+          "fightIdMatch": true,
+          "attributionResult": "campaign_parameters_preserved",
+          "linkDecision": "PASS",
+          "decision": "HOLD",
+          "reasons": [
+            "withdrawn_artwork_not_eligible"
+          ]
+        }
+      },
+      {
+        "sourceItem": "syn-affiliate",
+        "sourceType": "affiliate_onboarding_link",
+        "title": "Synthetic Test Affiliate",
+        "status": "active",
+        "syntheticAffiliate": true,
+        "decodedUrl": "https://www.fantasymmadness.com/auth?mode=signup&role=affiliate&utm_source=fan_acquisition&utm_medium=partner_outreach&utm_campaign=combat_fans_aff_synthetic_test&utm_content=onboarding",
+        "expectedDestination": "affiliate signup",
+        "expectedAffiliateId": null,
+        "campaignRequired": true,
+        "termsVerified": false,
+        "resolution": {
+          "decision": "HOLD",
+          "reason": "synthetic_affiliate_not_a_real_league",
+          "observedDestination": null,
+          "redirects": [],
+          "affiliateIdMatch": "fixture_only"
+        }
+      },
+      {
+        "sourceItem": "syn-affiliate:6ad629a60df141df46931a8b",
+        "sourceType": "personalized_fight_link",
+        "title": "Synthetic Test Affiliate",
+        "status": "active",
+        "syntheticAffiliate": true,
+        "decodedUrl": "https://www.fantasymmadness.com/fight/6ad629a60df141df46931a8b?play=1&ref=feedfacefeedfacefeedface&utm_source=fan_acquisition&utm_medium=partner_outreach&utm_campaign=combat_fans_aff_synthetic_test&utm_content=boxing",
+        "expectedDestination": "affiliate fight entry",
+        "expectedAffiliateId": "feedfacefeedfacefeedface",
+        "expectedFightId": "6ad629a60df141df46931a8b",
+        "attributionRequired": true,
+        "resolution": {
+          "decision": "HOLD",
+          "reason": "synthetic_affiliate_not_a_real_league",
+          "observedDestination": null,
+          "redirects": [],
+          "affiliateIdMatch": "fixture_only"
+        }
+      },
+      {
+        "sourceItem": "syn-affiliate:6adfcba7ee2996e566885594",
+        "sourceType": "personalized_fight_link",
+        "title": "Synthetic Test Affiliate",
+        "status": "active",
+        "syntheticAffiliate": true,
+        "decodedUrl": "https://www.fantasymmadness.com/fight/6adfcba7ee2996e566885594?play=1&ref=feedfacefeedfacefeedface&utm_source=fan_acquisition&utm_medium=partner_outreach&utm_campaign=combat_fans_aff_synthetic_test&utm_content=mma-ufc",
+        "expectedDestination": "affiliate fight entry",
+        "expectedAffiliateId": "feedfacefeedfacefeedface",
+        "expectedFightId": "6adfcba7ee2996e566885594",
+        "attributionRequired": true,
+        "resolution": {
+          "decision": "HOLD",
+          "reason": "synthetic_affiliate_not_a_real_league",
+          "observedDestination": null,
+          "redirects": [],
+          "affiliateIdMatch": "fixture_only"
+        }
+      },
+      {
+        "sourceItem": "affiliate-p-467d0f291d5acac2",
+        "sourceType": "legacy_recruitment_link",
+        "namespace": "growth_drafts",
+        "title": "A fan league for The Dozen with Liam Tuffs",
+        "status": "needs_owner_review",
+        "decodedUrl": "https://www.fantasymmadness.com/affiliate-create-account?utm_source=fan_acquisition&utm_medium=partner_outreach&utm_campaign=combat_fans_aff_the_dozen_with_liam__7d7a&utm_content=onboarding",
+        "expectedDestination": "affiliate signup; no league exists without verified account mapping",
+        "expectedAffiliateId": null,
+        "campaignRequired": true,
+        "termsVerified": false,
+        "proposalLanguage": true,
+        "existingLeagueVerified": false,
+        "recipientRelevance": {
+          "sport": "bare-knuckle",
+          "verifiedResearch": true,
+          "affiliateSuitabilityVerified": false
+        },
+        "approvalBlockers": [
+          "legacy_namespace_not_modified",
+          "recipient_affiliate_suitability_requires_evidence"
+        ],
+        "resolution": {
+          "observedDestination": "https://www.fantasymmadness.com/auth?mode=signup&role=affiliate",
+          "redirects": [
+            {
+              "url": "https://www.fantasymmadness.com/affiliate-create-account?utm_source=fan_acquisition&utm_medium=partner_outreach&utm_campaign=combat_fans_aff_the_dozen_with_liam__7d7a&utm_content=onboarding",
+              "status": 307,
+              "location": "/auth?mode=signup&role=affiliate"
+            },
+            {
+              "url": "https://www.fantasymmadness.com/auth?mode=signup&role=affiliate",
+              "status": 200
+            }
+          ],
+          "affiliateIdMatch": "not_applicable",
+          "fightIdMatch": "not_applicable",
+          "attributionResult": "campaign_parameters_lost",
+          "linkDecision": "FAIL",
+          "decision": "FAIL",
+          "reasons": [
+            "campaign_parameters_lost",
+            "legacy_namespace_not_modified",
+            "recipient_affiliate_suitability_requires_evidence",
+            "affiliate_terms_not_verified"
+          ]
+        }
+      }
+    ]
+  },
+  "publishingEnabled": false,
+  "outboundEnabled": false,
+  "productionChangedByThisRestoration": false,
+  "ownerFreshSessionAcceptance": "pending",
+  "productionFinal": {
+    "ok": true,
+    "service": "growth-production-preparation",
+    "environment": "production",
+    "database": "fmgrowthproduction",
+    "databaseIsolation": "separate_database_and_namespace",
+    "sharedAtlasCluster": true,
+    "collectionPrefix": "production_preparation_",
+    "scheduler": {
+      "enabled": true,
+      "generation": "production-preparation-5a99b6f4-d62f-4274-bc12-ad6411896065",
+      "lastCompletedAt": "2026-11-06T13:18:25.363Z",
+      "completedCycles": 55,
+      "scheduledCycles": 54,
+      "healthy": true,
+      "lastError": null
+    },
+    "operations": {
+      "mode": "preparation_only",
+      "departments": {
+        "marketing": {
+          "awaitingOwnerReview": 2,
+          "receipts": 2,
+          "ready": 0,
+          "held": 2,
+          "awaitingReceipt": 0,
+          "sourceHolds": 0,
+          "approvedDrafts": 0
+        },
+        "pr": {
+          "awaitingOwnerReview": 23,
+          "receipts": 23,
+          "ready": 23,
+          "held": 0,
+          "awaitingReceipt": 0,
+          "sourceHolds": 0,
+          "approvedDrafts": 0
+        },
+        "affiliate": {
+          "awaitingOwnerReview": 8,
+          "receipts": 8,
+          "ready": 0,
+          "held": 8,
+          "awaitingReceipt": 0,
+          "sourceHolds": 17,
+          "approvedDrafts": 0
+        }
+      },
+      "jobs": {
+        "completed": 161
+      },
+      "receiptMeaning": "Prepared evidence snapshots only; never messages sent, publication, owner approval or conversion.",
+      "realDeliveriesObserved": 0,
+      "liveSocialPostsObserved": 0,
+      "attributedPayingConversions": null,
+      "publishingEnabled": false,
+      "outboundEnabled": false
+    },
+    "connections": {
+      "source": "existing_authorized_connection_service",
+      "sourceDatabase": "fmgrowthtest",
+      "checkedAt": "2026-11-06T13:16:48.581Z",
+      "statusOnly": true,
+      "verificationStale": false,
+      "productionPublishingAuthorized": false,
+      "oauth": [
+        {
+          "provider": "tiktok",
+          "status": "connected",
+          "accessStatus": "valid",
+          "renewalStatus": "available"
+        },
+        {
+          "provider": "x",
+          "status": "connected",
+          "accessStatus": "valid",
+          "renewalStatus": "expiry-unknown"
+        }
+      ],
+      "meta": {
+        "existingRecordFound": true,
+        "source": "existing_isolated_record",
+        "encryptionConfigured": true,
+        "checkedAt": "2026-11-06T13:16:35.101Z",
+        "facebook": {
+          "verified": true,
+          "state": "connected",
+          "reason": null
+        },
+        "instagram": {
+          "verified": true,
+          "state": "connected",
+          "reason": null
+        },
+        "credentialsChanged": false,
+        "publishingEnabled": false
+      }
+    },
+    "ownerApprovalRequired": true,
+    "publishingEnabled": false,
+    "outboundEnabled": false,
+    "paymentMutationsEnabled": false,
+    "syntheticImportsSupported": false
+  },
+  "localTests": {
+    "restoredFrontendBrowser": {
+      "passed": 11,
+      "failed": 0
+    },
+    "restoredBackendDashboardAndProductionAdapter": {
+      "passed": 8,
+      "failed": 0
+    },
+    "currentDeliveryClaimSuppressionReadiness": {
+      "passed": 3,
+      "failed": 0
+    }
+  },
+  "ci": {
+    "frontendQualitySecurity": "https://github.com/WajihulHassan944/fmm-ver2/actions/runs/42223901750",
+    "frontendAffiliateAcceptance": "https://github.com/WajihulHassan944/fmm-ver2/actions/runs/42223901673",
+    "backendQualitySecurity": "https://github.com/WajihulHassan944/fantasymmadness-game-server-three/actions/runs/42223892956",
+    "backendFullIsolated": "https://github.com/WajihulHassan944/fantasymmadness-game-server-three/actions/runs/42223892877"
+  },
+  "ciConclusions": {
+    "frontendQualitySecurity": "success",
+    "frontendAffiliateAcceptance": "success",
+    "backendQualitySecurity": "success",
+    "backendFullIsolated": {
+      "conclusion": "failure",
+      "reportedTests": 187,
+      "reportedPass": 187,
+      "reportedFail": 0,
+      "failedStep": "Verify durable scheduled execution without owner session",
+      "cause": "Staging latest affiliate preparation job reported preparation_source_temporarily_unavailable, state retry; worker health correctly remained false. Production healthy and four accounts connected."
+    }
+  },
+  "preservedStagingWorkerLatestEvidence": [
+    {
+      "completedAt": "2026-11-06T13:16:48.771Z",
+      "evidence": {
+        "checkedAt": "2026-11-06T13:16:48.588Z",
+        "operations": {
+          "mode": "preparation_only",
+          "departments": {
+            "marketing": {
+              "awaitingOwnerReview": 2,
+              "receipts": 2,
+              "ready": 2,
+              "held": 0,
+              "awaitingReceipt": 0,
+              "sourceHolds": 0,
+              "approvedDrafts": 0
+            },
+            "pr": {
+              "awaitingOwnerReview": 5,
+              "receipts": 5,
+              "ready": 5,
+              "held": 0,
+              "awaitingReceipt": 0,
+              "sourceHolds": 0,
+              "approvedDrafts": 0
+            },
+            "affiliate": {
+              "awaitingOwnerReview": 12,
+              "receipts": 12,
+              "ready": 0,
+              "held": 12,
+              "awaitingReceipt": 0,
+              "sourceHolds": 23,
+              "approvedDrafts": 0
+            }
+          },
+          "jobs": {
+            "retry": 1,
+            "completed": 213
+          },
+          "receiptMeaning": "Prepared evidence snapshots only; never messages sent, publication, owner approval or conversion.",
+          "realDeliveriesObserved": 0,
+          "liveSocialPostsObserved": 0,
+          "attributedPayingConversions": null,
+          "publishingEnabled": false,
+          "outboundEnabled": false
+        },
+        "connections": {
+          "at": "2026-11-06T13:16:48.588Z",
+          "oauth": [
+            {
+              "provider": "tiktok",
+              "status": "connected",
+              "accessStatus": "valid",
+              "tokenExpiresAt": "2026-11-07T12:00:42.041Z",
+              "refreshExpiresAt": "2027-11-05T12:30:01.041Z",
+              "refreshExpiryKnown": true,
+              "refreshAvailable": true,
+              "renewalAvailable": true,
+              "renewalStatus": "available",
+              "nextRefreshAt": "2026-11-07T11:30:42.041Z",
+              "expiryEvidence": {
+                "source": "encrypted_provider_response",
+                "issuedAt": "2026-11-06T12:00:42.041Z",
+                "accessLifetimeSeconds": 86400,
+                "refreshLifetimeSeconds": 31451359,
+                "storedRefreshExpiresAt": "2027-11-05T12:30:01.041Z",
+                "metadataMismatch": false
+              },
+              "warnings": [],
+              "grantedScopes": [
+                "user.info.basic"
+              ],
+              "scopesVerifiedAt": "2026-11-06T12:00:42.223Z",
+              "identityVerifiedAt": "2026-11-06T13:01:33.062Z",
+              "nextRetryAt": null,
+              "reason": null,
+              "publishingEnabled": false
+            },
+            {
+              "provider": "x",
+              "status": "connected",
+              "accessStatus": "valid",
+              "tokenExpiresAt": "2026-11-06T15:16:47.998Z",
+              "refreshExpiresAt": null,
+              "refreshExpiryKnown": false,
+              "refreshAvailable": true,
+              "renewalAvailable": true,
+              "renewalStatus": "expiry-unknown",
+              "nextRefreshAt": "2026-11-06T14:46:47.998Z",
+              "expiryEvidence": {
+                "source": "unknown",
+                "issuedAt": "2026-11-06T13:16:47.998Z",
+                "accessLifetimeSeconds": 7200,
+                "refreshLifetimeSeconds": null,
+                "storedRefreshExpiresAt": null,
+                "metadataMismatch": false
+              },
+              "warnings": [],
+              "grantedScopes": [
+                "offline.access",
+                "tweet.read",
+                "users.read"
+              ],
+              "scopesVerifiedAt": "2026-11-06T13:16:48.129Z",
+              "identityVerifiedAt": "2026-11-06T13:16:48.129Z",
+              "nextRetryAt": null,
+              "reason": null,
+              "publishingEnabled": false
+            }
+          ],
+          "meta": {
+            "existingRecordFound": true,
+            "source": "existing_isolated_record",
+            "encryptionConfigured": true,
+            "checkedAt": "2026-11-06T13:16:35.101Z",
+            "facebook": {
+              "verified": true,
+              "state": "connected",
+              "reason": null
+            },
+            "instagram": {
+              "verified": true,
+              "state": "connected",
+              "reason": null
+            },
+            "credentialsChanged": false,
+            "publishingEnabled": false
+          },
+          "permissions": {
+            "verified": true,
+            "granted": [
+              "pages_show_list",
+              "business_management",
+              "instagram_basic",
+              "instagram_content_publish",
+              "pages_read_engagement",
+              "pages_manage_posts",
+              "public_profile"
+            ],
+            "declined": [],
+            "checkedAt": "2026-11-06T13:16:48.573Z",
+            "expiresAt": "2027-01-01T14:38:21.329Z",
+            "refreshSupported": false,
+            "lifecycle": "Facebook Page authorization has no generic OAuth refresh token; retain working Page tokens and reconnect only when provider validation requires it."
+          }
+        },
+        "jobResults": [
+          {
+            "department": "marketing",
+            "ok": true,
+            "sourceHolds": 0,
+            "receipt": {
+              "created": 0,
+              "checked": 2
+            }
+          },
+          {
+            "department": "pr",
+            "ok": true,
+            "sourceHolds": 0,
+            "receipt": {
+              "created": 0,
+              "checked": 5
+            }
+          },
+          {
+            "department": "affiliate",
+            "ok": false,
+            "state": "retry",
+            "reason": "preparation_source_temporarily_unavailable"
+          }
+        ],
+        "errors": 1,
+        "websiteSessionUsed": false,
+        "outboundEnabled": false,
+        "publishingEnabled": false
+      }
+    },
+    {
+      "completedAt": "2026-11-06T13:01:33.502Z",
+      "evidence": {
+        "checkedAt": "2026-11-06T13:01:33.344Z",
+        "operations": {
+          "mode": "preparation_only",
+          "departments": {
+            "marketing": {
+              "awaitingOwnerReview": 2,
+              "receipts": 2,
+              "ready": 2,
+              "held": 0,
+              "awaitingReceipt": 0,
+              "sourceHolds": 0,
+              "approvedDrafts": 0
+            },
+            "pr": {
+              "awaitingOwnerReview": 5,
+              "receipts": 5,
+              "ready": 5,
+              "held": 0,
+              "awaitingReceipt": 0,
+              "sourceHolds": 0,
+              "approvedDrafts": 0
+            },
+            "affiliate": {
+              "awaitingOwnerReview": 12,
+              "receipts": 12,
+              "ready": 0,
+              "held": 12,
+              "awaitingReceipt": 0,
+              "sourceHolds": 23,
+              "approvedDrafts": 0
+            }
+          },
+          "jobs": {
+            "completed": 211
+          },
+          "receiptMeaning": "Prepared evidence snapshots only; never messages sent, publication, owner approval or conversion.",
+          "realDeliveriesObserved": 0,
+          "liveSocialPostsObserved": 0,
+          "attributedPayingConversions": null,
+          "publishingEnabled": false,
+          "outboundEnabled": false
+        },
+        "connections": {
+          "at": "2026-11-06T13:01:33.344Z",
+          "oauth": [
+            {
+              "provider": "tiktok",
+              "status": "connected",
+              "accessStatus": "valid",
+              "tokenExpiresAt": "2026-11-07T12:00:42.041Z",
+              "refreshExpiresAt": "2027-11-05T12:30:01.041Z",
+              "refreshExpiryKnown": true,
+              "refreshAvailable": true,
+              "renewalAvailable": true,
+              "renewalStatus": "available",
+              "nextRefreshAt": "2026-11-07T11:30:42.041Z",
+              "expiryEvidence": {
+                "source": "encrypted_provider_response",
+                "issuedAt": "2026-11-06T12:00:42.041Z",
+                "accessLifetimeSeconds": 86400,
+                "refreshLifetimeSeconds": 31451359,
+                "storedRefreshExpiresAt": "2027-11-05T12:30:01.041Z",
+                "metadataMismatch": false
+              },
+              "warnings": [],
+              "grantedScopes": [
+                "user.info.basic"
+              ],
+              "scopesVerifiedAt": "2026-11-06T12:00:42.223Z",
+              "identityVerifiedAt": "2026-11-06T12:46:15.471Z",
+              "nextRetryAt": null,
+              "reason": null,
+              "publishingEnabled": false
+            },
+            {
+              "provider": "x",
+              "status": "connected",
+              "accessStatus": "valid",
+              "tokenExpiresAt": "2026-11-06T13:45:19.095Z",
+              "refreshExpiresAt": null,
+              "refreshExpiryKnown": false,
+              "refreshAvailable": true,
+              "renewalAvailable": true,
+              "renewalStatus": "expiry-unknown",
+              "nextRefreshAt": "2026-11-06T13:15:19.095Z",
+              "expiryEvidence": {
+                "source": "unknown",
+                "issuedAt": "2026-11-06T11:45:19.095Z",
+                "accessLifetimeSeconds": 7200,
+                "refreshLifetimeSeconds": null,
+                "storedRefreshExpiresAt": null,
+                "metadataMismatch": false
+              },
+              "warnings": [],
+              "grantedScopes": [
+                "offline.access",
+                "tweet.read",
+                "users.read"
+              ],
+              "scopesVerifiedAt": "2026-11-06T11:45:19.221Z",
+              "identityVerifiedAt": "2026-11-06T12:46:15.594Z",
+              "nextRetryAt": null,
+              "reason": null,
+              "publishingEnabled": false
+            }
+          ],
+          "meta": {
+            "existingRecordFound": true,
+            "source": "existing_isolated_record",
+            "encryptionConfigured": true,
+            "checkedAt": "2026-11-06T13:01:19.499Z",
+            "facebook": {
+              "verified": true,
+              "state": "connected",
+              "reason": null
+            },
+            "instagram": {
+              "verified": true,
+              "state": "connected",
+              "reason": null
+            },
+            "credentialsChanged": false,
+            "publishingEnabled": false
+          },
+          "permissions": {
+            "verified": true,
+            "granted": [
+              "pages_show_list",
+              "business_management",
+              "instagram_basic",
+              "instagram_content_publish",
+              "pages_read_engagement",
+              "pages_manage_posts",
+              "public_profile"
+            ],
+            "declined": [],
+            "checkedAt": "2026-11-06T13:01:33.329Z",
+            "expiresAt": "2027-01-01T14:38:21.329Z",
+            "refreshSupported": false,
+            "lifecycle": "Facebook Page authorization has no generic OAuth refresh token; retain working Page tokens and reconnect only when provider validation requires it."
+          }
+        },
+        "jobResults": [
+          {
+            "department": "marketing",
+            "ok": true,
+            "sourceHolds": 0,
+            "receipt": {
+              "created": 0,
+              "checked": 2
+            }
+          },
+          {
+            "department": "pr",
+            "ok": true,
+            "sourceHolds": 0,
+            "receipt": {
+              "created": 0,
+              "checked": 5
+            }
+          },
+          {
+            "department": "affiliate",
+            "ok": true,
+            "sourceHolds": 0,
+            "receipt": {
+              "created": 0,
+              "checked": 12
+            }
+          }
+        ],
+        "errors": 0,
+        "websiteSessionUsed": false,
+        "outboundEnabled": false,
+        "publishingEnabled": false
+      }
+    },
+    {
+      "completedAt": "2026-11-06T12:46:15.908Z",
+      "evidence": {
+        "checkedAt": "2026-11-06T12:46:15.735Z",
+        "operations": {
+          "mode": "preparation_only",
+          "departments": {
+            "marketing": {
+              "awaitingOwnerReview": 2,
+              "receipts": 2,
+              "ready": 2,
+              "held": 0,
+              "awaitingReceipt": 0,
+              "sourceHolds": 0,
+              "approvedDrafts": 0
+            },
+            "pr": {
+              "awaitingOwnerReview": 5,
+              "receipts": 5,
+              "ready": 5,
+              "held": 0,
+              "awaitingReceipt": 0,
+              "sourceHolds": 0,
+              "approvedDrafts": 0
+            },
+            "affiliate": {
+              "awaitingOwnerReview": 12,
+              "receipts": 12,
+              "ready": 0,
+              "held": 12,
+              "awaitingReceipt": 0,
+              "sourceHolds": 23,
+              "approvedDrafts": 0
+            }
+          },
+          "jobs": {
+            "completed": 208
+          },
+          "receiptMeaning": "Prepared evidence snapshots only; never messages sent, publication, owner approval or conversion.",
+          "realDeliveriesObserved": 0,
+          "liveSocialPostsObserved": 0,
+          "attributedPayingConversions": null,
+          "publishingEnabled": false,
+          "outboundEnabled": false
+        },
+        "connections": {
+          "at": "2026-11-06T12:46:15.735Z",
+          "oauth": [
+            {
+              "provider": "tiktok",
+              "status": "connected",
+              "accessStatus": "valid",
+              "tokenExpiresAt": "2026-11-07T12:00:42.041Z",
+              "refreshExpiresAt": "2027-11-05T12:30:01.041Z",
+              "refreshExpiryKnown": true,
+              "refreshAvailable": true,
+              "renewalAvailable": true,
+              "renewalStatus": "available",
+              "nextRefreshAt": "2026-11-07T11:30:42.041Z",
+              "expiryEvidence": {
+                "source": "encrypted_provider_response",
+                "issuedAt": "2026-11-06T12:00:42.041Z",
+                "accessLifetimeSeconds": 86400,
+                "refreshLifetimeSeconds": 31451359,
+                "storedRefreshExpiresAt": "2027-11-05T12:30:01.041Z",
+                "metadataMismatch": false
+              },
+              "warnings": [],
+              "grantedScopes": [
+                "user.info.basic"
+              ],
+              "scopesVerifiedAt": "2026-11-06T12:00:42.223Z",
+              "identityVerifiedAt": "2026-11-06T12:31:03.198Z",
+              "nextRetryAt": null,
+              "reason": null,
+              "publishingEnabled": false
+            },
+            {
+              "provider": "x",
+              "status": "connected",
+              "accessStatus": "valid",
+              "tokenExpiresAt": "2026-11-06T13:45:19.095Z",
+              "refreshExpiresAt": null,
+              "refreshExpiryKnown": false,
+              "refreshAvailable": true,
+              "renewalAvailable": true,
+              "renewalStatus": "expiry-unknown",
+              "nextRefreshAt": "2026-11-06T13:15:19.095Z",
+              "expiryEvidence": {
+                "source": "unknown",
+                "issuedAt": "2026-11-06T11:45:19.095Z",
+                "accessLifetimeSeconds": 7200,
+                "refreshLifetimeSeconds": null,
+                "storedRefreshExpiresAt": null,
+                "metadataMismatch": false
+              },
+              "warnings": [],
+              "grantedScopes": [
+                "offline.access",
+                "tweet.read",
+                "users.read"
+              ],
+              "scopesVerifiedAt": "2026-11-06T11:45:19.221Z",
+              "identityVerifiedAt": "2026-11-06T12:31:03.314Z",
+              "nextRetryAt": null,
+              "reason": null,
+              "publishingEnabled": false
+            }
+          ],
+          "meta": {
+            "existingRecordFound": true,
+            "source": "existing_isolated_record",
+            "encryptionConfigured": true,
+            "checkedAt": "2026-11-06T12:46:08.644Z",
+            "facebook": {
+              "verified": true,
+              "state": "connected",
+              "reason": null
+            },
+            "instagram": {
+              "verified": true,
+              "state": "connected",
+              "reason": null
+            },
+            "credentialsChanged": false,
+            "publishingEnabled": false
+          },
+          "permissions": {
+            "verified": true,
+            "granted": [
+              "pages_show_list",
+              "business_management",
+              "instagram_basic",
+              "instagram_content_publish",
+              "pages_read_engagement",
+              "pages_manage_posts",
+              "public_profile"
+            ],
+            "declined": [],
+            "checkedAt": "2026-11-06T12:46:15.721Z",
+            "expiresAt": "2027-01-01T14:38:21.329Z",
+            "refreshSupported": false,
+            "lifecycle": "Facebook Page authorization has no generic OAuth refresh token; retain working Page tokens and reconnect only when provider validation requires it."
+          }
+        },
+        "jobResults": [
+          {
+            "department": "affiliate",
+            "ok": true,
+            "sourceHolds": 0,
+            "receipt": {
+              "created": 0,
+              "checked": 12
+            }
+          },
+          {
+            "department": "marketing",
+            "ok": true,
+            "sourceHolds": 0,
+            "receipt": {
+              "created": 0,
+              "checked": 2
+            }
+          },
+          {
+            "department": "pr",
+            "ok": true,
+            "sourceHolds": 0,
+            "receipt": {
+              "created": 0,
+              "checked": 5
+            }
+          }
+        ],
+        "errors": 0,
+        "websiteSessionUsed": false,
+        "outboundEnabled": false,
+        "publishingEnabled": false
+      }
+    }
+  ]
+}
