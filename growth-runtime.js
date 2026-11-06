@@ -555,7 +555,10 @@ function createGrowthRuntime({ db, config, secrets = {}, provider, fetchImpl = g
   }
   async function overview() {
     const last = await col.runs.find({}).sort({ createdAt: -1 }).limit(10).toArray();
+    const reviewRows=await listDrafts({status:'needs_owner_review',limit:500});
+    const reviewReadiness={pendingOwnerReview:await col.drafts.countDocuments({status:'needs_owner_review'}),assessed:reviewRows.length,technicallyEligible:reviewRows.filter(d=>d.review.state==='eligible').length,held:reviewRows.filter(d=>d.review.state==='held').length,liveDeliveryAuthorized:0};
     return {
+      reviewReadiness,actualDeliveries:await col.drafts.countDocuments({status:'delivered',realDelivery:true}),sandboxCaptured:await col.drafts.countDocuments({status:'delivered',sandbox:true,realDelivery:{$ne:true}}),
       provider: provider.name, realDelivery: provider.realDelivery === true,
       draftsAwaitingReview: await col.drafts.countDocuments({ status: 'needs_owner_review' }),
       approvedAwaitingDelivery: await col.drafts.countDocuments({ status: 'approved' }),

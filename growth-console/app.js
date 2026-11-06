@@ -682,6 +682,11 @@
               : h('div', { class: 'empty', text: 'No daily report yet today. It is created by the first automatic run of the day.' })),
           h('section', { class: 'card' }, h('h2', { text: 'Recent automatic runs' }), h('p', { class: 'sub', text: 'The engine wakes up every 15 minutes.' }), runsTable(o.lastRuns.slice(0, 6)))),
       ]);
+        /* BEGIN authorized 2026-11-06 truthful overview readiness. */
+      if(o.reviewReadiness){var evidence=o.reviewReadiness;main.insertBefore(h('div',{class:'banner info',testid:'overview-review-readiness',text:evidence.pendingOwnerReview+' pending owner review · '+evidence.technicallyEligible+' technically eligible · '+evidence.held+' on HOLD · 0 live deliveries authorized.'}),main.querySelector('.grid.tiles'));}
+      var approvedHint=main.querySelector('[data-testid=tile-approved] .hint');if(approvedHint)approvedHint.textContent='Owner reviewed; live delivery still requires separate authorization';
+      var deliveredTile=main.querySelector('[data-testid=tile-delivered]');if(deliveredTile&&typeof o.actualDeliveries==='number'){deliveredTile.querySelector('.value').textContent=fmtNum(o.actualDeliveries);deliveredTile.querySelector('.hint').textContent='Actual external deliveries; sandbox captures excluded';}
+        /* END authorized 2026-11-06 truthful overview readiness. */
       return api('GET', '/admin/funnel').then(function (f) { var slot = document.getElementById('funnel-slot'); if (slot) slot.appendChild(funnelCard(f.funnel)); });
     });
   };

@@ -132,7 +132,8 @@ jobs:
       - name: Managed worker dependencies and security tests
         run: |
           npm ci --prefix growth-worker-service
-          node growth-worker-service/prepare.cjs
+          npm run build --prefix growth-worker-service
+          node growth-worker-service/scripts/queue-audit-bundle.test.mjs
           cd growth-worker-service
           node scripts/poster-bundle.test.mjs
           cd ..
