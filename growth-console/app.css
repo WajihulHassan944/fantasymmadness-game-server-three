@@ -224,26 +224,3 @@ code.copy{display:block;padding:8px 10px;border:1px dashed #9ab;border-radius:6p
 .provenance { margin: 6px 0 0; padding-left: 18px; }
 .form-row { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 10px; }
 .form-row input { flex: 1 1 220px; }
-
-/* Issue #203: match the established FANTASY MMADNESS command center. */
-:root{color-scheme:dark;--ink:#f3f4f6;--ink-2:#d2d5dc;--ink-3:#aab1bd;--line:#30343e;--line-2:#545c68;--bg:#090c10;--card:#14181f;--brand:#090b0f;--red:#ed172a;--red-2:#ff5663;--good:#79dda5;--good-bg:#102c22;--warn:#f7d273;--warn-bg:#302819;--bad:#ff949b;--bad-bg:#33191f;--info:#a9ccff;--info-bg:#16283d}
-body{background:radial-gradient(ellipse at top left,#271017 0,transparent 45%),var(--bg)}
-.sidenav,.tile,.card,.exec-dept,.topbar,html.embedded .topbar{background:var(--card);color:var(--ink)}
-.sidenav a.active{background:#3a151e;color:#ff8e98;border-left:3px solid var(--red)}
-.btn,button,input,select,textarea{background:#1c222c;color:var(--ink);border-color:var(--line-2)}
-.btn:hover,.topbar .signout:hover{background:#303845;color:#fff}.btn.primary{background:#c9182c;color:#fff}.btn.approve{background:#145b37;color:#fff}
-.draft .body,code.copy,pre,.table-wrap,th,td{background:var(--card);color:var(--ink);border-color:var(--line)}
-.banner.info,.banner.good,.banner.warn,.banner.bad{color:var(--ink);border-color:var(--line-2)}
-html.embedded .sidenav{display:flex;flex-wrap:wrap;gap:4px;border-right:0;border-bottom:1px solid var(--line);padding:10px}
-html.embedded .sidenav a{padding:8px 12px;font-size:13px;margin:0}
-html.embedded .layout{display:block}html.embedded main{max-width:none}
-button:focus-visible,a:focus-visible,input:focus-visible,select:focus-visible,textarea:focus-visible{outline:3px solid #ff6470;outline-offset:3px}
-[hidden]{display:none!important}main{min-width:0}pre,a,td,.card,.draft{overflow-wrap:anywhere}img{max-width:100%;height:auto}
-@media(max-width:640px){.topbar{height:auto;min-height:56px;flex-wrap:wrap;padding:12px}.layout{display:block}.sidenav{display:flex;flex-wrap:wrap}.sidenav a{font-size:12px}main,html.embedded main{padding:14px 10px}.grid.two{grid-template-columns:minmax(0,1fr)}.page-head .actions{margin-left:0}.stage-pill{margin-left:0}}
-@media(prefers-reduced-motion:reduce){*,*::before,*::after{animation:none!important;transition:none!important;scroll-behavior:auto!important}}
-/* Override legacy light surfaces together so campaign text keeps readable contrast. */
-.draft,.empty,.modal,.login,.funnel-step,.funnel-step.off,.chip,.chip.kind,.page-option{background:var(--card);color:var(--ink);border-color:var(--line)}
-.facts{background:#10251d;color:#e8f8ef;border-color:#315943}
-select,input[type=text],input[type=email],input[type=password],input[type=url],textarea{background:#17202b;color:var(--ink);border-color:var(--line-2)}
-dl.facts dt{color:#c4dcce}.modal header,.modal footer{border-color:var(--line)}
-.email-preview-safe td,.email-preview-safe th{background:#fff;color:#161a22}
