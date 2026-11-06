@@ -1,0 +1,156 @@
+name: Isolated social OAuth security tests
+on:
+  pull_request:
+    paths:
+      - 'growth-social-oauth*'
+      - 'growth-social-connection-*'
+      - 'growth-affiliate-*'
+      - 'growth-production-*'
+      - 'growth-runtime.js'
+      - 'growth-link-audit*'
+      - 'scripts/growth-affiliate-mobile-audit.js'
+      - 'docs/evidence/growth-affiliate-links-*'
+      - 'growth-backoffice*'
+      - 'growth-platform-copy*'
+      - 'growth-event-timing*'
+      - 'growth-text-quality*'
+      - 'growth-preparation-*'
+      - 'growth-poster*'
+      - 'growth-managed*'
+      - 'growth-worker-service/**'
+      - 'growth-assets/**'
+      - 'vercel.json'
+      - 'scripts/growth-social-oauth-deployed-smoke.js'
+      - 'growth-isolated-*.js'
+      - 'full-card-bootstrap.js'
+      - '.github/workflows/growth-social-oauth-isolated.yml'
+  workflow_dispatch:
+    inputs:
+      expected_release:
+        description: Require verified timer execution from this worker release
+        type: string
+        required: false
+      worker_url:
+        description: Exact isolated worker Preview URL to verify durable timer execution
+        type: string
+        required: false
+      deployed_smoke:
+        description: Run read-only checks against the isolated OAuth Preview
+        type: boolean
+        default: false
+permissions:
+  contents: read
+jobs:
+  isolated-social-oauth:
+    runs-on: ubuntu-24.04
+    services:
+      mongo:
+        image: mongo:7.0
+        ports:
+          - 27017:27017
+        options: >-
+          --health-cmd "mongosh --quiet --eval 'db.adminCommand({ping:1}).ok'"
+          --health-interval 10s --health-timeout 5s --health-retries 5
+    env:
+      # Pinned isolated acceptance target; never a production alias.
+      STAGING_WORKER_URL: https://fantasymmadness-growth-isolated-test-qyz7f9cck.vercel.app
+      STAGING_WORKER_RELEASE: affiliate-discovery-isolated-v5
+      GROWTH_TEST_MONGO_URI: mongodb://127.0.0.1:27017/fmgrowthtest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Probe isolated worker health before regressions
+        if: inputs.worker_url != '' || github.head_ref == 'feature/growth-social-oauth-isolated'
+        env:
+          WORKER_URL: ${{ inputs.worker_url || env.STAGING_WORKER_URL }}
+        run: node -e 'fetch(process.env.WORKER_URL+"/health").then(async r=>console.log("worker health",r.status,(await r.text()).slice(0,1500)))'
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - run: npm ci --ignore-scripts
+      - name: Syntax and real MongoDB OAuth security checks (providers mocked)
+        run: |
+          node --check growth-social-oauth-isolated.js
+          node --check growth-social-oauth-console.js
+          node --check growth-isolated-routes.js
+          node growth-social-admin-sso.test.js
+          node growth-social-oauth-isolated.test.js
+          node growth-social-oauth-preview.test.js
+      - name: Install Chromium for isolated back-office UI tests
+        run: |
+          if command -v google-chrome >/dev/null 2>&1; then
+            echo "GROWTH_TEST_CHROMIUM=$(command -v google-chrome)" >> "$GITHUB_ENV"
+          else
+            npx playwright install chromium
+          fi
+      - name: Administrator-only social Connections browser test
+        run: node growth-social-oauth-console.browser.test.js
+      - name: Verify required isolated test files exist
+        run: test -f growth-affiliate-program.test.js && test -f growth-preparation-operations.test.js && test -f growth-managed-scheduler.test.js
+      - name: Integrated back office, affiliate QR parity and sandbox receipt regressions
+        run: node --test --test-concurrency=1 growth-existing-meta-readonly.test.js growth-backoffice-preview.integration.test.js growth-autonomy-safety.integration.test.js growth-affiliate-program.test.js growth-affiliate-attribution.test.js growth-fight-urls.integration.test.js growth-backoffice.test.js growth-sandbox-receipt-reporting.test.js growth-registry-refresh.integration.test.js
+      - name: Read-only mobile destination evidence from the staging inventory
+        run: node scripts/growth-affiliate-mobile-audit.js
+      - name: Read-only actual QR inventory and synthetic affiliate entry attribution
+        run: |
+          node growth-link-audit.test.js
+          node growth-affiliate-qr-journey.integration.test.js
+          node growth-affiliate-acceptance.test.js
+          node growth-affiliate-acceptance-http.test.js
+          node growth-affiliate-hold-review.test.js
+          node growth-production-preparation.test.js
+          node growth-production-launch-audit.test.js
+          node growth-production-routing.test.js
+          node growth-production-observation.test.js
+      - name: Platform copy, PR quality, independent affiliate recruitment and connection persistence
+        run: |
+          node growth-preparation-operations.test.js
+          node growth-quality-refinement.test.js
+          node growth-draft-refinement.integration.test.js
+          node growth-social-connection-manager.test.js
+          node growth-affiliate-recruitment.test.js
+          node growth-approval-queue-audit.test.js
+          node growth-recipient-source-review.test.js
+          node growth-affiliate-discovery-retry.test.js
+          node growth-dashboard-lock.test.js
+          node growth-launch-review.test.js
+          node growth-launch-delivery-acceptance.test.js
+          node growth-prospect-research.test.js
+          node growth-contest-campaigns.test.js
+          node growth-fight-urls.test.js
+      - name: Actual poster rendering, original-image integrity and affiliate QR regression
+        run: |
+          node growth-poster-studio.test.js
+          node growth-posters.integration.test.js
+          node growth-poster-http-health.test.js
+      - run: npm audit --omit=dev --audit-level=high
+
+      - name: Verify deployed isolated Preview without provider authorization
+        if: (github.event_name == 'workflow_dispatch' && inputs.deployed_smoke) || github.head_ref == 'feature/growth-social-oauth-isolated'
+        run: node scripts/growth-social-oauth-deployed-smoke.js
+
+      - name: Managed worker dependencies and security tests
+        run: |
+          npm ci --prefix growth-worker-service
+          npm run build --prefix growth-worker-service
+          node growth-worker-service/scripts/queue-audit-bundle.test.mjs
+          cd growth-worker-service
+          node scripts/poster-bundle.test.mjs
+          cd ..
+          node --test growth-managed-scheduler.test.js
+          npm audit --omit=dev --audit-level=high --prefix growth-worker-service
+      - name: Verify durable scheduled execution without owner session
+        if: inputs.worker_url != '' || github.head_ref == 'feature/growth-social-oauth-isolated'
+        env:
+          WORKER_URL: ${{ inputs.worker_url || env.STAGING_WORKER_URL }}
+          EXPECTED_WORKER_RELEASE: ${{ inputs.expected_release || env.STAGING_WORKER_RELEASE }}
+        run: node scripts/growth-managed-worker-smoke.js
+
+      - name: Upload fixture-only dashboard screenshot evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: issue203-dashboard-fixtures
+          path: docs/evidence/issue203/*.png
+          if-no-files-found: ignore
+          retention-days: 14

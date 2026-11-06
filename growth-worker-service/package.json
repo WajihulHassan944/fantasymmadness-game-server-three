@@ -1,0 +1,36 @@
+{
+  "name": "fmm-growth-sandbox-worker",
+  "private": true,
+  "version": "1.0.0",
+  "scripts": {
+    "build": "node prepare.cjs && nitro build",
+    "dev": "node prepare.cjs && nitro dev"
+  },
+  "dependencies": {
+    "express": "4.22.1",
+    "he": "1.2.0",
+    "jsonwebtoken": "9.0.2",
+    "jsqr": "1.4.0",
+    "mongodb": "6.21.0",
+    "nitro": "3.0.261103-rc",
+    "nodemailer": "10.3.1",
+    "qrcode": "1.5.4",
+    "robots-parser": "3.0.1",
+    "rollup": "4.67.5",
+    "rss-parser": "3.13.0",
+    "sharp": "0.35.5",
+    "twitter-text": "3.1.0",
+    "undici": "7.30.2",
+    "workflow": "5.4.0"
+  },
+  "devDependencies": {
+    "rolldown": "^1.3.0"
+  },
+  "overrides": {
+    "zod": "4.6.7",
+    "undici": "7.30.2",
+    "minimatch": "11.0.4",
+    "qs": "6.17.1"
+  },
+  "type": "module"
+}

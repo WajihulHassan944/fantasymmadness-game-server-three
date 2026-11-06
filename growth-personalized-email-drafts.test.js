@@ -11,7 +11,9 @@ const out=preparePersonalizedDrafts([
 assert.equal(out.drafts.length,2);
 assert.ok(out.drafts.every(x=>x.status==='draft'&&!x.sent&&!x.approved&&!x.sendPermitted));
 assert.notEqual(out.drafts[0].html,out.drafts[1].html);
-assert.ok(out.drafts[0].html.includes('Example Newsroom'));
-assert.ok(out.drafts[1].html.includes('Example Fighter'));
+assert.ok(out.drafts[0].html.includes('Hi,'));
+assert.ok(!out.drafts[0].html.includes('Hi Example Newsroom'));
+assert.ok(out.drafts[1].html.includes('Hi,'));
+assert.equal(out.drafts[1].recipientName,'Example Fighter');
 assert.ok(out.drafts.every(x=>x.html.includes('BOXING • MMA • BARE-KNUCKLE • KICKBOXING • PRO WRESTLING')));
 console.log('STAGE10_PERSONALIZED_EMAIL_DRY_RUN '+JSON.stringify({drafts:out.drafts.length,externalSends:0}));

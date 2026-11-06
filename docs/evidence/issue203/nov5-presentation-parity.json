@@ -1,0 +1,44 @@
+[
+  {
+    "repository": "tiktok-oauth",
+    "file": "growth-console/index.html",
+    "baselineCommit": "9b181672c18202c2f8af95536c29a7a9f3f37c87",
+    "sha256": "3a33fd98dc991249b00a84cb19586778d6664ce34d46a622cba8ba0edd17b64e",
+    "byteIdentical": true
+  },
+  {
+    "repository": "tiktok-oauth",
+    "file": "growth-console/app.css",
+    "baselineCommit": "9b181672c18202c2f8af95536c29a7a9f3f37c87",
+    "sha256": "cbab989c988580996bd881a9f13db3dbd5e05c05457c74368f14b559a02f81df",
+    "byteIdentical": true
+  },
+  {
+    "repository": "tiktok-oauth",
+    "file": "growth-console/app.js",
+    "baselineCommit": "9b181672c18202c2f8af95536c29a7a9f3f37c87",
+    "sha256": "df6498a69322c843396854023fb93235eb6016483a6720e96182e1801b014926",
+    "byteIdentical": true
+  },
+  {
+    "repository": "frontend-social-preview",
+    "file": "src/Components/Admin/GrowthEngineCommandCenter.jsx",
+    "baselineCommit": "6c21ced7961c3b5ae1f3f642d0d9b01c791e01d6",
+    "sha256": "3515ee3c8981278be726824a75e2b5197cab66934c5b9864033292afe4c1fc5b",
+    "byteIdentical": true
+  },
+  {
+    "repository": "frontend-social-preview",
+    "file": "src/Components/Admin/GrowthEngineCommandCenter.module.css",
+    "baselineCommit": "6c21ced7961c3b5ae1f3f642d0d9b01c791e01d6",
+    "sha256": "cc566838263933b3a6ce15ebb382197e7a11c99f5085bf4f1c979832e0f2cbdc",
+    "byteIdentical": true
+  },
+  {
+    "repository": "frontend-social-preview",
+    "file": "src/Utils/growthEngineEmbed.cjs",
+    "baselineCommit": "6c21ced7961c3b5ae1f3f642d0d9b01c791e01d6",
+    "sha256": "dc38ff497adb9a2046f3fc2af74a6e35b8a09055dc4baad3d6f830e4b326cffa",
+    "byteIdentical": true
+  }
+]

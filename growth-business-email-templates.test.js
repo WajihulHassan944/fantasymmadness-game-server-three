@@ -2,7 +2,7 @@
 const assert=require('node:assert/strict');
 const {renderBusinessEmail}=require('./growth-business-email-templates');
 for(const type of ['media','promoter','affiliate','influencer','investor']){
- const x=renderBusinessEmail({type,recipientName:'Example <Partner>',personalization:'Relevant to your fight-night audience.'});
+ const x=renderBusinessEmail({type,recipientName:'Example <Partner>',personalization:'Relevant to your fight-night audience. Example <Partner> &amp; coverage.'});
  assert.ok(x.html.includes('FANTASY'));
  assert.ok(x.html.includes('contact@fantasymmadnesscom.com'));
  assert.ok(x.html.includes('max-width:600px'));
@@ -10,6 +10,9 @@ for(const type of ['media','promoter','affiliate','influencer','investor']){
  assert.ok(x.html.includes('Example &lt;Partner&gt;'));
  assert.ok(!x.html.includes('Example <Partner>'));
  assert.ok(x.text.includes('Relevant to your fight-night audience.'));
+ assert.ok(x.text.includes('Hi,'));
+ assert.ok(!x.text.includes('Hi Example'));
+ assert.ok(x.text.includes('Example <Partner> & coverage.'));
  assert.equal(x.sendPermitted,false);
  assert.ok(x.subject.length>12);
 }

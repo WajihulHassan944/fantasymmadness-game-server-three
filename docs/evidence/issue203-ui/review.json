@@ -1,0 +1,526 @@
+{
+  "checkedAt": "2026-11-06T14:48:56.937Z",
+  "readOnly": true,
+  "database": "fmgrowthtest",
+  "collectionPrefix": "preview198_",
+  "scheduler": {
+    "schedulerEnabled": true,
+    "preparationEnabled": true,
+    "preparationPaused": false,
+    "provider": "vercel-workflow",
+    "resumePending": false,
+    "workerBindingReady": true,
+    "generation": "affiliate-discovery-isolated-v5",
+    "lastScheduledGeneration": "affiliate-discovery-isolated-v5",
+    "lastWorkflowRunId": "wrun_41M6RJFMJ70GHK0HBBK3WY34B4",
+    "schedule": "every 15 minutes",
+    "healthy": true,
+    "lastScheduledAt": "2026-11-06T14:47:04.551Z",
+    "scheduledExecutions": 101,
+    "generationScheduledExecutions": 5,
+    "lastRunId": "growth_202611061446",
+    "lastError": null,
+    "nextWakeAt": "2026-11-06T15:02:04.551Z",
+    "ownerAllowlistConfigured": true,
+    "approvalMode": "owner_required",
+    "publishingEnabled": false,
+    "outboundEnabled": false
+  },
+  "campaigns": [
+    {
+      "id": "mkt-6ad629a60df141df46931a8b-49d793654a",
+      "kind": "marketing",
+      "title": "BOXING: ELIF NUR TURHAN vs ALYCIA BAUMGARDNER \u2014 Sunday, November 8 \u00b7 event start time unconfirmed",
+      "genre": "boxing",
+      "storedStatus": "needs_owner_review",
+      "ownerApproved": false,
+      "sendPermitted": false,
+      "decision": "ELIGIBLE_FOR_OWNER_REVIEW",
+      "blockers": [],
+      "receipt": {
+        "stage": "awaiting_owner_approval",
+        "checkedAt": "2026-11-06T14:46:58.822Z",
+        "blockers": []
+      },
+      "contest": {
+        "id": "6ad629a60df141df46931a8b",
+        "fighterA": "ELIF NUR TURHAN",
+        "fighterB": "ALYCIA BAUMGARDNER",
+        "eventName": "MVP",
+        "dateKey": "2026-11-08",
+        "timeTba": false,
+        "timing": {
+          "eventStartAt": null,
+          "eventTimeVerified": false,
+          "eventTimeSourceUrl": null,
+          "entryCutoffAt": "2026-11-09T04:00:00.000Z",
+          "entryTimeZone": "America/New_York",
+          "eventTimeZone": "America/New_York",
+          "errors": []
+        },
+        "contestUrl": "https://www.fantasymmadness.com/fight/6ad629a60df141df46931a8b?play=1"
+      },
+      "posters": [
+        {
+          "id": "13a0aa47fc413fb5f710-portrait",
+          "format": "portrait",
+          "qrDecodedMatches": true,
+          "decodedUrl": "https://www.fantasymmadness.com/fight/6ad629a60df141df46931a8b?play=1&utm_source=fan_acquisition&utm_medium=partner_outreach&utm_campaign=combat_fans_gs_boxing&utm_content=poster_qr",
+          "withdrawn": false
+        },
+        {
+          "id": "13a0aa47fc413fb5f710-story",
+          "format": "story",
+          "qrDecodedMatches": true,
+          "decodedUrl": "https://www.fantasymmadness.com/fight/6ad629a60df141df46931a8b?play=1&utm_source=fan_acquisition&utm_medium=partner_outreach&utm_campaign=combat_fans_gs_boxing&utm_content=poster_qr",
+          "withdrawn": false
+        }
+      ],
+      "channels": [
+        "facebook",
+        "x"
+      ],
+      "platforms": {
+        "instagram": {
+          "ready": false,
+          "blockers": [
+            "verified_profile_destination_required"
+          ],
+          "caption": "ELIF NUR TURHAN vs ALYCIA BAUMGARDNER | MVP | Boxing | 2026-11-08\n\nEvent start time unconfirmed\n\n10 rounds\n\nMake your round-by-round picks on FANTASY MMADNESS.\n\nFind ELIF NUR TURHAN vs ALYCIA BAUMGARDNER on FANTASY MMADNESS.\n\n#FANTASYMMADNESS #Boxing #ELIFNURTURHAN #ALYCIABAUMGARDNER",
+          "trackingUrl": "https://www.fantasymmadness.com/fight/6ad629a60df141df46931a8b?play=1&utm_source=fan_acquisition&utm_medium=partner_outreach&utm_campaign=combat_fans_gs_boxing&utm_content=instagram"
+        },
+        "facebook": {
+          "ready": true,
+          "blockers": [],
+          "caption": "ELIF NUR TURHAN vs ALYCIA BAUMGARDNER | MVP | Boxing | 2026-11-08\n\nEvent start time unconfirmed\n\n10 rounds\n\nMake your round-by-round picks on FANTASY MMADNESS.\n\nMake your picks on FANTASY MMADNESS: https://www.fantasymmadness.com/fight/6ad629a60df141df46931a8b?play=1&utm_source=fan_acquisition&utm_medium=partner_outreach&utm_campaign=combat_fans_gs_boxing&utm_content=facebook\n\n#FANTASYMMADNESS #Boxing #ELIFNURTURHAN",
+          "trackingUrl": "https://www.fantasymmadness.com/fight/6ad629a60df141df46931a8b?play=1&utm_source=fan_acquisition&utm_medium=partner_outreach&utm_campaign=combat_fans_gs_boxing&utm_content=facebook"
+        },
+        "tiktok": {
+          "ready": false,
+          "blockers": [
+            "verified_profile_destination_required"
+          ],
+          "caption": "ELIF NUR TURHAN vs ALYCIA BAUMGARDNER | MVP | Boxing | 2026-11-08\n\nEvent start time unconfirmed\n\n10 rounds\n\nMake your round-by-round picks on FANTASY MMADNESS.\n\nFind ELIF NUR TURHAN vs ALYCIA BAUMGARDNER on FANTASY MMADNESS.\n\n#FANTASYMMADNESS #Boxing #ELIFNURTURHAN #ALYCIABAUMGARDNER",
+          "trackingUrl": "https://www.fantasymmadness.com/fight/6ad629a60df141df46931a8b?play=1&utm_source=fan_acquisition&utm_medium=partner_outreach&utm_campaign=combat_fans_gs_boxing&utm_content=tiktok"
+        },
+        "x": {
+          "ready": true,
+          "blockers": [],
+          "caption": "ELIF NUR TURHAN vs ALYCIA BAUMGARDNER | MVP | Boxing | 2026-11-08\n\nMake your round-by-round picks on FANTASY MMADNESS.\n\nhttps://www.fantasymmadness.com/fight/6ad629a60df141df46931a8b?play=1&utm_source=fan_acquisition&utm_medium=partner_outreach&utm_campaign=combat_fans_gs_boxing&utm_content=x\n\n#Boxing #FANTASYMMADNESS",
+          "trackingUrl": "https://www.fantasymmadness.com/fight/6ad629a60df141df46931a8b?play=1&utm_source=fan_acquisition&utm_medium=partner_outreach&utm_campaign=combat_fans_gs_boxing&utm_content=x"
+        },
+        "youtube_shorts": {
+          "ready": false,
+          "blockers": [
+            "verified_profile_destination_required",
+            "youtube_publishing_not_connected"
+          ],
+          "caption": "ELIF NUR TURHAN vs ALYCIA BAUMGARDNER | MVP | Boxing | 2026-11-08\n\nEvent start time unconfirmed\n\n10 rounds\n\nMake your round-by-round picks on FANTASY MMADNESS.\n\nFind ELIF NUR TURHAN vs ALYCIA BAUMGARDNER on FANTASY MMADNESS.\n\n#FANTASYMMADNESS #Boxing #ELIFNURTURHAN #ALYCIABAUMGARDNER",
+          "trackingUrl": "https://www.fantasymmadness.com/fight/6ad629a60df141df46931a8b?play=1&utm_source=fan_acquisition&utm_medium=partner_outreach&utm_campaign=combat_fans_gs_boxing&utm_content=youtube_shorts"
+        }
+      },
+      "recipientDomain": null,
+      "contactSource": null,
+      "consentBasis": null,
+      "sourceEvidence": null
+    },
+    {
+      "id": "mkt-6adfcba7ee2996e566885594-e498620c94",
+      "kind": "marketing",
+      "title": "MMA/UFC: CIRYL GANE vs JOSH HOKIT \u2014 Saturday, November 14 \u00b7 event start time unconfirmed",
+      "genre": "mma-ufc",
+      "storedStatus": "needs_owner_review",
+      "ownerApproved": false,
+      "sendPermitted": false,
+      "decision": "ELIGIBLE_FOR_OWNER_REVIEW",
+      "blockers": [],
+      "receipt": {
+        "stage": "awaiting_owner_approval",
+        "checkedAt": "2026-11-06T14:46:58.822Z",
+        "blockers": []
+      },
+      "contest": {
+        "id": "6adfcba7ee2996e566885594",
+        "fighterA": "CIRYL GANE",
+        "fighterB": "JOSH HOKIT",
+        "eventName": "UFC 334",
+        "dateKey": "2026-11-14",
+        "timeTba": false,
+        "timing": {
+          "eventStartAt": null,
+          "eventTimeVerified": false,
+          "eventTimeSourceUrl": null,
+          "entryCutoffAt": "2026-11-15T04:00:00.000Z",
+          "entryTimeZone": "America/New_York",
+          "eventTimeZone": "America/New_York",
+          "errors": []
+        },
+        "contestUrl": "https://www.fantasymmadness.com/fight/6adfcba7ee2996e566885594?play=1"
+      },
+      "posters": [
+        {
+          "id": "1dff70804146b2b5f723-portrait",
+          "format": "portrait",
+          "qrDecodedMatches": true,
+          "decodedUrl": "https://www.fantasymmadness.com/fight/6adfcba7ee2996e566885594?play=1&utm_source=fan_acquisition&utm_medium=partner_outreach&utm_campaign=combat_fans_gs_mma_ufc&utm_content=poster_qr",
+          "withdrawn": false
+        },
+        {
+          "id": "1dff70804146b2b5f723-story",
+          "format": "story",
+          "qrDecodedMatches": true,
+          "decodedUrl": "https://www.fantasymmadness.com/fight/6adfcba7ee2996e566885594?play=1&utm_source=fan_acquisition&utm_medium=partner_outreach&utm_campaign=combat_fans_gs_mma_ufc&utm_content=poster_qr",
+          "withdrawn": false
+        }
+      ],
+      "channels": [
+        "facebook",
+        "x"
+      ],
+      "platforms": {
+        "instagram": {
+          "ready": false,
+          "blockers": [
+            "verified_profile_destination_required"
+          ],
+          "caption": "CIRYL GANE vs JOSH HOKIT | UFC 334 | MMA | 2026-11-14\n\nEvent start time unconfirmed\n\n5 rounds\n\nMake your round-by-round picks on FANTASY MMADNESS.\n\nFind CIRYL GANE vs JOSH HOKIT on FANTASY MMADNESS.\n\n#FANTASYMMADNESS #MMA #CIRYLGANE #JOSHHOKIT",
+          "trackingUrl": "https://www.fantasymmadness.com/fight/6adfcba7ee2996e566885594?play=1&utm_source=fan_acquisition&utm_medium=partner_outreach&utm_campaign=combat_fans_gs_mma_ufc&utm_content=instagram"
+        },
+        "facebook": {
+          "ready": true,
+          "blockers": [],
+          "caption": "CIRYL GANE vs JOSH HOKIT | UFC 334 | MMA | 2026-11-14\n\nEvent start time unconfirmed\n\n5 rounds\n\nMake your round-by-round picks on FANTASY MMADNESS.\n\nMake your picks on FANTASY MMADNESS: https://www.fantasymmadness.com/fight/6adfcba7ee2996e566885594?play=1&utm_source=fan_acquisition&utm_medium=partner_outreach&utm_campaign=combat_fans_gs_mma_ufc&utm_content=facebook\n\n#FANTASYMMADNESS #MMA #CIRYLGANE",
+          "trackingUrl": "https://www.fantasymmadness.com/fight/6adfcba7ee2996e566885594?play=1&utm_source=fan_acquisition&utm_medium=partner_outreach&utm_campaign=combat_fans_gs_mma_ufc&utm_content=facebook"
+        },
+        "tiktok": {
+          "ready": false,
+          "blockers": [
+            "verified_profile_destination_required"
+          ],
+          "caption": "CIRYL GANE vs JOSH HOKIT | UFC 334 | MMA | 2026-11-14\n\nEvent start time unconfirmed\n\n5 rounds\n\nMake your round-by-round picks on FANTASY MMADNESS.\n\nFind CIRYL GANE vs JOSH HOKIT on FANTASY MMADNESS.\n\n#FANTASYMMADNESS #MMA #CIRYLGANE #JOSHHOKIT",
+          "trackingUrl": "https://www.fantasymmadness.com/fight/6adfcba7ee2996e566885594?play=1&utm_source=fan_acquisition&utm_medium=partner_outreach&utm_campaign=combat_fans_gs_mma_ufc&utm_content=tiktok"
+        },
+        "x": {
+          "ready": true,
+          "blockers": [],
+          "caption": "CIRYL GANE vs JOSH HOKIT | UFC 334 | MMA | 2026-11-14\n\nMake your round-by-round picks on FANTASY MMADNESS.\n\nhttps://www.fantasymmadness.com/fight/6adfcba7ee2996e566885594?play=1&utm_source=fan_acquisition&utm_medium=partner_outreach&utm_campaign=combat_fans_gs_mma_ufc&utm_content=x\n\n#MMA #FANTASYMMADNESS",
+          "trackingUrl": "https://www.fantasymmadness.com/fight/6adfcba7ee2996e566885594?play=1&utm_source=fan_acquisition&utm_medium=partner_outreach&utm_campaign=combat_fans_gs_mma_ufc&utm_content=x"
+        },
+        "youtube_shorts": {
+          "ready": false,
+          "blockers": [
+            "verified_profile_destination_required",
+            "youtube_publishing_not_connected"
+          ],
+          "caption": "CIRYL GANE vs JOSH HOKIT | UFC 334 | MMA | 2026-11-14\n\nEvent start time unconfirmed\n\n5 rounds\n\nMake your round-by-round picks on FANTASY MMADNESS.\n\nFind CIRYL GANE vs JOSH HOKIT on FANTASY MMADNESS.\n\n#FANTASYMMADNESS #MMA #CIRYLGANE #JOSHHOKIT",
+          "trackingUrl": "https://www.fantasymmadness.com/fight/6adfcba7ee2996e566885594?play=1&utm_source=fan_acquisition&utm_medium=partner_outreach&utm_campaign=combat_fans_gs_mma_ufc&utm_content=youtube_shorts"
+        }
+      },
+      "recipientDomain": null,
+      "contactSource": null,
+      "consentBasis": null,
+      "sourceEvidence": null
+    },
+    {
+      "id": "pr-p-f956478203419e11",
+      "kind": "pr",
+      "title": "Boxing with Mannix and Mora: a round-by-round angle on ELIF NUR TURHAN vs ALYCIA BAUMGARDNER",
+      "subject": "Boxing with Mannix and Mora: a round-by-round angle on ELIF NUR TURHAN vs ALYCIA BAUMGARDNER",
+      "genre": "boxing",
+      "storedStatus": "needs_owner_review",
+      "ownerApproved": false,
+      "sendPermitted": false,
+      "decision": "ELIGIBLE_FOR_OWNER_REVIEW",
+      "blockers": [],
+      "receipt": {
+        "stage": "awaiting_owner_approval",
+        "checkedAt": "2026-11-06T14:46:59.070Z",
+        "blockers": []
+      },
+      "contest": null,
+      "posters": [],
+      "channels": [],
+      "platforms": {},
+      "recipientDomain": "gmail.com",
+      "contactSource": "https://feeds.megaphone.fm/GEMINIMEDIA8912957151",
+      "consentBasis": "Business contact published by the show in its public podcast feed (itunes:owner / itunes:email), retrieved 2026-11-05",
+      "sourceEvidence": {
+        "id": "p-f956478203419e11",
+        "name": "Boxing with Mannix and Mora",
+        "verifiedResearch": true,
+        "researchHold": null,
+        "researchedAt": "2026-11-05T15:00:59.364Z",
+        "evidence": [
+          {
+            "text": "Recent episodes cover boxing"
+          }
+        ]
+      }
+    },
+    {
+      "id": "pr-p-a593138355c14ed9",
+      "kind": "pr",
+      "title": "6th Round RETRO Podcast: a round-by-round angle on CIRYL GANE vs JOSH HOKIT",
+      "subject": "6th Round RETRO Podcast: a round-by-round angle on CIRYL GANE vs JOSH HOKIT",
+      "genre": "mma-ufc",
+      "storedStatus": "needs_owner_review",
+      "ownerApproved": false,
+      "sendPermitted": false,
+      "decision": "ELIGIBLE_FOR_OWNER_REVIEW",
+      "blockers": [],
+      "receipt": {
+        "stage": "awaiting_owner_approval",
+        "checkedAt": "2026-11-06T14:46:59.070Z",
+        "blockers": []
+      },
+      "contest": null,
+      "posters": [],
+      "channels": [],
+      "platforms": {},
+      "recipientDomain": "gmail.com",
+      "contactSource": "https://api.substack.com/feed/podcast/1474930/s/56213.rss",
+      "consentBasis": "Business contact published by the show in its public podcast feed (itunes:owner / itunes:email), retrieved 2026-11-05",
+      "sourceEvidence": {
+        "id": "p-a593138355c14ed9",
+        "name": "6th Round RETRO Podcast",
+        "verifiedResearch": true,
+        "researchHold": null,
+        "researchedAt": "2026-11-05T15:02:10.180Z",
+        "evidence": [
+          {
+            "text": "Recent episodes cover mma ufc"
+          }
+        ]
+      }
+    },
+    {
+      "id": "pr-p-4c35a814b6618fce",
+      "kind": "pr",
+      "title": "Budocast: MMA, UFC & Martial Arts News Podcast: a round-by-round angle on CIRYL GANE vs JOSH HOKIT",
+      "subject": "Budocast: MMA, UFC & Martial Arts News Podcast: a round-by-round angle on CIRYL GANE vs JOSH HOKIT",
+      "genre": "mma-ufc",
+      "storedStatus": "needs_owner_review",
+      "ownerApproved": false,
+      "sendPermitted": false,
+      "decision": "ELIGIBLE_FOR_OWNER_REVIEW",
+      "blockers": [],
+      "receipt": {
+        "stage": "awaiting_owner_approval",
+        "checkedAt": "2026-11-06T14:46:59.070Z",
+        "blockers": []
+      },
+      "contest": null,
+      "posters": [],
+      "channels": [],
+      "platforms": {},
+      "recipientDomain": "budocast.com",
+      "contactSource": "https://anchor.fm/s/104c918a0/podcast/rss",
+      "consentBasis": "Business contact published by the show in its public podcast feed (itunes:owner / itunes:email), retrieved 2026-11-05",
+      "sourceEvidence": {
+        "id": "p-4c35a814b6618fce",
+        "name": "Budocast: MMA, UFC & Martial Arts News Podcast",
+        "verifiedResearch": true,
+        "researchHold": null,
+        "researchedAt": "2026-11-05T15:03:16.499Z",
+        "evidence": [
+          {
+            "text": "Recent episodes cover mma ufc"
+          },
+          {
+            "text": "Mentioned CIRYL GANE in \u201cUFC 331 Results: Joshua Van Dethrones Pantoja, UFC 334 Announced | Budocast MMA News\u201d"
+          }
+        ]
+      }
+    },
+    {
+      "id": "pr-p-874920d814aee9a0",
+      "kind": "pr",
+      "title": "Going In Raw: A Pro Wrestling Podcast: a story idea for pro wrestling fans",
+      "subject": "Going In Raw: A Pro Wrestling Podcast: a story idea for pro wrestling fans",
+      "genre": "pro-wrestling",
+      "storedStatus": "needs_owner_review",
+      "ownerApproved": false,
+      "sendPermitted": false,
+      "decision": "ELIGIBLE_FOR_OWNER_REVIEW",
+      "blockers": [],
+      "receipt": {
+        "stage": "awaiting_owner_approval",
+        "checkedAt": "2026-11-06T14:46:59.070Z",
+        "blockers": []
+      },
+      "contest": null,
+      "posters": [],
+      "channels": [],
+      "platforms": {},
+      "recipientDomain": "studio71us.com",
+      "contactSource": "https://feeds.megaphone.fm/STU1900299775",
+      "consentBasis": "Business contact published by the show in its public podcast feed (itunes:owner / itunes:email), retrieved 2026-11-05",
+      "sourceEvidence": {
+        "id": "p-874920d814aee9a0",
+        "name": "Going In Raw: A Pro Wrestling Podcast",
+        "verifiedResearch": true,
+        "researchHold": null,
+        "researchedAt": "2026-11-05T16:03:35.743Z",
+        "evidence": [
+          {
+            "text": "Recent episodes cover pro wrestling"
+          }
+        ]
+      }
+    },
+    {
+      "id": "pr-p-cafd139ff66ea487",
+      "kind": "pr",
+      "title": "The Last Round Boxing Podcast: a round-by-round angle on ELIF NUR TURHAN vs ALYCIA BAUMGARDNER",
+      "subject": "The Last Round Boxing Podcast: a round-by-round angle on ELIF NUR TURHAN vs ALYCIA BAUMGARDNER",
+      "genre": "boxing",
+      "storedStatus": "needs_owner_review",
+      "ownerApproved": false,
+      "sendPermitted": false,
+      "decision": "ELIGIBLE_FOR_OWNER_REVIEW",
+      "blockers": [],
+      "receipt": {
+        "stage": "awaiting_owner_approval",
+        "checkedAt": "2026-11-06T14:46:59.070Z",
+        "blockers": []
+      },
+      "contest": null,
+      "posters": [],
+      "channels": [],
+      "platforms": {},
+      "recipientDomain": "gmail.com",
+      "contactSource": "https://anchor.fm/s/feca895c/podcast/rss",
+      "consentBasis": "Business contact published by the show in its public podcast feed (itunes:owner / itunes:email), retrieved 2026-11-06",
+      "sourceEvidence": {
+        "id": "p-cafd139ff66ea487",
+        "name": "The Last Round Boxing Podcast",
+        "verifiedResearch": true,
+        "researchHold": null,
+        "researchedAt": "2026-11-06T00:04:10.991Z",
+        "evidence": [
+          {
+            "text": "Recent episodes cover boxing"
+          }
+        ]
+      }
+    }
+  ],
+  "discoveryRetries": [
+    {
+      "error": null,
+      "failures": 0,
+      "lastSucceededAt": "2026-11-06T14:00:21.502Z",
+      "nextRetryAt": null,
+      "role": "gym",
+      "sport": "bare-knuckle"
+    },
+    {
+      "error": null,
+      "failures": 0,
+      "lastSucceededAt": "2026-11-06T14:46:59.373Z",
+      "nextRetryAt": null,
+      "role": "manager",
+      "sport": "boxing"
+    },
+    {
+      "error": null,
+      "failures": 0,
+      "lastSucceededAt": "2026-11-06T14:16:37.855Z",
+      "nextRetryAt": null,
+      "role": "gym",
+      "sport": "kickboxing"
+    },
+    {
+      "error": null,
+      "failures": 0,
+      "lastSucceededAt": "2026-11-06T14:31:46.013Z",
+      "nextRetryAt": null,
+      "role": "gym",
+      "sport": "pro-wrestling"
+    }
+  ],
+  "affiliateHoldCount": 12,
+  "connections": {
+    "checkedAt": "2026-11-06T14:47:04.546Z",
+    "verificationFresh": true,
+    "providerVerification": [
+      {
+        "provider": "tiktok",
+        "status": "connected",
+        "accessStatus": "valid",
+        "renewalStatus": "available",
+        "grantedScopes": [
+          "user.info.basic"
+        ]
+      },
+      {
+        "provider": "x",
+        "status": "connected",
+        "accessStatus": "valid",
+        "renewalStatus": "expiry-unknown",
+        "grantedScopes": [
+          "offline.access",
+          "tweet.read",
+          "users.read"
+        ]
+      }
+    ],
+    "metaVerification": {
+      "facebook": {
+        "verified": true,
+        "state": "connected",
+        "reason": null
+      },
+      "instagram": {
+        "verified": true,
+        "state": "connected",
+        "reason": null
+      }
+    },
+    "metaPermissions": {
+      "verified": true,
+      "granted": [
+        "pages_show_list",
+        "business_management",
+        "instagram_basic",
+        "instagram_content_publish",
+        "pages_read_engagement",
+        "pages_manage_posts",
+        "public_profile"
+      ]
+    },
+    "oauth": [
+      {
+        "provider": "tiktok",
+        "status": "connected",
+        "displayName": "FANTASY MMADNESS",
+        "username": null,
+        "grantedScopes": [
+          "user.info.basic"
+        ]
+      },
+      {
+        "provider": "x",
+        "status": "connected",
+        "displayName": "FANTASY MMADNESS",
+        "identity": "1941655665572765696",
+        "username": "FMmadness2024",
+        "grantedScopes": [
+          "offline.access",
+          "tweet.read",
+          "users.read"
+        ]
+      }
+    ],
+    "facebook": {
+      "pageId": "128043637053328",
+      "name": "Fantasy MMAdness"
+    },
+    "instagram": {
+      "accountId": "17841447949460050",
+      "username": "fantasymmadness"
+    }
+  },
+  "publishingEnabled": false,
+  "outboundEnabled": false
+}

@@ -2,7 +2,7 @@
 // Pure, offline controller model. Does not connect to production, send messages or schedule itself.
 const MAX_ATTEMPTS = 3;
 const BASE_DELAY_MS = 60_000;
-const ALLOWED = new Set(['discover', 'prepare_campaign', 'prepare_pr', 'prepare_followup', 'aggregate_report']);
+const ALLOWED = new Set(['discover', 'prepare_campaign', 'prepare_pr', 'prepare_followup', 'aggregate_report', 'refresh_marketing', 'pull_live_report']);
 function makeJob({ id, type, dueAt, payload = {} }) {
   if (!id || !ALLOWED.has(type) || !Number.isFinite(Date.parse(dueAt))) throw new Error('Invalid job');
   return { id: String(id), type, dueAt: new Date(dueAt).toISOString(), payload, attempts: 0, state: 'pending', lastError: null };

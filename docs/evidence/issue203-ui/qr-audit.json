@@ -1,0 +1,989 @@
+{
+  "checkedAt": "2026-11-06T14:34:10.153Z",
+  "database": "fmgrowthtest",
+  "collectionPrefix": "preview198_",
+  "readOnly": true,
+  "affiliateRecordsUnchanged": true,
+  "imagesExported": false,
+  "inventory": {
+    "drafts": 19,
+    "affiliateDrafts": 12,
+    "posterImages": 12,
+    "currentPosterImages": 4,
+    "activeMappedAffiliates": 0,
+    "syntheticMappedAffiliates": 1,
+    "socialPosts": 0,
+    "liamTuffsLegacyLinks": 1
+  },
+  "rows": [
+    {
+      "sourceItem": "affiliate-p-1756c6710e383d26",
+      "sourceType": "email_affiliate",
+      "status": "needs_owner_review",
+      "title": "The Darker Side Of Boxing fan league for ELIF NUR TURHAN vs ALYCIA BAUMGARDNER",
+      "decodedUrl": "https://www.fantasymmadness.com/auth?mode=signup&role=affiliate&utm_source=fan_acquisition&utm_medium=partner_outreach&utm_campaign=combat_fans_aff_the_darker_side_of_b_d1a5&utm_content=onboarding",
+      "expectedDestination": "affiliate signup; no existing league asserted",
+      "expectedAffiliateId": null,
+      "expectedFightId": null,
+      "campaignRequired": true,
+      "termsVerified": false,
+      "approvalBlockers": [
+        "independent_affiliate_suitability_requires_evidence"
+      ],
+      "recipientRelevance": {
+        "name": "The Darker Side Of Boxing",
+        "sport": "boxing",
+        "verifiedResearch": true,
+        "sourceUrls": []
+      },
+      "resolution": {
+        "observedDestination": "https://www.fantasymmadness.com/auth?mode=signup&role=affiliate&utm_source=fan_acquisition&utm_medium=partner_outreach&utm_campaign=combat_fans_aff_the_darker_side_of_b_d1a5&utm_content=onboarding",
+        "redirects": [
+          {
+            "url": "https://www.fantasymmadness.com/auth?mode=signup&role=affiliate&utm_source=fan_acquisition&utm_medium=partner_outreach&utm_campaign=combat_fans_aff_the_darker_side_of_b_d1a5&utm_content=onboarding",
+            "status": 200
+          }
+        ],
+        "affiliateIdMatch": "not_applicable",
+        "fightIdMatch": "not_applicable",
+        "attributionResult": "campaign_parameters_preserved",
+        "linkDecision": "PASS",
+        "decision": "HOLD",
+        "reasons": [
+          "independent_affiliate_suitability_requires_evidence",
+          "affiliate_terms_not_verified"
+        ]
+      }
+    },
+    {
+      "sourceItem": "affiliate-p-69fc82b0cae2bb89",
+      "sourceType": "email_affiliate",
+      "status": "needs_owner_review",
+      "title": "A fan league for Cami's Kickboxing Podcast",
+      "decodedUrl": "https://www.fantasymmadness.com/auth?mode=signup&role=affiliate&utm_source=fan_acquisition&utm_medium=partner_outreach&utm_campaign=combat_fans_aff_cami_s_kickboxing_po_ebc4&utm_content=onboarding",
+      "expectedDestination": "affiliate signup; no existing league asserted",
+      "expectedAffiliateId": null,
+      "expectedFightId": null,
+      "campaignRequired": true,
+      "termsVerified": false,
+      "approvalBlockers": [
+        "independent_affiliate_suitability_requires_evidence"
+      ],
+      "recipientRelevance": {
+        "name": "Cami's Kickboxing Podcast",
+        "sport": "kickboxing",
+        "verifiedResearch": true,
+        "sourceUrls": []
+      },
+      "resolution": {
+        "observedDestination": "https://www.fantasymmadness.com/auth?mode=signup&role=affiliate&utm_source=fan_acquisition&utm_medium=partner_outreach&utm_campaign=combat_fans_aff_cami_s_kickboxing_po_ebc4&utm_content=onboarding",
+        "redirects": [
+          {
+            "url": "https://www.fantasymmadness.com/auth?mode=signup&role=affiliate&utm_source=fan_acquisition&utm_medium=partner_outreach&utm_campaign=combat_fans_aff_cami_s_kickboxing_po_ebc4&utm_content=onboarding",
+            "status": 200
+          }
+        ],
+        "affiliateIdMatch": "not_applicable",
+        "fightIdMatch": "not_applicable",
+        "attributionResult": "campaign_parameters_preserved",
+        "linkDecision": "PASS",
+        "decision": "HOLD",
+        "reasons": [
+          "independent_affiliate_suitability_requires_evidence",
+          "affiliate_terms_not_verified"
+        ]
+      }
+    },
+    {
+      "sourceItem": "affiliate-p-dfcf83a1e2a04eeb",
+      "sourceType": "email_affiliate",
+      "status": "needs_owner_review",
+      "title": "A fan league for DEADLOCK: A Pro Wrestling Podcast",
+      "decodedUrl": "https://www.fantasymmadness.com/auth?mode=signup&role=affiliate&utm_source=fan_acquisition&utm_medium=partner_outreach&utm_campaign=combat_fans_aff_deadlock_a_pro_wrest_c29d&utm_content=onboarding",
+      "expectedDestination": "affiliate signup; no existing league asserted",
+      "expectedAffiliateId": null,
+      "expectedFightId": null,
+      "campaignRequired": true,
+      "termsVerified": false,
+      "approvalBlockers": [
+        "independent_affiliate_suitability_requires_evidence"
+      ],
+      "recipientRelevance": {
+        "name": "DEADLOCK: A Pro Wrestling Podcast",
+        "sport": "pro-wrestling",
+        "verifiedResearch": true,
+        "sourceUrls": []
+      },
+      "resolution": {
+        "observedDestination": "https://www.fantasymmadness.com/auth?mode=signup&role=affiliate&utm_source=fan_acquisition&utm_medium=partner_outreach&utm_campaign=combat_fans_aff_deadlock_a_pro_wrest_c29d&utm_content=onboarding",
+        "redirects": [
+          {
+            "url": "https://www.fantasymmadness.com/auth?mode=signup&role=affiliate&utm_source=fan_acquisition&utm_medium=partner_outreach&utm_campaign=combat_fans_aff_deadlock_a_pro_wrest_c29d&utm_content=onboarding",
+            "status": 200
+          }
+        ],
+        "affiliateIdMatch": "not_applicable",
+        "fightIdMatch": "not_applicable",
+        "attributionResult": "campaign_parameters_preserved",
+        "linkDecision": "PASS",
+        "decision": "HOLD",
+        "reasons": [
+          "independent_affiliate_suitability_requires_evidence",
+          "affiliate_terms_not_verified"
+        ]
+      }
+    },
+    {
+      "sourceItem": "affiliate-p-22505d8dff73cec0",
+      "sourceType": "email_affiliate",
+      "status": "needs_owner_review",
+      "title": "A fan league for Fightful Wrestling Podcast with Sean Ross Sapp",
+      "decodedUrl": "https://www.fantasymmadness.com/auth?mode=signup&role=affiliate&utm_source=fan_acquisition&utm_medium=partner_outreach&utm_campaign=combat_fans_aff_fightful_wrestling_p_506c&utm_content=onboarding",
+      "expectedDestination": "affiliate signup; no existing league asserted",
+      "expectedAffiliateId": null,
+      "expectedFightId": null,
+      "campaignRequired": true,
+      "termsVerified": false,
+      "approvalBlockers": [
+        "independent_affiliate_suitability_requires_evidence"
+      ],
+      "recipientRelevance": {
+        "name": "Fightful Wrestling Podcast with Sean Ross Sapp",
+        "sport": "pro-wrestling",
+        "verifiedResearch": true,
+        "sourceUrls": []
+      },
+      "resolution": {
+        "observedDestination": "https://www.fantasymmadness.com/auth?mode=signup&role=affiliate&utm_source=fan_acquisition&utm_medium=partner_outreach&utm_campaign=combat_fans_aff_fightful_wrestling_p_506c&utm_content=onboarding",
+        "redirects": [
+          {
+            "url": "https://www.fantasymmadness.com/auth?mode=signup&role=affiliate&utm_source=fan_acquisition&utm_medium=partner_outreach&utm_campaign=combat_fans_aff_fightful_wrestling_p_506c&utm_content=onboarding",
+            "status": 200
+          }
+        ],
+        "affiliateIdMatch": "not_applicable",
+        "fightIdMatch": "not_applicable",
+        "attributionResult": "campaign_parameters_preserved",
+        "linkDecision": "PASS",
+        "decision": "HOLD",
+        "reasons": [
+          "independent_affiliate_suitability_requires_evidence",
+          "affiliate_terms_not_verified"
+        ]
+      }
+    },
+    {
+      "sourceItem": "affiliate-ap-d4c8ec180e1bda642e1da3",
+      "sourceType": "email_affiliate",
+      "status": "needs_owner_review",
+      "title": "Alania Fighting Team \u2014 FANTASY MMADNESS fan league partnership",
+      "decodedUrl": "https://www.fantasymmadness.com/auth?mode=signup&role=affiliate&utm_source=fan_acquisition&utm_medium=partner_outreach&utm_campaign=combat_fans_aff_alania_fighting_team_d522&utm_content=onboarding",
+      "expectedDestination": "affiliate signup; no existing league asserted",
+      "expectedAffiliateId": null,
+      "expectedFightId": null,
+      "campaignRequired": true,
+      "termsVerified": false,
+      "approvalBlockers": [
+        "affiliate_terms_require_owner_review"
+      ],
+      "recipientRelevance": {
+        "name": "Alania Fighting Team",
+        "sport": "kickboxing",
+        "verifiedResearch": true,
+        "sourceUrls": [
+          "https://www.wikidata.org/wiki/Q141535259",
+          "https://www.wikidata.org/wiki/Q141535259",
+          "https://alaniafightingteam.com/contacts/"
+        ]
+      },
+      "resolution": {
+        "observedDestination": "https://www.fantasymmadness.com/auth?mode=signup&role=affiliate&utm_source=fan_acquisition&utm_medium=partner_outreach&utm_campaign=combat_fans_aff_alania_fighting_team_d522&utm_content=onboarding",
+        "redirects": [
+          {
+            "url": "https://www.fantasymmadness.com/auth?mode=signup&role=affiliate&utm_source=fan_acquisition&utm_medium=partner_outreach&utm_campaign=combat_fans_aff_alania_fighting_team_d522&utm_content=onboarding",
+            "status": 200
+          }
+        ],
+        "affiliateIdMatch": "not_applicable",
+        "fightIdMatch": "not_applicable",
+        "attributionResult": "campaign_parameters_preserved",
+        "linkDecision": "PASS",
+        "decision": "HOLD",
+        "reasons": [
+          "affiliate_terms_require_owner_review",
+          "affiliate_terms_not_verified"
+        ]
+      }
+    },
+    {
+      "sourceItem": "affiliate-ap-af07a546ad07dc91d200ee",
+      "sourceType": "email_affiliate",
+      "status": "needs_owner_review",
+      "title": "American Kickboxing Academy \u2014 FANTASY MMADNESS fan league partnership",
+      "decodedUrl": "https://www.fantasymmadness.com/auth?mode=signup&role=affiliate&utm_source=fan_acquisition&utm_medium=partner_outreach&utm_campaign=combat_fans_aff_american_kickboxing__602a&utm_content=onboarding",
+      "expectedDestination": "affiliate signup; no existing league asserted",
+      "expectedAffiliateId": null,
+      "expectedFightId": null,
+      "campaignRequired": true,
+      "termsVerified": false,
+      "approvalBlockers": [
+        "affiliate_terms_require_owner_review"
+      ],
+      "recipientRelevance": {
+        "name": "American Kickboxing Academy",
+        "sport": "kickboxing",
+        "verifiedResearch": true,
+        "sourceUrls": [
+          "https://www.wikidata.org/wiki/Q4744294",
+          "https://www.wikidata.org/wiki/Q4744294",
+          "https://www.americankickboxingacademy.com/"
+        ]
+      },
+      "resolution": {
+        "observedDestination": "https://www.fantasymmadness.com/auth?mode=signup&role=affiliate&utm_source=fan_acquisition&utm_medium=partner_outreach&utm_campaign=combat_fans_aff_american_kickboxing__602a&utm_content=onboarding",
+        "redirects": [
+          {
+            "url": "https://www.fantasymmadness.com/auth?mode=signup&role=affiliate&utm_source=fan_acquisition&utm_medium=partner_outreach&utm_campaign=combat_fans_aff_american_kickboxing__602a&utm_content=onboarding",
+            "status": 200
+          }
+        ],
+        "affiliateIdMatch": "not_applicable",
+        "fightIdMatch": "not_applicable",
+        "attributionResult": "campaign_parameters_preserved",
+        "linkDecision": "PASS",
+        "decision": "HOLD",
+        "reasons": [
+          "affiliate_terms_require_owner_review",
+          "affiliate_terms_not_verified"
+        ]
+      }
+    },
+    {
+      "sourceItem": "affiliate-ap-4dd4aa5d41adf65a3fc982",
+      "sourceType": "email_affiliate",
+      "status": "needs_owner_review",
+      "title": "Golden Belt Club \u2014 FANTASY MMADNESS fan league partnership",
+      "decodedUrl": "https://www.fantasymmadness.com/auth?mode=signup&role=affiliate&utm_source=fan_acquisition&utm_medium=partner_outreach&utm_campaign=combat_fans_aff_golden_belt_club_d98c&utm_content=onboarding",
+      "expectedDestination": "affiliate signup; no existing league asserted",
+      "expectedAffiliateId": null,
+      "expectedFightId": null,
+      "campaignRequired": true,
+      "termsVerified": false,
+      "approvalBlockers": [
+        "affiliate_terms_require_owner_review"
+      ],
+      "recipientRelevance": {
+        "name": "Golden Belt Club",
+        "sport": "kickboxing",
+        "verifiedResearch": true,
+        "sourceUrls": [
+          "https://www.wikidata.org/wiki/Q140677017",
+          "https://www.wikidata.org/wiki/Q140677017",
+          "https://goldenbeltclub.com/contact-us"
+        ]
+      },
+      "resolution": {
+        "observedDestination": "https://www.fantasymmadness.com/auth?mode=signup&role=affiliate&utm_source=fan_acquisition&utm_medium=partner_outreach&utm_campaign=combat_fans_aff_golden_belt_club_d98c&utm_content=onboarding",
+        "redirects": [
+          {
+            "url": "https://www.fantasymmadness.com/auth?mode=signup&role=affiliate&utm_source=fan_acquisition&utm_medium=partner_outreach&utm_campaign=combat_fans_aff_golden_belt_club_d98c&utm_content=onboarding",
+            "status": 200
+          }
+        ],
+        "affiliateIdMatch": "not_applicable",
+        "fightIdMatch": "not_applicable",
+        "attributionResult": "campaign_parameters_preserved",
+        "linkDecision": "PASS",
+        "decision": "HOLD",
+        "reasons": [
+          "affiliate_terms_require_owner_review",
+          "affiliate_terms_not_verified"
+        ]
+      }
+    },
+    {
+      "sourceItem": "affiliate-ap-bd96b034cd5a0a7341e991",
+      "sourceType": "email_affiliate",
+      "status": "needs_owner_review",
+      "title": "Chicago Mixed Martial Arts \u2014 FANTASY MMADNESS fan league partnership",
+      "decodedUrl": "https://www.fantasymmadness.com/auth?mode=signup&role=affiliate&utm_source=fan_acquisition&utm_medium=partner_outreach&utm_campaign=combat_fans_aff_chicago_mixed_martia_7621&utm_content=onboarding",
+      "expectedDestination": "affiliate signup; no existing league asserted",
+      "expectedAffiliateId": null,
+      "expectedFightId": null,
+      "campaignRequired": true,
+      "termsVerified": false,
+      "approvalBlockers": [
+        "affiliate_terms_require_owner_review"
+      ],
+      "recipientRelevance": {
+        "name": "Chicago Mixed Martial Arts",
+        "sport": "mma-ufc",
+        "verifiedResearch": true,
+        "sourceUrls": [
+          "https://www.wikidata.org/wiki/Q140611031",
+          "https://www.wikidata.org/wiki/Q140611031",
+          "https://chicagomma.com/contact"
+        ]
+      },
+      "resolution": {
+        "observedDestination": "https://www.fantasymmadness.com/auth?mode=signup&role=affiliate&utm_source=fan_acquisition&utm_medium=partner_outreach&utm_campaign=combat_fans_aff_chicago_mixed_martia_7621&utm_content=onboarding",
+        "redirects": [
+          {
+            "url": "https://www.fantasymmadness.com/auth?mode=signup&role=affiliate&utm_source=fan_acquisition&utm_medium=partner_outreach&utm_campaign=combat_fans_aff_chicago_mixed_martia_7621&utm_content=onboarding",
+            "status": 200
+          }
+        ],
+        "affiliateIdMatch": "not_applicable",
+        "fightIdMatch": "not_applicable",
+        "attributionResult": "campaign_parameters_preserved",
+        "linkDecision": "PASS",
+        "decision": "HOLD",
+        "reasons": [
+          "affiliate_terms_require_owner_review",
+          "affiliate_terms_not_verified"
+        ]
+      }
+    },
+    {
+      "sourceItem": "affiliate-ap-e17bd9b8e7a56e9f099425",
+      "sourceType": "email_affiliate",
+      "status": "needs_owner_review",
+      "title": "AMC Kickboxing and Pankration \u2014 FANTASY MMADNESS fan league partnership",
+      "decodedUrl": "https://www.fantasymmadness.com/auth?mode=signup&role=affiliate&utm_source=fan_acquisition&utm_medium=partner_outreach&utm_campaign=combat_fans_aff_amc_kickboxing_and_p_ae6d&utm_content=onboarding",
+      "expectedDestination": "affiliate signup; no existing league asserted",
+      "expectedAffiliateId": null,
+      "expectedFightId": null,
+      "campaignRequired": true,
+      "termsVerified": false,
+      "approvalBlockers": [
+        "affiliate_terms_require_owner_review"
+      ],
+      "recipientRelevance": {
+        "name": "AMC Kickboxing and Pankration",
+        "sport": "mma-ufc",
+        "verifiedResearch": true,
+        "sourceUrls": [
+          "https://www.wikidata.org/wiki/Q18353422",
+          "https://www.wikidata.org/wiki/Q18353422",
+          "https://amcmma.com/"
+        ]
+      },
+      "resolution": {
+        "observedDestination": "https://www.fantasymmadness.com/auth?mode=signup&role=affiliate&utm_source=fan_acquisition&utm_medium=partner_outreach&utm_campaign=combat_fans_aff_amc_kickboxing_and_p_ae6d&utm_content=onboarding",
+        "redirects": [
+          {
+            "url": "https://www.fantasymmadness.com/auth?mode=signup&role=affiliate&utm_source=fan_acquisition&utm_medium=partner_outreach&utm_campaign=combat_fans_aff_amc_kickboxing_and_p_ae6d&utm_content=onboarding",
+            "status": 200
+          }
+        ],
+        "affiliateIdMatch": "not_applicable",
+        "fightIdMatch": "not_applicable",
+        "attributionResult": "campaign_parameters_preserved",
+        "linkDecision": "PASS",
+        "decision": "HOLD",
+        "reasons": [
+          "affiliate_terms_require_owner_review",
+          "affiliate_terms_not_verified"
+        ]
+      }
+    },
+    {
+      "sourceItem": "affiliate-ap-586daface6235e003361fb",
+      "sourceType": "email_affiliate",
+      "status": "needs_owner_review",
+      "title": "Paul Bearer \u2014 FANTASY MMADNESS fan league partnership",
+      "decodedUrl": "https://www.fantasymmadness.com/auth?mode=signup&role=affiliate&utm_source=fan_acquisition&utm_medium=partner_outreach&utm_campaign=combat_fans_aff_paul_bearer_dd2b&utm_content=onboarding",
+      "expectedDestination": "affiliate signup; no existing league asserted",
+      "expectedAffiliateId": null,
+      "expectedFightId": null,
+      "campaignRequired": true,
+      "termsVerified": false,
+      "approvalBlockers": [
+        "affiliate_terms_require_owner_review"
+      ],
+      "recipientRelevance": {
+        "name": "Paul Bearer",
+        "sport": "pro-wrestling",
+        "verifiedResearch": true,
+        "sourceUrls": [
+          "https://www.wikidata.org/wiki/Q714222",
+          "https://www.wikidata.org/wiki/Q714222",
+          "https://www.percypringle.com/"
+        ]
+      },
+      "resolution": {
+        "observedDestination": "https://www.fantasymmadness.com/auth?mode=signup&role=affiliate&utm_source=fan_acquisition&utm_medium=partner_outreach&utm_campaign=combat_fans_aff_paul_bearer_dd2b&utm_content=onboarding",
+        "redirects": [
+          {
+            "url": "https://www.fantasymmadness.com/auth?mode=signup&role=affiliate&utm_source=fan_acquisition&utm_medium=partner_outreach&utm_campaign=combat_fans_aff_paul_bearer_dd2b&utm_content=onboarding",
+            "status": 200
+          }
+        ],
+        "affiliateIdMatch": "not_applicable",
+        "fightIdMatch": "not_applicable",
+        "attributionResult": "campaign_parameters_preserved",
+        "linkDecision": "PASS",
+        "decision": "HOLD",
+        "reasons": [
+          "affiliate_terms_require_owner_review",
+          "affiliate_terms_not_verified"
+        ]
+      }
+    },
+    {
+      "sourceItem": "affiliate-ap-33fdb7312f36d5f1af5e52",
+      "sourceType": "email_affiliate",
+      "status": "needs_owner_review",
+      "title": "Deen the Great \u2014 FANTASY MMADNESS fan league partnership",
+      "decodedUrl": "https://www.fantasymmadness.com/auth?mode=signup&role=affiliate&utm_source=fan_acquisition&utm_medium=partner_outreach&utm_campaign=combat_fans_aff_deen_the_great_6bb4&utm_content=onboarding",
+      "expectedDestination": "affiliate signup; no existing league asserted",
+      "expectedAffiliateId": null,
+      "expectedFightId": null,
+      "campaignRequired": true,
+      "termsVerified": false,
+      "approvalBlockers": [
+        "affiliate_terms_require_owner_review"
+      ],
+      "recipientRelevance": {
+        "name": "Deen the Great",
+        "sport": "boxing",
+        "verifiedResearch": true,
+        "sourceUrls": [
+          "https://www.wikidata.org/wiki/Q138569039",
+          "https://www.wikidata.org/wiki/Q138569039",
+          "https://link.me/deenthegreat"
+        ]
+      },
+      "resolution": {
+        "observedDestination": "https://www.fantasymmadness.com/auth?mode=signup&role=affiliate&utm_source=fan_acquisition&utm_medium=partner_outreach&utm_campaign=combat_fans_aff_deen_the_great_6bb4&utm_content=onboarding",
+        "redirects": [
+          {
+            "url": "https://www.fantasymmadness.com/auth?mode=signup&role=affiliate&utm_source=fan_acquisition&utm_medium=partner_outreach&utm_campaign=combat_fans_aff_deen_the_great_6bb4&utm_content=onboarding",
+            "status": 200
+          }
+        ],
+        "affiliateIdMatch": "not_applicable",
+        "fightIdMatch": "not_applicable",
+        "attributionResult": "campaign_parameters_preserved",
+        "linkDecision": "PASS",
+        "decision": "HOLD",
+        "reasons": [
+          "affiliate_terms_require_owner_review",
+          "affiliate_terms_not_verified"
+        ]
+      }
+    },
+    {
+      "sourceItem": "affiliate-ap-f592236900275060b4435f",
+      "sourceType": "email_affiliate",
+      "status": "needs_owner_review",
+      "title": "Dory Funk Jr. \u2014 FANTASY MMADNESS fan league partnership",
+      "decodedUrl": "https://www.fantasymmadness.com/auth?mode=signup&role=affiliate&utm_source=fan_acquisition&utm_medium=partner_outreach&utm_campaign=combat_fans_aff_dory_funk_jr_7149&utm_content=onboarding",
+      "expectedDestination": "affiliate signup; no existing league asserted",
+      "expectedAffiliateId": null,
+      "expectedFightId": null,
+      "campaignRequired": true,
+      "termsVerified": false,
+      "approvalBlockers": [
+        "affiliate_terms_require_owner_review"
+      ],
+      "recipientRelevance": {
+        "name": "Dory Funk Jr.",
+        "sport": "pro-wrestling",
+        "verifiedResearch": true,
+        "sourceUrls": [
+          "https://www.wikidata.org/wiki/Q631530",
+          "https://www.wikidata.org/wiki/Q631530",
+          "https://dory-funk.com/contacts/"
+        ]
+      },
+      "resolution": {
+        "observedDestination": "https://www.fantasymmadness.com/auth?mode=signup&role=affiliate&utm_source=fan_acquisition&utm_medium=partner_outreach&utm_campaign=combat_fans_aff_dory_funk_jr_7149&utm_content=onboarding",
+        "redirects": [
+          {
+            "url": "https://www.fantasymmadness.com/auth?mode=signup&role=affiliate&utm_source=fan_acquisition&utm_medium=partner_outreach&utm_campaign=combat_fans_aff_dory_funk_jr_7149&utm_content=onboarding",
+            "status": 200
+          }
+        ],
+        "affiliateIdMatch": "not_applicable",
+        "fightIdMatch": "not_applicable",
+        "attributionResult": "campaign_parameters_preserved",
+        "linkDecision": "PASS",
+        "decision": "HOLD",
+        "reasons": [
+          "affiliate_terms_require_owner_review",
+          "affiliate_terms_not_verified"
+        ]
+      }
+    },
+    {
+      "sourceItem": "0d293833a235d214a8bb-portrait",
+      "sourceType": "fight_poster_qr",
+      "status": "withdrawn",
+      "format": "portrait",
+      "decodedUrl": "https://www.fantasymmadness.com/fight/6adfcba7ee2996e566885594?play=1&utm_source=fan_acquisition&utm_medium=partner_outreach&utm_campaign=combat_fans_gs_mma_ufc&utm_content=poster_qr",
+      "decodeError": null,
+      "expectedUrl": "https://www.fantasymmadness.com/fight/6adfcba7ee2996e566885594?play=1&utm_source=fan_acquisition&utm_medium=partner_outreach&utm_campaign=combat_fans_gs_mma_ufc&utm_content=poster_qr",
+      "expectedDestination": "fight entry",
+      "expectedFightId": "6adfcba7ee2996e566885594",
+      "expectedAffiliateId": null,
+      "qrMetadataMatch": true,
+      "attributionRequired": true,
+      "resolution": {
+        "observedDestination": "https://www.fantasymmadness.com/fight/6adfcba7ee2996e566885594?play=1&utm_source=fan_acquisition&utm_medium=partner_outreach&utm_campaign=combat_fans_gs_mma_ufc&utm_content=poster_qr",
+        "redirects": [
+          {
+            "url": "https://www.fantasymmadness.com/fight/6adfcba7ee2996e566885594?play=1&utm_source=fan_acquisition&utm_medium=partner_outreach&utm_campaign=combat_fans_gs_mma_ufc&utm_content=poster_qr",
+            "status": 200
+          }
+        ],
+        "affiliateIdMatch": "not_applicable",
+        "fightIdMatch": true,
+        "attributionResult": "campaign_parameters_preserved",
+        "linkDecision": "PASS",
+        "decision": "HOLD",
+        "reasons": [
+          "withdrawn_artwork_not_eligible"
+        ]
+      }
+    },
+    {
+      "sourceItem": "0d293833a235d214a8bb-story",
+      "sourceType": "fight_poster_qr",
+      "status": "withdrawn",
+      "format": "story",
+      "decodedUrl": "https://www.fantasymmadness.com/fight/6adfcba7ee2996e566885594?play=1&utm_source=fan_acquisition&utm_medium=partner_outreach&utm_campaign=combat_fans_gs_mma_ufc&utm_content=poster_qr",
+      "decodeError": null,
+      "expectedUrl": "https://www.fantasymmadness.com/fight/6adfcba7ee2996e566885594?play=1&utm_source=fan_acquisition&utm_medium=partner_outreach&utm_campaign=combat_fans_gs_mma_ufc&utm_content=poster_qr",
+      "expectedDestination": "fight entry",
+      "expectedFightId": "6adfcba7ee2996e566885594",
+      "expectedAffiliateId": null,
+      "qrMetadataMatch": true,
+      "attributionRequired": true,
+      "resolution": {
+        "observedDestination": "https://www.fantasymmadness.com/fight/6adfcba7ee2996e566885594?play=1&utm_source=fan_acquisition&utm_medium=partner_outreach&utm_campaign=combat_fans_gs_mma_ufc&utm_content=poster_qr",
+        "redirects": [
+          {
+            "url": "https://www.fantasymmadness.com/fight/6adfcba7ee2996e566885594?play=1&utm_source=fan_acquisition&utm_medium=partner_outreach&utm_campaign=combat_fans_gs_mma_ufc&utm_content=poster_qr",
+            "status": 200
+          }
+        ],
+        "affiliateIdMatch": "not_applicable",
+        "fightIdMatch": true,
+        "attributionResult": "campaign_parameters_preserved",
+        "linkDecision": "PASS",
+        "decision": "HOLD",
+        "reasons": [
+          "withdrawn_artwork_not_eligible"
+        ]
+      }
+    },
+    {
+      "sourceItem": "13a0aa47fc413fb5f710-portrait",
+      "sourceType": "fight_poster_qr",
+      "status": "generated",
+      "format": "portrait",
+      "decodedUrl": "https://www.fantasymmadness.com/fight/6ad629a60df141df46931a8b?play=1&utm_source=fan_acquisition&utm_medium=partner_outreach&utm_campaign=combat_fans_gs_boxing&utm_content=poster_qr",
+      "decodeError": null,
+      "expectedUrl": "https://www.fantasymmadness.com/fight/6ad629a60df141df46931a8b?play=1&utm_source=fan_acquisition&utm_medium=partner_outreach&utm_campaign=combat_fans_gs_boxing&utm_content=poster_qr",
+      "expectedDestination": "fight entry",
+      "expectedFightId": "6ad629a60df141df46931a8b",
+      "expectedAffiliateId": null,
+      "qrMetadataMatch": true,
+      "attributionRequired": true,
+      "resolution": {
+        "observedDestination": "https://www.fantasymmadness.com/fight/6ad629a60df141df46931a8b?play=1&utm_source=fan_acquisition&utm_medium=partner_outreach&utm_campaign=combat_fans_gs_boxing&utm_content=poster_qr",
+        "redirects": [
+          {
+            "url": "https://www.fantasymmadness.com/fight/6ad629a60df141df46931a8b?play=1&utm_source=fan_acquisition&utm_medium=partner_outreach&utm_campaign=combat_fans_gs_boxing&utm_content=poster_qr",
+            "status": 200
+          }
+        ],
+        "affiliateIdMatch": "not_applicable",
+        "fightIdMatch": true,
+        "attributionResult": "campaign_parameters_preserved",
+        "linkDecision": "PASS",
+        "decision": "PASS",
+        "reasons": []
+      }
+    },
+    {
+      "sourceItem": "13a0aa47fc413fb5f710-story",
+      "sourceType": "fight_poster_qr",
+      "status": "generated",
+      "format": "story",
+      "decodedUrl": "https://www.fantasymmadness.com/fight/6ad629a60df141df46931a8b?play=1&utm_source=fan_acquisition&utm_medium=partner_outreach&utm_campaign=combat_fans_gs_boxing&utm_content=poster_qr",
+      "decodeError": null,
+      "expectedUrl": "https://www.fantasymmadness.com/fight/6ad629a60df141df46931a8b?play=1&utm_source=fan_acquisition&utm_medium=partner_outreach&utm_campaign=combat_fans_gs_boxing&utm_content=poster_qr",
+      "expectedDestination": "fight entry",
+      "expectedFightId": "6ad629a60df141df46931a8b",
+      "expectedAffiliateId": null,
+      "qrMetadataMatch": true,
+      "attributionRequired": true,
+      "resolution": {
+        "observedDestination": "https://www.fantasymmadness.com/fight/6ad629a60df141df46931a8b?play=1&utm_source=fan_acquisition&utm_medium=partner_outreach&utm_campaign=combat_fans_gs_boxing&utm_content=poster_qr",
+        "redirects": [
+          {
+            "url": "https://www.fantasymmadness.com/fight/6ad629a60df141df46931a8b?play=1&utm_source=fan_acquisition&utm_medium=partner_outreach&utm_campaign=combat_fans_gs_boxing&utm_content=poster_qr",
+            "status": 200
+          }
+        ],
+        "affiliateIdMatch": "not_applicable",
+        "fightIdMatch": true,
+        "attributionResult": "campaign_parameters_preserved",
+        "linkDecision": "PASS",
+        "decision": "PASS",
+        "reasons": []
+      }
+    },
+    {
+      "sourceItem": "1dff70804146b2b5f723-portrait",
+      "sourceType": "fight_poster_qr",
+      "status": "generated",
+      "format": "portrait",
+      "decodedUrl": "https://www.fantasymmadness.com/fight/6adfcba7ee2996e566885594?play=1&utm_source=fan_acquisition&utm_medium=partner_outreach&utm_campaign=combat_fans_gs_mma_ufc&utm_content=poster_qr",
+      "decodeError": null,
+      "expectedUrl": "https://www.fantasymmadness.com/fight/6adfcba7ee2996e566885594?play=1&utm_source=fan_acquisition&utm_medium=partner_outreach&utm_campaign=combat_fans_gs_mma_ufc&utm_content=poster_qr",
+      "expectedDestination": "fight entry",
+      "expectedFightId": "6adfcba7ee2996e566885594",
+      "expectedAffiliateId": null,
+      "qrMetadataMatch": true,
+      "attributionRequired": true,
+      "resolution": {
+        "observedDestination": "https://www.fantasymmadness.com/fight/6adfcba7ee2996e566885594?play=1&utm_source=fan_acquisition&utm_medium=partner_outreach&utm_campaign=combat_fans_gs_mma_ufc&utm_content=poster_qr",
+        "redirects": [
+          {
+            "url": "https://www.fantasymmadness.com/fight/6adfcba7ee2996e566885594?play=1&utm_source=fan_acquisition&utm_medium=partner_outreach&utm_campaign=combat_fans_gs_mma_ufc&utm_content=poster_qr",
+            "status": 200
+          }
+        ],
+        "affiliateIdMatch": "not_applicable",
+        "fightIdMatch": true,
+        "attributionResult": "campaign_parameters_preserved",
+        "linkDecision": "PASS",
+        "decision": "PASS",
+        "reasons": []
+      }
+    },
+    {
+      "sourceItem": "1dff70804146b2b5f723-story",
+      "sourceType": "fight_poster_qr",
+      "status": "generated",
+      "format": "story",
+      "decodedUrl": "https://www.fantasymmadness.com/fight/6adfcba7ee2996e566885594?play=1&utm_source=fan_acquisition&utm_medium=partner_outreach&utm_campaign=combat_fans_gs_mma_ufc&utm_content=poster_qr",
+      "decodeError": null,
+      "expectedUrl": "https://www.fantasymmadness.com/fight/6adfcba7ee2996e566885594?play=1&utm_source=fan_acquisition&utm_medium=partner_outreach&utm_campaign=combat_fans_gs_mma_ufc&utm_content=poster_qr",
+      "expectedDestination": "fight entry",
+      "expectedFightId": "6adfcba7ee2996e566885594",
+      "expectedAffiliateId": null,
+      "qrMetadataMatch": true,
+      "attributionRequired": true,
+      "resolution": {
+        "observedDestination": "https://www.fantasymmadness.com/fight/6adfcba7ee2996e566885594?play=1&utm_source=fan_acquisition&utm_medium=partner_outreach&utm_campaign=combat_fans_gs_mma_ufc&utm_content=poster_qr",
+        "redirects": [
+          {
+            "url": "https://www.fantasymmadness.com/fight/6adfcba7ee2996e566885594?play=1&utm_source=fan_acquisition&utm_medium=partner_outreach&utm_campaign=combat_fans_gs_mma_ufc&utm_content=poster_qr",
+            "status": 200
+          }
+        ],
+        "affiliateIdMatch": "not_applicable",
+        "fightIdMatch": true,
+        "attributionResult": "campaign_parameters_preserved",
+        "linkDecision": "PASS",
+        "decision": "PASS",
+        "reasons": []
+      }
+    },
+    {
+      "sourceItem": "5e380f3626308e2f7fa2-portrait",
+      "sourceType": "fight_poster_qr",
+      "status": "withdrawn",
+      "format": "portrait",
+      "decodedUrl": "https://www.fantasymmadness.com/fight/6ad629a60df141df46931a8b?play=1&utm_source=fan_acquisition&utm_medium=partner_outreach&utm_campaign=combat_fans_gs_boxing&utm_content=poster_qr",
+      "decodeError": null,
+      "expectedUrl": "https://www.fantasymmadness.com/fight/6ad629a60df141df46931a8b?play=1&utm_source=fan_acquisition&utm_medium=partner_outreach&utm_campaign=combat_fans_gs_boxing&utm_content=poster_qr",
+      "expectedDestination": "fight entry",
+      "expectedFightId": "6ad629a60df141df46931a8b",
+      "expectedAffiliateId": null,
+      "qrMetadataMatch": true,
+      "attributionRequired": true,
+      "resolution": {
+        "observedDestination": "https://www.fantasymmadness.com/fight/6ad629a60df141df46931a8b?play=1&utm_source=fan_acquisition&utm_medium=partner_outreach&utm_campaign=combat_fans_gs_boxing&utm_content=poster_qr",
+        "redirects": [
+          {
+            "url": "https://www.fantasymmadness.com/fight/6ad629a60df141df46931a8b?play=1&utm_source=fan_acquisition&utm_medium=partner_outreach&utm_campaign=combat_fans_gs_boxing&utm_content=poster_qr",
+            "status": 200
+          }
+        ],
+        "affiliateIdMatch": "not_applicable",
+        "fightIdMatch": true,
+        "attributionResult": "campaign_parameters_preserved",
+        "linkDecision": "PASS",
+        "decision": "HOLD",
+        "reasons": [
+          "withdrawn_artwork_not_eligible"
+        ]
+      }
+    },
+    {
+      "sourceItem": "5e380f3626308e2f7fa2-story",
+      "sourceType": "fight_poster_qr",
+      "status": "withdrawn",
+      "format": "story",
+      "decodedUrl": "https://www.fantasymmadness.com/fight/6ad629a60df141df46931a8b?play=1&utm_source=fan_acquisition&utm_medium=partner_outreach&utm_campaign=combat_fans_gs_boxing&utm_content=poster_qr",
+      "decodeError": null,
+      "expectedUrl": "https://www.fantasymmadness.com/fight/6ad629a60df141df46931a8b?play=1&utm_source=fan_acquisition&utm_medium=partner_outreach&utm_campaign=combat_fans_gs_boxing&utm_content=poster_qr",
+      "expectedDestination": "fight entry",
+      "expectedFightId": "6ad629a60df141df46931a8b",
+      "expectedAffiliateId": null,
+      "qrMetadataMatch": true,
+      "attributionRequired": true,
+      "resolution": {
+        "observedDestination": "https://www.fantasymmadness.com/fight/6ad629a60df141df46931a8b?play=1&utm_source=fan_acquisition&utm_medium=partner_outreach&utm_campaign=combat_fans_gs_boxing&utm_content=poster_qr",
+        "redirects": [
+          {
+            "url": "https://www.fantasymmadness.com/fight/6ad629a60df141df46931a8b?play=1&utm_source=fan_acquisition&utm_medium=partner_outreach&utm_campaign=combat_fans_gs_boxing&utm_content=poster_qr",
+            "status": 200
+          }
+        ],
+        "affiliateIdMatch": "not_applicable",
+        "fightIdMatch": true,
+        "attributionResult": "campaign_parameters_preserved",
+        "linkDecision": "PASS",
+        "decision": "HOLD",
+        "reasons": [
+          "withdrawn_artwork_not_eligible"
+        ]
+      }
+    },
+    {
+      "sourceItem": "bbb25e548fcbcf78d25e-portrait",
+      "sourceType": "fight_poster_qr",
+      "status": "withdrawn",
+      "format": "portrait",
+      "decodedUrl": "https://www.fantasymmadness.com/fight/6adfcba7ee2996e566885594?play=1&utm_source=fan_acquisition&utm_medium=partner_outreach&utm_campaign=combat_fans_gs_mma_ufc&utm_content=poster_qr",
+      "decodeError": null,
+      "expectedUrl": "https://www.fantasymmadness.com/fight/6adfcba7ee2996e566885594?play=1&utm_source=fan_acquisition&utm_medium=partner_outreach&utm_campaign=combat_fans_gs_mma_ufc&utm_content=poster_qr",
+      "expectedDestination": "fight entry",
+      "expectedFightId": "6adfcba7ee2996e566885594",
+      "expectedAffiliateId": null,
+      "qrMetadataMatch": true,
+      "attributionRequired": true,
+      "resolution": {
+        "observedDestination": "https://www.fantasymmadness.com/fight/6adfcba7ee2996e566885594?play=1&utm_source=fan_acquisition&utm_medium=partner_outreach&utm_campaign=combat_fans_gs_mma_ufc&utm_content=poster_qr",
+        "redirects": [
+          {
+            "url": "https://www.fantasymmadness.com/fight/6adfcba7ee2996e566885594?play=1&utm_source=fan_acquisition&utm_medium=partner_outreach&utm_campaign=combat_fans_gs_mma_ufc&utm_content=poster_qr",
+            "status": 200
+          }
+        ],
+        "affiliateIdMatch": "not_applicable",
+        "fightIdMatch": true,
+        "attributionResult": "campaign_parameters_preserved",
+        "linkDecision": "PASS",
+        "decision": "HOLD",
+        "reasons": [
+          "withdrawn_artwork_not_eligible"
+        ]
+      }
+    },
+    {
+      "sourceItem": "bbb25e548fcbcf78d25e-story",
+      "sourceType": "fight_poster_qr",
+      "status": "withdrawn",
+      "format": "story",
+      "decodedUrl": "https://www.fantasymmadness.com/fight/6adfcba7ee2996e566885594?play=1&utm_source=fan_acquisition&utm_medium=partner_outreach&utm_campaign=combat_fans_gs_mma_ufc&utm_content=poster_qr",
+      "decodeError": null,
+      "expectedUrl": "https://www.fantasymmadness.com/fight/6adfcba7ee2996e566885594?play=1&utm_source=fan_acquisition&utm_medium=partner_outreach&utm_campaign=combat_fans_gs_mma_ufc&utm_content=poster_qr",
+      "expectedDestination": "fight entry",
+      "expectedFightId": "6adfcba7ee2996e566885594",
+      "expectedAffiliateId": null,
+      "qrMetadataMatch": true,
+      "attributionRequired": true,
+      "resolution": {
+        "observedDestination": "https://www.fantasymmadness.com/fight/6adfcba7ee2996e566885594?play=1&utm_source=fan_acquisition&utm_medium=partner_outreach&utm_campaign=combat_fans_gs_mma_ufc&utm_content=poster_qr",
+        "redirects": [
+          {
+            "url": "https://www.fantasymmadness.com/fight/6adfcba7ee2996e566885594?play=1&utm_source=fan_acquisition&utm_medium=partner_outreach&utm_campaign=combat_fans_gs_mma_ufc&utm_content=poster_qr",
+            "status": 200
+          }
+        ],
+        "affiliateIdMatch": "not_applicable",
+        "fightIdMatch": true,
+        "attributionResult": "campaign_parameters_preserved",
+        "linkDecision": "PASS",
+        "decision": "HOLD",
+        "reasons": [
+          "withdrawn_artwork_not_eligible"
+        ]
+      }
+    },
+    {
+      "sourceItem": "c324a0c7b19423230dcd-portrait",
+      "sourceType": "fight_poster_qr",
+      "status": "withdrawn",
+      "format": "portrait",
+      "decodedUrl": "https://www.fantasymmadness.com/fight/6ad629a60df141df46931a8b?play=1&utm_source=fan_acquisition&utm_medium=partner_outreach&utm_campaign=combat_fans_gs_boxing&utm_content=poster_qr",
+      "decodeError": null,
+      "expectedUrl": "https://www.fantasymmadness.com/fight/6ad629a60df141df46931a8b?play=1&utm_source=fan_acquisition&utm_medium=partner_outreach&utm_campaign=combat_fans_gs_boxing&utm_content=poster_qr",
+      "expectedDestination": "fight entry",
+      "expectedFightId": "6ad629a60df141df46931a8b",
+      "expectedAffiliateId": null,
+      "qrMetadataMatch": true,
+      "attributionRequired": true,
+      "resolution": {
+        "observedDestination": "https://www.fantasymmadness.com/fight/6ad629a60df141df46931a8b?play=1&utm_source=fan_acquisition&utm_medium=partner_outreach&utm_campaign=combat_fans_gs_boxing&utm_content=poster_qr",
+        "redirects": [
+          {
+            "url": "https://www.fantasymmadness.com/fight/6ad629a60df141df46931a8b?play=1&utm_source=fan_acquisition&utm_medium=partner_outreach&utm_campaign=combat_fans_gs_boxing&utm_content=poster_qr",
+            "status": 200
+          }
+        ],
+        "affiliateIdMatch": "not_applicable",
+        "fightIdMatch": true,
+        "attributionResult": "campaign_parameters_preserved",
+        "linkDecision": "PASS",
+        "decision": "HOLD",
+        "reasons": [
+          "withdrawn_artwork_not_eligible"
+        ]
+      }
+    },
+    {
+      "sourceItem": "c324a0c7b19423230dcd-story",
+      "sourceType": "fight_poster_qr",
+      "status": "withdrawn",
+      "format": "story",
+      "decodedUrl": "https://www.fantasymmadness.com/fight/6ad629a60df141df46931a8b?play=1&utm_source=fan_acquisition&utm_medium=partner_outreach&utm_campaign=combat_fans_gs_boxing&utm_content=poster_qr",
+      "decodeError": null,
+      "expectedUrl": "https://www.fantasymmadness.com/fight/6ad629a60df141df46931a8b?play=1&utm_source=fan_acquisition&utm_medium=partner_outreach&utm_campaign=combat_fans_gs_boxing&utm_content=poster_qr",
+      "expectedDestination": "fight entry",
+      "expectedFightId": "6ad629a60df141df46931a8b",
+      "expectedAffiliateId": null,
+      "qrMetadataMatch": true,
+      "attributionRequired": true,
+      "resolution": {
+        "observedDestination": "https://www.fantasymmadness.com/fight/6ad629a60df141df46931a8b?play=1&utm_source=fan_acquisition&utm_medium=partner_outreach&utm_campaign=combat_fans_gs_boxing&utm_content=poster_qr",
+        "redirects": [
+          {
+            "url": "https://www.fantasymmadness.com/fight/6ad629a60df141df46931a8b?play=1&utm_source=fan_acquisition&utm_medium=partner_outreach&utm_campaign=combat_fans_gs_boxing&utm_content=poster_qr",
+            "status": 200
+          }
+        ],
+        "affiliateIdMatch": "not_applicable",
+        "fightIdMatch": true,
+        "attributionResult": "campaign_parameters_preserved",
+        "linkDecision": "PASS",
+        "decision": "HOLD",
+        "reasons": [
+          "withdrawn_artwork_not_eligible"
+        ]
+      }
+    },
+    {
+      "sourceItem": "syn-affiliate",
+      "sourceType": "affiliate_onboarding_link",
+      "title": "Synthetic Test Affiliate",
+      "status": "active",
+      "syntheticAffiliate": true,
+      "decodedUrl": "https://www.fantasymmadness.com/auth?mode=signup&role=affiliate&utm_source=fan_acquisition&utm_medium=partner_outreach&utm_campaign=combat_fans_aff_synthetic_test&utm_content=onboarding",
+      "expectedDestination": "affiliate signup",
+      "expectedAffiliateId": null,
+      "campaignRequired": true,
+      "termsVerified": false,
+      "resolution": {
+        "decision": "HOLD",
+        "reason": "synthetic_affiliate_not_a_real_league",
+        "observedDestination": null,
+        "redirects": [],
+        "affiliateIdMatch": "fixture_only"
+      }
+    },
+    {
+      "sourceItem": "syn-affiliate:6ad629a60df141df46931a8b",
+      "sourceType": "personalized_fight_link",
+      "title": "Synthetic Test Affiliate",
+      "status": "active",
+      "syntheticAffiliate": true,
+      "decodedUrl": "https://www.fantasymmadness.com/fight/6ad629a60df141df46931a8b?play=1&ref=feedfacefeedfacefeedface&utm_source=fan_acquisition&utm_medium=partner_outreach&utm_campaign=combat_fans_aff_synthetic_test&utm_content=boxing",
+      "expectedDestination": "affiliate fight entry",
+      "expectedAffiliateId": "feedfacefeedfacefeedface",
+      "expectedFightId": "6ad629a60df141df46931a8b",
+      "attributionRequired": true,
+      "resolution": {
+        "decision": "HOLD",
+        "reason": "synthetic_affiliate_not_a_real_league",
+        "observedDestination": null,
+        "redirects": [],
+        "affiliateIdMatch": "fixture_only"
+      }
+    },
+    {
+      "sourceItem": "syn-affiliate:6adfcba7ee2996e566885594",
+      "sourceType": "personalized_fight_link",
+      "title": "Synthetic Test Affiliate",
+      "status": "active",
+      "syntheticAffiliate": true,
+      "decodedUrl": "https://www.fantasymmadness.com/fight/6adfcba7ee2996e566885594?play=1&ref=feedfacefeedfacefeedface&utm_source=fan_acquisition&utm_medium=partner_outreach&utm_campaign=combat_fans_aff_synthetic_test&utm_content=mma-ufc",
+      "expectedDestination": "affiliate fight entry",
+      "expectedAffiliateId": "feedfacefeedfacefeedface",
+      "expectedFightId": "6adfcba7ee2996e566885594",
+      "attributionRequired": true,
+      "resolution": {
+        "decision": "HOLD",
+        "reason": "synthetic_affiliate_not_a_real_league",
+        "observedDestination": null,
+        "redirects": [],
+        "affiliateIdMatch": "fixture_only"
+      }
+    },
+    {
+      "sourceItem": "affiliate-p-467d0f291d5acac2",
+      "sourceType": "legacy_recruitment_link",
+      "namespace": "growth_drafts",
+      "title": "A fan league for The Dozen with Liam Tuffs",
+      "status": "needs_owner_review",
+      "decodedUrl": "https://www.fantasymmadness.com/affiliate-create-account?utm_source=fan_acquisition&utm_medium=partner_outreach&utm_campaign=combat_fans_aff_the_dozen_with_liam__7d7a&utm_content=onboarding",
+      "expectedDestination": "affiliate signup; no league exists without verified account mapping",
+      "expectedAffiliateId": null,
+      "campaignRequired": true,
+      "termsVerified": false,
+      "proposalLanguage": true,
+      "existingLeagueVerified": false,
+      "recipientRelevance": {
+        "sport": "bare-knuckle",
+        "verifiedResearch": true,
+        "affiliateSuitabilityVerified": false
+      },
+      "approvalBlockers": [
+        "legacy_namespace_not_modified",
+        "recipient_affiliate_suitability_requires_evidence"
+      ],
+      "resolution": {
+        "observedDestination": "https://www.fantasymmadness.com/auth?mode=signup&role=affiliate",
+        "redirects": [
+          {
+            "url": "https://www.fantasymmadness.com/affiliate-create-account?utm_source=fan_acquisition&utm_medium=partner_outreach&utm_campaign=combat_fans_aff_the_dozen_with_liam__7d7a&utm_content=onboarding",
+            "status": 307,
+            "location": "/auth?mode=signup&role=affiliate"
+          },
+          {
+            "url": "https://www.fantasymmadness.com/auth?mode=signup&role=affiliate",
+            "status": 200
+          }
+        ],
+        "affiliateIdMatch": "not_applicable",
+        "fightIdMatch": "not_applicable",
+        "attributionResult": "campaign_parameters_lost",
+        "linkDecision": "FAIL",
+        "decision": "FAIL",
+        "reasons": [
+          "campaign_parameters_lost",
+          "legacy_namespace_not_modified",
+          "recipient_affiliate_suitability_requires_evidence",
+          "affiliate_terms_not_verified"
+        ]
+      }
+    }
+  ]
+}

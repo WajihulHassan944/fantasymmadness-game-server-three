@@ -1,0 +1,12 @@
+'use strict';
+const crypto=require('node:crypto');
+const PREFIX='production_preparation_';
+const safeError=value=>{const text=String(value||''),code=text.match(/(?:http[_ :]*|status[_ :]*)([45]\d\d)/i)?.[1];if(code)return'http_'+code;return /^[a-z0-9_]{1,160}$/i.test(text)?text:'external_source_unavailable';};
+async function observeProductionPreparation({productionDb,originalDb}){
+ if(productionDb.databaseName!=='fmgrowthproduction'||originalDb.databaseName!=='fmgrowthtest')throw Error('explicit_separate_database_targets_required');
+ const col=n=>productionDb.collection(PREFIX+n),holds=await col('affiliate_prospects').find({error:{$type:'string'}},{projection:{_id:0,id:1,sourceId:1,error:1,nextRetryAt:1,status:1}}).limit(30).toArray();
+ const settings=await col('growth_settings').find({$or:[{_id:'affiliate-discovery-state'},{_id:'affiliate-recruitment-state'},{_id:'affiliate-program-readiness'}]},{projection:{_id:1,checkedAt:1,lastAttemptAt:1,nextRetryAt:1,termsVerified:1,signupVerified:1,error:1}}).toArray();
+ const originals=await originalDb.collection('growth_affiliates').find({}).sort({_id:1}).toArray();
+ return{checkedAt:new Date().toISOString(),readOnly:true,productionDatabase:'fmgrowthproduction',collectionPrefix:PREFIX,affiliateSourceHolds:holds.map(x=>({...x,error:safeError(x.error)})),recruitmentState:settings.map(x=>({...x,...(x.error?{error:safeError(x.error)}:{})})),marketingHolds:await col('growth_preparation_receipts').find({department:'marketing',stage:'held_for_evidence'},{projection:{_id:0,draftId:1,blockers:1,lastCheckedAt:1}}).toArray(),productionSyntheticAffiliates:await col('growth_affiliates').countDocuments({synthetic:true}),productionMappedAffiliates:await col('growth_affiliates').countDocuments({'identityVerification.verified':true,'identityVerification.environment':'production'}),productionAttributionEvents:await col('growth_attribution_events').countDocuments(),productionRealDeliveries:await col('growth_delivery_claims').countDocuments({realDelivery:true}),productionLiveSocialPosts:await col('growth_social_posts').countDocuments({status:'published',sandbox:{$ne:true}}),originalGrowthAffiliates:{count:originals.length,sha256:crypto.createHash('sha256').update(JSON.stringify(originals)).digest('hex')},businessRecordsChangedByObservation:false,publishingEnabled:false,outboundEnabled:false};
+}
+module.exports={observeProductionPreparation,safeError};

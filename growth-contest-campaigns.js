@@ -1,0 +1,256 @@
+'use strict';
+// Fight-marketing campaigns built ONLY from contests FANTASY MMADNESS has actually
+// published. Source of truth: the public, read-only contest feeds of the main
+// FANTASY MMADNESS backend (the same feeds the website shows players). Nothing
+// here writes to that backend.
+//
+//   fetchVerifiedContests() -> contests that pass every verification rule, plus
+//                              the rejected ones with reasons
+//   buildCampaign()         -> event-specific posts per social channel
+//   checkCampaign()         -> final safeguard: a campaign that fails it never
+//                              enters the approval queue
+//
+// Hard rules: real fighter names, a future date inside the horizon, one of the
+// five sports, an open contest; no invented prizes, fees, titles or venues;
+// podcast / media / creator names are never treated as fights.
+const crypto = require('crypto');
+
+const SPORTS = Object.freeze(['boxing', 'mma-ufc', 'kickboxing', 'bare-knuckle', 'pro-wrestling']);
+const SPORT_LABEL = { boxing: 'BOXING', 'mma-ufc': 'MMA/UFC', kickboxing: 'KICKBOXING', 'bare-knuckle': 'BARE-KNUCKLE', 'pro-wrestling': 'PRO WRESTLING' };
+const DEFAULT_SOURCE = 'https://fantasymmadness-game-server-three-taupe.vercel.app';
+const SITE = 'https://www.fantasymmadness.com';
+const OPEN_MATCH_STATUSES = new Set(['scheduled', 'open', 'ongoing']);
+const PLACEHOLDER = /^(tba|tbd|tbc|n\/?a|unknown|fighter\s*[ab12]?|opponent|red corner|blue corner|mystery.*|winner of .*|vs\.?|-+|\?+)$/i;
+const MEDIA_WORDS = /(\w+cast\b|\b(podcast|podcasts|show|radio|episode|episodes|news|media|network|channel|youtube|tv|live stream|recap|preview show|the fight game|breakdown|talk)\b)/i;
+const MONEY_WORDS = /(\$\s?\d|\bprize|\bjackpot|\bcash\b|\bwin money\b|\bpayout|\bguarantee|\bfree money|\bbet\b|\bbetting|\bodds\b|\bwager)/i;
+const HYPE_CLAIMS = /\b(title fight|championship|main event|undisputed|world title|belt on the line|sold out)\b/i;
+
+const clean = (s, n = 120) => String(s ?? '').replace(/[\x00-\x1f]/g, ' ').replace(/\s+/g, ' ').trim().slice(0, n);
+const norm = (s) => clean(s, 200).toLowerCase().normalize('NFKD').replace(/[̀-ͯ]/g, '').replace(/[^a-z0-9]+/g, ' ').trim();
+const hash = (s) => crypto.createHash('sha256').update(String(s)).digest('hex');
+
+function sportOf(item) {
+  if (item.__feed === 'pro-wrestling') return 'pro-wrestling';
+  const raw = clean(item.matchCategoryTwo) || clean(item.matchCategory) || clean(item.effectiveCategory);
+  const c = raw.toLowerCase().replace(/[^a-z0-9]+/g, '');
+  if (['boxing', 'box'].includes(c)) return 'boxing';
+  if (['mma', 'mixedmartialarts', 'ufc', 'mmaufc'].includes(c)) return 'mma-ufc';
+  if (['kickboxing', 'k1', 'kone'].includes(c)) return 'kickboxing';
+  if (['bareknuckle', 'bareknuckleboxing', 'bareknucklefighting', 'bkfc'].includes(c)) return 'bare-knuckle';
+  if (['prowrestling', 'wrestling'].includes(c)) return 'pro-wrestling';
+  return null;
+}
+
+function validTimeZone(tz) { try { if (!tz) return null; new Intl.DateTimeFormat('en-US', { timeZone: tz }); return tz; } catch { return null; } }
+function dateKeyIn(date, tz) {
+  const p = new Intl.DateTimeFormat('en-CA', { timeZone: tz || 'America/New_York', year: 'numeric', month: '2-digit', day: '2-digit' }).formatToParts(date);
+  const g = (t) => p.find((x) => x.type === t).value; return `${g('year')}-${g('month')}-${g('day')}`;
+}
+
+// ---- verification ------------------------------------------------------------
+function verifyContest(item, { now = new Date(), horizonDays = 21, mediaNames = new Set() } = {}) {
+  const reasons = [];
+  const wrestling = item.__feed === 'pro-wrestling';
+  const id = clean(wrestling ? item.id : (item._id || item.id), 64);
+  if (!/^[a-zA-Z0-9_-]{6,64}$/.test(id)) reasons.push('missing_contest_id');
+  const sport = sportOf(item);
+  if (!sport) reasons.push('sport_not_one_of_five');
+  const a = clean(wrestling ? (item.competitorA?.displayName || item.competitorA?.name) : (item.matchFighterA || item.fighterA?.name || item.fighterAId?.name), 60);
+  const b = clean(wrestling ? (item.competitorB?.displayName || item.competitorB?.name) : (item.matchFighterB || item.fighterB?.name || item.fighterBId?.name), 60);
+  for (const [n, label] of [[a, 'a'], [b, 'b']]) {
+    if (!n || n.length < 2 || PLACEHOLDER.test(n) || !/[a-z]/i.test(n)) reasons.push(`fighter_${label}_name_missing_or_placeholder`);
+    else if (MEDIA_WORDS.test(n) || mediaNames.has(norm(n))) reasons.push(`fighter_${label}_looks_like_media_not_a_fighter`);
+    else if (!wrestling && /\s(and|&|\+)\s/i.test(n)) reasons.push(`fighter_${label}_names_two_people_or_a_show`);
+  }
+  if (a && b && norm(a) === norm(b)) reasons.push('same_fighter_twice');
+  const title = clean(wrestling ? (item.eventName || item.title) : item.matchName, 120);
+  if (title && (mediaNames.has(norm(title)) || /\bpodcast\b/i.test(title))) reasons.push('event_title_is_a_media_name');
+  // Shadow / mystery records are replays, not upcoming events.
+  if (!wrestling && (item.sourceType === 'shadow' || item.isShadow || item.shadowIdentityHidden || String(item.matchType || '').toLowerCase() === 'shadow')) reasons.push('shadow_or_mystery_fight_not_a_real_event');
+  // Auto-discovered candidates are not published contests until the owner promotes them.
+  if (item.autoDiscovered === true && !item.homepagePromoted && !item.featuredThisWeek && !item.featuredFight) reasons.push('unpublished_auto_discovered_candidate');
+  if (item.draft === true || item.isDraft === true || item.voidedAt) reasons.push('draft_or_voided');
+  if (item.cancelledAt || item.canceledAt || item.cancelled === true || item.canceled === true) reasons.push('fight_cancelled');
+  // canSubmitPrediction describes the requesting player's prediction state,
+  // not whether this public contest accepts entries. Use the registry entry flag.
+  if (item.entryOpen === false) reasons.push('registry_entries_unavailable');
+  const status = clean(wrestling ? item.status : item.matchStatus, 20).toLowerCase();
+  if (wrestling ? status !== 'open' : !OPEN_MATCH_STATUSES.has(status || 'ongoing')) reasons.push(`contest_not_open (${status || 'none'})`);
+  // The live player-entry helper ignores legacy shadow flags on published LIVE
+  // fights. Marketing must follow that same rule: otherwise a playable LIVE
+  // contest can be incorrectly excluded. Genuine shadow/non-LIVE closures stay
+  // protected, as do the separate lockAt and entryClosedAt checks below.
+  if (!wrestling && String(item.matchType || '').toUpperCase() !== 'LIVE' && String(item.matchShadowOpenStatus || '').toLowerCase() === 'closed') reasons.push('contest_entries_closed');
+  if (wrestling && item.publicVisible === false) reasons.push('not_public');
+  // Date: must be a real future date inside the horizon.
+  const tz = validTimeZone(item.eventTimeZone);
+  const date = item.matchDate ? new Date(item.matchDate) : null;
+  const dateKey = /^\d{4}-\d{2}-\d{2}$/.test(String(item.matchDateKey || '')) ? item.matchDateKey : (date && Number.isFinite(date.getTime()) ? dateKeyIn(date, tz || 'UTC') : null);
+  if (!dateKey) reasons.push('event_date_missing');
+  else {
+    const today = dateKeyIn(now, tz || 'America/New_York');
+    const horizon = dateKeyIn(new Date(now.getTime() + horizonDays * 86400000), tz || 'America/New_York');
+    if (dateKey < today) reasons.push('event_date_in_past');
+    if (dateKey > horizon) reasons.push('event_date_beyond_horizon');
+  }
+  for (const f of ['lockAt', 'entryClosedAt']) {
+    if (item[f]) { const t = new Date(item[f]).getTime(); if (Number.isFinite(t) && t <= now.getTime()) reasons.push(f === 'lockAt' ? 'predictions_already_locked' : 'entries_already_closed'); }
+  }
+  if (item.timeTba !== true && /^\d{1,2}:\d{2}$/.test(String(item.matchTime || ''))) {
+    const cutoff = require('./fight-entry-time').getFightEntryLockTime(item);
+    if (Number.isFinite(cutoff) && cutoff <= now.getTime()) reasons.push('scheduled_entry_time_passed');
+  }
+  if (reasons.length) return { ok: false, id: id || null, sport, reasons, label: a && b ? `${a} vs ${b}` : (title || id || 'unknown') };
+  const timeTba = item.timeTba === true || !/^\d{1,2}:\d{2}$/.test(String(item.matchTime || ''));
+  const timing=require('./growth-event-timing').timingFromRegistry(item);
+  const contest = {
+    timing,
+    id, sport, fighterA: a, fighterB: b, eventName: title && norm(title) !== norm(`${a} vs ${b}`) ? title : null,
+    dateKey, timeTba, matchTime: timeTba ? null : item.matchTime, timeZone: tz,
+    venue: clean(item.venue, 80) || null, city: clean(item.eventCity, 60) || null,
+    weightClass: clean(item.weightClass || item.division, 40) || null, maxRounds: Number.isInteger(item.maxRounds) && item.maxRounds > 0 && item.maxRounds <= 15 ? item.maxRounds : null,
+    promotion: clean(item.promotionName || item.promoterName, 80) || null,
+    entry: { open: item.entryOpen !== false, feeTokens: Number.isFinite(item.entryFeeTokens) ? item.entryFeeTokens : null },
+    ufc: !wrestling && (Number.isInteger(item.ufcEventNumber) || /\bufc\b/i.test(title || '')),
+    contestUrl: wrestling ? `${SITE}/pro-wrestling/play/${encodeURIComponent(id)}` : `${SITE}/fight/${encodeURIComponent(id)}?play=1`,
+    source: wrestling ? 'fmm-public-pro-wrestling-feed' : 'fmm-public-prediction-feed',
+    status: status || 'ongoing',
+    ...(() => { // the contest's own official artwork, and which published field it came from
+      const f = ['fightPosterImage', 'featuredFightBackgroundImage', 'promotionBackground', 'bannerImage'].find((k) => /^https:\/\/[^\s"'<>]+$/i.test(clean(item[k], 500)));
+      return { posterUrl: f ? clean(item[f], 500) : null, posterField: f || null };
+    })(),
+    // Per-fighter photos published on this contest (selection and rights checks: growth-fighter-artwork.js).
+    fighterPhotos: require('./growth-fighter-artwork').contestPhotoCandidates(item, a, b, wrestling),
+    // If the public feed itself names the website's canonical fight address, offer it to the
+    // URL resolver (growth-fight-urls.js), which uses it only after the website serves it.
+    canonicalFromFeed: clean(item.canonicalUrl || item.canonicalPath, 300) || null,
+  };
+  contest.fingerprint = hash(JSON.stringify([contest.id, contest.sport, contest.fighterA, contest.fighterB, contest.dateKey, contest.matchTime, contest.timeZone, contest.eventName, contest.promotion, contest.venue, contest.city, contest.weightClass, contest.maxRounds, contest.entry])).slice(0, 10);
+  return { ok: true, contest };
+}
+
+async function getJson(fetchImpl, url) {
+  const r = await fetchImpl(url, { headers: { Accept: 'application/json' }, redirect: 'error', signal: AbortSignal.timeout(10000), cache: 'no-store' });
+  if (!r || !r.ok) throw Error(`contest feed ${new URL(url).pathname} returned ${r ? r.status : 'no response'}`);
+  const j = await r.json();
+  if (!j || !Array.isArray(j.items) || j.ok === false) throw Error(`contest feed ${new URL(url).pathname} returned an invalid listing`);
+  return j;
+}
+
+function sourceBase(env = {}) {
+  const v = String(env.GROWTH_CONTEST_SOURCE_URL || DEFAULT_SOURCE).replace(/\/+$/, '');
+  const u = new URL(v);
+  if (u.protocol !== 'https:' || !(/^fantasymmadness-game-server-three[a-z0-9-]*\.vercel\.app$/.test(u.hostname) || /(^|\.)fantasymmadness\.com$/.test(u.hostname))) throw Error('GROWTH_CONTEST_SOURCE_URL must be the FANTASY MMADNESS backend (https)');
+  return `${u.origin}`;
+}
+
+async function fetchVerifiedContests({ fetchImpl = globalThis.fetch, baseUrl = DEFAULT_SOURCE, now = new Date(), horizonDays = 21, mediaNames = new Set() } = {}) {
+  const errors = []; const raw = [];
+  try { const j = await getJson(fetchImpl, `${baseUrl}/api/public/prediction-fights?limit=100`); for (const it of (j.items || [])) raw.push({ ...it, __feed: 'prediction' }); }
+  catch (e) { errors.push(clean(e.message, 200)); }
+  try { const j = await getJson(fetchImpl, `${baseUrl}/api/public/pro-wrestling/matches?status=OPEN&limit=50`); for (const it of (j.items || [])) raw.push({ ...it, __feed: 'pro-wrestling' }); }
+  catch (e) { errors.push(clean(e.message, 200)); }
+  const contests = []; const rejected = []; const seen = new Set(); const events = new Set();
+  for (const it of raw) {
+    const v = verifyContest(it, { now, horizonDays, mediaNames });
+    if (!v.ok) { rejected.push({ id: v.id, sport: v.sport, label: v.label, reasons: v.reasons }); continue; }
+    if (seen.has(v.contest.id)) continue; seen.add(v.contest.id); contests.push(v.contest);
+    const c = v.contest;
+    const eventKey = [c.sport, c.dateKey, ...[norm(c.fighterA), norm(c.fighterB)].sort()].join('|');
+    if (events.has(eventKey)) { contests.pop(); rejected.push({ id: c.id, sport: c.sport, label: `${c.fighterA} vs ${c.fighterB}`, reasons: ['duplicate_registry_fight'] }); }
+    else events.add(eventKey);
+  }
+  contests.sort((x, y) => x.dateKey.localeCompare(y.dateKey));
+  return { contests, rejected, errors, checked: raw.length, sourceReachable: errors.length < 2, complete: errors.length === 0 };
+}
+
+// ---- copy ----------------------------------------------------------------------
+const EMOJI = { boxing: '🥊', 'mma-ufc': '🔥', kickboxing: '🦵', 'bare-knuckle': '👊', 'pro-wrestling': '🤼' };
+function tags(c) {
+  const t = { boxing: ['#Boxing'], 'mma-ufc': c.ufc ? ['#MMA', '#UFC'] : ['#MMA'], kickboxing: ['#Kickboxing'], 'bare-knuckle': ['#BareKnuckle'], 'pro-wrestling': ['#ProWrestling'] }[c.sport].slice();
+  if (c.promotion && /^[A-Za-z0-9]{2,20}$/.test(c.promotion.replace(/\s+/g, ''))) t.push('#' + c.promotion.replace(/\s+/g, ''));
+  t.push('#FANTASYMMADNESS'); return t.join(' ');
+}
+function whenText(c) {
+  const [y, m, d] = c.dateKey.split('-').map(Number);
+  const day = new Date(Date.UTC(y, m - 1, d, 12)).toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric', timeZone: 'UTC' });
+  if (!c.timing?.eventTimeVerified) return day+' · event start time unconfirmed';
+  return day+' · '+require('./growth-event-timing').timeLabel(c);
+
+}
+function link(c, channel) {
+  const sep = c.contestUrl.includes('?') ? '&' : '?';
+  // fan_acquisition / partner_outreach / combat_fans_* is what the live site already
+  // records on registration, so sign-ups from these posts become measurable without
+  // any production change. "gs" = Growth Engine social; utm_content = channel.
+  return `${c.contestUrl}${sep}utm_source=fan_acquisition&utm_medium=partner_outreach&utm_campaign=combat_fans_gs_${c.sport.replace(/[^a-z0-9]+/g, '_')}&utm_content=${channel}`;
+}
+// How you play, by sport (matches what each contest page offers; no prizes or fees).
+const PLAY = {
+  boxing: ['Call it round by round: punches, round winners and the finish.', 'Score this one round by round and see whose card comes closest.', 'Think you can read every round? Fill out your round-by-round card.'],
+  'mma-ufc': ['Call it round by round: strikes, takedowns, round winners and the finish.', 'Fill out your round-by-round card before the cage door closes.', 'Score every round and see whose card comes closest.'],
+  kickboxing: ['Call it round by round: punches, kicks, knees and round winners.', 'Score every exchange, round by round.', 'Think you can read every round? Fill out your round-by-round card.'],
+  'bare-knuckle': ['Call it round by round: punches, knockdowns and round winners.', 'No gloves. Score every round and call the finish.', 'Think you can read every round? Fill out your round-by-round card.'],
+  'pro-wrestling': ['Make your picks for this match.', 'Who walks out the winner? Lock in your picks.', 'Call it before the bell. Make your picks.'],
+};
+function buildCampaign(c, options={}) {
+  const k=require('./growth-platform-copy').buildPlatformCopy(c,options);
+  return {headline:clean(`${SPORT_LABEL[c.sport]}: ${c.fighterA} vs ${c.fighterB} — ${whenText(c)}`,180),...k};
+}
+
+// ---- final safeguard -----------------------------------------------------------
+function checkCampaign(draft, contest, { now = new Date(), mediaNames = new Set() } = {}) {
+  const reasons = [];
+  if (!contest || !contest.id) return ['no_verified_contest'];
+  if (draft.kind !== 'marketing') reasons.push('not_a_marketing_campaign');
+  if (draft.contestId !== contest.id) reasons.push('contest_id_mismatch');
+  if (!SPORTS.includes(draft.genre) || draft.genre !== contest.sport) reasons.push('sport_mismatch');
+  const texts = { text: draft.text, ...(draft.posts || {}) };
+  for (const [ch, t] of Object.entries(texts)) {
+    const s = String(t || '');
+    if (!s.trim()) { reasons.push(`${ch}_empty`); continue; }
+    if (!s.includes(contest.fighterA) || !s.includes(contest.fighterB)) reasons.push(`${ch}_missing_fighter_names`);
+    // Either form of this fight's address is accepted: the fighter-name address or the ID address (fallback).
+    const bases = [contest.contestUrl, contest.idUrl, contest.cleanUrl].filter(Boolean).map((u) => u.split('?')[0]);
+    if (!draft.platformCopy && ch !== 'tiktok' && !bases.some((b) => s.includes(b))) reasons.push(`${ch}_missing_contest_link`);
+    if (MONEY_WORDS.test(s)) reasons.push(`${ch}_mentions_money_or_prizes`);
+    if (HYPE_CLAIMS.test(s) && !(contest.eventName && HYPE_CLAIMS.test(contest.eventName))) reasons.push(`${ch}_claims_title_or_main_event_not_in_contest`);
+    if (/\bpodcast\b/i.test(s)) reasons.push(`${ch}_mentions_podcast`);
+    for (const m of mediaNames) if (m.length > 5 && norm(s).includes(m) && !norm(`${contest.fighterA} ${contest.fighterB} ${contest.eventName || ''}`).includes(m)) { reasons.push(`${ch}_contains_media_name`); break; }
+  }
+  if (draft.platformCopy) reasons.push(...require('./growth-platform-copy').validatePlatformCopy(draft,contest,{now}));
+  else if (require('twitter-text').parseTweet(draft.posts?.x||'').weightedLength>280) reasons.push('x_post_too_long');
+  reasons.push(...require('./growth-event-timing').validateTiming(contest));
+  const today = dateKeyIn(now, contest.timeZone || 'America/New_York');
+  if (contest.dateKey < today) reasons.push('event_date_in_past');
+  return reasons;
+}
+
+
+// Keeps campaign attribution on this fight's links after an owner edit or relink: any link
+// to the fight (fighter-name or ID address) gets play=1 (fights) and the Growth Engine
+// campaign tags back if they were removed. Other parameters (affiliate ref=, an affiliate
+// campaign tag) are kept as they are. Links to other pages are left untouched.
+function tagCampaignLinks(text, c, channel) {
+  const norm = (u) => String(u || '').split('?')[0].replace(/\/+$/, '');
+  const bases = new Set([c.cleanUrl, c.idBase, c.contestUrl, c.idUrl].filter(Boolean).map(norm));
+  return String(text || '').replace(/https:\/\/(?:www\.)?fantasymmadness\.com\/[^\s<>"')\]]+/g, (raw) => {
+    const m = raw.match(/^(.*?)([.,!?;:]*)$/); const u0 = m[1]; const tail = m[2];
+    let url; try { url = new URL(u0); } catch { return raw; }
+    const base = `${SITE}${url.pathname}`.replace(/\/+$/, '');
+    if (!bases.has(base)) return raw;
+    const q = new URLSearchParams();
+    if (c.sport !== 'pro-wrestling') q.set('play', url.searchParams.get('play') || '1');
+    for (const [k, v] of url.searchParams) if (k !== 'play' && !k.startsWith('utm_')) q.set(k, v);
+    const camp = url.searchParams.get('utm_campaign') || '';
+    const ours = /^combat_fans_/.test(camp);
+    q.set('utm_source', ours ? (url.searchParams.get('utm_source') || 'fan_acquisition') : 'fan_acquisition');
+    q.set('utm_medium', ours ? (url.searchParams.get('utm_medium') || 'partner_outreach') : 'partner_outreach');
+    q.set('utm_campaign', ours ? camp : `combat_fans_gs_${c.sport.replace(/[^a-z0-9]+/g, '_')}`);
+    q.set('utm_content', /^combat_fans_gs_/.test(q.get('utm_campaign')) ? channel : (url.searchParams.get('utm_content') || channel));
+    for (const [k, v] of url.searchParams) if (k.startsWith('utm_') && !q.has(k)) q.set(k, v);
+    return `${base}?${q.toString()}${tail}`;
+  });
+}
+
+module.exports = { tagCampaignLinks, SPORTS, SPORT_LABEL, DEFAULT_SOURCE, sourceBase, sportOf, verifyContest, fetchVerifiedContests, buildCampaign, checkCampaign, norm, MONEY_WORDS };
