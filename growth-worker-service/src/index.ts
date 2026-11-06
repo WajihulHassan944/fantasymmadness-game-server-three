@@ -8,10 +8,10 @@ import {affiliateStagingAcceptance} from '../workflows/affiliate-acceptance';
 import {productionLaunchAudit} from '../workflows/production-launch-audit';
 import production from './production-preparation.cjs';
 import {productionPreparationLoop} from '../workflows/production-preparation';
-import {activateVerifiedProductionPreparation,stopProductionPreparation,inspectProductionPreparation} from '../workflows/production-release';
+import {activateVerifiedProductionPreparation,stopProductionPreparation,inspectProductionPreparation,handoverVerifiedProductionPreparation} from '../workflows/production-release';
 import {createProductionPreparationApp} from '../shared/growth-production-preparation-http.js';
 const app=express();app.disable('x-powered-by');
-const productionControlAvailable=Boolean(activateVerifiedProductionPreparation&&stopProductionPreparation&&inspectProductionPreparation);
+const productionControlAvailable=Boolean(activateVerifiedProductionPreparation&&stopProductionPreparation&&inspectProductionPreparation&&handoverVerifiedProductionPreparation);
 if(process.env.GROWTH_PREPARATION_MODE==='production_preparation'){app.use(createProductionPreparationApp({env:process.env,context:production.context,startScheduled:async(generation:string)=>{try{await start(productionPreparationLoop,[generation,0],{experimental_hook:{token:`production-preparation:${generation}:0`}});}catch(e){if(!HookConflictError.is(e))throw e;}}}));}
 app.get('/health',async(_req,res)=>{
  res.set('Cache-Control','no-store');

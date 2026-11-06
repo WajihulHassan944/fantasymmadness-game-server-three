@@ -33,3 +33,17 @@ export async function inspectProductionPreparationState(){
  return preparation.inspectDeployed();
 }
 inspectProductionPreparationState.maxRetries=0;
+
+export async function handoverVerifiedProductionPreparation(fromDeploymentId:string){
+ 'use workflow';
+ const initial=await handoverProductionPreparation(fromDeploymentId);
+ const run=await start(productionPreparationLoop,[initial.scheduler.generation,0],{experimental_hook:{token:`production-preparation:${initial.scheduler.generation}:0`}});
+ return{environment:'production',database:initial.database,preparationWorkflowRunId:run.runId,generation:initial.scheduler.generation,publishingEnabled:false,outboundEnabled:false};
+}
+export async function handoverProductionPreparation(fromDeploymentId:string){
+ 'use step';
+ const c=await preparation.context();
+ await preparation.inspectDeployed();
+ return c.handover({fromDeploymentId,deploymentId:process.env.VERCEL_DEPLOYMENT_ID,confirmation:'HANDOVER PRODUCTION PREPARATION ONLY'});
+}
+handoverProductionPreparation.maxRetries=3;
