@@ -233,4 +233,7 @@ html.embedded :is(.card,.grid,.card-head,.actions) { min-width: 0; }
 html.embedded .btn { max-width: 100%; white-space: normal; }
 html.embedded :is(input,select,textarea) { max-width: 100%; }
 html.embedded .poster-thumb img { object-fit: contain; }
+html.embedded .modal-back { max-height: max(160px,calc(var(--fmm-owner-viewport,720px) - 120px)); padding: 12px 16px; }
+html.embedded .modal { max-height: max(136px,calc(var(--fmm-owner-viewport,720px) - 144px)); overflow: auto; }
+html.embedded .modal footer { position: sticky; bottom: 0; background: var(--card); }
 /* END authorized 2026-11-06 usability repairs. */

@@ -178,6 +178,9 @@
           .catch(function (e) { confirmBtn.disabled = false; if (!e || !e.silent) err.textContent = explain(e); });
       });
       document.body.appendChild(back);
+        /* BEGIN authorized 2026-11-06 dialog visibility. */
+        tellParent(parse().name, {event:'dialog-open'});
+        /* END authorized 2026-11-06 dialog visibility. */
       var first = back.querySelector('input,textarea,select'); (first || confirmBtn).focus();
     });
   }
@@ -478,6 +481,18 @@
           isEmail ? h('pre', { class: 'preview-text', text: d.text || 'No message body: do not authorize delivery.' }) : (d.posts ? channelPosts(d) : h('pre', {class:'preview-text',text:d.text || 'No caption: do not authorize publishing.'})),
           d.contest ? h('p', { text: 'Event: ' + (d.contest.eventName || 'Unverified') + ' · Date: ' + (d.contest.dateKey || 'Unverified') + ' · Event start: ' + (d.contest.timeTba ? 'Unconfirmed; contest cutoff is not the event start.' : 'Verify against the published event source before release.') }) : null,
           d.poster ? h('p', { text: 'Artwork: ' + [d.poster.portrait?.id, d.poster.story?.id].filter(Boolean).join(', ') + ' · QR destination: ' + (d.poster.qrUrl || 'Unverified') }) : null);
+        var destinations = h('p', { testid: 'final-review-destinations', text: 'Checking current destination configuration…' });
+        review.appendChild(destinations);
+        api('GET', '/admin/connections').then(function (r) {
+          var c = r.connections || {}, selected = c.meta?.selected;
+          destinations.textContent = isEmail ? 'Configured sender: ' + (c.email?.sender || 'Not verified') + ' · Recipient and provider delivery approval remain required.' :
+            'Facebook: ' + (selected?.pageName && selected?.pageId ? selected.pageName + ' (ID ' + selected.pageId + ')' : 'Not verified — hold release') +
+            ' · Instagram: ' + (selected?.igUsername || 'Not verified') + ' · Publishing remains disabled. Review each channel grant in Connections.';
+        }).catch(function () { destinations.textContent = 'Destination configuration unavailable — hold release. No credentials changed.'; });
+        if (d.poster) review.appendChild(h('div', { class: 'poster-row' }, ['portrait','story'].map(function (format) {
+          var image = d.poster[format];
+          return image?.url ? h('a', {class:'poster-thumb',href:image.url,target:'_blank',rel:'noopener noreferrer'}, h('img',{src:image.url,alt:format + ' original campaign poster',width:'120'}), h('small',{text:format + ' · open original'})) : null;
+        })));
         p = h('div', null, p, review);
         /* END authorized 2026-11-06 final review details. */
         if (isEmail || !d.poster || !d.poster.needsArtwork) return p;
@@ -1351,6 +1366,12 @@
   'use strict';
   if (!document.documentElement.classList.contains('embedded') || !window.ResizeObserver) return;
   var last = 0, queued = false;
+  window.addEventListener('message', function (event) {
+    var origin = location.ancestorOrigins && location.ancestorOrigins[0];
+    var height = event.data && event.data.height;
+    if (!origin || event.source !== window.parent || event.origin !== origin || event.data.type !== 'fmm-growth-viewport' || !Number.isInteger(height) || height < 160 || height > 10000) return;
+    document.documentElement.style.setProperty('--fmm-owner-viewport', height + 'px');
+  });
   function measure() {
     queued = false;
     var layout = document.querySelector('.layout');
