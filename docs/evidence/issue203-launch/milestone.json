@@ -1,0 +1,1548 @@
+{
+  "applicationCommit": "8e0930405c3e5519e00b8af07d866bdc111479ab",
+  "verificationCommit": "a10e3834e912fd6ee6cb078760ac8c13b1def34d",
+  "workerDeployment": {
+    "id": "dpl_6Cgkqx3w1KVUtUyK8UUJ4gb9tmRS",
+    "url": "fantasymmadness-growth-isolated-test-qyz7f9cck.vercel.app",
+    "readyState": "INITIALIZING",
+    "target": null,
+    "gitSource": {
+      "type": "github",
+      "repoId": 841323822,
+      "ref": "feature/growth-sandbox-worker-isolated",
+      "sha": "8e0930405c3e5519e00b8af07d866bdc111479ab"
+    },
+    "release": "affiliate-discovery-isolated-v5",
+    "priorRelease": "autonomous-preparation-v4"
+  },
+  "backofficeDeployment": {
+    "id": "dpl_9g9R3d6NkDDpQ6Cb9Txvwu6krTfV",
+    "url": "fantasymmadness-growth-isolated-test-h669q3crl.vercel.app",
+    "readyState": "INITIALIZING",
+    "target": null,
+    "gitSource": {
+      "type": "github",
+      "repoId": 841323822,
+      "ref": "feature/growth-social-oauth-isolated",
+      "sha": "8e0930405c3e5519e00b8af07d866bdc111479ab"
+    }
+  },
+  "workerRun": {
+    "runId": "wrun_41M6RJFMJ70GHK0HBBK3WY34B4",
+    "deploymentId": "dpl_6Cgkqx3w1KVUtUyK8UUJ4gb9tmRS",
+    "release": "affiliate-discovery-isolated-v5"
+  },
+  "workerExecutions": {
+    "runId": "wrun_41M6RJFMJ70GHK0HBBK3WY34B4",
+    "status": "running",
+    "steps": [
+      {
+        "stepName": "step//./workflows/sandbox//executeCycle",
+        "status": "completed",
+        "completedAt": "2026-11-06T14:01:30.765Z",
+        "result": {
+          "stop": false,
+          "evidence": {
+            "checkedAt": "2026-11-06T14:01:30.648Z",
+            "operations": {
+              "mode": "preparation_only",
+              "departments": {
+                "marketing": {
+                  "awaitingOwnerReview": 2,
+                  "receipts": 2,
+                  "ready": 2,
+                  "held": 0,
+                  "awaitingReceipt": 0,
+                  "sourceHolds": 0,
+                  "approvedDrafts": 0
+                },
+                "pr": {
+                  "awaitingOwnerReview": 5,
+                  "receipts": 5,
+                  "ready": 5,
+                  "held": 0,
+                  "awaitingReceipt": 0,
+                  "sourceHolds": 0,
+                  "approvedDrafts": 0
+                },
+                "affiliate": {
+                  "awaitingOwnerReview": 12,
+                  "receipts": 12,
+                  "ready": 0,
+                  "held": 12,
+                  "awaitingReceipt": 0,
+                  "sourceHolds": 23,
+                  "approvedDrafts": 0
+                }
+              },
+              "jobs": {
+                "completed": 222
+              },
+              "receiptMeaning": "Prepared evidence snapshots only; never messages sent, publication, owner approval or conversion.",
+              "realDeliveriesObserved": 0,
+              "liveSocialPostsObserved": 0,
+              "attributedPayingConversions": null,
+              "publishingEnabled": false,
+              "outboundEnabled": false
+            },
+            "connections": {
+              "at": "2026-11-06T14:01:30.648Z",
+              "oauth": [
+                {
+                  "provider": "tiktok",
+                  "status": "connected",
+                  "accessStatus": "valid",
+                  "tokenExpiresAt": "2026-11-07T12:00:42.041Z",
+                  "refreshExpiresAt": "2027-11-05T12:30:01.041Z",
+                  "refreshExpiryKnown": true,
+                  "refreshAvailable": true,
+                  "renewalAvailable": true,
+                  "renewalStatus": "available",
+                  "nextRefreshAt": "2026-11-07T11:30:42.041Z",
+                  "expiryEvidence": {
+                    "source": "encrypted_provider_response",
+                    "issuedAt": "2026-11-06T12:00:42.041Z",
+                    "accessLifetimeSeconds": 86400,
+                    "refreshLifetimeSeconds": 31451359,
+                    "storedRefreshExpiresAt": "2027-11-05T12:30:01.041Z",
+                    "metadataMismatch": false
+                  },
+                  "warnings": [],
+                  "grantedScopes": [
+                    "user.info.basic"
+                  ],
+                  "scopesVerifiedAt": "2026-11-06T12:00:42.223Z",
+                  "identityVerifiedAt": "2026-11-06T13:47:11.285Z",
+                  "nextRetryAt": null,
+                  "reason": null,
+                  "publishingEnabled": false
+                },
+                {
+                  "provider": "x",
+                  "status": "connected",
+                  "accessStatus": "valid",
+                  "tokenExpiresAt": "2026-11-06T15:16:47.998Z",
+                  "refreshExpiresAt": null,
+                  "refreshExpiryKnown": false,
+                  "refreshAvailable": true,
+                  "renewalAvailable": true,
+                  "renewalStatus": "expiry-unknown",
+                  "nextRefreshAt": "2026-11-06T14:46:47.998Z",
+                  "expiryEvidence": {
+                    "source": "unknown",
+                    "issuedAt": "2026-11-06T13:16:47.998Z",
+                    "accessLifetimeSeconds": 7200,
+                    "refreshLifetimeSeconds": null,
+                    "storedRefreshExpiresAt": null,
+                    "metadataMismatch": false
+                  },
+                  "warnings": [],
+                  "grantedScopes": [
+                    "offline.access",
+                    "tweet.read",
+                    "users.read"
+                  ],
+                  "scopesVerifiedAt": "2026-11-06T13:16:48.129Z",
+                  "identityVerifiedAt": "2026-11-06T13:47:11.416Z",
+                  "nextRetryAt": null,
+                  "reason": null,
+                  "publishingEnabled": false
+                }
+              ],
+              "meta": {
+                "existingRecordFound": true,
+                "source": "existing_isolated_record",
+                "encryptionConfigured": true,
+                "checkedAt": "2026-11-06T14:00:19.782Z",
+                "facebook": {
+                  "verified": true,
+                  "state": "connected",
+                  "reason": null
+                },
+                "instagram": {
+                  "verified": true,
+                  "state": "connected",
+                  "reason": null
+                },
+                "credentialsChanged": false,
+                "publishingEnabled": false
+              },
+              "permissions": {
+                "verified": true,
+                "granted": [
+                  "pages_show_list",
+                  "business_management",
+                  "instagram_basic",
+                  "instagram_content_publish",
+                  "pages_read_engagement",
+                  "pages_manage_posts",
+                  "public_profile"
+                ],
+                "declined": [],
+                "checkedAt": "2026-11-06T14:01:30.636Z",
+                "expiresAt": "2027-01-01T14:38:21.329Z",
+                "refreshSupported": false,
+                "lifecycle": "Facebook Page authorization has no generic OAuth refresh token; retain working Page tokens and reconnect only when provider validation requires it."
+              }
+            },
+            "jobResults": [],
+            "errors": 0,
+            "websiteSessionUsed": false,
+            "outboundEnabled": false,
+            "publishingEnabled": false
+          }
+        }
+      },
+      {
+        "stepName": "step//./workflows/sandbox//executeCycle",
+        "status": "completed",
+        "completedAt": "2026-11-06T14:00:23.657Z",
+        "result": {
+          "stop": false,
+          "evidence": {
+            "checkedAt": "2026-11-06T14:00:23.291Z",
+            "operations": {
+              "mode": "preparation_only",
+              "departments": {
+                "marketing": {
+                  "awaitingOwnerReview": 2,
+                  "receipts": 2,
+                  "ready": 2,
+                  "held": 0,
+                  "awaitingReceipt": 0,
+                  "sourceHolds": 0,
+                  "approvedDrafts": 0
+                },
+                "pr": {
+                  "awaitingOwnerReview": 5,
+                  "receipts": 5,
+                  "ready": 5,
+                  "held": 0,
+                  "awaitingReceipt": 0,
+                  "sourceHolds": 0,
+                  "approvedDrafts": 0
+                },
+                "affiliate": {
+                  "awaitingOwnerReview": 12,
+                  "receipts": 12,
+                  "ready": 0,
+                  "held": 12,
+                  "awaitingReceipt": 0,
+                  "sourceHolds": 23,
+                  "approvedDrafts": 0
+                }
+              },
+              "jobs": {
+                "completed": 222
+              },
+              "receiptMeaning": "Prepared evidence snapshots only; never messages sent, publication, owner approval or conversion.",
+              "realDeliveriesObserved": 0,
+              "liveSocialPostsObserved": 0,
+              "attributedPayingConversions": null,
+              "publishingEnabled": false,
+              "outboundEnabled": false
+            },
+            "connections": {
+              "at": "2026-11-06T14:00:23.291Z",
+              "oauth": [
+                {
+                  "provider": "tiktok",
+                  "status": "connected",
+                  "accessStatus": "valid",
+                  "tokenExpiresAt": "2026-11-07T12:00:42.041Z",
+                  "refreshExpiresAt": "2027-11-05T12:30:01.041Z",
+                  "refreshExpiryKnown": true,
+                  "refreshAvailable": true,
+                  "renewalAvailable": true,
+                  "renewalStatus": "available",
+                  "nextRefreshAt": "2026-11-07T11:30:42.041Z",
+                  "expiryEvidence": {
+                    "source": "encrypted_provider_response",
+                    "issuedAt": "2026-11-06T12:00:42.041Z",
+                    "accessLifetimeSeconds": 86400,
+                    "refreshLifetimeSeconds": 31451359,
+                    "storedRefreshExpiresAt": "2027-11-05T12:30:01.041Z",
+                    "metadataMismatch": false
+                  },
+                  "warnings": [],
+                  "grantedScopes": [
+                    "user.info.basic"
+                  ],
+                  "scopesVerifiedAt": "2026-11-06T12:00:42.223Z",
+                  "identityVerifiedAt": "2026-11-06T13:47:11.285Z",
+                  "nextRetryAt": null,
+                  "reason": null,
+                  "publishingEnabled": false
+                },
+                {
+                  "provider": "x",
+                  "status": "connected",
+                  "accessStatus": "valid",
+                  "tokenExpiresAt": "2026-11-06T15:16:47.998Z",
+                  "refreshExpiresAt": null,
+                  "refreshExpiryKnown": false,
+                  "refreshAvailable": true,
+                  "renewalAvailable": true,
+                  "renewalStatus": "expiry-unknown",
+                  "nextRefreshAt": "2026-11-06T14:46:47.998Z",
+                  "expiryEvidence": {
+                    "source": "unknown",
+                    "issuedAt": "2026-11-06T13:16:47.998Z",
+                    "accessLifetimeSeconds": 7200,
+                    "refreshLifetimeSeconds": null,
+                    "storedRefreshExpiresAt": null,
+                    "metadataMismatch": false
+                  },
+                  "warnings": [],
+                  "grantedScopes": [
+                    "offline.access",
+                    "tweet.read",
+                    "users.read"
+                  ],
+                  "scopesVerifiedAt": "2026-11-06T13:16:48.129Z",
+                  "identityVerifiedAt": "2026-11-06T13:47:11.416Z",
+                  "nextRetryAt": null,
+                  "reason": null,
+                  "publishingEnabled": false
+                }
+              ],
+              "meta": {
+                "existingRecordFound": true,
+                "source": "existing_isolated_record",
+                "encryptionConfigured": true,
+                "checkedAt": "2026-11-06T14:00:19.782Z",
+                "facebook": {
+                  "verified": true,
+                  "state": "connected",
+                  "reason": null
+                },
+                "instagram": {
+                  "verified": true,
+                  "state": "connected",
+                  "reason": null
+                },
+                "credentialsChanged": false,
+                "publishingEnabled": false
+              },
+              "permissions": {
+                "verified": true,
+                "granted": [
+                  "pages_show_list",
+                  "business_management",
+                  "instagram_basic",
+                  "instagram_content_publish",
+                  "pages_read_engagement",
+                  "pages_manage_posts",
+                  "public_profile"
+                ],
+                "declined": [],
+                "checkedAt": "2026-11-06T14:00:23.280Z",
+                "expiresAt": "2027-01-01T14:38:21.329Z",
+                "refreshSupported": false,
+                "lifecycle": "Facebook Page authorization has no generic OAuth refresh token; retain working Page tokens and reconnect only when provider validation requires it."
+              }
+            },
+            "jobResults": [
+              {
+                "department": "marketing",
+                "ok": true,
+                "sourceHolds": 0,
+                "receipt": {
+                  "created": 0,
+                  "checked": 2
+                }
+              },
+              {
+                "department": "pr",
+                "ok": true,
+                "sourceHolds": 0,
+                "receipt": {
+                  "created": 0,
+                  "checked": 5
+                }
+              },
+              {
+                "department": "affiliate",
+                "ok": true,
+                "sourceHolds": 0,
+                "receipt": {
+                  "created": 0,
+                  "checked": 12
+                }
+              }
+            ],
+            "errors": 0,
+            "websiteSessionUsed": false,
+            "outboundEnabled": false,
+            "publishingEnabled": false
+          }
+        }
+      },
+      {
+        "stepName": "step//./workflows/sandbox//executeCycle",
+        "status": "completed",
+        "completedAt": "2026-11-06T13:59:12.869Z",
+        "result": {
+          "stop": false,
+          "evidence": {
+            "checkedAt": "2026-11-06T13:59:12.710Z",
+            "operations": {
+              "mode": "preparation_only",
+              "departments": {
+                "marketing": {
+                  "awaitingOwnerReview": 2,
+                  "receipts": 2,
+                  "ready": 2,
+                  "held": 0,
+                  "awaitingReceipt": 0,
+                  "sourceHolds": 0,
+                  "approvedDrafts": 0
+                },
+                "pr": {
+                  "awaitingOwnerReview": 5,
+                  "receipts": 5,
+                  "ready": 5,
+                  "held": 0,
+                  "awaitingReceipt": 0,
+                  "sourceHolds": 0,
+                  "approvedDrafts": 0
+                },
+                "affiliate": {
+                  "awaitingOwnerReview": 12,
+                  "receipts": 12,
+                  "ready": 0,
+                  "held": 12,
+                  "awaitingReceipt": 0,
+                  "sourceHolds": 23,
+                  "approvedDrafts": 0
+                }
+              },
+              "jobs": {
+                "completed": 219
+              },
+              "receiptMeaning": "Prepared evidence snapshots only; never messages sent, publication, owner approval or conversion.",
+              "realDeliveriesObserved": 0,
+              "liveSocialPostsObserved": 0,
+              "attributedPayingConversions": null,
+              "publishingEnabled": false,
+              "outboundEnabled": false
+            },
+            "connections": {
+              "at": "2026-11-06T13:59:12.710Z",
+              "oauth": [
+                {
+                  "provider": "tiktok",
+                  "status": "connected",
+                  "accessStatus": "valid",
+                  "tokenExpiresAt": "2026-11-07T12:00:42.041Z",
+                  "refreshExpiresAt": "2027-11-05T12:30:01.041Z",
+                  "refreshExpiryKnown": true,
+                  "refreshAvailable": true,
+                  "renewalAvailable": true,
+                  "renewalStatus": "available",
+                  "nextRefreshAt": "2026-11-07T11:30:42.041Z",
+                  "expiryEvidence": {
+                    "source": "encrypted_provider_response",
+                    "issuedAt": "2026-11-06T12:00:42.041Z",
+                    "accessLifetimeSeconds": 86400,
+                    "refreshLifetimeSeconds": 31451359,
+                    "storedRefreshExpiresAt": "2027-11-05T12:30:01.041Z",
+                    "metadataMismatch": false
+                  },
+                  "warnings": [],
+                  "grantedScopes": [
+                    "user.info.basic"
+                  ],
+                  "scopesVerifiedAt": "2026-11-06T12:00:42.223Z",
+                  "identityVerifiedAt": "2026-11-06T13:47:11.285Z",
+                  "nextRetryAt": null,
+                  "reason": null,
+                  "publishingEnabled": false
+                },
+                {
+                  "provider": "x",
+                  "status": "connected",
+                  "accessStatus": "valid",
+                  "tokenExpiresAt": "2026-11-06T15:16:47.998Z",
+                  "refreshExpiresAt": null,
+                  "refreshExpiryKnown": false,
+                  "refreshAvailable": true,
+                  "renewalAvailable": true,
+                  "renewalStatus": "expiry-unknown",
+                  "nextRefreshAt": "2026-11-06T14:46:47.998Z",
+                  "expiryEvidence": {
+                    "source": "unknown",
+                    "issuedAt": "2026-11-06T13:16:47.998Z",
+                    "accessLifetimeSeconds": 7200,
+                    "refreshLifetimeSeconds": null,
+                    "storedRefreshExpiresAt": null,
+                    "metadataMismatch": false
+                  },
+                  "warnings": [],
+                  "grantedScopes": [
+                    "offline.access",
+                    "tweet.read",
+                    "users.read"
+                  ],
+                  "scopesVerifiedAt": "2026-11-06T13:16:48.129Z",
+                  "identityVerifiedAt": "2026-11-06T13:47:11.416Z",
+                  "nextRetryAt": null,
+                  "reason": null,
+                  "publishingEnabled": false
+                }
+              ],
+              "meta": {
+                "existingRecordFound": true,
+                "source": "existing_isolated_record",
+                "encryptionConfigured": true,
+                "checkedAt": "2026-11-06T13:55:00.545Z",
+                "facebook": {
+                  "verified": true,
+                  "state": "connected",
+                  "reason": null
+                },
+                "instagram": {
+                  "verified": true,
+                  "state": "connected",
+                  "reason": null
+                },
+                "credentialsChanged": false,
+                "publishingEnabled": false
+              },
+              "permissions": {
+                "verified": true,
+                "granted": [
+                  "pages_show_list",
+                  "business_management",
+                  "instagram_basic",
+                  "instagram_content_publish",
+                  "pages_read_engagement",
+                  "pages_manage_posts",
+                  "public_profile"
+                ],
+                "declined": [],
+                "checkedAt": "2026-11-06T13:59:12.695Z",
+                "expiresAt": "2027-01-01T14:38:21.329Z",
+                "refreshSupported": false,
+                "lifecycle": "Facebook Page authorization has no generic OAuth refresh token; retain working Page tokens and reconnect only when provider validation requires it."
+              }
+            },
+            "jobResults": [],
+            "errors": 0,
+            "websiteSessionUsed": false,
+            "outboundEnabled": false,
+            "publishingEnabled": false
+          }
+        }
+      }
+    ]
+  },
+  "review": {
+    "checkedAt": "2026-11-06T14:04:06.399Z",
+    "readOnly": true,
+    "database": "fmgrowthtest",
+    "collectionPrefix": "preview198_",
+    "scheduler": {
+      "schedulerEnabled": true,
+      "preparationEnabled": true,
+      "preparationPaused": false,
+      "provider": "vercel-workflow",
+      "resumePending": false,
+      "workerBindingReady": true,
+      "generation": "affiliate-discovery-isolated-v5",
+      "lastScheduledGeneration": "affiliate-discovery-isolated-v5",
+      "lastWorkflowRunId": "wrun_41M6RJFMJ70GHK0HBBK3WY34B4",
+      "schedule": "every 15 minutes",
+      "healthy": true,
+      "lastScheduledAt": "2026-11-06T14:01:30.648Z",
+      "scheduledExecutions": 98,
+      "generationScheduledExecutions": 2,
+      "lastRunId": "growth_202611061401",
+      "lastError": null,
+      "nextWakeAt": "2026-11-06T14:16:30.648Z",
+      "ownerAllowlistConfigured": true,
+      "approvalMode": "owner_required",
+      "publishingEnabled": false,
+      "outboundEnabled": false
+    },
+    "campaigns": [
+      {
+        "id": "mkt-6ad629a60df141df46931a8b-49d793654a",
+        "kind": "marketing",
+        "title": "BOXING: ELIF NUR TURHAN vs ALYCIA BAUMGARDNER \u2014 Sunday, November 8 \u00b7 event start time unconfirmed",
+        "genre": "boxing",
+        "storedStatus": "needs_owner_review",
+        "ownerApproved": false,
+        "sendPermitted": false,
+        "decision": "ELIGIBLE_FOR_OWNER_REVIEW",
+        "blockers": [],
+        "receipt": {
+          "stage": "awaiting_owner_approval",
+          "checkedAt": "2026-11-06T14:00:20.920Z",
+          "blockers": []
+        },
+        "contest": {
+          "id": "6ad629a60df141df46931a8b",
+          "fighterA": "ELIF NUR TURHAN",
+          "fighterB": "ALYCIA BAUMGARDNER",
+          "eventName": "MVP",
+          "dateKey": "2026-11-08",
+          "timeTba": false,
+          "timing": {
+            "eventStartAt": null,
+            "eventTimeVerified": false,
+            "eventTimeSourceUrl": null,
+            "entryCutoffAt": "2026-11-09T04:00:00.000Z",
+            "entryTimeZone": "America/New_York",
+            "eventTimeZone": "America/New_York",
+            "errors": []
+          },
+          "contestUrl": "https://www.fantasymmadness.com/fight/6ad629a60df141df46931a8b?play=1"
+        },
+        "posters": [
+          {
+            "id": "13a0aa47fc413fb5f710-portrait",
+            "format": "portrait",
+            "qrDecodedMatches": true,
+            "decodedUrl": "https://www.fantasymmadness.com/fight/6ad629a60df141df46931a8b?play=1&utm_source=fan_acquisition&utm_medium=partner_outreach&utm_campaign=combat_fans_gs_boxing&utm_content=poster_qr",
+            "withdrawn": false
+          },
+          {
+            "id": "13a0aa47fc413fb5f710-story",
+            "format": "story",
+            "qrDecodedMatches": true,
+            "decodedUrl": "https://www.fantasymmadness.com/fight/6ad629a60df141df46931a8b?play=1&utm_source=fan_acquisition&utm_medium=partner_outreach&utm_campaign=combat_fans_gs_boxing&utm_content=poster_qr",
+            "withdrawn": false
+          }
+        ],
+        "channels": [
+          "facebook",
+          "x"
+        ],
+        "platforms": {
+          "instagram": {
+            "ready": false,
+            "blockers": [
+              "verified_profile_destination_required"
+            ],
+            "caption": "ELIF NUR TURHAN vs ALYCIA BAUMGARDNER | MVP | Boxing | 2026-11-08\n\nEvent start time unconfirmed\n\n10 rounds\n\nMake your round-by-round picks on FANTASY MMADNESS.\n\nFind ELIF NUR TURHAN vs ALYCIA BAUMGARDNER on FANTASY MMADNESS.\n\n#FANTASYMMADNESS #Boxing #ELIFNURTURHAN #ALYCIABAUMGARDNER",
+            "trackingUrl": "https://www.fantasymmadness.com/fight/6ad629a60df141df46931a8b?play=1&utm_source=fan_acquisition&utm_medium=partner_outreach&utm_campaign=combat_fans_gs_boxing&utm_content=instagram"
+          },
+          "facebook": {
+            "ready": true,
+            "blockers": [],
+            "caption": "ELIF NUR TURHAN vs ALYCIA BAUMGARDNER | MVP | Boxing | 2026-11-08\n\nEvent start time unconfirmed\n\n10 rounds\n\nMake your round-by-round picks on FANTASY MMADNESS.\n\nMake your picks on FANTASY MMADNESS: https://www.fantasymmadness.com/fight/6ad629a60df141df46931a8b?play=1&utm_source=fan_acquisition&utm_medium=partner_outreach&utm_campaign=combat_fans_gs_boxing&utm_content=facebook\n\n#FANTASYMMADNESS #Boxing #ELIFNURTURHAN",
+            "trackingUrl": "https://www.fantasymmadness.com/fight/6ad629a60df141df46931a8b?play=1&utm_source=fan_acquisition&utm_medium=partner_outreach&utm_campaign=combat_fans_gs_boxing&utm_content=facebook"
+          },
+          "tiktok": {
+            "ready": false,
+            "blockers": [
+              "verified_profile_destination_required"
+            ],
+            "caption": "ELIF NUR TURHAN vs ALYCIA BAUMGARDNER | MVP | Boxing | 2026-11-08\n\nEvent start time unconfirmed\n\n10 rounds\n\nMake your round-by-round picks on FANTASY MMADNESS.\n\nFind ELIF NUR TURHAN vs ALYCIA BAUMGARDNER on FANTASY MMADNESS.\n\n#FANTASYMMADNESS #Boxing #ELIFNURTURHAN #ALYCIABAUMGARDNER",
+            "trackingUrl": "https://www.fantasymmadness.com/fight/6ad629a60df141df46931a8b?play=1&utm_source=fan_acquisition&utm_medium=partner_outreach&utm_campaign=combat_fans_gs_boxing&utm_content=tiktok"
+          },
+          "x": {
+            "ready": true,
+            "blockers": [],
+            "caption": "ELIF NUR TURHAN vs ALYCIA BAUMGARDNER | MVP | Boxing | 2026-11-08\n\nMake your round-by-round picks on FANTASY MMADNESS.\n\nhttps://www.fantasymmadness.com/fight/6ad629a60df141df46931a8b?play=1&utm_source=fan_acquisition&utm_medium=partner_outreach&utm_campaign=combat_fans_gs_boxing&utm_content=x\n\n#Boxing #FANTASYMMADNESS",
+            "trackingUrl": "https://www.fantasymmadness.com/fight/6ad629a60df141df46931a8b?play=1&utm_source=fan_acquisition&utm_medium=partner_outreach&utm_campaign=combat_fans_gs_boxing&utm_content=x"
+          },
+          "youtube_shorts": {
+            "ready": false,
+            "blockers": [
+              "verified_profile_destination_required",
+              "youtube_publishing_not_connected"
+            ],
+            "caption": "ELIF NUR TURHAN vs ALYCIA BAUMGARDNER | MVP | Boxing | 2026-11-08\n\nEvent start time unconfirmed\n\n10 rounds\n\nMake your round-by-round picks on FANTASY MMADNESS.\n\nFind ELIF NUR TURHAN vs ALYCIA BAUMGARDNER on FANTASY MMADNESS.\n\n#FANTASYMMADNESS #Boxing #ELIFNURTURHAN #ALYCIABAUMGARDNER",
+            "trackingUrl": "https://www.fantasymmadness.com/fight/6ad629a60df141df46931a8b?play=1&utm_source=fan_acquisition&utm_medium=partner_outreach&utm_campaign=combat_fans_gs_boxing&utm_content=youtube_shorts"
+          }
+        },
+        "recipientDomain": null,
+        "contactSource": null,
+        "consentBasis": null,
+        "sourceEvidence": null
+      },
+      {
+        "id": "mkt-6adfcba7ee2996e566885594-e498620c94",
+        "kind": "marketing",
+        "title": "MMA/UFC: CIRYL GANE vs JOSH HOKIT \u2014 Saturday, November 14 \u00b7 event start time unconfirmed",
+        "genre": "mma-ufc",
+        "storedStatus": "needs_owner_review",
+        "ownerApproved": false,
+        "sendPermitted": false,
+        "decision": "ELIGIBLE_FOR_OWNER_REVIEW",
+        "blockers": [],
+        "receipt": {
+          "stage": "awaiting_owner_approval",
+          "checkedAt": "2026-11-06T14:00:20.920Z",
+          "blockers": []
+        },
+        "contest": {
+          "id": "6adfcba7ee2996e566885594",
+          "fighterA": "CIRYL GANE",
+          "fighterB": "JOSH HOKIT",
+          "eventName": "UFC 334",
+          "dateKey": "2026-11-14",
+          "timeTba": false,
+          "timing": {
+            "eventStartAt": null,
+            "eventTimeVerified": false,
+            "eventTimeSourceUrl": null,
+            "entryCutoffAt": "2026-11-15T04:00:00.000Z",
+            "entryTimeZone": "America/New_York",
+            "eventTimeZone": "America/New_York",
+            "errors": []
+          },
+          "contestUrl": "https://www.fantasymmadness.com/fight/6adfcba7ee2996e566885594?play=1"
+        },
+        "posters": [
+          {
+            "id": "1dff70804146b2b5f723-portrait",
+            "format": "portrait",
+            "qrDecodedMatches": true,
+            "decodedUrl": "https://www.fantasymmadness.com/fight/6adfcba7ee2996e566885594?play=1&utm_source=fan_acquisition&utm_medium=partner_outreach&utm_campaign=combat_fans_gs_mma_ufc&utm_content=poster_qr",
+            "withdrawn": false
+          },
+          {
+            "id": "1dff70804146b2b5f723-story",
+            "format": "story",
+            "qrDecodedMatches": true,
+            "decodedUrl": "https://www.fantasymmadness.com/fight/6adfcba7ee2996e566885594?play=1&utm_source=fan_acquisition&utm_medium=partner_outreach&utm_campaign=combat_fans_gs_mma_ufc&utm_content=poster_qr",
+            "withdrawn": false
+          }
+        ],
+        "channels": [
+          "facebook",
+          "x"
+        ],
+        "platforms": {
+          "instagram": {
+            "ready": false,
+            "blockers": [
+              "verified_profile_destination_required"
+            ],
+            "caption": "CIRYL GANE vs JOSH HOKIT | UFC 334 | MMA | 2026-11-14\n\nEvent start time unconfirmed\n\n5 rounds\n\nMake your round-by-round picks on FANTASY MMADNESS.\n\nFind CIRYL GANE vs JOSH HOKIT on FANTASY MMADNESS.\n\n#FANTASYMMADNESS #MMA #CIRYLGANE #JOSHHOKIT",
+            "trackingUrl": "https://www.fantasymmadness.com/fight/6adfcba7ee2996e566885594?play=1&utm_source=fan_acquisition&utm_medium=partner_outreach&utm_campaign=combat_fans_gs_mma_ufc&utm_content=instagram"
+          },
+          "facebook": {
+            "ready": true,
+            "blockers": [],
+            "caption": "CIRYL GANE vs JOSH HOKIT | UFC 334 | MMA | 2026-11-14\n\nEvent start time unconfirmed\n\n5 rounds\n\nMake your round-by-round picks on FANTASY MMADNESS.\n\nMake your picks on FANTASY MMADNESS: https://www.fantasymmadness.com/fight/6adfcba7ee2996e566885594?play=1&utm_source=fan_acquisition&utm_medium=partner_outreach&utm_campaign=combat_fans_gs_mma_ufc&utm_content=facebook\n\n#FANTASYMMADNESS #MMA #CIRYLGANE",
+            "trackingUrl": "https://www.fantasymmadness.com/fight/6adfcba7ee2996e566885594?play=1&utm_source=fan_acquisition&utm_medium=partner_outreach&utm_campaign=combat_fans_gs_mma_ufc&utm_content=facebook"
+          },
+          "tiktok": {
+            "ready": false,
+            "blockers": [
+              "verified_profile_destination_required"
+            ],
+            "caption": "CIRYL GANE vs JOSH HOKIT | UFC 334 | MMA | 2026-11-14\n\nEvent start time unconfirmed\n\n5 rounds\n\nMake your round-by-round picks on FANTASY MMADNESS.\n\nFind CIRYL GANE vs JOSH HOKIT on FANTASY MMADNESS.\n\n#FANTASYMMADNESS #MMA #CIRYLGANE #JOSHHOKIT",
+            "trackingUrl": "https://www.fantasymmadness.com/fight/6adfcba7ee2996e566885594?play=1&utm_source=fan_acquisition&utm_medium=partner_outreach&utm_campaign=combat_fans_gs_mma_ufc&utm_content=tiktok"
+          },
+          "x": {
+            "ready": true,
+            "blockers": [],
+            "caption": "CIRYL GANE vs JOSH HOKIT | UFC 334 | MMA | 2026-11-14\n\nMake your round-by-round picks on FANTASY MMADNESS.\n\nhttps://www.fantasymmadness.com/fight/6adfcba7ee2996e566885594?play=1&utm_source=fan_acquisition&utm_medium=partner_outreach&utm_campaign=combat_fans_gs_mma_ufc&utm_content=x\n\n#MMA #FANTASYMMADNESS",
+            "trackingUrl": "https://www.fantasymmadness.com/fight/6adfcba7ee2996e566885594?play=1&utm_source=fan_acquisition&utm_medium=partner_outreach&utm_campaign=combat_fans_gs_mma_ufc&utm_content=x"
+          },
+          "youtube_shorts": {
+            "ready": false,
+            "blockers": [
+              "verified_profile_destination_required",
+              "youtube_publishing_not_connected"
+            ],
+            "caption": "CIRYL GANE vs JOSH HOKIT | UFC 334 | MMA | 2026-11-14\n\nEvent start time unconfirmed\n\n5 rounds\n\nMake your round-by-round picks on FANTASY MMADNESS.\n\nFind CIRYL GANE vs JOSH HOKIT on FANTASY MMADNESS.\n\n#FANTASYMMADNESS #MMA #CIRYLGANE #JOSHHOKIT",
+            "trackingUrl": "https://www.fantasymmadness.com/fight/6adfcba7ee2996e566885594?play=1&utm_source=fan_acquisition&utm_medium=partner_outreach&utm_campaign=combat_fans_gs_mma_ufc&utm_content=youtube_shorts"
+          }
+        },
+        "recipientDomain": null,
+        "contactSource": null,
+        "consentBasis": null,
+        "sourceEvidence": null
+      },
+      {
+        "id": "pr-p-f956478203419e11",
+        "kind": "pr",
+        "title": "Boxing with Mannix and Mora: a round-by-round angle on ELIF NUR TURHAN vs ALYCIA BAUMGARDNER",
+        "subject": "Boxing with Mannix and Mora: a round-by-round angle on ELIF NUR TURHAN vs ALYCIA BAUMGARDNER",
+        "genre": "boxing",
+        "storedStatus": "needs_owner_review",
+        "ownerApproved": false,
+        "sendPermitted": false,
+        "decision": "ELIGIBLE_FOR_OWNER_REVIEW",
+        "blockers": [],
+        "receipt": {
+          "stage": "awaiting_owner_approval",
+          "checkedAt": "2026-11-06T14:00:21.246Z",
+          "blockers": []
+        },
+        "contest": null,
+        "posters": [],
+        "channels": [],
+        "platforms": {},
+        "recipientDomain": "gmail.com",
+        "contactSource": "https://feeds.megaphone.fm/GEMINIMEDIA8912957151",
+        "consentBasis": "Business contact published by the show in its public podcast feed (itunes:owner / itunes:email), retrieved 2026-11-05",
+        "sourceEvidence": {
+          "id": "p-f956478203419e11",
+          "name": "Boxing with Mannix and Mora",
+          "verifiedResearch": true,
+          "researchHold": null,
+          "researchedAt": "2026-11-05T15:00:59.364Z",
+          "evidence": [
+            {
+              "text": "Recent episodes cover boxing"
+            }
+          ]
+        }
+      },
+      {
+        "id": "pr-p-a593138355c14ed9",
+        "kind": "pr",
+        "title": "6th Round RETRO Podcast: a round-by-round angle on CIRYL GANE vs JOSH HOKIT",
+        "subject": "6th Round RETRO Podcast: a round-by-round angle on CIRYL GANE vs JOSH HOKIT",
+        "genre": "mma-ufc",
+        "storedStatus": "needs_owner_review",
+        "ownerApproved": false,
+        "sendPermitted": false,
+        "decision": "ELIGIBLE_FOR_OWNER_REVIEW",
+        "blockers": [],
+        "receipt": {
+          "stage": "awaiting_owner_approval",
+          "checkedAt": "2026-11-06T14:00:21.246Z",
+          "blockers": []
+        },
+        "contest": null,
+        "posters": [],
+        "channels": [],
+        "platforms": {},
+        "recipientDomain": "gmail.com",
+        "contactSource": "https://api.substack.com/feed/podcast/1474930/s/56213.rss",
+        "consentBasis": "Business contact published by the show in its public podcast feed (itunes:owner / itunes:email), retrieved 2026-11-05",
+        "sourceEvidence": {
+          "id": "p-a593138355c14ed9",
+          "name": "6th Round RETRO Podcast",
+          "verifiedResearch": true,
+          "researchHold": null,
+          "researchedAt": "2026-11-05T15:02:10.180Z",
+          "evidence": [
+            {
+              "text": "Recent episodes cover mma ufc"
+            }
+          ]
+        }
+      },
+      {
+        "id": "pr-p-4c35a814b6618fce",
+        "kind": "pr",
+        "title": "Budocast: MMA, UFC & Martial Arts News Podcast: a round-by-round angle on CIRYL GANE vs JOSH HOKIT",
+        "subject": "Budocast: MMA, UFC & Martial Arts News Podcast: a round-by-round angle on CIRYL GANE vs JOSH HOKIT",
+        "genre": "mma-ufc",
+        "storedStatus": "needs_owner_review",
+        "ownerApproved": false,
+        "sendPermitted": false,
+        "decision": "ELIGIBLE_FOR_OWNER_REVIEW",
+        "blockers": [],
+        "receipt": {
+          "stage": "awaiting_owner_approval",
+          "checkedAt": "2026-11-06T14:00:21.246Z",
+          "blockers": []
+        },
+        "contest": null,
+        "posters": [],
+        "channels": [],
+        "platforms": {},
+        "recipientDomain": "budocast.com",
+        "contactSource": "https://anchor.fm/s/104c918a0/podcast/rss",
+        "consentBasis": "Business contact published by the show in its public podcast feed (itunes:owner / itunes:email), retrieved 2026-11-05",
+        "sourceEvidence": {
+          "id": "p-4c35a814b6618fce",
+          "name": "Budocast: MMA, UFC & Martial Arts News Podcast",
+          "verifiedResearch": true,
+          "researchHold": null,
+          "researchedAt": "2026-11-05T15:03:16.499Z",
+          "evidence": [
+            {
+              "text": "Recent episodes cover mma ufc"
+            },
+            {
+              "text": "Mentioned CIRYL GANE in \u201cUFC 331 Results: Joshua Van Dethrones Pantoja, UFC 334 Announced | Budocast MMA News\u201d"
+            }
+          ]
+        }
+      },
+      {
+        "id": "pr-p-874920d814aee9a0",
+        "kind": "pr",
+        "title": "Going In Raw: A Pro Wrestling Podcast: a story idea for pro wrestling fans",
+        "subject": "Going In Raw: A Pro Wrestling Podcast: a story idea for pro wrestling fans",
+        "genre": "pro-wrestling",
+        "storedStatus": "needs_owner_review",
+        "ownerApproved": false,
+        "sendPermitted": false,
+        "decision": "ELIGIBLE_FOR_OWNER_REVIEW",
+        "blockers": [],
+        "receipt": {
+          "stage": "awaiting_owner_approval",
+          "checkedAt": "2026-11-06T14:00:21.246Z",
+          "blockers": []
+        },
+        "contest": null,
+        "posters": [],
+        "channels": [],
+        "platforms": {},
+        "recipientDomain": "studio71us.com",
+        "contactSource": "https://feeds.megaphone.fm/STU1900299775",
+        "consentBasis": "Business contact published by the show in its public podcast feed (itunes:owner / itunes:email), retrieved 2026-11-05",
+        "sourceEvidence": {
+          "id": "p-874920d814aee9a0",
+          "name": "Going In Raw: A Pro Wrestling Podcast",
+          "verifiedResearch": true,
+          "researchHold": null,
+          "researchedAt": "2026-11-05T16:03:35.743Z",
+          "evidence": [
+            {
+              "text": "Recent episodes cover pro wrestling"
+            }
+          ]
+        }
+      },
+      {
+        "id": "pr-p-cafd139ff66ea487",
+        "kind": "pr",
+        "title": "The Last Round Boxing Podcast: a round-by-round angle on ELIF NUR TURHAN vs ALYCIA BAUMGARDNER",
+        "subject": "The Last Round Boxing Podcast: a round-by-round angle on ELIF NUR TURHAN vs ALYCIA BAUMGARDNER",
+        "genre": "boxing",
+        "storedStatus": "needs_owner_review",
+        "ownerApproved": false,
+        "sendPermitted": false,
+        "decision": "ELIGIBLE_FOR_OWNER_REVIEW",
+        "blockers": [],
+        "receipt": {
+          "stage": "awaiting_owner_approval",
+          "checkedAt": "2026-11-06T14:00:21.246Z",
+          "blockers": []
+        },
+        "contest": null,
+        "posters": [],
+        "channels": [],
+        "platforms": {},
+        "recipientDomain": "gmail.com",
+        "contactSource": "https://anchor.fm/s/feca895c/podcast/rss",
+        "consentBasis": "Business contact published by the show in its public podcast feed (itunes:owner / itunes:email), retrieved 2026-11-06",
+        "sourceEvidence": {
+          "id": "p-cafd139ff66ea487",
+          "name": "The Last Round Boxing Podcast",
+          "verifiedResearch": true,
+          "researchHold": null,
+          "researchedAt": "2026-11-06T00:04:10.991Z",
+          "evidence": [
+            {
+              "text": "Recent episodes cover boxing"
+            }
+          ]
+        }
+      }
+    ],
+    "discoveryRetries": [
+      {
+        "error": null,
+        "failures": 0,
+        "lastSucceededAt": "2026-11-06T14:00:21.502Z",
+        "nextRetryAt": null,
+        "role": "gym",
+        "sport": "bare-knuckle"
+      }
+    ],
+    "affiliateHoldCount": 12,
+    "connections": {
+      "checkedAt": "2026-11-06T14:01:30.642Z",
+      "verificationFresh": true,
+      "providerVerification": [
+        {
+          "provider": "tiktok",
+          "status": "connected",
+          "accessStatus": "valid",
+          "renewalStatus": "available",
+          "grantedScopes": [
+            "user.info.basic"
+          ]
+        },
+        {
+          "provider": "x",
+          "status": "connected",
+          "accessStatus": "valid",
+          "renewalStatus": "expiry-unknown",
+          "grantedScopes": [
+            "offline.access",
+            "tweet.read",
+            "users.read"
+          ]
+        }
+      ],
+      "metaVerification": {
+        "facebook": {
+          "verified": true,
+          "state": "connected",
+          "reason": null
+        },
+        "instagram": {
+          "verified": true,
+          "state": "connected",
+          "reason": null
+        }
+      },
+      "metaPermissions": {
+        "verified": true,
+        "granted": [
+          "pages_show_list",
+          "business_management",
+          "instagram_basic",
+          "instagram_content_publish",
+          "pages_read_engagement",
+          "pages_manage_posts",
+          "public_profile"
+        ]
+      },
+      "oauth": [
+        {
+          "provider": "tiktok",
+          "status": "connected",
+          "displayName": "FANTASY MMADNESS",
+          "username": null,
+          "grantedScopes": [
+            "user.info.basic"
+          ]
+        },
+        {
+          "provider": "x",
+          "status": "connected",
+          "displayName": "FANTASY MMADNESS",
+          "username": "FMmadness2024",
+          "grantedScopes": [
+            "offline.access",
+            "tweet.read",
+            "users.read"
+          ]
+        }
+      ],
+      "facebook": {
+        "name": "Fantasy MMAdness"
+      },
+      "instagram": {
+        "username": "fantasymmadness"
+      }
+    },
+    "publishingEnabled": false,
+    "outboundEnabled": false,
+    "channelAuthorization": {
+      "facebook": {
+        "connected": true,
+        "postingScopeVerified": true,
+        "ownerPublishingAuthorization": false
+      },
+      "instagram": {
+        "connected": true,
+        "postingScopeVerified": true,
+        "campaignHold": "verified_profile_destination_required",
+        "ownerPublishingAuthorization": false
+      },
+      "x": {
+        "connected": true,
+        "postingScopeVerified": false,
+        "missingScope": "tweet.write",
+        "ownerPublishingAuthorization": false
+      },
+      "tiktok": {
+        "connected": true,
+        "postingScopeVerified": false,
+        "requiredConsent": "provider-supported video upload/publish scope and supported asset",
+        "ownerPublishingAuthorization": false
+      }
+    },
+    "liveLaunchApproved": false
+  },
+  "capturedDeliveryFirst": {
+    "checkedAt": "2026-11-06T13:55:24.379Z",
+    "database": "fmgrowthtest",
+    "collectionPrefix": "preview198_launch_qa_",
+    "synthetic": true,
+    "results": [
+      {
+        "campaignId": "mkt-6ad629a60df141df46931a8b-49d793654a",
+        "channel": "facebook",
+        "decision": "PASS_CAPTURE_ONLY",
+        "qaId": "qa-3e4d715e2e80f60bb68a5f8906326157"
+      },
+      {
+        "campaignId": "mkt-6ad629a60df141df46931a8b-49d793654a",
+        "channel": "instagram",
+        "decision": "HOLD",
+        "blockers": [
+          "verified_profile_destination_required"
+        ]
+      },
+      {
+        "campaignId": "mkt-6ad629a60df141df46931a8b-49d793654a",
+        "channel": "x",
+        "decision": "PASS_CAPTURE_ONLY",
+        "qaId": "qa-e7f9ac86d0bcfbbcc9627a189c371dbf"
+      },
+      {
+        "campaignId": "mkt-6ad629a60df141df46931a8b-49d793654a",
+        "channel": "tiktok",
+        "decision": "HOLD",
+        "blockers": [
+          "verified_profile_destination_required"
+        ]
+      },
+      {
+        "campaignId": "mkt-6adfcba7ee2996e566885594-e498620c94",
+        "channel": "facebook",
+        "decision": "PASS_CAPTURE_ONLY",
+        "qaId": "qa-42cdda5fefc2152940ecdb7cee21ac5a"
+      },
+      {
+        "campaignId": "mkt-6adfcba7ee2996e566885594-e498620c94",
+        "channel": "instagram",
+        "decision": "HOLD",
+        "blockers": [
+          "verified_profile_destination_required"
+        ]
+      },
+      {
+        "campaignId": "mkt-6adfcba7ee2996e566885594-e498620c94",
+        "channel": "x",
+        "decision": "PASS_CAPTURE_ONLY",
+        "qaId": "qa-e03b2b2235a2714fbebc5e6536db1382"
+      },
+      {
+        "campaignId": "mkt-6adfcba7ee2996e566885594-e498620c94",
+        "channel": "tiktok",
+        "decision": "HOLD",
+        "blockers": [
+          "verified_profile_destination_required"
+        ]
+      },
+      {
+        "campaignId": "pr-p-f956478203419e11",
+        "channel": "email",
+        "decision": "PASS_CAPTURE_ONLY",
+        "qaId": "qa-fd6a2312978342a6fd0d3c3e4288f43d"
+      },
+      {
+        "campaignId": "pr-p-a593138355c14ed9",
+        "channel": "email",
+        "decision": "PASS_CAPTURE_ONLY",
+        "qaId": "qa-bb7f5642e7d8b3f12badd44f7017e709"
+      },
+      {
+        "campaignId": "pr-p-4c35a814b6618fce",
+        "channel": "email",
+        "decision": "PASS_CAPTURE_ONLY",
+        "qaId": "qa-f261549495f84ed33dcefecfaa372a75"
+      },
+      {
+        "campaignId": "pr-p-874920d814aee9a0",
+        "channel": "email",
+        "decision": "PASS_CAPTURE_ONLY",
+        "qaId": "qa-e58563847050b5bce54ed47d247f7e61"
+      },
+      {
+        "campaignId": "pr-p-cafd139ff66ea487",
+        "channel": "email",
+        "decision": "PASS_CAPTURE_ONLY",
+        "qaId": "qa-d94e3e7dfd9c48f679421e73cf325421"
+      }
+    ],
+    "sourceApprovalFlagsUnchanged": true,
+    "capturedEmails": 5,
+    "capturedSocial": 4,
+    "realDeliveries": 0,
+    "realSocialPosts": 0,
+    "publishingEnabled": false,
+    "outboundEnabled": false
+  },
+  "capturedDeliveryReplay": {
+    "checkedAt": "2026-11-06T13:57:51.211Z",
+    "database": "fmgrowthtest",
+    "collectionPrefix": "preview198_launch_qa_",
+    "synthetic": true,
+    "results": [
+      {
+        "campaignId": "mkt-6ad629a60df141df46931a8b-49d793654a",
+        "channel": "facebook",
+        "decision": "PASS_REPLAY_NO_NEW_CAPTURE",
+        "qaId": "qa-3e4d715e2e80f60bb68a5f8906326157",
+        "reason": "idempotent_capture_reused"
+      },
+      {
+        "campaignId": "mkt-6ad629a60df141df46931a8b-49d793654a",
+        "channel": "instagram",
+        "decision": "HOLD",
+        "blockers": [
+          "verified_profile_destination_required"
+        ]
+      },
+      {
+        "campaignId": "mkt-6ad629a60df141df46931a8b-49d793654a",
+        "channel": "x",
+        "decision": "PASS_REPLAY_NO_NEW_CAPTURE",
+        "qaId": "qa-e7f9ac86d0bcfbbcc9627a189c371dbf",
+        "reason": "idempotent_capture_reused"
+      },
+      {
+        "campaignId": "mkt-6ad629a60df141df46931a8b-49d793654a",
+        "channel": "tiktok",
+        "decision": "HOLD",
+        "blockers": [
+          "verified_profile_destination_required"
+        ]
+      },
+      {
+        "campaignId": "mkt-6adfcba7ee2996e566885594-e498620c94",
+        "channel": "facebook",
+        "decision": "PASS_REPLAY_NO_NEW_CAPTURE",
+        "qaId": "qa-42cdda5fefc2152940ecdb7cee21ac5a",
+        "reason": "idempotent_capture_reused"
+      },
+      {
+        "campaignId": "mkt-6adfcba7ee2996e566885594-e498620c94",
+        "channel": "instagram",
+        "decision": "HOLD",
+        "blockers": [
+          "verified_profile_destination_required"
+        ]
+      },
+      {
+        "campaignId": "mkt-6adfcba7ee2996e566885594-e498620c94",
+        "channel": "x",
+        "decision": "PASS_REPLAY_NO_NEW_CAPTURE",
+        "qaId": "qa-e03b2b2235a2714fbebc5e6536db1382",
+        "reason": "idempotent_capture_reused"
+      },
+      {
+        "campaignId": "mkt-6adfcba7ee2996e566885594-e498620c94",
+        "channel": "tiktok",
+        "decision": "HOLD",
+        "blockers": [
+          "verified_profile_destination_required"
+        ]
+      },
+      {
+        "campaignId": "pr-p-f956478203419e11",
+        "channel": "email",
+        "decision": "PASS_REPLAY_NO_NEW_CAPTURE",
+        "qaId": "qa-fd6a2312978342a6fd0d3c3e4288f43d",
+        "reason": "idempotent_capture_reused"
+      },
+      {
+        "campaignId": "pr-p-a593138355c14ed9",
+        "channel": "email",
+        "decision": "PASS_REPLAY_NO_NEW_CAPTURE",
+        "qaId": "qa-bb7f5642e7d8b3f12badd44f7017e709",
+        "reason": "idempotent_capture_reused"
+      },
+      {
+        "campaignId": "pr-p-4c35a814b6618fce",
+        "channel": "email",
+        "decision": "PASS_REPLAY_NO_NEW_CAPTURE",
+        "qaId": "qa-f261549495f84ed33dcefecfaa372a75",
+        "reason": "idempotent_capture_reused"
+      },
+      {
+        "campaignId": "pr-p-874920d814aee9a0",
+        "channel": "email",
+        "decision": "PASS_REPLAY_NO_NEW_CAPTURE",
+        "qaId": "qa-e58563847050b5bce54ed47d247f7e61",
+        "reason": "idempotent_capture_reused"
+      },
+      {
+        "campaignId": "pr-p-cafd139ff66ea487",
+        "channel": "email",
+        "decision": "PASS_REPLAY_NO_NEW_CAPTURE",
+        "qaId": "qa-d94e3e7dfd9c48f679421e73cf325421",
+        "reason": "idempotent_capture_reused"
+      }
+    ],
+    "sourceApprovalFlagsUnchanged": true,
+    "capturedEmails": 5,
+    "capturedSocial": 4,
+    "realDeliveries": 0,
+    "realSocialPosts": 0,
+    "publishingEnabled": false,
+    "outboundEnabled": false
+  },
+  "deliveryFirstRun": {
+    "runId": "wrun_41M6RJ8P110GHSAM6NRNHFDN5D",
+    "deploymentId": "dpl_6Cgkqx3w1KVUtUyK8UUJ4gb9tmRS"
+  },
+  "deliveryReplayRun": {
+    "runId": "wrun_41M6RJD5QM0GHF6C39P6NN298T",
+    "deploymentId": "dpl_6Cgkqx3w1KVUtUyK8UUJ4gb9tmRS"
+  },
+  "productionBefore": {
+    "ok": true,
+    "service": "growth-production-preparation",
+    "environment": "production",
+    "database": "fmgrowthproduction",
+    "databaseIsolation": "separate_database_and_namespace",
+    "sharedAtlasCluster": true,
+    "collectionPrefix": "production_preparation_",
+    "scheduler": {
+      "enabled": true,
+      "generation": "production-preparation-5a99b6f4-d62f-4274-bc12-ad6411896065",
+      "lastCompletedAt": "2026-11-06T13:33:39.622Z",
+      "completedCycles": 56,
+      "scheduledCycles": 55,
+      "healthy": true,
+      "lastError": null
+    },
+    "operations": {
+      "mode": "preparation_only",
+      "departments": {
+        "marketing": {
+          "awaitingOwnerReview": 2,
+          "receipts": 2,
+          "ready": 0,
+          "held": 2,
+          "awaitingReceipt": 0,
+          "sourceHolds": 0,
+          "approvedDrafts": 0
+        },
+        "pr": {
+          "awaitingOwnerReview": 23,
+          "receipts": 23,
+          "ready": 23,
+          "held": 0,
+          "awaitingReceipt": 0,
+          "sourceHolds": 0,
+          "approvedDrafts": 0
+        },
+        "affiliate": {
+          "awaitingOwnerReview": 8,
+          "receipts": 8,
+          "ready": 0,
+          "held": 8,
+          "awaitingReceipt": 0,
+          "sourceHolds": 18,
+          "approvedDrafts": 0
+        }
+      },
+      "jobs": {
+        "completed": 164
+      },
+      "receiptMeaning": "Prepared evidence snapshots only; never messages sent, publication, owner approval or conversion.",
+      "realDeliveriesObserved": 0,
+      "liveSocialPostsObserved": 0,
+      "attributedPayingConversions": null,
+      "publishingEnabled": false,
+      "outboundEnabled": false
+    },
+    "connections": {
+      "source": "existing_authorized_connection_service",
+      "sourceDatabase": "fmgrowthtest",
+      "checkedAt": "2026-11-06T13:31:59.533Z",
+      "statusOnly": true,
+      "verificationStale": false,
+      "productionPublishingAuthorized": false,
+      "oauth": [
+        {
+          "provider": "tiktok",
+          "status": "connected",
+          "accessStatus": "valid",
+          "renewalStatus": "available"
+        },
+        {
+          "provider": "x",
+          "status": "connected",
+          "accessStatus": "valid",
+          "renewalStatus": "expiry-unknown"
+        }
+      ],
+      "meta": {
+        "existingRecordFound": true,
+        "source": "existing_isolated_record",
+        "encryptionConfigured": true,
+        "checkedAt": "2026-11-06T13:31:53.857Z",
+        "facebook": {
+          "verified": true,
+          "state": "connected",
+          "reason": null
+        },
+        "instagram": {
+          "verified": true,
+          "state": "connected",
+          "reason": null
+        },
+        "credentialsChanged": false,
+        "publishingEnabled": false
+      }
+    },
+    "ownerApprovalRequired": true,
+    "publishingEnabled": false,
+    "outboundEnabled": false,
+    "paymentMutationsEnabled": false,
+    "syntheticImportsSupported": false
+  },
+  "productionAfter": {
+    "ok": true,
+    "service": "growth-production-preparation",
+    "environment": "production",
+    "database": "fmgrowthproduction",
+    "databaseIsolation": "separate_database_and_namespace",
+    "sharedAtlasCluster": true,
+    "collectionPrefix": "production_preparation_",
+    "scheduler": {
+      "enabled": true,
+      "generation": "production-preparation-5a99b6f4-d62f-4274-bc12-ad6411896065",
+      "lastCompletedAt": "2026-11-06T14:03:59.562Z",
+      "completedCycles": 58,
+      "scheduledCycles": 57,
+      "healthy": true,
+      "lastError": null
+    },
+    "operations": {
+      "mode": "preparation_only",
+      "departments": {
+        "marketing": {
+          "awaitingOwnerReview": 2,
+          "receipts": 2,
+          "ready": 0,
+          "held": 2,
+          "awaitingReceipt": 0,
+          "sourceHolds": 0,
+          "approvedDrafts": 0
+        },
+        "pr": {
+          "awaitingOwnerReview": 23,
+          "receipts": 23,
+          "ready": 23,
+          "held": 0,
+          "awaitingReceipt": 0,
+          "sourceHolds": 0,
+          "approvedDrafts": 0
+        },
+        "affiliate": {
+          "awaitingOwnerReview": 8,
+          "receipts": 8,
+          "ready": 0,
+          "held": 8,
+          "awaitingReceipt": 0,
+          "sourceHolds": 19,
+          "approvedDrafts": 0
+        }
+      },
+      "jobs": {
+        "completed": 170
+      },
+      "receiptMeaning": "Prepared evidence snapshots only; never messages sent, publication, owner approval or conversion.",
+      "realDeliveriesObserved": 0,
+      "liveSocialPostsObserved": 0,
+      "attributedPayingConversions": null,
+      "publishingEnabled": false,
+      "outboundEnabled": false
+    },
+    "connections": {
+      "source": "existing_authorized_connection_service",
+      "sourceDatabase": "fmgrowthtest",
+      "checkedAt": "2026-11-06T14:01:30.642Z",
+      "statusOnly": true,
+      "verificationStale": false,
+      "productionPublishingAuthorized": false,
+      "oauth": [
+        {
+          "provider": "tiktok",
+          "status": "connected",
+          "accessStatus": "valid",
+          "renewalStatus": "available"
+        },
+        {
+          "provider": "x",
+          "status": "connected",
+          "accessStatus": "valid",
+          "renewalStatus": "expiry-unknown"
+        }
+      ],
+      "meta": {
+        "existingRecordFound": true,
+        "source": "existing_isolated_record",
+        "encryptionConfigured": true,
+        "checkedAt": "2026-11-06T14:00:19.782Z",
+        "facebook": {
+          "verified": true,
+          "state": "connected",
+          "reason": null
+        },
+        "instagram": {
+          "verified": true,
+          "state": "connected",
+          "reason": null
+        },
+        "credentialsChanged": false,
+        "publishingEnabled": false
+      }
+    },
+    "ownerApprovalRequired": true,
+    "publishingEnabled": false,
+    "outboundEnabled": false,
+    "paymentMutationsEnabled": false,
+    "syntheticImportsSupported": false
+  },
+  "ci": {
+    "fullRun": 42230115167,
+    "securityRun": 42230115152,
+    "conclusion": "success",
+    "reportedTests": 192,
+    "passed": 192,
+    "failed": 0,
+    "skipped": 0
+  },
+  "appearanceLock": [
+    {
+      "repository": "tiktok-oauth",
+      "file": "growth-console/index.html",
+      "baselineCommit": "9b181672c18202c2f8af95536c29a7a9f3f37c87",
+      "sha256": "3a33fd98dc991249b00a84cb19586778d6664ce34d46a622cba8ba0edd17b64e",
+      "byteIdentical": true
+    },
+    {
+      "repository": "tiktok-oauth",
+      "file": "growth-console/app.css",
+      "baselineCommit": "9b181672c18202c2f8af95536c29a7a9f3f37c87",
+      "sha256": "cbab989c988580996bd881a9f13db3dbd5e05c05457c74368f14b559a02f81df",
+      "byteIdentical": true
+    },
+    {
+      "repository": "tiktok-oauth",
+      "file": "growth-console/app.js",
+      "baselineCommit": "9b181672c18202c2f8af95536c29a7a9f3f37c87",
+      "sha256": "df6498a69322c843396854023fb93235eb6016483a6720e96182e1801b014926",
+      "byteIdentical": true
+    },
+    {
+      "repository": "frontend-social-preview",
+      "file": "src/Components/Admin/GrowthEngineCommandCenter.jsx",
+      "baselineCommit": "6c21ced7961c3b5ae1f3f642d0d9b01c791e01d6",
+      "sha256": "3515ee3c8981278be726824a75e2b5197cab66934c5b9864033292afe4c1fc5b",
+      "byteIdentical": true
+    },
+    {
+      "repository": "frontend-social-preview",
+      "file": "src/Components/Admin/GrowthEngineCommandCenter.module.css",
+      "baselineCommit": "6c21ced7961c3b5ae1f3f642d0d9b01c791e01d6",
+      "sha256": "cc566838263933b3a6ce15ebb382197e7a11c99f5085bf4f1c979832e0f2cbdc",
+      "byteIdentical": true
+    },
+    {
+      "repository": "frontend-social-preview",
+      "file": "src/Utils/growthEngineEmbed.cjs",
+      "baselineCommit": "6c21ced7961c3b5ae1f3f642d0d9b01c791e01d6",
+      "sha256": "dc38ff497adb9a2046f3fc2af74a6e35b8a09055dc4baad3d6f830e4b326cffa",
+      "byteIdentical": true
+    }
+  ],
+  "frontendDeploymentUnchanged": "dpl_2fSE4HREbWeHhfsmE1uPMo8Yk3Eh",
+  "publishingEnabled": false,
+  "outboundEnabled": false
+}
