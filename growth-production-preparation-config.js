@@ -27,6 +27,17 @@ function resolveProductionPreparationConfig(env=process.env){
  return{ok:!errors.length,errors,config,secrets};
 }
 function assertProductionDatabase(db,config){if(!approved.has(config)||db?.databaseName!==DATABASE||config.collectionPrefix!==PREFIX)throw Error('validated_production_preparation_database_required');}
-function productionReadOnlyFetch(fetchImpl=globalThis.fetch){return async(url,options={})=>{const u=new URL(url),method=String(options.method||'GET').toUpperCase();if(u.protocol!=='https:'||u.username||u.password||!['GET','HEAD'].includes(method)||options.body!==undefined)throw Error('production_preparation_read_only_network_required');return fetchImpl(url,{...options,method,redirect:options.redirect==='manual'?'manual':'error',signal:options.signal||AbortSignal.timeout(15000)});};}
+function productionReadOnlyFetch(fetchImpl=globalThis.fetch){return async(url,options={})=>{const u=new URL(url),method=String(options.method||'GET').toUpperCase();
+ if(/^fantasymmadness-game-server-three[a-z0-9-]*\.vercel\.app$/.test(u.hostname)){
+  const path=u.pathname,publicRead=/^\/(?:match|shadow)(?:\/[a-f\d]{24})?\/?$/i.test(path)||/^\/api\/public\/(?:fights|prediction-fights)(?:\/[a-f\d]{24})?\/?$/i.test(path)||/^\/api\/public\/pro-wrestling\/matches(?:\/[a-f\d]{24})?\/?$/i.test(path);
+  if(!publicRead)throw Error('game_registry_public_read_path_required');
+  const headers=new Headers(options.headers||{});if(['authorization','cookie','x-cron-secret','x-admin-token'].some(key=>headers.has(key)))throw Error('game_registry_anonymous_read_required');
+ }
+if(u.protocol!=='https:'||u.username||u.password||!['GET','HEAD'].includes(method)||options.body!==undefined)throw Error('production_preparation_read_only_network_required');return fetchImpl(url,{...options,method,redirect:options.redirect==='manual'?'manual':'error',signal:options.signal||AbortSignal.timeout(15000)});};}
+function preparationCollectionName(name){
+ if(!/^[a-z_]+$/.test(name)||name.startsWith('preview'))throw Error('production_collection_not_permitted');
+ if(new Set(['match','matches','shadow','shadows','scores','users','admins','affiliates','payments','transactions','user_matches','bettingwins','combat_fighters','pro_wrestling_matches','full_card_entries','full_cards']).has(name))throw Error('game_registry_collection_forbidden');
+ return PREFIX+name;
+}
 function deploymentFingerprint(config){return crypto.createHash('sha256').update(JSON.stringify({mode:config.mode,database:config.database,prefix:config.collectionPrefix,owners:config.autonomy.owners})).digest('hex');}
-module.exports={resolveProductionPreparationConfig,assertProductionDatabase,productionReadOnlyFetch,deploymentFingerprint,DATABASE,PREFIX,PROJECT};
+module.exports={resolveProductionPreparationConfig,assertProductionDatabase,productionReadOnlyFetch,preparationCollectionName,deploymentFingerprint,DATABASE,PREFIX,PROJECT};

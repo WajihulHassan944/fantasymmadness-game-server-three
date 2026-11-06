@@ -1,13 +1,13 @@
 'use strict';
 const crypto=require('node:crypto');
-const {assertProductionDatabase,productionReadOnlyFetch,PREFIX}=require('./growth-production-preparation-config');
+const {assertProductionDatabase,productionReadOnlyFetch,preparationCollectionName,PREFIX}=require('./growth-production-preparation-config');
 // Only this validated composition root can open the new production namespace.
 // No staging copy, affiliate signup, OAuth exchange, payment or send API exists.
 async function createProductionPreparation({rawDb,config,secrets,fetchImpl,verifiedOwnerIds,originalConnections=null,clock=()=>new Date(),runtimeFactory}={}){
  assertProductionDatabase(rawDb,config);
  const owners=config.autonomy.owners;
  if(!Array.isArray(verifiedOwnerIds)||!owners.every(id=>verifiedOwnerIds.includes(id)))throw Error('production_first_party_owner_evidence_required');
- const db={databaseName:rawDb.databaseName,collection:name=>{if(!/^[a-z_]+$/.test(name)||name.startsWith('preview'))throw Error('production_collection_not_permitted');return rawDb.collection(PREFIX+name);}};
+ const db={databaseName:rawDb.databaseName,collection:name=>{return rawDb.collection(preparationCollectionName(name));}};
  const marker=await db.collection('growth_settings').findOne({_id:'production-preparation'});
  if(marker&&(marker.environment!=='production'||marker.database!==rawDb.databaseName||marker.schemaVersion!==1))throw Error('production_namespace_requires_review');
  if(!marker){for(const name of ['growth_drafts','growth_affiliates','growth_attribution_events','growth_prospects'])if(await db.collection(name).countDocuments({}))throw Error('production_namespace_requires_review');}
