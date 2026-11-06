@@ -27,6 +27,14 @@ function createProductionBackoffice({runtime,config,status,clock=()=>new Date()}
       counts: { researched: shows.length, drafted: shows.filter((x) => x.draftId).length, publishedContacts: shows.filter((x) => x.contact && !x.contact.manual).length, noContact: count('no_verified_contact_route'), noAngle: count('no_evidence_based_angle'), failed: count('research_failed'), waitingForResearch: pending },
       bySport: Object.fromEntries(['boxing', 'mma-ufc', 'kickboxing', 'bare-knuckle', 'pro-wrestling'].map((g) => [g, shows.filter((x) => x.genre === g).length])) };
   }
+  if(section==='drafts'){
+   const drafts=await runtime.listDrafts({kind:q.kind,status:q.status,contestId:q.contestId,limit:Math.min(100,Number(q.limit)||30)});
+   return{ok:true,drafts:await Promise.all(drafts.map(async d=>{
+    let blockers;try{blockers=[...await runtime.preparation.quality(d,clock()),...(d.reviewSafety?.state==='hold'&&Array.isArray(d.reviewSafety.reasons)?d.reviewSafety.reasons:[])];}catch{blockers=['draft_assessment_unavailable'];}
+    if(d.kind==='affiliate')blockers.push('current_recipient_suitability_requires_owner_verification');
+    return{...d,review:{state:blockers.length?'held':'eligible',blockers:[...new Set(blockers)],ownerApprovalRequired:true,liveDeliveryAuthorized:false,checkedAt:clock().toISOString()}};
+   }))};
+  }
   if(section==='marketing/coverage')return{ok:true,coverage:await bo.marketingCoverage()};
   if(section==='analytics')return{ok:true,analytics:await bo.analytics()};
   if(section==='funnel')return{ok:true,funnel:await bo.funnel()};
