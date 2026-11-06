@@ -34,6 +34,10 @@
   // 'signed-out' (signed out here or at the back office's request).
   function tellParent(section, extra) { if (EMBEDDED) { try { var parentOrigin = (window.location.ancestorOrigins && window.location.ancestorOrigins[0]) || '*'; var m = { type: 'fmm-growth-console', section: section, signedIn: Boolean(token()) }; if (extra) for (var k in extra) m[k] = extra[k]; window.parent.postMessage(m, parentOrigin); } catch (e) { /* ignore */ } } }
 
+  var resizeQueued = false;
+  function reportHeight() { if (!EMBEDDED || resizeQueued) return; resizeQueued = true; requestAnimationFrame(function () { resizeQueued = false; tellParent(parse().name, { event: 'resize', height: Math.ceil(document.body.scrollHeight) }); }); }
+  if (EMBEDDED && window.ResizeObserver) new ResizeObserver(reportHeight).observe(document.body);
+
   // ---------- tiny DOM helpers ----------
   function h(tag, attrs) {
     var el = document.createElement(tag);
