@@ -715,5 +715,317 @@
   },
   "ownerAuthenticatedBrowserAcceptance": false,
   "gitHubProductionSmokeDispatch": "404: workflow not registered on default branch; exact script passed locally through approved proxy",
-  "gameApiDeploymentMetadata": "403 from connected Vercel identity; no game or payment deployment/action attempted"
+  "gameApiDeploymentMetadata": "403 from connected Vercel identity; no game or payment deployment/action attempted",
+  "finalPostRoutingHealth": {
+    "ok": true,
+    "service": "growth-production-preparation",
+    "environment": "production",
+    "database": "fmgrowthproduction",
+    "databaseIsolation": "separate_database_and_namespace",
+    "sharedAtlasCluster": true,
+    "collectionPrefix": "production_preparation_",
+    "scheduler": {
+      "enabled": true,
+      "generation": "production-preparation-5a99b6f4-d62f-4274-bc12-ad6411896065",
+      "lastCompletedAt": "2026-11-06T00:06:46.659Z",
+      "completedCycles": 3,
+      "scheduledCycles": 2,
+      "healthy": true,
+      "lastError": null
+    },
+    "operations": {
+      "mode": "preparation_only",
+      "departments": {
+        "marketing": {
+          "awaitingOwnerReview": 2,
+          "receipts": 2,
+          "ready": 0,
+          "held": 2,
+          "awaitingReceipt": 0,
+          "sourceHolds": 0,
+          "approvedDrafts": 0
+        },
+        "pr": {
+          "awaitingOwnerReview": 8,
+          "receipts": 8,
+          "ready": 8,
+          "held": 0,
+          "awaitingReceipt": 0,
+          "sourceHolds": 0,
+          "approvedDrafts": 0
+        },
+        "affiliate": {
+          "awaitingOwnerReview": 0,
+          "receipts": 0,
+          "ready": 0,
+          "held": 0,
+          "awaitingReceipt": 0,
+          "sourceHolds": 2,
+          "approvedDrafts": 0
+        }
+      },
+      "jobs": {
+        "completed": 9
+      },
+      "receiptMeaning": "Prepared evidence snapshots only; never messages sent, publication, owner approval or conversion.",
+      "realDeliveriesObserved": 0,
+      "liveSocialPostsObserved": 0,
+      "attributedPayingConversions": null,
+      "publishingEnabled": false,
+      "outboundEnabled": false
+    },
+    "connections": {
+      "source": "existing_authorized_connection_service",
+      "sourceDatabase": "fmgrowthtest",
+      "checkedAt": "2026-11-06T00:04:19.634Z",
+      "statusOnly": true,
+      "verificationStale": false,
+      "productionPublishingAuthorized": false,
+      "oauth": [
+        {
+          "provider": "tiktok",
+          "status": "connected",
+          "accessStatus": "valid",
+          "renewalStatus": "available"
+        },
+        {
+          "provider": "x",
+          "status": "connected",
+          "accessStatus": "valid",
+          "renewalStatus": "expiry-unknown"
+        }
+      ],
+      "meta": {
+        "existingRecordFound": true,
+        "source": "existing_isolated_record",
+        "encryptionConfigured": true,
+        "checkedAt": "2026-11-06T00:04:09.831Z",
+        "facebook": {
+          "verified": true,
+          "state": "connected",
+          "reason": null
+        },
+        "instagram": {
+          "verified": true,
+          "state": "connected",
+          "reason": null
+        },
+        "credentialsChanged": false,
+        "publishingEnabled": false
+      }
+    },
+    "ownerApprovalRequired": true,
+    "publishingEnabled": false,
+    "outboundEnabled": false,
+    "paymentMutationsEnabled": false,
+    "syntheticImportsSupported": false
+  },
+  "finalPostRoutingCycles": {
+    "runId": "wrun_41M6Q13HCK0GXVGA5ZQVN1BM8Q",
+    "status": "running",
+    "steps": [
+      {
+        "stepId": "step_01M6Q13HCKKZRVX7VXY9D1AK86",
+        "stepName": "step//./workflows/production-preparation//executeProductionPreparation",
+        "status": "completed",
+        "completedAt": "2026-11-06T00:06:46.703Z",
+        "result": {
+          "stop": false,
+          "evidence": {
+            "generation": "production-preparation-5a99b6f4-d62f-4274-bc12-ad6411896065",
+            "ordinal": 2,
+            "workflowRunId": "wrun_41M6Q13HCK0GXVGA5ZQVN1BM8Q",
+            "trigger": "workflow_timer",
+            "completedAt": "2026-11-06T00:06:46.659Z",
+            "environment": "production",
+            "database": "fmgrowthproduction",
+            "collectionPrefix": "production_preparation_",
+            "operations": {
+              "mode": "preparation_only",
+              "departments": {
+                "marketing": {
+                  "awaitingOwnerReview": 2,
+                  "receipts": 2,
+                  "ready": 0,
+                  "held": 2,
+                  "awaitingReceipt": 0,
+                  "sourceHolds": 0,
+                  "approvedDrafts": 0
+                },
+                "pr": {
+                  "awaitingOwnerReview": 8,
+                  "receipts": 8,
+                  "ready": 8,
+                  "held": 0,
+                  "awaitingReceipt": 0,
+                  "sourceHolds": 0,
+                  "approvedDrafts": 0
+                },
+                "affiliate": {
+                  "awaitingOwnerReview": 0,
+                  "receipts": 0,
+                  "ready": 0,
+                  "held": 0,
+                  "awaitingReceipt": 0,
+                  "sourceHolds": 2,
+                  "approvedDrafts": 0
+                }
+              },
+              "jobs": {
+                "completed": 9
+              },
+              "receiptMeaning": "Prepared evidence snapshots only; never messages sent, publication, owner approval or conversion.",
+              "realDeliveriesObserved": 0,
+              "liveSocialPostsObserved": 0,
+              "attributedPayingConversions": null,
+              "publishingEnabled": false,
+              "outboundEnabled": false
+            },
+            "errors": 0,
+            "websiteSessionUsed": false,
+            "ownerApprovalRequired": true,
+            "publishingEnabled": false,
+            "outboundEnabled": false,
+            "automaticApprovals": 0,
+            "paymentMutations": 0
+          }
+        }
+      },
+      {
+        "stepId": "step_01M6Q13HCKKZRVX7VXY9D1AK84",
+        "stepName": "step//./workflows/production-preparation//executeProductionPreparation",
+        "status": "completed",
+        "completedAt": "2026-11-05T23:51:34.728Z",
+        "result": {
+          "stop": false,
+          "evidence": {
+            "generation": "production-preparation-5a99b6f4-d62f-4274-bc12-ad6411896065",
+            "ordinal": 1,
+            "workflowRunId": "wrun_41M6Q13HCK0GXVGA5ZQVN1BM8Q",
+            "trigger": "workflow_timer",
+            "completedAt": "2026-11-05T23:51:34.674Z",
+            "environment": "production",
+            "database": "fmgrowthproduction",
+            "collectionPrefix": "production_preparation_",
+            "operations": {
+              "mode": "preparation_only",
+              "departments": {
+                "marketing": {
+                  "awaitingOwnerReview": 2,
+                  "receipts": 2,
+                  "ready": 0,
+                  "held": 2,
+                  "awaitingReceipt": 0,
+                  "sourceHolds": 0,
+                  "approvedDrafts": 0
+                },
+                "pr": {
+                  "awaitingOwnerReview": 6,
+                  "receipts": 6,
+                  "ready": 6,
+                  "held": 0,
+                  "awaitingReceipt": 0,
+                  "sourceHolds": 0,
+                  "approvedDrafts": 0
+                },
+                "affiliate": {
+                  "awaitingOwnerReview": 0,
+                  "receipts": 0,
+                  "ready": 0,
+                  "held": 0,
+                  "awaitingReceipt": 0,
+                  "sourceHolds": 2,
+                  "approvedDrafts": 0
+                }
+              },
+              "jobs": {
+                "completed": 6
+              },
+              "receiptMeaning": "Prepared evidence snapshots only; never messages sent, publication, owner approval or conversion.",
+              "realDeliveriesObserved": 0,
+              "liveSocialPostsObserved": 0,
+              "attributedPayingConversions": null,
+              "publishingEnabled": false,
+              "outboundEnabled": false
+            },
+            "errors": 0,
+            "websiteSessionUsed": false,
+            "ownerApprovalRequired": true,
+            "publishingEnabled": false,
+            "outboundEnabled": false,
+            "automaticApprovals": 0,
+            "paymentMutations": 0
+          }
+        }
+      },
+      {
+        "stepId": "step_01M6Q13HCKKZRVX7VXY9D1AK82",
+        "stepName": "step//./workflows/production-preparation//executeProductionPreparation",
+        "status": "completed",
+        "completedAt": "2026-11-05T23:36:24.270Z",
+        "result": {
+          "stop": false,
+          "evidence": {
+            "generation": "production-preparation-5a99b6f4-d62f-4274-bc12-ad6411896065",
+            "ordinal": 0,
+            "workflowRunId": "wrun_41M6Q13HCK0GXVGA5ZQVN1BM8Q",
+            "trigger": "bootstrap",
+            "completedAt": "2026-11-05T23:36:24.188Z",
+            "environment": "production",
+            "database": "fmgrowthproduction",
+            "collectionPrefix": "production_preparation_",
+            "operations": {
+              "mode": "preparation_only",
+              "departments": {
+                "marketing": {
+                  "awaitingOwnerReview": 2,
+                  "receipts": 2,
+                  "ready": 0,
+                  "held": 2,
+                  "awaitingReceipt": 0,
+                  "sourceHolds": 0,
+                  "approvedDrafts": 0
+                },
+                "pr": {
+                  "awaitingOwnerReview": 4,
+                  "receipts": 4,
+                  "ready": 4,
+                  "held": 0,
+                  "awaitingReceipt": 0,
+                  "sourceHolds": 0,
+                  "approvedDrafts": 0
+                },
+                "affiliate": {
+                  "awaitingOwnerReview": 0,
+                  "receipts": 0,
+                  "ready": 0,
+                  "held": 0,
+                  "awaitingReceipt": 0,
+                  "sourceHolds": 1,
+                  "approvedDrafts": 0
+                }
+              },
+              "jobs": {
+                "completed": 3
+              },
+              "receiptMeaning": "Prepared evidence snapshots only; never messages sent, publication, owner approval or conversion.",
+              "realDeliveriesObserved": 0,
+              "liveSocialPostsObserved": 0,
+              "attributedPayingConversions": null,
+              "publishingEnabled": false,
+              "outboundEnabled": false
+            },
+            "errors": 0,
+            "websiteSessionUsed": false,
+            "ownerApprovalRequired": true,
+            "publishingEnabled": false,
+            "outboundEnabled": false,
+            "automaticApprovals": 0,
+            "paymentMutations": 0
+          }
+        }
+      }
+    ]
+  },
+  "finalRecordedAtUtc": "2026-11-06T00:14:07.170971+00:00"
 }

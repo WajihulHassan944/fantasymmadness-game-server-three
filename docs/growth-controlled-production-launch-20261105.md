@@ -65,3 +65,7 @@ The earlier 20-source audit remains individually recorded: eight withdrawn poste
 4. Verify legacy Growth health after rollback, check the worker is stopped, and confirm no publishing/outbound action. Resume requires explicit owner/service confirmation; health or login alone cannot restart it.
 
 Owner acceptance: open the normal back office in a fresh/private browser, confirm automatic connection and the **Production Growth preparation** view. Do not approve or publish. The technical production preparation launch is verified; fresh owner-browser acceptance and the stated creative/recipient/terms holds remain open.
+
+## Final post-routing observation
+
+A second real production timer completed **Nov 5, 2026, 7:06:46 PM EST** (`2026-11-06T00:06:46.659Z`). Production now has three completed cycles (bootstrap plus two unattended scheduled cycles), healthy=true, lastError=null. It has **2 marketing drafts, 8 PR drafts, 9 completed preparation jobs**, no approvals or real sends, and the same explicit creative/source holds. All four connections were freshly verified by the existing service at approximately **7:04 PM EST** without credential changes. This also confirms the preserved isolated connection-maintenance worker continued after production routing was published. Fresh-owner browser acceptance remains pending; no interactive owner session was fabricated.
