@@ -11,3 +11,7 @@ test('emergency recipient hold is isolated, persistent, replay safe and never de
  await assert.rejects(()=>auditApprovalQueue({db:client.db('fmgrowthproduction')}),/isolated_queue_database_required/);
  }finally{await drafts.deleteOne({id});await leads.deleteOne({id:leadId});await db.collection('preview198_growth_audit_log').deleteOne({draftId:id});await client.close();}
 });
+test('current-recipient attestation requires primary evidence, identity match and a fresh timestamp',()=>{
+ const {verifiedCurrentRecipient}=require('./growth-recipient-safety'),now=new Date('2026-11-06T15:00:00Z'),lead={recipientVerification:{currentStatusVerified:true,identityMatched:true,status:'living_person',sourceKind:'primary',sourceUrl:'https://official.example/contact',sourceHash:'a'.repeat(64),checkedAt:'2026-11-06T14:00:00Z'}};
+ assert.equal(verifiedCurrentRecipient(lead,now),true);for(const patch of [{sourceKind:'directory'},{identityMatched:false},{checkedAt:'2025-01-01'},{checkedAt:'2027-01-01'},{sourceHash:''},{status:'deceased'}])assert.equal(verifiedCurrentRecipient({...lead,recipientVerification:{...lead.recipientVerification,...patch}},now),false);assert.equal(verifiedCurrentRecipient({...lead,outreachHold:{reason:'owner_hold'}},now),false);
+});

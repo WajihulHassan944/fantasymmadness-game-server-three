@@ -1,4 +1,5 @@
 'use strict';
+const {verifiedCurrentRecipient}=require('./growth-recipient-safety');
 const crypto=require('node:crypto');
 const {createPreparationOperations}=require('./growth-preparation-operations');
 async function auditApprovalQueue({db,clock=()=>new Date()}){
@@ -11,7 +12,7 @@ async function auditApprovalQueue({db,clock=()=>new Date()}){
   const reportedUnsafe=/\bdory\s+funk\b/i.test([d.subject,d.text,lead?.name].join(' '));
   const holds=[];
   if(reportedUnsafe)holds.push('owner_reported_recipient_status_requires_verification');
-  if(d.kind==='affiliate'&&!lead?.recipientVerification?.currentStatusVerified)holds.push('current_recipient_status_requires_verification');
+  if(d.kind==='affiliate'&&!verifiedCurrentRecipient(lead,clock()))holds.push('current_recipient_status_requires_verification');
   if(holds.length){
    const r=await col.drafts.updateOne({id:d.id,status:{$in:['needs_owner_review','approved']}},{$addToSet:{approvalBlockers:{$each:holds}},$set:{reviewSafety:{state:'hold',reasons:holds,checkedAt:now,authority:'owner_requested_emergency_audit'},ownerApproved:false,sendPermitted:false}});
    if(reportedUnsafe&&lead)await col.recruitment.updateOne({id:lead.id},{$set:{outreachHold:{reason:holds[0],checkedAt:now,authority:'owner_reported_status_not_independently_confirmed'}}});
@@ -19,8 +20,8 @@ async function auditApprovalQueue({db,clock=()=>new Date()}){
    d.approvalBlockers=[...new Set([...(d.approvalBlockers||[]),...holds])];d.ownerApproved=false;d.sendPermitted=false;
   }
   const blockers=await quality.quality(d,clock());
-  const contact=lead?.contact||lead?.research?.contact;
-  rows.push({id:d.id,kind:d.kind,title:d.subject||d.headline,prospectId:d.prospectId,name:lead?.name||null,sourceId:lead?.sourceId||null,sourceUrl:lead?.sourceUrl||null,website:lead?.website||null,createdAt:d.createdAt,discoveryHistory:lead?.history||[],researchAt:lead?.researchedAt||null,contactSource:contact?.source||null,recipientDomain:String(d.recipient||'').split('@')[1]||null,recipientDigest:crypto.createHash('sha256').update(String(d.recipient||'').toLowerCase()).digest('hex'),contactMatches:Boolean(contact?.email&&contact.email.toLowerCase()===String(d.recipient||'').toLowerCase()),recipientStatus:reportedUnsafe?'OWNER_REPORTED_UNSAFE_UNCONFIRMED':lead?.recipientVerification?.currentStatusVerified?'verified_current':'unverified_current_status',blockers,decision:blockers.length?'HOLD':'TECHNICALLY_ELIGIBLE_FOR_OWNER_REVIEW',ownerApproved:d.ownerApproved===true,sendPermitted:d.sendPermitted===true,evidence:lead?.evidence||lead?.research?.evidence||[]});
+  const contact=d.recruitmentSource==='independent_public_partner'?lead?.contact:lead?.research?.contact;
+  rows.push({id:d.id,kind:d.kind,title:d.subject||d.headline,prospectId:d.prospectId,name:lead?.name||null,sourceId:lead?.sourceId||null,sourceUrl:lead?.sourceUrl||null,website:lead?.website||null,createdAt:d.createdAt,discoveryHistory:lead?.history||[],researchAt:lead?.researchedAt||null,contactSource:contact?.source||null,contactAddressSourceVerified:contact?.verified===true||lead?.research?.ok===true,recipientDomain:String(d.recipient||'').split('@')[1]||null,recipientDigest:crypto.createHash('sha256').update(String(d.recipient||'').toLowerCase()).digest('hex'),contactMatches:Boolean(contact?.email&&contact.email.toLowerCase()===String(d.recipient||'').toLowerCase()),recipientStatus:reportedUnsafe?'OWNER_REPORTED_UNSAFE_UNCONFIRMED':verifiedCurrentRecipient(lead,clock())?'verified_current':'unverified_current_status',blockers,decision:blockers.length?'HOLD':'TECHNICALLY_ELIGIBLE_FOR_OWNER_REVIEW',ownerApproved:d.ownerApproved===true,sendPermitted:d.sendPermitted===true,evidence:lead?.evidence||lead?.research?.evidence||[]});
  }
  return{checkedAt:now,database:'fmgrowthtest',collectionPrefix:'preview198_',rows,counts:{total:rows.length,held:rows.filter(x=>x.decision==='HOLD').length,eligibleForOwnerReview:rows.filter(x=>x.decision!=='HOLD').length},publishingEnabled:false,outboundEnabled:false,productionChanged:false,credentialsChanged:false};
 }

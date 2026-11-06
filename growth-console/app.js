@@ -412,6 +412,16 @@
       } else actions.appendChild(h('span', { class: 'muted small', text: 'Will be sent only when real email delivery is switched on (currently off).' }));
       actions.appendChild(h('button', { class: 'btn danger small', testid: 'btn-withdraw', text: 'Withdraw approval', onclick: function () { reject(d, reload, true); } }));
     }
+        /* BEGIN authorized 2026-11-06 emergency hold presentation. */
+    var held = d.review ? d.review.state === 'held' : d.reviewSafety?.state === 'hold' || (d.approvalBlockers || []).length > 0;
+    if (held) {
+      var blockedApproval = actions.querySelector('[data-testid=btn-approve]');
+      if (blockedApproval) { blockedApproval.disabled = true; blockedApproval.title = 'Resolve evidence holds before approval'; }
+      ['btn-schedule','btn-mark-published'].forEach(function(id){var button=actions.querySelector('[data-testid='+id+']');if(button)button.disabled=true;});
+      if(d.status==='approved'&&isEmail){var note=actions.querySelector('.muted');if(note)note.textContent='On HOLD — delivery remains blocked.';}
+      card.insertBefore(h('div', {class:'banner warn',testid:'review-hold'},h('strong',{text:'HOLD — excluded from technically eligible counts'}),h('p',{text:(d.review?.blockers || d.approvalBlockers || d.reviewSafety?.reasons || ['Verification required']).map(function(x){return String(x).replace(/_/g,' ');}).join('; ')})),actions);
+    } else if (d.status === 'needs_owner_review') card.insertBefore(h('p',{class:'small muted',testid:'review-eligible',text:'Eligible for owner review. No live delivery is authorized.'}),actions);
+        /* END authorized 2026-11-06 emergency hold presentation. */
     return card;
   }
   // Generated FANTASY MMADNESS posters: feed (4:5) and TikTok (9:16), with the artwork source.
@@ -572,6 +582,12 @@
       return api('GET', '/admin/drafts' + (qs ? '?' + qs : '')).then(function (r) {
         clear(container);
         var rows = r.drafts.filter(function (d) { return !query._genre || d.genre === query._genre; });
+        /* BEGIN authorized 2026-11-06 queue eligibility filters. */
+        var heldCount = rows.filter(function(d){return d.review?.state === 'held' || !d.review && ((d.approvalBlockers || []).length || d.reviewSafety?.state === 'hold');}).length;
+        if (query._review) container.appendChild(h('p',{class:'small muted',testid:'queue-review-counts',text:rows.length + ' pending owner review · ' + (rows.length-heldCount) + ' technically eligible · ' + heldCount + ' on HOLD · 0 authorized live deliveries'}));
+        if (query._review === 'eligible') rows = rows.filter(function(d){return d.review?.state === 'eligible';});
+        if (query._review === 'held') rows = rows.filter(function(d){return d.review?.state === 'held' || !d.review && ((d.approvalBlockers || []).length || d.reviewSafety?.state === 'hold');});
+        /* END authorized 2026-11-06 queue eligibility filters. */
         if (!rows.length) { container.appendChild(h('div', { class: 'empty', testid: 'empty', text: emptyText || 'Nothing here right now.' })); return rows; }
         container.appendChild(h('p', { class: 'muted small', testid: 'draft-count', text: rows.length + ' item' + (rows.length === 1 ? '' : 's') }));
         rows.forEach(function (d) { container.appendChild(draftCard(d, load)); });
@@ -690,6 +706,9 @@
 
   pages.approvals = function (main, params) {
     var q = { status: params.status === undefined ? 'needs_owner_review' : params.status, kind: params.kind || '', _genre: params.sport || '', limit: 300 };
+        /* BEGIN authorized 2026-11-06 owner review state. */
+    q._review = q.status === 'needs_owner_review' ? (params.review || 'eligible') : '';
+        /* END authorized 2026-11-06 owner review state. */
     var list = h('div', { testid: 'approval-list' });
     var statusSel = h('select', { testid: 'filter-status', 'aria-label': 'Status' },
       [['needs_owner_review', 'Awaiting approval'], ['approved', 'Approved'], ['published', 'Published'], ['delivered', 'Delivered'], ['rejected', 'Rejected'], ['', 'Everything']].map(function (o) { return h('option', { value: o[0], text: o[1] }); }));
@@ -705,11 +724,20 @@
       h('div', { class: 'filters' }, h('label', null, 'Show', statusSel), h('label', null, 'Type', kindSel), h('label', null, 'Sport', sportSel)),
       list,
     ]);
+        /* BEGIN authorized 2026-11-06 owner review controls. */
+    var reviewSelect = h('select', {'aria-label':'Evidence readiness',testid:'filter-review'}, [['eligible','Technically eligible for review'],['held','Held — evidence required'],['all','All pending items']].map(function(o){return h('option',{value:o[0],text:o[1]});}));
+    reviewSelect.value = q._review || 'all';
+    reviewSelect.onchange = function(){location.hash='#/approvals?status='+encodeURIComponent(statusSel.value)+'&kind='+encodeURIComponent(kindSel.value)+'&sport='+encodeURIComponent(sportSel.value)+'&review='+encodeURIComponent(reviewSelect.value);};
+    main.querySelector('.filters').appendChild(h('label',null,'Evidence',reviewSelect));
+        /* END authorized 2026-11-06 owner review controls. */
     draftList(list, q, q.status === 'needs_owner_review' ? 'Nothing is waiting for your approval right now.' : 'No items match these filters.');
     return Promise.resolve();
   };
 
   pages.marketing = function (main, params) {
+        /* BEGIN authorized 2026-11-06 posters route. */
+    if(params.view === 'posters') return posterDepartment(main,params);
+        /* END authorized 2026-11-06 posters route. */
     var g = params.sport || '';
     return Promise.all([api('GET', '/admin/marketing/coverage'), api('GET', '/admin/drafts?kind=marketing&limit=300' + (params.fightId ? '&contestId=' + encodeURIComponent(params.fightId) : ''))]).then(function (r) {
       var cov = r[0].coverage, drafts = r[1].drafts, latest = cov.latest;
@@ -928,6 +956,13 @@
        h('section',{class:'card'},h('h2',{text:'Invitation review'}),h('p',{text:'Signup destination: '+(r.program.signupVerified?'verified':'not yet verified')+'. Approved affiliate terms require owner review. No rates, earnings or free setup are promised.'}),list),
        h('section',{class:'card'},h('h2',{text:'Lifecycle and reporting'}),h('p',{text:'Discovered → Researched → Contact Verified → Draft Prepared → Awaiting Approval → Approved → Invited → Responded → Onboarding → Active → Attributed Conversions'}),h('p',{text:'Approved: '+c.approved+' · Sandbox captures (not sent): '+c.sandboxCaptures+' · Responses: '+c.responses+' · Onboarded: '+c.onboarded+' · Active: '+c.active+' · Paying conversions: not connected in staging'}),pipeline)]);
       draftList(list,{kind:'affiliate',limit:200},'No invitations awaiting research yet.');onboarding(pipeline);if(INTEGRATED)main.appendChild(departmentReceipts('affiliate'));
+        /* BEGIN authorized 2026-11-06 recruitment evidence history. */
+      main.querySelectorAll('[data-testid=recruitment-prospect]').forEach(function(card,index){
+        var prospect=r.prospects[index];if(!prospect)return;
+        card.appendChild(h('p',{class:'small',text:'Recipient status: '+(prospect.deceased?'Source reports deceased — outreach held':prospect.outreachHold?'Outreach held for status verification':'Current status requires primary-source verification')+'. Commercial affiliate agreement: '+(r.program.commercialActivationApproved?'verified':'not approved for activation')+'.'}));
+        card.appendChild(h('details',null,h('summary',{text:'Research and outreach history'}),h('ul',{class:'small'},(prospect.history||[]).map(function(entry){return h('li',null,String(entry.stage||'Recorded event').replace(/_/g,' ')+' · '+when(entry.at),entry.sourceUrl?h('a',{href:entry.sourceUrl,target:'_blank',rel:'noopener noreferrer',text:' Source'}):null);})),h('p',{class:'small',text:'Prepared drafts and sandbox captures are not external outreach. No message is authorized by research or an agreement review.'})));
+      });
+        /* END authorized 2026-11-06 recruitment evidence history. */
     });
   };
 
@@ -1061,6 +1096,9 @@
   pages.revenue = function (main) {
     return api('GET', '/admin/attribution').then(function (r) {
       var a = r.attribution; clear(main);
+        /* BEGIN authorized 2026-11-06 revenue QA separation. */
+      a.synthetic = null;
+        /* END authorized 2026-11-06 revenue QA separation. */
       var rejected = Object.keys(a.rejectedEvents || {});
       add(main, [
         head('Revenue Attribution', 'Which campaigns and affiliates bring in paying players.'),
@@ -1250,6 +1288,9 @@
         paused ? h('div', { class: 'banner warn', testid: 'paused-banner' }, h('span', { class: 'ico', text: '⏸' }), h('div', null, h('strong', { text: 'Publishing is paused.' }), 'Nothing will be posted until you resume.' + (r.paused.by ? ' Paused by ' + r.paused.by + '.' : ''))) : null,
         h('section', { class: 'card' }, h('h2', { text: 'Channels' }), h('p', { class: 'sub', text: 'Mode: ' + (r.provider === 'none' ? 'off (posts are held)' : r.provider === 'sandbox' ? 'sandbox: posting is simulated, nothing reaches the real accounts' : 'live') }),
           h('div', { class: 'grid tiles' }, Object.keys(names).map(function (ch) { var c = r.channels[ch] || {}; return h('div', { class: 'tile', testid: 'channel-tile-' + ch }, h('div', { class: 'label', text: names[ch] }), h('div', { class: 'value text', text: c.mode === 'live' ? 'Live' : c.mode === 'sandbox' ? 'Sandbox' : 'Off' }), h('div', { class: 'hint', text: c.ready ? (c.note || (c.mode === 'sandbox' ? 'Simulated: nothing reaches the account' : 'Ready')) : 'Authorization needed: see Connections' })); }))),
+        /* BEGIN authorized 2026-11-06 publishing QA separation. */
+        false &&
+        /* END authorized 2026-11-06 publishing QA separation. */
         liveTestCard(r),
         h('section', { class: 'card' }, h('h2', { text: 'Queue' }), rows.length ? h('div', { class: 'table-wrap' }, h('table', { class: 'data', testid: 'posts-table' }, h('thead', null, h('tr', null, h('th', { text: 'Channel' }), h('th', { text: 'Post' }), h('th', { text: 'When' }), h('th', { text: 'Status' }), h('th', { text: '' }))), h('tbody', null, rows)))
           : h('div', { class: 'empty', testid: 'posts-empty', text: 'Nothing scheduled. Approve a fight campaign, then press “Schedule posts”.' })),
@@ -1353,6 +1394,21 @@
     }).catch(function () { /* ignore */ });
   });
 
+        /* BEGIN authorized 2026-11-06 original poster workflow. */
+  pages.qa = function(main) {
+    return Promise.all([api('GET','/admin/attribution'),api('GET','/admin/social')]).then(function(r){
+      clear(main);add(main,[head('Administrator QA','Technical acceptance only; no live publishing or outreach is authorized.'),r[0].attribution.synthetic?syntheticCard(r[0].attribution.synthetic):h('p',{text:'No synthetic journey configuration in this environment.'}),liveTestCard(r[1])]);
+    });
+  };
+  function posterDepartment(main, params) {
+    return api('GET','/admin/drafts?kind=marketing&limit=100'+(params.fightId?'&contestId='+encodeURIComponent(params.fightId):'')).then(function(r){
+      clear(main);main.appendChild(head('Posters','Original campaign artwork, verified QR destinations and downloads. Owner approval remains separate.'));
+      var current=r.drafts.filter(function(d){return d.status!=='rejected'&&d.poster;});
+      if(!current.length) main.appendChild(h('div',{class:'empty',text:'No current campaign posters. Verified eligible fights appear here when original artwork is ready.'}));
+      current.forEach(function(d){main.appendChild(h('section',{class:'card',testid:'poster-campaign','data-draft-id':d.id},h('h2',{text:d.headline||d.id}),d.contest?fightFacts(d.contest):null,posterPanel(d,function(){posterDepartment(main,params);}),h('a',{class:'btn',href:'#/approvals?kind=marketing',text:'Review campaign approval'})));});
+    });
+  }
+        /* END authorized 2026-11-06 original poster workflow. */
   function boot() {
     if (!token()) return renderLogin();
     api('GET', '/admin/session').then(function (s) { state.sessionExpMs = s && s.exp ? s.exp * 1000 : null; scheduleExpiry(state.sessionExpMs); route(); }).catch(function (e) { if (!e.silent) renderLogin(); });

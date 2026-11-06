@@ -374,6 +374,7 @@ function createGrowthRuntime({ db, config, secrets = {}, provider, fetchImpl = g
     const out = { delivered: 0, held: 0, failed: 0, suppressed: 0 };
     for (const draft of ready) {
       if (await autonomy.isPaused()) { out.held++; break; }
+      if(draft.reviewSafety?.state==='hold'||(draft.autoResearched||draft.recruitmentSource)&& (await preparation.quality(draft,now)).length){out.held++;continue;}
       if (provider.name === 'none') { out.held++; continue; }
       if (draft.followupRoot) { const root = await col.drafts.findOne({ id: draft.followupRoot }); if (!root || root.replied === true || root.bounced === true) { await col.drafts.updateOne({ id: draft.id }, { $set: { status: 'held', deliveryError: 'conversation_already_replied_or_bounced' } }); out.held++; continue; } }
       if (await suppression.isSuppressed(draft.recipient)) { await col.drafts.updateOne({ id: draft.id }, { $set: { status: 'suppressed', updatedAt: now.toISOString() } }); out.suppressed++; continue; }
@@ -500,10 +501,12 @@ function createGrowthRuntime({ db, config, secrets = {}, provider, fetchImpl = g
   const publicDraft = ({ _id, ...d }) => d;
   async function listDrafts({ status, kind, contestId, limit = 100 } = {}) {
     const q = {}; if (contestId) q.contestId = clean(contestId, 160); if (status) q.status = clean(status, 40); if (kind) q.kind = clean(kind, 40);
-    return (await col.drafts.find(q).sort({ createdAt: -1 }).limit(Math.min(500, Number(limit) || 100)).toArray()).map(publicDraft);
+    const rows=await col.drafts.find(q).sort({ createdAt: -1 }).limit(Math.min(500, Number(limit) || 100)).toArray();
+    return Promise.all(rows.map(async d=>{const blockers=['needs_owner_review','approved'].includes(d.status)?(d.kind==='marketing'||d.autoResearched||d.recruitmentSource?await preparation.quality(d):[...(d.approvalBlockers||[]),...(d.reviewSafety?.state==='hold'?d.reviewSafety.reasons||['recipient_safety_hold']:[])]):[];return {...publicDraft(d),review:{state:blockers.length?'held':'eligible',blockers,ownerApprovalRequired:d.ownerApproved!==true,liveDeliveryAuthorized:false}};}));
   }
   async function approveDraft(id, { admin, acceptTextPoster = false, now = new Date() } = {}) {
     const current = await col.drafts.findOne({ id: clean(id, 160) });
+    if(current?.reviewSafety?.state==='hold')return{ok:false,reason:'recipient_safety_hold',details:current.reviewSafety.reasons||[]};
     if(current?.kind==='affiliate'&&(current.approvalBlockers||[]).length){const review=await col.settings.findOne({_id:'affiliate-terms-review',status:'approved',scope:'staging_recruitment_review',approvedByKind:'owner_session'});const blockers=current.approvalBlockers.filter(reason=>!(reason==='affiliate_terms_require_owner_review'&&review?.sourceHash&&review.version));if(blockers.length)return{ok:false,reason:'affiliate_program_verification_required',details:blockers};}
     if(current&&current.kind!=='marketing'&&(current.autoResearched||current.recruitmentSource)){const blockers=await preparation.quality(current,now);if(blockers.length)return{ok:false,reason:'preparation_quality_review_required',details:blockers};}
     if (current && current.status === 'needs_owner_review' && current.kind === 'marketing') {
@@ -519,7 +522,7 @@ function createGrowthRuntime({ db, config, secrets = {}, provider, fetchImpl = g
         if (p.needsArtwork && acceptTextPoster !== true) return { ok: false, reason: 'needs_artwork_confirm_text_poster', details: p.art.missing };
       }
     }
-    const r = await col.drafts.findOneAndUpdate({ id: clean(id, 160), status: 'needs_owner_review' }, { $set: { status: 'approved', ownerApproved: true, sendPermitted: true, approvedBy: clean(admin, 120), approvedAt: now.toISOString() } }, { returnDocument: 'after' });
+    const r = await col.drafts.findOneAndUpdate({ id: clean(id, 160), status: 'needs_owner_review', 'reviewSafety.state':{$ne:'hold'}, approvalBlockers:current?.approvalBlockers||{$exists:false} }, { $set: { status: 'approved', ownerApproved: true, sendPermitted: true, approvedBy: clean(admin, 120), approvedAt: now.toISOString() } }, { returnDocument: 'after' });
     if (!r) return { ok: false, reason: 'not_found_or_not_awaiting_review' };
     await audit('approve_draft', { id: r.id, admin: clean(admin, 120) });
     if(r.kind==='affiliate'&&r.recruitmentSource==='independent_public_partner')await col.recruitment.updateOne({id:r.prospectId},{$set:{status:'approved'},$push:{history:{stage:'approved',at:now.toISOString(),actor:admin}}});

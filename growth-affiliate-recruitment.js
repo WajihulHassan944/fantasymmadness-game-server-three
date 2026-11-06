@@ -1,4 +1,5 @@
 'use strict';
+const {verifiedCurrentRecipient}=require('./growth-recipient-safety');
 // Public structured discovery + robots-respecting official-site research only.
 const crypto=require('node:crypto'),dns=require('node:dns').promises,net=require('node:net');
 const {Agent}=require('undici'),robotsParser=require('robots-parser');
@@ -27,7 +28,7 @@ function invitation(lead,{signupVerified=false,termsVerified=false}={}){
  'Would you be open to reviewing the partnership and the applicable terms?'];
  const url=onboardingLink({code:codeFor(lead.id,lead.name)}),cta=signupVerified?{label:'Join the FANTASY MMADNESS Affiliate Program',url}:null;
  const email=renderPersonalEmail({eyebrow:'AFFILIATE PARTNERSHIP',subject:`${readable(lead.name)} — FANTASY MMADNESS fan league partnership`,greeting:greetingFor(lead.contact,{title:lead.contact.type==='person'&&lead.contact.nameVerified?null:lead.name}),paragraphs,cta});
- return{ok:true,...email,attributionUrl:url,qualityVersion:3,approvalBlockers:[!signupVerified&&'signup_destination_not_verified',!termsVerified&&'affiliate_terms_require_owner_review'].filter(Boolean),sourceEvidence:lead.evidence};
+ return{ok:true,...email,attributionUrl:url,qualityVersion:3,approvalBlockers:[!verifiedCurrentRecipient(lead)&&'current_recipient_status_requires_verification',!signupVerified&&'signup_destination_not_verified',!termsVerified&&'affiliate_terms_require_owner_review'].filter(Boolean),sourceEvidence:lead.evidence};
 }
 function createRecruitment({col,fetchImpl=globalThis.fetch,isSuppressed=async()=>false,suppress=async()=>{},lookup=dns.lookup,resolveMx=dns.resolveMx,clock=()=>new Date()}){
  const leads=col.recruitment,settings=col.settings;
@@ -37,9 +38,9 @@ function createRecruitment({col,fetchImpl=globalThis.fetch,isSuppressed=async()=
   if(!SPORTS[sport]||!ROLES[partnerType])throw Error('unsupported_discovery_classification');
   const taxonomy=await json('https://www.wikidata.org/w/api.php?'+new URLSearchParams({action:'wbsearchentities',format:'json',language:'en',search:SPORTS[sport],limit:'5',maxlag:'5'}));
   const entity=taxonomy.search?.find(x=>String(x.label).toLowerCase()===SPORTS[sport].toLowerCase()&&/^Q\d+$/.test(x.id));if(!entity)return{found:0,reason:'sport_taxonomy_not_resolved'};
-  const query=`SELECT DISTINCT ?partner ?partnerLabel ?description ?website ?countryLabel WHERE { ?partner wdt:P641 wd:${entity.id}; wdt:P856 ?website. ?partner schema:description ?description. FILTER(LANG(?description)="en") FILTER(REGEX(STR(?description),"${ROLES[partnerType]}","i"))  OPTIONAL{?partner wdt:P27|wdt:P17 ?country} SERVICE wikibase:label {bd:serviceParam wikibase:language "en".} } LIMIT 3`;
+  const query=`SELECT DISTINCT ?partner ?partnerLabel ?description ?website ?countryLabel WHERE { ?partner wdt:P641 wd:${entity.id}; wdt:P856 ?website. ?partner schema:description ?description. FILTER(LANG(?description)="en") FILTER(REGEX(STR(?description),"${ROLES[partnerType]}","i"))  FILTER NOT EXISTS { ?partner wdt:P570 ?deathDate } FILTER NOT EXISTS { ?partner wdt:P576 ?dissolutionDate } OPTIONAL{?partner wdt:P27|wdt:P17 ?country} SERVICE wikibase:label {bd:serviceParam wikibase:language "en".} } LIMIT 3`;
   const source='https://query.wikidata.org/sparql?'+new URLSearchParams({format:'json',query});const data=await json(source);let found=0;
-  for(const r of data.results?.bindings||[]){const q=String(r.partner?.value||'').match(/\/(Q\d+)$/)?.[1],website=r.website?.value,name=readable(r.partnerLabel?.value),description=readable(r.description?.value);if(!q||!name||name===q||!/^https?:\/\//.test(website||'')||!new RegExp(ROLES[partnerType],'i').test(description))continue;
+  for(const r of data.results?.bindings||[]){const q=String(r.partner?.value||'').match(/\/(Q\d+)$/)?.[1],website=r.website?.value,name=readable(r.partnerLabel?.value),description=readable(r.description?.value);if(r.deathDate?.value||r.dissolutionDate?.value||!q||!name||name===q||!/^https?:\/\//.test(website||'')||!new RegExp(ROLES[partnerType],'i').test(description))continue;
    const sourceUrl='https://www.wikidata.org/wiki/'+q,now=clock();const normalizedWebsite=website.replace(/^http:/,'https:');const doc={id:idFor(q),sourceId:q,name,sport,partnerType,country:r.countryLabel?.value||null,platform:'official_website',website:normalizedWebsite,originalWebsite:website,sourceUrl,status:'discovered',history:[{stage:'discovered',at:now.toISOString(),sourceUrl}],audienceSize:null,engagementQuality:null,recentActivity:{verified:false,date:null},expectedPartnershipValue:'unassessed',confidence:0.75,evidence:[{kind:'role',text:description,sourceUrl,retrievedAt:now.toISOString(),confidence:0.75},{kind:'official_website',sourceUrl,website,retrievedAt:now.toISOString()}],createdAt:now.toISOString()};
    const up=await leads.updateOne({sourceId:q},{$setOnInsert:doc,$set:{lastDiscoveredAt:now.toISOString()},$addToSet:{sports:sport,partnerTypes:partnerType}},{upsert:true});found+=up.upsertedCount;
   }return{found};
@@ -61,7 +62,7 @@ function createRecruitment({col,fetchImpl=globalThis.fetch,isSuppressed=async()=
  return{contactVerified:Boolean(contact),error};
  }
  async function prepare(){const ready=await readiness();let drafted=0,duplicates=0;for(const lead of await leads.find({status:'contact_verified'}).limit(4).toArray()){
-  if(await isSuppressed(lead.contact.email)||await col.drafts.findOne({recipient:lead.contact.email})){duplicates++;continue;}
+  if(lead.outreachHold||lead.deceased===true||await isSuppressed(lead.contact.email)||await col.drafts.findOne({recipient:lead.contact.email})){duplicates++;continue;}
   const m=invitation(lead,ready);if(!m.ok){await leads.updateOne({id:lead.id},{$set:{draftBlocker:m.reason}});continue;}const doc={id:'affiliate-'+lead.id,kind:'affiliate',genre:lead.sport,prospectId:lead.id,recruitmentSource:'independent_public_partner',recipient:lead.contact.email,subject:m.subject,text:m.text,html:m.html,sourceEvidence:m.sourceEvidence,approvalBlockers:m.approvalBlockers,signupUrl:m.attributionUrl,emailQualityVersion:3,contactSource:lead.contact.source,consentBasis:lead.contact.basis,status:'needs_owner_review',ownerApproved:false,sendPermitted:false,createdAt:clock().toISOString()};
   const r=await col.drafts.updateOne({id:doc.id},{$setOnInsert:doc},{upsert:true});drafted+=r.upsertedCount;if(r.upsertedCount)await leads.updateOne({id:lead.id},{$set:{status:'awaiting_approval',draftId:doc.id},$push:{history:{$each:[{stage:'draft_prepared',at:clock().toISOString()},{stage:'awaiting_approval',at:clock().toISOString()}]}}});
  }return{drafted,duplicates,program:ready};}
