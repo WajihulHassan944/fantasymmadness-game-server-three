@@ -5,6 +5,7 @@
 (function () {
   'use strict';
   var API = '/api/growth';
+  var ISOLATED_PREVIEW = document.documentElement.getAttribute('data-isolated-preparation-preview') === 'true';
   var PRODUCTION = document.documentElement.getAttribute('data-production-preparation') === 'true';
   var INTEGRATED = document.documentElement.getAttribute('data-integrated-preview') === 'true';
   var TOKEN_KEY = PRODUCTION ? 'fmmGrowthProductionPreparationToken' : INTEGRATED ? 'fmmGrowthSocialOAuthPreviewToken' : 'fmmGrowthConsoleToken';
@@ -1372,7 +1373,7 @@
     document.title = (NAV.filter(function (n) { return n[0] === r.name; })[0] || ['', 'Growth Engine'])[1] + ' · Growth Engine (production preparation)';
     Promise.resolve(pages[r.name](main, r.params)).then(function () {
       if(PRODUCTION){
-        main.prepend(h('div',{class:'banner info',testid:'production-preparation-banner'},h('strong',{text:'Production Growth preparation'}),h('span',{text:'Discovery, research and drafts only. Owner approval required; publishing, outreach and payment changes are disabled.'}),h('button',{class:'btn danger',testid:'production-emergency-stop',text:'Emergency stop preparation',onclick:function(){modal({title:'Stop production preparation?',body:h('p',{text:'This pauses scheduled preparation. Existing records and connections remain unchanged.'}),onConfirm:function(){return api('POST','/admin/autonomy/stop',{});}}).then(route).catch(fail);}})));
+        main.prepend(h('div',{class:'banner info',testid:'production-preparation-banner'},h('strong',{text:ISOLATED_PREVIEW?'Isolated Growth Preview':'Production Growth preparation'}),h('span',{text:'Discovery, research and drafts only. Owner approval required; publishing, outreach and payment changes are disabled.'}),h('button',{class:'btn danger',testid:'production-emergency-stop',text:'Emergency stop preparation',onclick:function(){modal({title:'Stop production preparation?',body:h('p',{text:'This pauses scheduled preparation. Existing records and connections remain unchanged.'}),onConfirm:function(){return api('POST','/admin/autonomy/stop',{});}}).then(route).catch(fail);}})));
         main.querySelectorAll('button').forEach(function(b){if(!b.hasAttribute('data-content-review') && /approve|publish|send|schedule|connect|disconnect|refresh.*token|generate|record correction|reject prospect|opt out|run now|check for new|check now|verify existing|add to do-not|invitation|onboard|mark|retry|requeue/i.test(b.textContent)){b.disabled=true;b.title='Requires a separately authorized operation; production preparation remains active.';}});
       }
  if (state.pendingCount === null) refreshCounts(); else paintBadges(); })
