@@ -261,25 +261,10 @@ async function refreshUpcomingUfcEvents(options = {}) {
         continue;
       }
 
-      if (dryRun === true || String(dryRun).toLowerCase() === 'true') {
-        skipped.push({ reason: 'dry-run', title: candidate.title, eventName: candidate.eventName, confidence: candidate.confidence, candidate });
-        continue;
-      }
-
-      const result = await upsertDiscoveredUfcEvent({
-        candidate,
-        Match,
-        Notification,
-        triggerUpcomingEventAutomationForMatch,
-        logger,
-        forceSwarm: options.forceSwarm,
-        reason,
-      });
-
-      if (result.action === 'created') created.push(result);
-      else if (result.action === 'updated') updated.push(result);
-      else skipped.push(result);
-      if (result.action === 'created' || result.action === 'updated') cacheInvalidated = true;
+      // Discovery produces proposals only. Neither cron, startup nor an admin
+      // refresh may create/update production fights or trigger outbound Swarm work.
+      // The existing owner fight-creation/editor workflows remain separate.
+      skipped.push({ reason: dryRun === true || String(dryRun).toLowerCase() === 'true' ? 'dry-run' : 'owner-registry-approval-required', title: candidate.title, eventName: candidate.eventName, confidence: candidate.confidence, candidate });
     } catch (error) {
       errors.push({ title: cleanString(item?.title), error: summarizeError(error) });
     }
@@ -290,6 +275,9 @@ async function refreshUpcomingUfcEvents(options = {}) {
   return {
     ok: errors.length === 0,
     provider: GOOGLE_NEWS_PROVIDER,
+    registryAccess: 'read_only_proposals',
+    registryWritesEnabled: false,
+    ownerRegistryApprovalRequired: true,
     feedUrl,
     reason,
     fetchedItems: rawItems.length,
@@ -823,7 +811,7 @@ function extractFighterPair(text = '') {
 
 function normalizeFighterName(value = '') {
   return cleanText(value)
-    .replace(/\b(?:set|targeted|booked|scheduled|for|on|at|in|fight\s+card|card\s+announcement|announcement|headline|headlines)\b.*$/i, '')
+    .replace(/\b(?:postponed|rescheduled|moved|delayed|cancelled|canceled|withdrawn|set|targeted|booked|scheduled|for|on|at|in|fight\s+card|card\s+announcement|announcement|headline|headlines)\b.*$/i, '')
     .replace(/\b(?:UFC|Fight|Night|Main|Event|Dana|White|announces?|announced|official)\b/gi, '')
     .replace(/^[^A-Za-zÀ-ÖØ-öø-ÿ]+|[^A-Za-zÀ-ÖØ-öø-ÿ]+$/g, '')
     .replace(/\s+/g, ' ')

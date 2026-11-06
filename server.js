@@ -1,3 +1,4 @@
+const {verifyGameAdministrator,isGrowthAuthority}=require('./game-admin-authority');
 const { wrestlingPromotionFight, isWrestlingPromotionOpen } = require('./wrestling-promotion');
 const express = require('express');
 const { createCoinWallet, installCoinWriteGuards, CoinError } = require('./coin-wallet');
@@ -398,7 +399,7 @@ const verifyAdminToken = (req, res, next) => {
   }
 
   try {
-    req.admin = jwt.verify(token, process.env.JWT_SECRET_ADMIN);
+    req.admin = verifyGameAdministrator(token, process.env.JWT_SECRET_ADMIN);
     return next();
   } catch (error) {
     return res.status(401).json({
@@ -458,7 +459,7 @@ const verifyCronSecret = (req, res, next) => {
     const adminToken = String(req.headers.authorization || '').replace(/^Bearer\s+/i, '').trim();
     try {
       if (adminToken && process.env.JWT_SECRET_ADMIN) {
-        req.admin = jwt.verify(adminToken, process.env.JWT_SECRET_ADMIN);
+        req.admin = verifyGameAdministrator(adminToken, process.env.JWT_SECRET_ADMIN);
         return next();
       }
     } catch (_error) { /* fall through to 401 */ }
@@ -548,12 +549,13 @@ const verifyAdminOrAffiliateToken = (req, res, next) => {
     });
   }
   try {
-    req.admin = jwt.verify(token, process.env.JWT_SECRET_ADMIN);
+    req.admin = verifyGameAdministrator(token, process.env.JWT_SECRET_ADMIN);
     req.actorRole = 'admin';
     return next();
   } catch (_adminError) {
     try {
       const claims = jwt.verify(token, process.env.JWT_SECRET);
+      if(isGrowthAuthority(claims))return res.status(403).json({message:'Growth credentials cannot manage fights.',code:'WRONG_TOKEN_SCOPE'});
       const scope = String(claims.scope || '').trim();
       // A player token must never reach fight creation.
       if (scope && scope !== TOKEN_SCOPES.AFFILIATE) {
@@ -11359,7 +11361,7 @@ app.get('/approveAffiliate/:id', async (req, res) => {
     const isAdminCaller = (() => {
       const token = String(req.headers.authorization || '').replace(/^Bearer\s+/i, '').trim();
       try {
-        return Boolean(token && process.env.JWT_SECRET_ADMIN && jwt.verify(token, process.env.JWT_SECRET_ADMIN));
+        return Boolean(token && process.env.JWT_SECRET_ADMIN && verifyGameAdministrator(token, process.env.JWT_SECRET_ADMIN));
       } catch (_error) {
         return false;
       }
@@ -11743,7 +11745,7 @@ app.get('/api/scores', optionalVerifyToken, async (req, res) => {
       const adminHeader = req.headers.authorization;
       const adminToken = adminHeader && adminHeader.startsWith('Bearer ') ? adminHeader.slice(7) : null;
       if (adminToken && process.env.JWT_SECRET_ADMIN) {
-        jwt.verify(adminToken, process.env.JWT_SECRET_ADMIN);
+        verifyGameAdministrator(adminToken, process.env.JWT_SECRET_ADMIN);
         isAdmin = true;
       }
     } catch (ignored) { isAdmin = false; }
