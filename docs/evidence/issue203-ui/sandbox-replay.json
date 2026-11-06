@@ -1,0 +1,110 @@
+{
+  "checkedAt": "2026-11-06T14:43:50.073Z",
+  "database": "fmgrowthtest",
+  "collectionPrefix": "preview198_launch_qa_",
+  "synthetic": true,
+  "results": [
+    {
+      "campaignId": "mkt-6ad629a60df141df46931a8b-49d793654a",
+      "channel": "facebook",
+      "decision": "PASS_REPLAY_NO_NEW_CAPTURE",
+      "qaId": "qa-3e4d715e2e80f60bb68a5f8906326157",
+      "reason": "idempotent_capture_reused"
+    },
+    {
+      "campaignId": "mkt-6ad629a60df141df46931a8b-49d793654a",
+      "channel": "instagram",
+      "decision": "HOLD",
+      "blockers": [
+        "verified_profile_destination_required"
+      ]
+    },
+    {
+      "campaignId": "mkt-6ad629a60df141df46931a8b-49d793654a",
+      "channel": "x",
+      "decision": "PASS_REPLAY_NO_NEW_CAPTURE",
+      "qaId": "qa-e7f9ac86d0bcfbbcc9627a189c371dbf",
+      "reason": "idempotent_capture_reused"
+    },
+    {
+      "campaignId": "mkt-6ad629a60df141df46931a8b-49d793654a",
+      "channel": "tiktok",
+      "decision": "HOLD",
+      "blockers": [
+        "verified_profile_destination_required"
+      ]
+    },
+    {
+      "campaignId": "mkt-6adfcba7ee2996e566885594-e498620c94",
+      "channel": "facebook",
+      "decision": "PASS_REPLAY_NO_NEW_CAPTURE",
+      "qaId": "qa-42cdda5fefc2152940ecdb7cee21ac5a",
+      "reason": "idempotent_capture_reused"
+    },
+    {
+      "campaignId": "mkt-6adfcba7ee2996e566885594-e498620c94",
+      "channel": "instagram",
+      "decision": "HOLD",
+      "blockers": [
+        "verified_profile_destination_required"
+      ]
+    },
+    {
+      "campaignId": "mkt-6adfcba7ee2996e566885594-e498620c94",
+      "channel": "x",
+      "decision": "PASS_REPLAY_NO_NEW_CAPTURE",
+      "qaId": "qa-e03b2b2235a2714fbebc5e6536db1382",
+      "reason": "idempotent_capture_reused"
+    },
+    {
+      "campaignId": "mkt-6adfcba7ee2996e566885594-e498620c94",
+      "channel": "tiktok",
+      "decision": "HOLD",
+      "blockers": [
+        "verified_profile_destination_required"
+      ]
+    },
+    {
+      "campaignId": "pr-p-f956478203419e11",
+      "channel": "email",
+      "decision": "PASS_REPLAY_NO_NEW_CAPTURE",
+      "qaId": "qa-fd6a2312978342a6fd0d3c3e4288f43d",
+      "reason": "idempotent_capture_reused"
+    },
+    {
+      "campaignId": "pr-p-a593138355c14ed9",
+      "channel": "email",
+      "decision": "PASS_REPLAY_NO_NEW_CAPTURE",
+      "qaId": "qa-bb7f5642e7d8b3f12badd44f7017e709",
+      "reason": "idempotent_capture_reused"
+    },
+    {
+      "campaignId": "pr-p-4c35a814b6618fce",
+      "channel": "email",
+      "decision": "PASS_REPLAY_NO_NEW_CAPTURE",
+      "qaId": "qa-f261549495f84ed33dcefecfaa372a75",
+      "reason": "idempotent_capture_reused"
+    },
+    {
+      "campaignId": "pr-p-874920d814aee9a0",
+      "channel": "email",
+      "decision": "PASS_REPLAY_NO_NEW_CAPTURE",
+      "qaId": "qa-e58563847050b5bce54ed47d247f7e61",
+      "reason": "idempotent_capture_reused"
+    },
+    {
+      "campaignId": "pr-p-cafd139ff66ea487",
+      "channel": "email",
+      "decision": "PASS_REPLAY_NO_NEW_CAPTURE",
+      "qaId": "qa-d94e3e7dfd9c48f679421e73cf325421",
+      "reason": "idempotent_capture_reused"
+    }
+  ],
+  "sourceApprovalFlagsUnchanged": true,
+  "capturedEmails": 5,
+  "capturedSocial": 4,
+  "realDeliveries": 0,
+  "realSocialPosts": 0,
+  "publishingEnabled": false,
+  "outboundEnabled": false
+}

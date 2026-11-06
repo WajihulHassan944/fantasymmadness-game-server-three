@@ -1,0 +1,1060 @@
+{
+  "runId": "wrun_41M6RJFMJ70GHK0HBBK3WY34B4",
+  "status": "running",
+  "steps": [
+    {
+      "stepName": "step//./workflows/sandbox//executeCycle",
+      "status": "completed",
+      "completedAt": "2026-11-06T14:47:04.697Z",
+      "result": {
+        "stop": false,
+        "evidence": {
+          "checkedAt": "2026-11-06T14:47:04.551Z",
+          "operations": {
+            "mode": "preparation_only",
+            "departments": {
+              "marketing": {
+                "awaitingOwnerReview": 2,
+                "receipts": 2,
+                "ready": 2,
+                "held": 0,
+                "awaitingReceipt": 0,
+                "sourceHolds": 0,
+                "approvedDrafts": 0
+              },
+              "pr": {
+                "awaitingOwnerReview": 5,
+                "receipts": 5,
+                "ready": 5,
+                "held": 0,
+                "awaitingReceipt": 0,
+                "sourceHolds": 0,
+                "approvedDrafts": 0
+              },
+              "affiliate": {
+                "awaitingOwnerReview": 12,
+                "receipts": 12,
+                "ready": 0,
+                "held": 12,
+                "awaitingReceipt": 0,
+                "sourceHolds": 23,
+                "approvedDrafts": 0
+              }
+            },
+            "jobs": {
+              "completed": 231
+            },
+            "receiptMeaning": "Prepared evidence snapshots only; never messages sent, publication, owner approval or conversion.",
+            "realDeliveriesObserved": 0,
+            "liveSocialPostsObserved": 0,
+            "attributedPayingConversions": null,
+            "publishingEnabled": false,
+            "outboundEnabled": false
+          },
+          "connections": {
+            "at": "2026-11-06T14:47:04.551Z",
+            "oauth": [
+              {
+                "provider": "tiktok",
+                "status": "connected",
+                "accessStatus": "valid",
+                "tokenExpiresAt": "2026-11-07T12:00:42.041Z",
+                "refreshExpiresAt": "2027-11-05T12:30:01.041Z",
+                "refreshExpiryKnown": true,
+                "refreshAvailable": true,
+                "renewalAvailable": true,
+                "renewalStatus": "available",
+                "nextRefreshAt": "2026-11-07T11:30:42.041Z",
+                "expiryEvidence": {
+                  "source": "encrypted_provider_response",
+                  "issuedAt": "2026-11-06T12:00:42.041Z",
+                  "accessLifetimeSeconds": 86400,
+                  "refreshLifetimeSeconds": 31451359,
+                  "storedRefreshExpiresAt": "2027-11-05T12:30:01.041Z",
+                  "metadataMismatch": false
+                },
+                "warnings": [],
+                "grantedScopes": [
+                  "user.info.basic"
+                ],
+                "scopesVerifiedAt": "2026-11-06T12:00:42.223Z",
+                "identityVerifiedAt": "2026-11-06T14:31:54.083Z",
+                "nextRetryAt": null,
+                "reason": null,
+                "publishingEnabled": false
+              },
+              {
+                "provider": "x",
+                "status": "connected",
+                "accessStatus": "valid",
+                "tokenExpiresAt": "2026-11-06T16:47:04.038Z",
+                "refreshExpiresAt": null,
+                "refreshExpiryKnown": false,
+                "refreshAvailable": true,
+                "renewalAvailable": true,
+                "renewalStatus": "expiry-unknown",
+                "nextRefreshAt": "2026-11-06T16:17:04.038Z",
+                "expiryEvidence": {
+                  "source": "unknown",
+                  "issuedAt": "2026-11-06T14:47:04.038Z",
+                  "accessLifetimeSeconds": 7200,
+                  "refreshLifetimeSeconds": null,
+                  "storedRefreshExpiresAt": null,
+                  "metadataMismatch": false
+                },
+                "warnings": [],
+                "grantedScopes": [
+                  "offline.access",
+                  "tweet.read",
+                  "users.read"
+                ],
+                "scopesVerifiedAt": "2026-11-06T14:47:04.157Z",
+                "identityVerifiedAt": "2026-11-06T14:47:04.157Z",
+                "nextRetryAt": null,
+                "reason": null,
+                "publishingEnabled": false
+              }
+            ],
+            "meta": {
+              "existingRecordFound": true,
+              "source": "existing_isolated_record",
+              "encryptionConfigured": true,
+              "checkedAt": "2026-11-06T14:46:57.917Z",
+              "facebook": {
+                "verified": true,
+                "state": "connected",
+                "reason": null
+              },
+              "instagram": {
+                "verified": true,
+                "state": "connected",
+                "reason": null
+              },
+              "credentialsChanged": false,
+              "publishingEnabled": false
+            },
+            "permissions": {
+              "verified": true,
+              "granted": [
+                "pages_show_list",
+                "business_management",
+                "instagram_basic",
+                "instagram_content_publish",
+                "pages_read_engagement",
+                "pages_manage_posts",
+                "public_profile"
+              ],
+              "declined": [],
+              "checkedAt": "2026-11-06T14:47:04.540Z",
+              "expiresAt": "2027-01-01T14:38:21.329Z",
+              "refreshSupported": false,
+              "lifecycle": "Facebook Page authorization has no generic OAuth refresh token; retain working Page tokens and reconnect only when provider validation requires it."
+            }
+          },
+          "jobResults": [
+            {
+              "department": "marketing",
+              "ok": true,
+              "sourceHolds": 0,
+              "receipt": {
+                "created": 0,
+                "checked": 2
+              }
+            },
+            {
+              "department": "pr",
+              "ok": true,
+              "sourceHolds": 0,
+              "receipt": {
+                "created": 0,
+                "checked": 5
+              }
+            },
+            {
+              "department": "affiliate",
+              "ok": true,
+              "sourceHolds": 1,
+              "receipt": {
+                "created": 0,
+                "checked": 12
+              }
+            }
+          ],
+          "errors": 0,
+          "websiteSessionUsed": false,
+          "outboundEnabled": false,
+          "publishingEnabled": false
+        }
+      }
+    },
+    {
+      "stepName": "step//./workflows/sandbox//executeCycle",
+      "status": "completed",
+      "completedAt": "2026-11-06T14:31:54.764Z",
+      "result": {
+        "stop": false,
+        "evidence": {
+          "checkedAt": "2026-11-06T14:31:54.403Z",
+          "operations": {
+            "mode": "preparation_only",
+            "departments": {
+              "marketing": {
+                "awaitingOwnerReview": 2,
+                "receipts": 2,
+                "ready": 2,
+                "held": 0,
+                "awaitingReceipt": 0,
+                "sourceHolds": 0,
+                "approvedDrafts": 0
+              },
+              "pr": {
+                "awaitingOwnerReview": 5,
+                "receipts": 5,
+                "ready": 5,
+                "held": 0,
+                "awaitingReceipt": 0,
+                "sourceHolds": 0,
+                "approvedDrafts": 0
+              },
+              "affiliate": {
+                "awaitingOwnerReview": 12,
+                "receipts": 12,
+                "ready": 0,
+                "held": 12,
+                "awaitingReceipt": 0,
+                "sourceHolds": 23,
+                "approvedDrafts": 0
+              }
+            },
+            "jobs": {
+              "completed": 228
+            },
+            "receiptMeaning": "Prepared evidence snapshots only; never messages sent, publication, owner approval or conversion.",
+            "realDeliveriesObserved": 0,
+            "liveSocialPostsObserved": 0,
+            "attributedPayingConversions": null,
+            "publishingEnabled": false,
+            "outboundEnabled": false
+          },
+          "connections": {
+            "at": "2026-11-06T14:31:54.403Z",
+            "oauth": [
+              {
+                "provider": "tiktok",
+                "status": "connected",
+                "accessStatus": "valid",
+                "tokenExpiresAt": "2026-11-07T12:00:42.041Z",
+                "refreshExpiresAt": "2027-11-05T12:30:01.041Z",
+                "refreshExpiryKnown": true,
+                "refreshAvailable": true,
+                "renewalAvailable": true,
+                "renewalStatus": "available",
+                "nextRefreshAt": "2026-11-07T11:30:42.041Z",
+                "expiryEvidence": {
+                  "source": "encrypted_provider_response",
+                  "issuedAt": "2026-11-06T12:00:42.041Z",
+                  "accessLifetimeSeconds": 86400,
+                  "refreshLifetimeSeconds": 31451359,
+                  "storedRefreshExpiresAt": "2027-11-05T12:30:01.041Z",
+                  "metadataMismatch": false
+                },
+                "warnings": [],
+                "grantedScopes": [
+                  "user.info.basic"
+                ],
+                "scopesVerifiedAt": "2026-11-06T12:00:42.223Z",
+                "identityVerifiedAt": "2026-11-06T14:16:40.158Z",
+                "nextRetryAt": null,
+                "reason": null,
+                "publishingEnabled": false
+              },
+              {
+                "provider": "x",
+                "status": "connected",
+                "accessStatus": "valid",
+                "tokenExpiresAt": "2026-11-06T15:16:47.998Z",
+                "refreshExpiresAt": null,
+                "refreshExpiryKnown": false,
+                "refreshAvailable": true,
+                "renewalAvailable": true,
+                "renewalStatus": "expiry-unknown",
+                "nextRefreshAt": "2026-11-06T14:46:47.998Z",
+                "expiryEvidence": {
+                  "source": "unknown",
+                  "issuedAt": "2026-11-06T13:16:47.998Z",
+                  "accessLifetimeSeconds": 7200,
+                  "refreshLifetimeSeconds": null,
+                  "storedRefreshExpiresAt": null,
+                  "metadataMismatch": false
+                },
+                "warnings": [],
+                "grantedScopes": [
+                  "offline.access",
+                  "tweet.read",
+                  "users.read"
+                ],
+                "scopesVerifiedAt": "2026-11-06T13:16:48.129Z",
+                "identityVerifiedAt": "2026-11-06T14:16:40.317Z",
+                "nextRetryAt": null,
+                "reason": null,
+                "publishingEnabled": false
+              }
+            ],
+            "meta": {
+              "existingRecordFound": true,
+              "source": "existing_isolated_record",
+              "encryptionConfigured": true,
+              "checkedAt": "2026-11-06T14:31:44.147Z",
+              "facebook": {
+                "verified": true,
+                "state": "connected",
+                "reason": null
+              },
+              "instagram": {
+                "verified": true,
+                "state": "connected",
+                "reason": null
+              },
+              "credentialsChanged": false,
+              "publishingEnabled": false
+            },
+            "permissions": {
+              "verified": true,
+              "granted": [
+                "pages_show_list",
+                "business_management",
+                "instagram_basic",
+                "instagram_content_publish",
+                "pages_read_engagement",
+                "pages_manage_posts",
+                "public_profile"
+              ],
+              "declined": [],
+              "checkedAt": "2026-11-06T14:31:54.387Z",
+              "expiresAt": "2027-01-01T14:38:21.329Z",
+              "refreshSupported": false,
+              "lifecycle": "Facebook Page authorization has no generic OAuth refresh token; retain working Page tokens and reconnect only when provider validation requires it."
+            }
+          },
+          "jobResults": [
+            {
+              "department": "marketing",
+              "ok": true,
+              "sourceHolds": 0,
+              "receipt": {
+                "created": 0,
+                "checked": 2
+              }
+            },
+            {
+              "department": "pr",
+              "ok": true,
+              "sourceHolds": 0,
+              "receipt": {
+                "created": 0,
+                "checked": 5
+              }
+            },
+            {
+              "department": "affiliate",
+              "ok": true,
+              "sourceHolds": 1,
+              "receipt": {
+                "created": 0,
+                "checked": 12
+              }
+            }
+          ],
+          "errors": 0,
+          "websiteSessionUsed": false,
+          "outboundEnabled": false,
+          "publishingEnabled": false
+        }
+      }
+    },
+    {
+      "stepName": "step//./workflows/sandbox//executeCycle",
+      "status": "completed",
+      "completedAt": "2026-11-06T14:16:40.660Z",
+      "result": {
+        "stop": false,
+        "evidence": {
+          "checkedAt": "2026-11-06T14:16:40.435Z",
+          "operations": {
+            "mode": "preparation_only",
+            "departments": {
+              "marketing": {
+                "awaitingOwnerReview": 2,
+                "receipts": 2,
+                "ready": 2,
+                "held": 0,
+                "awaitingReceipt": 0,
+                "sourceHolds": 0,
+                "approvedDrafts": 0
+              },
+              "pr": {
+                "awaitingOwnerReview": 5,
+                "receipts": 5,
+                "ready": 5,
+                "held": 0,
+                "awaitingReceipt": 0,
+                "sourceHolds": 0,
+                "approvedDrafts": 0
+              },
+              "affiliate": {
+                "awaitingOwnerReview": 12,
+                "receipts": 12,
+                "ready": 0,
+                "held": 12,
+                "awaitingReceipt": 0,
+                "sourceHolds": 23,
+                "approvedDrafts": 0
+              }
+            },
+            "jobs": {
+              "completed": 225
+            },
+            "receiptMeaning": "Prepared evidence snapshots only; never messages sent, publication, owner approval or conversion.",
+            "realDeliveriesObserved": 0,
+            "liveSocialPostsObserved": 0,
+            "attributedPayingConversions": null,
+            "publishingEnabled": false,
+            "outboundEnabled": false
+          },
+          "connections": {
+            "at": "2026-11-06T14:16:40.435Z",
+            "oauth": [
+              {
+                "provider": "tiktok",
+                "status": "connected",
+                "accessStatus": "valid",
+                "tokenExpiresAt": "2026-11-07T12:00:42.041Z",
+                "refreshExpiresAt": "2027-11-05T12:30:01.041Z",
+                "refreshExpiryKnown": true,
+                "refreshAvailable": true,
+                "renewalAvailable": true,
+                "renewalStatus": "available",
+                "nextRefreshAt": "2026-11-07T11:30:42.041Z",
+                "expiryEvidence": {
+                  "source": "encrypted_provider_response",
+                  "issuedAt": "2026-11-06T12:00:42.041Z",
+                  "accessLifetimeSeconds": 86400,
+                  "refreshLifetimeSeconds": 31451359,
+                  "storedRefreshExpiresAt": "2027-11-05T12:30:01.041Z",
+                  "metadataMismatch": false
+                },
+                "warnings": [],
+                "grantedScopes": [
+                  "user.info.basic"
+                ],
+                "scopesVerifiedAt": "2026-11-06T12:00:42.223Z",
+                "identityVerifiedAt": "2026-11-06T13:47:11.285Z",
+                "nextRetryAt": null,
+                "reason": null,
+                "publishingEnabled": false
+              },
+              {
+                "provider": "x",
+                "status": "connected",
+                "accessStatus": "valid",
+                "tokenExpiresAt": "2026-11-06T15:16:47.998Z",
+                "refreshExpiresAt": null,
+                "refreshExpiryKnown": false,
+                "refreshAvailable": true,
+                "renewalAvailable": true,
+                "renewalStatus": "expiry-unknown",
+                "nextRefreshAt": "2026-11-06T14:46:47.998Z",
+                "expiryEvidence": {
+                  "source": "unknown",
+                  "issuedAt": "2026-11-06T13:16:47.998Z",
+                  "accessLifetimeSeconds": 7200,
+                  "refreshLifetimeSeconds": null,
+                  "storedRefreshExpiresAt": null,
+                  "metadataMismatch": false
+                },
+                "warnings": [],
+                "grantedScopes": [
+                  "offline.access",
+                  "tweet.read",
+                  "users.read"
+                ],
+                "scopesVerifiedAt": "2026-11-06T13:16:48.129Z",
+                "identityVerifiedAt": "2026-11-06T13:47:11.416Z",
+                "nextRetryAt": null,
+                "reason": null,
+                "publishingEnabled": false
+              }
+            ],
+            "meta": {
+              "existingRecordFound": true,
+              "source": "existing_isolated_record",
+              "encryptionConfigured": true,
+              "checkedAt": "2026-11-06T14:13:27.356Z",
+              "facebook": {
+                "verified": true,
+                "state": "connected",
+                "reason": null
+              },
+              "instagram": {
+                "verified": true,
+                "state": "connected",
+                "reason": null
+              },
+              "credentialsChanged": false,
+              "publishingEnabled": false
+            },
+            "permissions": {
+              "verified": true,
+              "granted": [
+                "pages_show_list",
+                "business_management",
+                "instagram_basic",
+                "instagram_content_publish",
+                "pages_read_engagement",
+                "pages_manage_posts",
+                "public_profile"
+              ],
+              "declined": [],
+              "checkedAt": "2026-11-06T14:16:40.423Z",
+              "expiresAt": "2027-01-01T14:38:21.329Z",
+              "refreshSupported": false,
+              "lifecycle": "Facebook Page authorization has no generic OAuth refresh token; retain working Page tokens and reconnect only when provider validation requires it."
+            }
+          },
+          "jobResults": [
+            {
+              "department": "marketing",
+              "ok": true,
+              "sourceHolds": 0,
+              "receipt": {
+                "created": 0,
+                "checked": 2
+              }
+            },
+            {
+              "department": "pr",
+              "ok": true,
+              "sourceHolds": 0,
+              "receipt": {
+                "created": 0,
+                "checked": 5
+              }
+            },
+            {
+              "department": "affiliate",
+              "ok": true,
+              "sourceHolds": 1,
+              "receipt": {
+                "created": 0,
+                "checked": 12
+              }
+            }
+          ],
+          "errors": 0,
+          "websiteSessionUsed": false,
+          "outboundEnabled": false,
+          "publishingEnabled": false
+        }
+      }
+    },
+    {
+      "stepName": "step//./workflows/sandbox//executeCycle",
+      "status": "completed",
+      "completedAt": "2026-11-06T14:01:30.765Z",
+      "result": {
+        "stop": false,
+        "evidence": {
+          "checkedAt": "2026-11-06T14:01:30.648Z",
+          "operations": {
+            "mode": "preparation_only",
+            "departments": {
+              "marketing": {
+                "awaitingOwnerReview": 2,
+                "receipts": 2,
+                "ready": 2,
+                "held": 0,
+                "awaitingReceipt": 0,
+                "sourceHolds": 0,
+                "approvedDrafts": 0
+              },
+              "pr": {
+                "awaitingOwnerReview": 5,
+                "receipts": 5,
+                "ready": 5,
+                "held": 0,
+                "awaitingReceipt": 0,
+                "sourceHolds": 0,
+                "approvedDrafts": 0
+              },
+              "affiliate": {
+                "awaitingOwnerReview": 12,
+                "receipts": 12,
+                "ready": 0,
+                "held": 12,
+                "awaitingReceipt": 0,
+                "sourceHolds": 23,
+                "approvedDrafts": 0
+              }
+            },
+            "jobs": {
+              "completed": 222
+            },
+            "receiptMeaning": "Prepared evidence snapshots only; never messages sent, publication, owner approval or conversion.",
+            "realDeliveriesObserved": 0,
+            "liveSocialPostsObserved": 0,
+            "attributedPayingConversions": null,
+            "publishingEnabled": false,
+            "outboundEnabled": false
+          },
+          "connections": {
+            "at": "2026-11-06T14:01:30.648Z",
+            "oauth": [
+              {
+                "provider": "tiktok",
+                "status": "connected",
+                "accessStatus": "valid",
+                "tokenExpiresAt": "2026-11-07T12:00:42.041Z",
+                "refreshExpiresAt": "2027-11-05T12:30:01.041Z",
+                "refreshExpiryKnown": true,
+                "refreshAvailable": true,
+                "renewalAvailable": true,
+                "renewalStatus": "available",
+                "nextRefreshAt": "2026-11-07T11:30:42.041Z",
+                "expiryEvidence": {
+                  "source": "encrypted_provider_response",
+                  "issuedAt": "2026-11-06T12:00:42.041Z",
+                  "accessLifetimeSeconds": 86400,
+                  "refreshLifetimeSeconds": 31451359,
+                  "storedRefreshExpiresAt": "2027-11-05T12:30:01.041Z",
+                  "metadataMismatch": false
+                },
+                "warnings": [],
+                "grantedScopes": [
+                  "user.info.basic"
+                ],
+                "scopesVerifiedAt": "2026-11-06T12:00:42.223Z",
+                "identityVerifiedAt": "2026-11-06T13:47:11.285Z",
+                "nextRetryAt": null,
+                "reason": null,
+                "publishingEnabled": false
+              },
+              {
+                "provider": "x",
+                "status": "connected",
+                "accessStatus": "valid",
+                "tokenExpiresAt": "2026-11-06T15:16:47.998Z",
+                "refreshExpiresAt": null,
+                "refreshExpiryKnown": false,
+                "refreshAvailable": true,
+                "renewalAvailable": true,
+                "renewalStatus": "expiry-unknown",
+                "nextRefreshAt": "2026-11-06T14:46:47.998Z",
+                "expiryEvidence": {
+                  "source": "unknown",
+                  "issuedAt": "2026-11-06T13:16:47.998Z",
+                  "accessLifetimeSeconds": 7200,
+                  "refreshLifetimeSeconds": null,
+                  "storedRefreshExpiresAt": null,
+                  "metadataMismatch": false
+                },
+                "warnings": [],
+                "grantedScopes": [
+                  "offline.access",
+                  "tweet.read",
+                  "users.read"
+                ],
+                "scopesVerifiedAt": "2026-11-06T13:16:48.129Z",
+                "identityVerifiedAt": "2026-11-06T13:47:11.416Z",
+                "nextRetryAt": null,
+                "reason": null,
+                "publishingEnabled": false
+              }
+            ],
+            "meta": {
+              "existingRecordFound": true,
+              "source": "existing_isolated_record",
+              "encryptionConfigured": true,
+              "checkedAt": "2026-11-06T14:00:19.782Z",
+              "facebook": {
+                "verified": true,
+                "state": "connected",
+                "reason": null
+              },
+              "instagram": {
+                "verified": true,
+                "state": "connected",
+                "reason": null
+              },
+              "credentialsChanged": false,
+              "publishingEnabled": false
+            },
+            "permissions": {
+              "verified": true,
+              "granted": [
+                "pages_show_list",
+                "business_management",
+                "instagram_basic",
+                "instagram_content_publish",
+                "pages_read_engagement",
+                "pages_manage_posts",
+                "public_profile"
+              ],
+              "declined": [],
+              "checkedAt": "2026-11-06T14:01:30.636Z",
+              "expiresAt": "2027-01-01T14:38:21.329Z",
+              "refreshSupported": false,
+              "lifecycle": "Facebook Page authorization has no generic OAuth refresh token; retain working Page tokens and reconnect only when provider validation requires it."
+            }
+          },
+          "jobResults": [],
+          "errors": 0,
+          "websiteSessionUsed": false,
+          "outboundEnabled": false,
+          "publishingEnabled": false
+        }
+      }
+    },
+    {
+      "stepName": "step//./workflows/sandbox//executeCycle",
+      "status": "completed",
+      "completedAt": "2026-11-06T14:00:23.657Z",
+      "result": {
+        "stop": false,
+        "evidence": {
+          "checkedAt": "2026-11-06T14:00:23.291Z",
+          "operations": {
+            "mode": "preparation_only",
+            "departments": {
+              "marketing": {
+                "awaitingOwnerReview": 2,
+                "receipts": 2,
+                "ready": 2,
+                "held": 0,
+                "awaitingReceipt": 0,
+                "sourceHolds": 0,
+                "approvedDrafts": 0
+              },
+              "pr": {
+                "awaitingOwnerReview": 5,
+                "receipts": 5,
+                "ready": 5,
+                "held": 0,
+                "awaitingReceipt": 0,
+                "sourceHolds": 0,
+                "approvedDrafts": 0
+              },
+              "affiliate": {
+                "awaitingOwnerReview": 12,
+                "receipts": 12,
+                "ready": 0,
+                "held": 12,
+                "awaitingReceipt": 0,
+                "sourceHolds": 23,
+                "approvedDrafts": 0
+              }
+            },
+            "jobs": {
+              "completed": 222
+            },
+            "receiptMeaning": "Prepared evidence snapshots only; never messages sent, publication, owner approval or conversion.",
+            "realDeliveriesObserved": 0,
+            "liveSocialPostsObserved": 0,
+            "attributedPayingConversions": null,
+            "publishingEnabled": false,
+            "outboundEnabled": false
+          },
+          "connections": {
+            "at": "2026-11-06T14:00:23.291Z",
+            "oauth": [
+              {
+                "provider": "tiktok",
+                "status": "connected",
+                "accessStatus": "valid",
+                "tokenExpiresAt": "2026-11-07T12:00:42.041Z",
+                "refreshExpiresAt": "2027-11-05T12:30:01.041Z",
+                "refreshExpiryKnown": true,
+                "refreshAvailable": true,
+                "renewalAvailable": true,
+                "renewalStatus": "available",
+                "nextRefreshAt": "2026-11-07T11:30:42.041Z",
+                "expiryEvidence": {
+                  "source": "encrypted_provider_response",
+                  "issuedAt": "2026-11-06T12:00:42.041Z",
+                  "accessLifetimeSeconds": 86400,
+                  "refreshLifetimeSeconds": 31451359,
+                  "storedRefreshExpiresAt": "2027-11-05T12:30:01.041Z",
+                  "metadataMismatch": false
+                },
+                "warnings": [],
+                "grantedScopes": [
+                  "user.info.basic"
+                ],
+                "scopesVerifiedAt": "2026-11-06T12:00:42.223Z",
+                "identityVerifiedAt": "2026-11-06T13:47:11.285Z",
+                "nextRetryAt": null,
+                "reason": null,
+                "publishingEnabled": false
+              },
+              {
+                "provider": "x",
+                "status": "connected",
+                "accessStatus": "valid",
+                "tokenExpiresAt": "2026-11-06T15:16:47.998Z",
+                "refreshExpiresAt": null,
+                "refreshExpiryKnown": false,
+                "refreshAvailable": true,
+                "renewalAvailable": true,
+                "renewalStatus": "expiry-unknown",
+                "nextRefreshAt": "2026-11-06T14:46:47.998Z",
+                "expiryEvidence": {
+                  "source": "unknown",
+                  "issuedAt": "2026-11-06T13:16:47.998Z",
+                  "accessLifetimeSeconds": 7200,
+                  "refreshLifetimeSeconds": null,
+                  "storedRefreshExpiresAt": null,
+                  "metadataMismatch": false
+                },
+                "warnings": [],
+                "grantedScopes": [
+                  "offline.access",
+                  "tweet.read",
+                  "users.read"
+                ],
+                "scopesVerifiedAt": "2026-11-06T13:16:48.129Z",
+                "identityVerifiedAt": "2026-11-06T13:47:11.416Z",
+                "nextRetryAt": null,
+                "reason": null,
+                "publishingEnabled": false
+              }
+            ],
+            "meta": {
+              "existingRecordFound": true,
+              "source": "existing_isolated_record",
+              "encryptionConfigured": true,
+              "checkedAt": "2026-11-06T14:00:19.782Z",
+              "facebook": {
+                "verified": true,
+                "state": "connected",
+                "reason": null
+              },
+              "instagram": {
+                "verified": true,
+                "state": "connected",
+                "reason": null
+              },
+              "credentialsChanged": false,
+              "publishingEnabled": false
+            },
+            "permissions": {
+              "verified": true,
+              "granted": [
+                "pages_show_list",
+                "business_management",
+                "instagram_basic",
+                "instagram_content_publish",
+                "pages_read_engagement",
+                "pages_manage_posts",
+                "public_profile"
+              ],
+              "declined": [],
+              "checkedAt": "2026-11-06T14:00:23.280Z",
+              "expiresAt": "2027-01-01T14:38:21.329Z",
+              "refreshSupported": false,
+              "lifecycle": "Facebook Page authorization has no generic OAuth refresh token; retain working Page tokens and reconnect only when provider validation requires it."
+            }
+          },
+          "jobResults": [
+            {
+              "department": "marketing",
+              "ok": true,
+              "sourceHolds": 0,
+              "receipt": {
+                "created": 0,
+                "checked": 2
+              }
+            },
+            {
+              "department": "pr",
+              "ok": true,
+              "sourceHolds": 0,
+              "receipt": {
+                "created": 0,
+                "checked": 5
+              }
+            },
+            {
+              "department": "affiliate",
+              "ok": true,
+              "sourceHolds": 0,
+              "receipt": {
+                "created": 0,
+                "checked": 12
+              }
+            }
+          ],
+          "errors": 0,
+          "websiteSessionUsed": false,
+          "outboundEnabled": false,
+          "publishingEnabled": false
+        }
+      }
+    },
+    {
+      "stepName": "step//./workflows/sandbox//executeCycle",
+      "status": "completed",
+      "completedAt": "2026-11-06T13:59:12.869Z",
+      "result": {
+        "stop": false,
+        "evidence": {
+          "checkedAt": "2026-11-06T13:59:12.710Z",
+          "operations": {
+            "mode": "preparation_only",
+            "departments": {
+              "marketing": {
+                "awaitingOwnerReview": 2,
+                "receipts": 2,
+                "ready": 2,
+                "held": 0,
+                "awaitingReceipt": 0,
+                "sourceHolds": 0,
+                "approvedDrafts": 0
+              },
+              "pr": {
+                "awaitingOwnerReview": 5,
+                "receipts": 5,
+                "ready": 5,
+                "held": 0,
+                "awaitingReceipt": 0,
+                "sourceHolds": 0,
+                "approvedDrafts": 0
+              },
+              "affiliate": {
+                "awaitingOwnerReview": 12,
+                "receipts": 12,
+                "ready": 0,
+                "held": 12,
+                "awaitingReceipt": 0,
+                "sourceHolds": 23,
+                "approvedDrafts": 0
+              }
+            },
+            "jobs": {
+              "completed": 219
+            },
+            "receiptMeaning": "Prepared evidence snapshots only; never messages sent, publication, owner approval or conversion.",
+            "realDeliveriesObserved": 0,
+            "liveSocialPostsObserved": 0,
+            "attributedPayingConversions": null,
+            "publishingEnabled": false,
+            "outboundEnabled": false
+          },
+          "connections": {
+            "at": "2026-11-06T13:59:12.710Z",
+            "oauth": [
+              {
+                "provider": "tiktok",
+                "status": "connected",
+                "accessStatus": "valid",
+                "tokenExpiresAt": "2026-11-07T12:00:42.041Z",
+                "refreshExpiresAt": "2027-11-05T12:30:01.041Z",
+                "refreshExpiryKnown": true,
+                "refreshAvailable": true,
+                "renewalAvailable": true,
+                "renewalStatus": "available",
+                "nextRefreshAt": "2026-11-07T11:30:42.041Z",
+                "expiryEvidence": {
+                  "source": "encrypted_provider_response",
+                  "issuedAt": "2026-11-06T12:00:42.041Z",
+                  "accessLifetimeSeconds": 86400,
+                  "refreshLifetimeSeconds": 31451359,
+                  "storedRefreshExpiresAt": "2027-11-05T12:30:01.041Z",
+                  "metadataMismatch": false
+                },
+                "warnings": [],
+                "grantedScopes": [
+                  "user.info.basic"
+                ],
+                "scopesVerifiedAt": "2026-11-06T12:00:42.223Z",
+                "identityVerifiedAt": "2026-11-06T13:47:11.285Z",
+                "nextRetryAt": null,
+                "reason": null,
+                "publishingEnabled": false
+              },
+              {
+                "provider": "x",
+                "status": "connected",
+                "accessStatus": "valid",
+                "tokenExpiresAt": "2026-11-06T15:16:47.998Z",
+                "refreshExpiresAt": null,
+                "refreshExpiryKnown": false,
+                "refreshAvailable": true,
+                "renewalAvailable": true,
+                "renewalStatus": "expiry-unknown",
+                "nextRefreshAt": "2026-11-06T14:46:47.998Z",
+                "expiryEvidence": {
+                  "source": "unknown",
+                  "issuedAt": "2026-11-06T13:16:47.998Z",
+                  "accessLifetimeSeconds": 7200,
+                  "refreshLifetimeSeconds": null,
+                  "storedRefreshExpiresAt": null,
+                  "metadataMismatch": false
+                },
+                "warnings": [],
+                "grantedScopes": [
+                  "offline.access",
+                  "tweet.read",
+                  "users.read"
+                ],
+                "scopesVerifiedAt": "2026-11-06T13:16:48.129Z",
+                "identityVerifiedAt": "2026-11-06T13:47:11.416Z",
+                "nextRetryAt": null,
+                "reason": null,
+                "publishingEnabled": false
+              }
+            ],
+            "meta": {
+              "existingRecordFound": true,
+              "source": "existing_isolated_record",
+              "encryptionConfigured": true,
+              "checkedAt": "2026-11-06T13:55:00.545Z",
+              "facebook": {
+                "verified": true,
+                "state": "connected",
+                "reason": null
+              },
+              "instagram": {
+                "verified": true,
+                "state": "connected",
+                "reason": null
+              },
+              "credentialsChanged": false,
+              "publishingEnabled": false
+            },
+            "permissions": {
+              "verified": true,
+              "granted": [
+                "pages_show_list",
+                "business_management",
+                "instagram_basic",
+                "instagram_content_publish",
+                "pages_read_engagement",
+                "pages_manage_posts",
+                "public_profile"
+              ],
+              "declined": [],
+              "checkedAt": "2026-11-06T13:59:12.695Z",
+              "expiresAt": "2027-01-01T14:38:21.329Z",
+              "refreshSupported": false,
+              "lifecycle": "Facebook Page authorization has no generic OAuth refresh token; retain working Page tokens and reconnect only when provider validation requires it."
+            }
+          },
+          "jobResults": [],
+          "errors": 0,
+          "websiteSessionUsed": false,
+          "outboundEnabled": false,
+          "publishingEnabled": false
+        }
+      }
+    }
+  ]
+}
