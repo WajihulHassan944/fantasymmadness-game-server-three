@@ -16,6 +16,7 @@ if (!capturedApp) throw new Error('Full Card bootstrap could not locate the Expr
 
 const mongoose = require('mongoose');
 const jwt = require('jsonwebtoken');
+const { verifyGameAdministrator } = require('./game-admin-authority');
 const crypto = require('crypto');
 const multer = require('multer');
 const cloudinary = require('cloudinary').v2;
@@ -47,7 +48,7 @@ const verifyToken = (req, res, next) => {
 const verifyAdminToken = (req, res, next) => {
   const token = String(req.headers.authorization || '').replace(/^Bearer\s+/i, '');
   if (!token) return res.status(401).json({ message: 'Admin authentication is required.' });
-  try { req.admin = jwt.verify(token, process.env.JWT_SECRET_ADMIN); return next(); }
+  try { req.admin = verifyGameAdministrator(token, process.env.JWT_SECRET_ADMIN); return next(); }
   catch (_error) { return res.status(401).json({ message: 'Invalid or expired admin session.' }); }
 };
 require('./etsy-integration')({app:capturedApp,mongoose,verifyAdminToken});

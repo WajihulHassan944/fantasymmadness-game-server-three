@@ -23,3 +23,5 @@ test('actual mixed administrator/affiliate creation guard rejects Growth and pla
  let writes=0;const call=claims=>{let status=200;const req={headers:{authorization:'Bearer '+jwt.sign(claims,secret)}},res={status(n){status=n;return this;},json(){return this;}};context.guard(req,res,()=>writes++);return{status,role:req.actorRole};};
  for(const scope of ['growth','user','player'])assert.notEqual(call({id,email:'qa@fixture.invalid',scope}).status,200);assert.notEqual(call({id,email:'qa@fixture.invalid',iss:'growth-admin'}).status,200);assert.notEqual(call({id,email:'qa@fixture.invalid',aud:'growth'}).status,200);assert.equal(writes,0);assert.equal(call({id,email:'owner@fixture.invalid'}).role,'admin');assert.equal(call({id,email:'partner@fixture.invalid',scope:'affiliate'}).role,'affiliate');assert.equal(writes,2);
 });
+
+test('bootstrap sidecars use the same separated game authority',()=>{const source=fs.readFileSync('full-card-bootstrap.js','utf8');assert.match(source,/req.admin = verifyGameAdministrator\(token, process.env.JWT_SECRET_ADMIN\)/);assert.doesNotMatch(source,/jwt\.verify\([^)]*JWT_SECRET_ADMIN/);});
