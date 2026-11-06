@@ -30,7 +30,7 @@ async function createProductionPreparation({rawDb,config,secrets,fetchImpl,verif
    const preparation=await runtime.preparation.run(now),operations=await runtime.preparation.summary();
    const finished=clock(),current=await settings.findOne({_id:'production-preparation',enabled:true,generation,deploymentId,lease,leaseUntil:{$gt:finished.toISOString()}});if(!current)return{stop:true,leaseLost:true};
    const errors=(report.errors||[]).length+(preparation.jobs||[]).filter(j=>!j.ok).length;
-   const evidence={generation,ordinal,workflowRunId,trigger:ordinal>0?'workflow_timer':'bootstrap',completedAt:finished.toISOString(),environment:'production',database:rawDb.databaseName,collectionPrefix:PREFIX,operations,errors,websiteSessionUsed:false,ownerApprovalRequired:true,publishingEnabled:false,outboundEnabled:false,automaticApprovals:0,paymentMutations:0};
+   const evidence={generation,ordinal,deploymentId,commit:config.releaseCommit,workflowRunId,trigger:ordinal>0?'workflow_timer':'bootstrap',completedAt:finished.toISOString(),environment:'production',database:rawDb.databaseName,collectionPrefix:PREFIX,operations,errors,websiteSessionUsed:false,ownerApprovalRequired:true,publishingEnabled:false,outboundEnabled:false,automaticApprovals:0,paymentMutations:0};
    await cycles.updateOne({_id:key},{$setOnInsert:evidence},{upsert:true});
    await settings.updateOne({_id:'production-preparation',enabled:true,generation,deploymentId,lease},{$set:{lastCompletedAt:evidence.completedAt,nextWakeAt:new Date(+finished+900000).toISOString(),lastError:errors?'preparation_jobs_require_review':null},$inc:{completedCycles:1,scheduledCycles:ordinal>0?1:0}});
    return{stop:false,evidence};
@@ -53,6 +53,16 @@ async function createProductionPreparation({rawDb,config,secrets,fetchImpl,verif
  async function stop(){await settings.updateOne({_id:'autonomy:policy'},{$set:{paused:true,enabled:false}},{upsert:true});await settings.updateOne({_id:'production-preparation'},{$set:{enabled:false,stoppedAt:clock().toISOString(),generation:'production-preparation-'+crypto.randomUUID()},$unset:{lease:'',leaseUntil:''}});}
  const backoffice=require('./growth-production-backoffice').createProductionBackoffice({runtime,config,status,clock});
  async function read(section,query={}){const view=await backoffice.read(section,query);if(view)return view;if(section==='overview')return{ok:true,overview:await runtime.overview()};if(section==='drafts')return{ok:true,drafts:await runtime.listDrafts({kind:query.kind,status:query.status,limit:Math.min(100,Number(query.limit)||30)})};const mapping={research:['prospects','shows'],affiliates:['affiliates','affiliates'],reports:['reports','reports'],alerts:['alerts','alerts'],audit:['audit','entries'],attribution:['attribution','events'],jobs:['jobs','jobs'],social:['social','posts']},entry=mapping[section];if(!entry)return{ok:false,reason:'production_read_route_not_found'};const filter=section==='affiliates'?{synthetic:{$ne:true},status:'active',liveAffiliateId:{$regex:'^[a-f0-9]{24}$'},'identityVerification.verified':true,'identityVerification.environment':'production','identityVerification.source':'website_affiliate_authority'}:{};return{ok:true,[entry[1]]:await runtime.collections[entry[0]].find(filter,{projection:{credentials:0,tokenSealed:0,verificationSealed:0}}).limit(100).toArray()};}
- return{cycle,status,activate,handover,stop,read,sessionCollections:{nonces:runtime.collections.ssoNonces,revocations:runtime.collections.sessionRevocations,audit:runtime.collections.audit}};
+ async function workerReceipts(limit=20){return{ok:true,environment:'production',receiptType:'preparation_only',receipts:await cycles.find({environment:'production',trigger:'workflow_timer',completedAt:{$type:'string'}},{projection:{_id:1,generation:1,ordinal:1,deploymentId:1,commit:1,workflowRunId:1,trigger:1,completedAt:1,environment:1,database:1,collectionPrefix:1,errors:1,websiteSessionUsed:1,ownerApprovalRequired:1,publishingEnabled:1,outboundEnabled:1,automaticApprovals:1,paymentMutations:1}}).sort({completedAt:-1}).limit(Math.min(100,Math.max(1,Number(limit)||20))).toArray()};}
+ async function posterImage(id){
+  if(!/^[a-f0-9]{20}-(portrait|story)$/.test(String(id)))return null;
+  const image=await runtime.collections.posters.findOne({id,withdrawnAt:{$exists:false}});
+  if(!image||image.art?.needsArtwork||!image.art?.used||image.qrDecoded!==image.qrUrl)return null;
+  const draft=await runtime.collections.drafts.findOne({id:image.draftId,kind:'marketing',status:{$in:['needs_owner_review','approved']}});
+  if(!draft||draft.poster?.status!=='ready'||draft.poster?.needsArtwork||draft.poster?.qr?.decodedMatches!==true||draft.poster?.qr?.destination?.ok!==true||![draft.poster?.portrait?.id,draft.poster?.story?.id].includes(id))return null;
+  return runtime.posters.getImage(id);
+ }
+ const review=require('./growth-production-review').createProductionReview({col:runtime.collections,quality:runtime.preparation.quality,clock});
+ return{cycle,status,activate,handover,stop,read,workerReceipts,posterImage,reviewDraft:review.decide,sessionCollections:{nonces:runtime.collections.ssoNonces,revocations:runtime.collections.sessionRevocations,audit:runtime.collections.audit}};
 }
 module.exports={createProductionPreparation};

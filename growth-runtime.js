@@ -175,7 +175,7 @@ function createGrowthRuntime({ db, config, secrets = {}, provider, fetchImpl = g
     return r.modifiedCount || 0;
   }
   const posterCfg = config.posters || { enabled: false };
-  const posterStudio = createPosterStudio({ col, fetchImpl, publicOrigin: posterCfg.publicOrigin, env: posterCfg.artEnv || {} });
+  const posterStudio = createPosterStudio({ col, fetchImpl, publicOrigin: posterCfg.publicOrigin, imagePath: posterCfg.imagePath, env: posterCfg.artEnv || {} });
   // Posters for open fight campaigns: generated once per campaign version (a few per run).
   async function affiliatePoster(draft, affiliate, channel, now) {
     const link = require('./growth-affiliate-program').playerLink(affiliate, draft.contest);

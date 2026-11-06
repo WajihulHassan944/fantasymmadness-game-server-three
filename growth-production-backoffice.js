@@ -3,6 +3,7 @@
 // This adapter exposes no delivery, approval, credential or game mutation methods.
 const {createBackoffice}=require('./growth-backoffice');
 const {productionChannelStatus}=require('./growth-production-channel-status');
+const {contentVersion}=require('./growth-production-review');
 function createProductionBackoffice({runtime,config,status,clock=()=>new Date()}){
  const bo=createBackoffice({runtime,manualOnly:true}),col=runtime.collections;
  async function read(section,q={}){
@@ -33,7 +34,7 @@ function createProductionBackoffice({runtime,config,status,clock=()=>new Date()}
    return{ok:true,drafts:await Promise.all(drafts.map(async d=>{
     let blockers;try{blockers=[...await runtime.preparation.quality(d,clock()),...(d.reviewSafety?.state==='hold'&&Array.isArray(d.reviewSafety.reasons)?d.reviewSafety.reasons:[])];}catch{blockers=['draft_assessment_unavailable'];}
     if(d.kind==='affiliate')blockers.push('current_recipient_suitability_requires_owner_verification');
-    return{...d,review:{state:blockers.length?'held':'eligible',blockers:[...new Set(blockers)],ownerApprovalRequired:true,liveDeliveryAuthorized:false,checkedAt:clock().toISOString()}};
+    return{...d,review:{state:blockers.length?'held':'eligible',version:contentVersion(d),blockers:[...new Set(blockers)],ownerApprovalRequired:true,liveDeliveryAuthorized:false,checkedAt:clock().toISOString()}};
    }))};
   }
   if(section==='marketing/coverage')return{ok:true,coverage:await bo.marketingCoverage()};
@@ -47,7 +48,7 @@ function createProductionBackoffice({runtime,config,status,clock=()=>new Date()}
   if(section==='suppressions')return{ok:true,suppressions:await bo.suppressions(q)};
   if(section==='workstreams')return{ok:true,...await bo.workstreams(q)};
   if(section==='social')return{ok:true,posts:await runtime.social.list({status:q.status}),paused:{paused:true,reason:'production_preparation_only'},provider:'none',channels:productionChannelStatus(s.connections),liveTestApproved:false};
-  if(section==='posters')return{ok:true,posters:await col.posters.find({withdrawnAt:{$exists:false}},{projection:{bytes:0,_id:0}}).limit(100).toArray(),enabled:false};
+  if(section==='posters')return{ok:true,posters:await col.posters.find({withdrawnAt:{$exists:false}},{projection:{bytes:0,_id:0}}).limit(100).toArray(),enabled:config.posters?.enabled===true};
   if(section==='recruitment'){
    const prospects=await runtime.recruitment.list(q),count=(filter={})=>col.recruitment.countDocuments(filter),d= s.operations.departments.affiliate;
    return{ok:true,prospects,counters:{discovered:await count(),researched:await count({researchedAt:{$exists:true}}),verifiedContacts:await count({'contact.verified':true}),drafted:await col.drafts.countDocuments({kind:'affiliate'}),awaitingApproval:d.awaitingOwnerReview,approved:d.approvedDrafts,sandboxCaptures:0,externalMessagesSent:0,responses:await count({status:'responded'}),onboarded:await count({status:{$in:['onboarding','active']}}),active:await col.affiliates.countDocuments({'identityVerification.verified':true,'identityVerification.environment':'production',status:'active'}),attributedPayingConversions:null},program:await runtime.recruitment.readiness(),lastResearch:await col.settings.findOne({_id:'affiliate-discovery-cursor'}),nextScheduledAt:s.scheduler.lastCompletedAt?new Date(Date.parse(s.scheduler.lastCompletedAt)+900000).toISOString():null,publishingEnabled:false,outboundEnabled:false};

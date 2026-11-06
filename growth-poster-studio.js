@@ -107,7 +107,7 @@ async function verifyDestination(fetchImpl, url, contest) {
 }
 
 // ---- studio: generate, verify, store, serve ----------------------------------------------------------
-function createPosterStudio({ col, fetchImpl = globalThis.fetch, publicOrigin, env = {}, logoUrl = LOGO_URL, artwork = null }) {
+function createPosterStudio({ col, fetchImpl = globalThis.fetch, publicOrigin, imagePath = '/api/growth/posters', env = {}, logoUrl = LOGO_URL, artwork = null }) {
   const policy = artPolicy(env);
   const origin = String(publicOrigin || '').replace(/\/+$/, '');
   const library = artwork || require('./growth-fighter-artwork').createArtworkLibrary({ col, fetchImpl, env });
@@ -117,7 +117,8 @@ function createPosterStudio({ col, fetchImpl = globalThis.fetch, publicOrigin, e
     const r = await fetchImage(fetchImpl, logoUrl, { maxBytes: 4 * 1024 * 1024 }).catch(() => ({ ok: false }));
     logoCache = { at: Date.now(), buffer: r.ok ? r.buffer : null }; return logoCache.buffer;
   }
-  const urlFor = (id) => `${origin}/api/growth/posters/${id}.jpg`;
+  if (!['/api/growth/posters', '/api/growth/production-posters'].includes(imagePath)) throw Error('invalid_poster_image_path');
+  const urlFor = (id) => `${origin}${imagePath}/${id}.jpg`;
   const provenance = (sel) => ({
     mode: sel.mode, needsArtwork: sel.needsArtwork, missing: sel.missing, problems: sel.problems.slice(0, 10),
     used: sel.mode !== 'text',
