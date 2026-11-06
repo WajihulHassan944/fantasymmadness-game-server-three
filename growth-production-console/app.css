@@ -237,3 +237,9 @@ html.embedded .modal-back { max-height: max(160px,calc(var(--fmm-owner-viewport,
 html.embedded .modal { max-height: max(136px,calc(var(--fmm-owner-viewport,720px) - 144px)); overflow: auto; }
 html.embedded .modal footer { position: sticky; bottom: 0; background: var(--card); }
 /* END authorized 2026-11-06 usability repairs. */
+
+/* Keep the preparation safeguard and emergency stop readable at mobile widths. */
+[data-testid="production-preparation-banner"]{flex-wrap:wrap;align-items:flex-start}
+[data-testid="production-preparation-banner"]>strong{flex-basis:100%;word-break:normal;overflow-wrap:normal}
+[data-testid="production-preparation-banner"]>span{flex:1 1 240px;min-width:0}
+[data-testid="production-preparation-banner"]>button{flex:0 0 auto;min-width:180px;white-space:normal;word-break:normal;overflow-wrap:normal}
