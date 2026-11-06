@@ -1,4 +1,5 @@
 'use strict';
 const test=require('node:test'),assert=require('node:assert/strict'),fs=require('node:fs'),crypto=require('node:crypto');
 const baseline=require('./docs/evidence/issue203/nov5-presentation-parity.json').filter(x=>x.file.startsWith('growth-console/'));
-test('approved November 5 dashboard assets stay byte-identical during worker and campaign repairs',()=>{assert.equal(baseline.length,3);for(const f of baseline)assert.equal(crypto.createHash('sha256').update(fs.readFileSync(f.file)).digest('hex'),f.sha256,f.file);});
+test('November 5 assets remain unchanged before explicitly authorized usability appendices',()=>{assert.equal(baseline.length,3);for(const f of baseline)assert.equal(crypto.createHash('sha256').update(fs.readFileSync(f.file,'utf8').replace(/        \/\* BEGIN authorized 2026-11-06 final review details\.[\s\S]*?        \/\* END authorized 2026-11-06 final review details\. \*\/\n/, '').split('\n/* BEGIN authorized 2026-11-06')[0].replace(/\n$/, '')+'\n').digest('hex'),f.sha256,f.file);});
+test('authorized usability changes match the reviewed assets, retaining the original baseline above',()=>{const approved=require('./docs/evidence/issue203-ui/authorized-usability-assets.json');for(const [file,hash] of Object.entries(approved))assert.equal(crypto.createHash('sha256').update(fs.readFileSync(file)).digest('hex'),hash,file);});

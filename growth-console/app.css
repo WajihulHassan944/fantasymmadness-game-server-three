@@ -224,3 +224,13 @@ code.copy{display:block;padding:8px 10px;border:1px dashed #9ab;border-radius:6p
 .provenance { margin: 6px 0 0; padding-left: 18px; }
 .form-row { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 10px; }
 .form-row input { flex: 1 1 220px; }
+
+/* BEGIN authorized 2026-11-06 usability repairs; original palette retained. */
+html.embedded .layout { min-height: 0; }
+html.embedded .login-wrap { min-height: 0; padding-bottom: 40px; }
+html.embedded .grid.two { grid-template-columns: repeat(auto-fit,minmax(min(100%,380px),1fr)); }
+html.embedded :is(.card,.grid,.card-head,.actions) { min-width: 0; }
+html.embedded .btn { max-width: 100%; white-space: normal; }
+html.embedded :is(input,select,textarea) { max-width: 100%; }
+html.embedded .poster-thumb img { object-fit: contain; }
+/* END authorized 2026-11-06 usability repairs. */

@@ -469,6 +469,17 @@
       title: 'Approve this ' + (KIND_NAMES[d.kind] || 'item').toLowerCase() + '?', confirmLabel: 'Approve', confirmClass: 'approve',
       body: (function () {
         var p = h('p', { text: isEmail ? 'Approving queues this email. Real email delivery is OFF in staging, so it will NOT be sent until you switch delivery on.' : 'Approving marks this post ready to publish. Nothing is posted automatically.' });
+        /* BEGIN authorized 2026-11-06 final review details. */
+        var review = h('section', { testid: 'campaign-final-review' },
+          h('h3', { text: d.headline || d.subject || d.id }),
+          h('p', { text: 'Draft ID: ' + d.id + ' · Schedule: not authorized by this review.' }),
+          h('p', { text: 'Technical staging approval only. Publishing and recipient delivery require separate explicit owner authorization and server-side gates.' }),
+          isEmail ? h('p', { text: 'Recipient: ' + (d.recipient || 'Not verified') + ' · Sender: contact@fantasymmadnesscom.com' }) : h('p', { text: 'Channels: ' + (d.channels || Object.keys(d.posts || {})).join(', ') + ' · Destination accounts must be verified in Connections before release.' }),
+          isEmail ? h('pre', { class: 'preview-text', text: d.text || 'No message body: do not authorize delivery.' }) : (d.posts ? channelPosts(d) : h('pre', {class:'preview-text',text:d.text || 'No caption: do not authorize publishing.'})),
+          d.contest ? h('p', { text: 'Event: ' + (d.contest.eventName || 'Unverified') + ' · Date: ' + (d.contest.dateKey || 'Unverified') + ' · Event start: ' + (d.contest.timeTba ? 'Unconfirmed; contest cutoff is not the event start.' : 'Verify against the published event source before release.') }) : null,
+          d.poster ? h('p', { text: 'Artwork: ' + [d.poster.portrait?.id, d.poster.story?.id].filter(Boolean).join(', ') + ' · QR destination: ' + (d.poster.qrUrl || 'Unverified') }) : null);
+        p = h('div', null, p, review);
+        /* END authorized 2026-11-06 final review details. */
         if (isEmail || !d.poster || !d.poster.needsArtwork) return p;
         approve.textBox = h('input', { type: 'checkbox', testid: 'accept-text-poster' });
         return h('div', null, p, h('div', { class: 'banner warn' }, h('div', null, h('strong', { text: 'This fight has no approved photos yet.' }), ' The poster shows the names only. Add approved photos on the Marketing page to get the photo poster, or approve with the text poster.')),
@@ -1334,3 +1345,29 @@
   window.addEventListener('hashchange', route);
   boot();
 })();
+
+/* BEGIN authorized 2026-11-06 embedded geometry protocol. */
+(function () {
+  'use strict';
+  if (!document.documentElement.classList.contains('embedded') || !window.ResizeObserver) return;
+  var last = 0, queued = false;
+  function measure() {
+    queued = false;
+    var layout = document.querySelector('.layout');
+    var header = document.querySelector('.topbar');
+    if (!layout) return;
+    var height = Math.ceil(layout.scrollHeight + (header ? header.offsetHeight : 0) + 2);
+    if (height < 160 || height > 30000 || height === last) return;
+    last = height;
+    var section = (location.hash.replace(/^#\//, '').split('?')[0] || 'overview');
+    window.parent.postMessage({type:'fmm-growth-console',event:'content-size',section:section,height:height}, (location.ancestorOrigins && location.ancestorOrigins[0]) || '*');
+  }
+  function schedule() { if (!queued) { queued = true; requestAnimationFrame(measure); } }
+  var observer = new ResizeObserver(schedule);
+  observer.observe(document.body);
+  new MutationObserver(schedule).observe(document.body,{childList:true,subtree:true});
+  window.addEventListener('hashchange',schedule);
+  window.addEventListener('load',schedule);
+  schedule();
+})();
+/* END authorized 2026-11-06 embedded geometry protocol. */
