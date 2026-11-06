@@ -2,6 +2,7 @@
 // Reuse the approved console's read models against production Growth collections.
 // This adapter exposes no delivery, approval, credential or game mutation methods.
 const {createBackoffice}=require('./growth-backoffice');
+const {productionChannelStatus}=require('./growth-production-channel-status');
 function createProductionBackoffice({runtime,config,status,clock=()=>new Date()}){
  const bo=createBackoffice({runtime,manualOnly:true}),col=runtime.collections;
  async function read(section,q={}){
@@ -45,7 +46,7 @@ function createProductionBackoffice({runtime,config,status,clock=()=>new Date()}
   if(section==='audit')return{ok:true,entries:await bo.auditLog(q)};
   if(section==='suppressions')return{ok:true,suppressions:await bo.suppressions(q)};
   if(section==='workstreams')return{ok:true,...await bo.workstreams(q)};
-  if(section==='social')return{ok:true,posts:await runtime.social.list({status:q.status}),paused:{paused:true,reason:'production_preparation_only'},provider:'none',channels:{},liveTestApproved:false};
+  if(section==='social')return{ok:true,posts:await runtime.social.list({status:q.status}),paused:{paused:true,reason:'production_preparation_only'},provider:'none',channels:productionChannelStatus(s.connections),liveTestApproved:false};
   if(section==='posters')return{ok:true,posters:await col.posters.find({withdrawnAt:{$exists:false}},{projection:{bytes:0,_id:0}}).limit(100).toArray(),enabled:false};
   if(section==='recruitment'){
    const prospects=await runtime.recruitment.list(q),count=(filter={})=>col.recruitment.countDocuments(filter),d= s.operations.departments.affiliate;

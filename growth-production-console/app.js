@@ -1276,6 +1276,7 @@
           body: h('p', { text: paused ? 'Scheduled posts that are due will go out on the next run (every 15 minutes), after their fight is checked again.' : 'Nothing will be posted to any channel until you resume. Scheduled posts stay in the queue.' }),
           onConfirm: function () { return api('POST', '/admin/social/pause', { paused: !paused }); } }).then(function (ok) { if (ok) { toast(paused ? 'Publishing resumed.' : 'Publishing paused.', 'good'); route(); } }).catch(fail);
       } });
+      if (PRODUCTION) { toggle.disabled = true; toggle.title = 'Publishing infrastructure requires a verified delivery release.'; }
       var rows = r.posts.map(function (p) {
         var acts = h('td', { class: 'nowrap' });
         if (['scheduled', 'held', 'failed'].indexOf(p.status) >= 0) acts.appendChild(h('button', { class: 'btn small danger', testid: 'btn-cancel-post', text: 'Cancel', onclick: function () { api('POST', '/admin/social/' + encodeURIComponent(p.id) + '/cancel').then(function () { toast('Post cancelled.', 'good'); route(); }).catch(fail); } }));
@@ -1296,7 +1297,7 @@
         head('Publishing', 'Scheduled social posts for approved fight campaigns. Nothing posts without your approval, and every fight is checked again just before posting.', toggle),
         paused ? h('div', { class: 'banner warn', testid: 'paused-banner' }, h('span', { class: 'ico', text: '⏸' }), h('div', null, h('strong', { text: 'Publishing is paused.' }), 'Nothing will be posted until you resume.' + (r.paused.by ? ' Paused by ' + r.paused.by + '.' : ''))) : null,
         h('section', { class: 'card' }, h('h2', { text: 'Channels' }), h('p', { class: 'sub', text: 'Mode: ' + (r.provider === 'none' ? 'off (posts are held)' : r.provider === 'sandbox' ? 'sandbox: posting is simulated, nothing reaches the real accounts' : 'live') }),
-          h('div', { class: 'grid tiles' }, Object.keys(names).map(function (ch) { var c = r.channels[ch] || {}; return h('div', { class: 'tile', testid: 'channel-tile-' + ch }, h('div', { class: 'label', text: names[ch] }), h('div', { class: 'value text', text: c.mode === 'live' ? 'Live' : c.mode === 'sandbox' ? 'Sandbox' : 'Off' }), h('div', { class: 'hint', text: c.ready ? (c.note || (c.mode === 'sandbox' ? 'Simulated: nothing reaches the account' : 'Ready')) : 'Authorization needed: see Connections' })); }))),
+          h('div', { class: 'grid tiles' }, Object.keys(names).map(function (ch) { var c = r.channels[ch] || {}; return h('div', { class: 'tile', testid: 'channel-tile-' + ch }, h('div', { class: 'label', text: names[ch] }), h('div', { class: 'value text', text: PRODUCTION ? (c.connected ? 'Connected' : 'Verification needed') : c.mode === 'live' ? 'Live' : c.mode === 'sandbox' ? 'Sandbox' : 'Off' }), h('div', { class: 'hint', text: PRODUCTION ? (c.note || 'Publishing disabled. Connection verification unavailable.') : c.ready ? (c.note || (c.mode === 'sandbox' ? 'Simulated: nothing reaches the account' : 'Ready')) : 'Authorization needed: see Connections' })); }))),
         /* BEGIN authorized 2026-11-06 publishing QA separation. */
         false &&
         /* END authorized 2026-11-06 publishing QA separation. */
