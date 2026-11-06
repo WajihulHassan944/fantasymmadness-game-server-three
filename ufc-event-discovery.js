@@ -3,8 +3,8 @@
 /**
  * Google News -> UFC upcoming event discovery.
  *
- * This module intentionally stays additive: it reuses the existing Match model,
- * the existing rss-parser instance, and the existing backend -> Swarm hook.
+ * Discovery writes only a separate proposal queue. Registry creation remains
+ * an explicit owner operation; no automatic approval or Registry mutation.
  */
 
 const GOOGLE_NEWS_UFC_RSS_FEED_URL = 'https://news.google.com/rss/search?q=UFC%20OR%20%22UFC%20Fight%20Night%22&hl=en-US&gl=US&ceid=US:en';
@@ -91,6 +91,7 @@ function registerUfcEventDiscovery(options = {}) {
     throw new Error('registerUfcEventDiscovery requires app, parser, and Match.');
   }
 
+  const proposalQueue = options.proposalQueue || Match.db?.collection('fight_discovery_proposals');
   let isRunning = false;
   let lastRun = null;
   let lastError = null;
@@ -117,6 +118,7 @@ function registerUfcEventDiscovery(options = {}) {
         triggerUpcomingEventAutomationForMatch,
         clearPublicResponseCache,
         logger,
+        proposalQueue,
         ...requestOptions,
       });
       lastRun = result;
@@ -182,6 +184,14 @@ function registerUfcEventDiscovery(options = {}) {
       lastRun,
       lastError,
     });
+  });
+
+  app.get('/api/admin/ufc-event-discovery/proposals', verifyAdminToken || verifyCronOrAdmin, async (_req, res) => {
+    try {
+      if (!proposalQueue) throw Error('proposal_queue_unavailable');
+      const proposals = await proposalQueue.find({status:'needs_owner_review'}).sort({firstSeenAt:-1}).limit(100).toArray();
+      res.json({ok:true,registryWritesEnabled:false,ownerApprovalRequired:true,proposals});
+    } catch { res.status(503).json({ok:false,reason:'proposal_queue_unavailable'}); }
   });
 
   app.post('/api/admin/ufc-event-discovery/refresh', verifyAdminToken || verifyCronOrAdmin, async (req, res) => {
@@ -264,6 +274,13 @@ async function refreshUpcomingUfcEvents(options = {}) {
       // Discovery produces proposals only. Neither cron, startup nor an admin
       // refresh may create/update production fights or trigger outbound Swarm work.
       // The existing owner fight-creation/editor workflows remain separate.
+      if (!(dryRun === true || String(dryRun).toLowerCase() === 'true')) {
+        if (!options.proposalQueue) throw Error('proposal_queue_unavailable');
+        await options.proposalQueue.updateOne({_id: candidate.discoveryKey}, {$setOnInsert: {
+          status:'needs_owner_review', ownerApprovalRequired:true, firstSeenAt:now,
+          initialCandidate:candidate, registryMatchId:null,
+        }, $set:{lastSeenAt:now, latestCandidate:candidate}}, {upsert:true});
+      }
       skipped.push({ reason: dryRun === true || String(dryRun).toLowerCase() === 'true' ? 'dry-run' : 'owner-registry-approval-required', title: candidate.title, eventName: candidate.eventName, confidence: candidate.confidence, candidate });
     } catch (error) {
       errors.push({ title: cleanString(item?.title), error: summarizeError(error) });
