@@ -241,3 +241,9 @@ button:focus-visible,a:focus-visible,input:focus-visible,select:focus-visible,te
 [hidden]{display:none!important}main{min-width:0}pre,a,td,.card,.draft{overflow-wrap:anywhere}img{max-width:100%;height:auto}
 @media(max-width:640px){.topbar{height:auto;min-height:56px;flex-wrap:wrap;padding:12px}.layout{display:block}.sidenav{display:flex;flex-wrap:wrap}.sidenav a{font-size:12px}main,html.embedded main{padding:14px 10px}.grid.two{grid-template-columns:minmax(0,1fr)}.page-head .actions{margin-left:0}.stage-pill{margin-left:0}}
 @media(prefers-reduced-motion:reduce){*,*::before,*::after{animation:none!important;transition:none!important;scroll-behavior:auto!important}}
+/* Override legacy light surfaces together so campaign text keeps readable contrast. */
+.draft,.empty,.modal,.login,.funnel-step,.funnel-step.off,.chip,.chip.kind,.page-option{background:var(--card);color:var(--ink);border-color:var(--line)}
+.facts{background:#10251d;color:#e8f8ef;border-color:#315943}
+select,input[type=text],input[type=email],input[type=password],input[type=url],textarea{background:#17202b;color:var(--ink);border-color:var(--line-2)}
+dl.facts dt{color:#c4dcce}.modal header,.modal footer{border-color:var(--line)}
+.email-preview-safe td,.email-preview-safe th{background:#fff;color:#161a22}

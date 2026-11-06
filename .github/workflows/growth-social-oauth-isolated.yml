@@ -138,3 +138,12 @@ jobs:
           WORKER_URL: ${{ inputs.worker_url || env.STAGING_WORKER_URL }}
           EXPECTED_WORKER_RELEASE: ${{ inputs.expected_release || env.STAGING_WORKER_RELEASE }}
         run: node scripts/growth-managed-worker-smoke.js
+
+      - name: Upload fixture-only dashboard screenshot evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: issue203-dashboard-fixtures
+          path: docs/evidence/issue203/*.png
+          if-no-files-found: ignore
+          retention-days: 14
