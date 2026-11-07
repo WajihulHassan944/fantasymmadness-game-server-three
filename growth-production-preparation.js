@@ -20,7 +20,7 @@ async function createProductionPreparation({rawDb,config,secrets,fetchImpl,verif
  const stopped=async()=>{const s=await settings.findOne({_id:'production-preparation'}),p=await settings.findOne({_id:'autonomy:policy'});return !s?.enabled||p?.paused===true;};
  async function cycle({generation,ordinal,deploymentId,workflowRunId=null}){
   const state=await settings.findOne({_id:'production-preparation'});if(await stopped()||state.generation!==generation||state.deploymentId!==deploymentId)return{stop:true};
-  const now=clock(),bucket=Math.floor(+now/900000),key=generation+':'+bucket,lease=crypto.randomUUID();
+  const now=clock(),bucket=Math.floor(+now/900000),key=generation+':'+bucket+(ordinal===1?':confirmation':''),lease=crypto.randomUUID();
   const existing=await cycles.findOne({_id:key});if(existing?.completedAt)return{stop:false,duplicate:true};
   const claimed=await settings.findOneAndUpdate({_id:'production-preparation',enabled:true,generation,deploymentId,$or:[{leaseUntil:{$exists:false}},{leaseUntil:{$lte:now.toISOString()}}]},{$set:{lease,leaseUntil:new Date(+now+10*60000).toISOString()}},{returnDocument:'after'});if(!claimed)return{stop:false,busy:true};
   try{
@@ -33,7 +33,7 @@ async function createProductionPreparation({rawDb,config,secrets,fetchImpl,verif
    const preparation=await runtime.preparation.run(now),operations=await runtime.preparation.summary();
    const finished=clock(),current=await settings.findOne({_id:'production-preparation',enabled:true,generation,deploymentId,lease,leaseUntil:{$gt:finished.toISOString()}});if(!current)return{stop:true,leaseLost:true};
    const errors=(report.errors||[]).length+(report.jobs||[]).filter(j=>!j.ok).length+(preparation.jobs||[]).filter(j=>!j.ok).length;
-   const evidence={generation,ordinal,deploymentId,commit:config.releaseCommit,workflowRunId,trigger:ordinal>0?'workflow_timer':'bootstrap',completedAt:finished.toISOString(),environment,database:rawDb.databaseName,collectionPrefix:PREFIX,operations,errors,websiteSessionUsed:false,ownerApprovalRequired:true,publishingEnabled:false,outboundEnabled:false,automaticApprovals:0,paymentMutations:0};
+   const evidence={generation,ordinal,cyclePurpose:ordinal===1?'release_confirmation':'scheduled_preparation',jobsProcessed:(report.jobs||[]).filter(j=>j.ok).length,preparationJobsProcessed:(preparation.jobs||[]).filter(j=>j.ok).length,deploymentId,commit:config.releaseCommit,workflowRunId,trigger:ordinal>0?'workflow_timer':'bootstrap',completedAt:finished.toISOString(),environment,database:rawDb.databaseName,collectionPrefix:PREFIX,operations,errors,websiteSessionUsed:false,ownerApprovalRequired:true,publishingEnabled:false,outboundEnabled:false,automaticApprovals:0,paymentMutations:0};
    await cycles.updateOne({_id:key},{$setOnInsert:evidence},{upsert:true});
    await settings.updateOne({_id:'production-preparation',enabled:true,generation,deploymentId,lease},{$set:{lastCompletedAt:evidence.completedAt,nextWakeAt:new Date(+finished+900000).toISOString(),lastError:errors?'preparation_jobs_require_review':null},$inc:{completedCycles:1,scheduledCycles:ordinal>0?1:0}});
    return{stop:false,evidence};
@@ -63,7 +63,7 @@ async function createProductionPreparation({rawDb,config,secrets,fetchImpl,verif
   const receipt={verifiedOwnerSession:true,at:clock().toISOString(),releaseCommit:config.releaseCommit,checks,allReadModelsPassed:checks.every(x=>x.ok),publishingEnabled:false,outboundEnabled:false};
   await settings.updateOne({_id:'owner-production-acceptance'},{$set:receipt},{upsert:true});await runtime.collections.audit.insertOne({action:'owner_production_acceptance',owner,...receipt});return{ok:receipt.allReadModelsPassed,...receipt};
  }
- async function workerReceipts(limit=20){return{ok:true,environment,receiptType:'preparation_only',receipts:await cycles.find({environment,trigger:'workflow_timer',completedAt:{$type:'string'}},{projection:{_id:1,generation:1,ordinal:1,deploymentId:1,commit:1,workflowRunId:1,trigger:1,completedAt:1,environment:1,database:1,collectionPrefix:1,errors:1,websiteSessionUsed:1,ownerApprovalRequired:1,publishingEnabled:1,outboundEnabled:1,automaticApprovals:1,paymentMutations:1}}).sort({completedAt:-1}).limit(Math.min(100,Math.max(1,Number(limit)||20))).toArray()};}
+ async function workerReceipts(limit=20){return{ok:true,environment,receiptType:'preparation_only',receipts:await cycles.find({environment,trigger:'workflow_timer',completedAt:{$type:'string'}},{projection:{_id:1,generation:1,ordinal:1,cyclePurpose:1,jobsProcessed:1,preparationJobsProcessed:1,deploymentId:1,commit:1,workflowRunId:1,trigger:1,completedAt:1,environment:1,database:1,collectionPrefix:1,errors:1,websiteSessionUsed:1,ownerApprovalRequired:1,publishingEnabled:1,outboundEnabled:1,automaticApprovals:1,paymentMutations:1}}).sort({completedAt:-1}).limit(Math.min(100,Math.max(1,Number(limit)||20))).toArray()};}
  async function posterImage(id){
   if(!/^[a-f0-9]{20}-(portrait|story)$/.test(String(id)))return null;
   const image=await runtime.collections.posters.findOne({id,withdrawnAt:{$exists:false}});
