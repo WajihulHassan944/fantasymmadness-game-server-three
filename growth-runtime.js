@@ -38,7 +38,7 @@ function createGrowthRuntime({ db, config, secrets = {}, provider, fetchImpl = g
   else if (db.databaseName && db.databaseName !== 'fmgrowthtest') throw Error('Growth runtime only uses the fmgrowthtest database');
   if (!provider || typeof provider.send !== 'function') throw Error('Delivery provider required');
   const col = {
-    contestVerifications:db.collection('growth_contest_verifications'),recruitment:db.collection('affiliate_prospects'),preparationJobs:db.collection('growth_preparation_jobs'),preparationReceipts:db.collection('growth_preparation_receipts'),connectionAlerts:db.collection('growth_connection_alerts'),
+    marketingEligibility:db.collection('growth_marketing_eligibility'),contestVerifications:db.collection('growth_contest_verifications'),recruitment:db.collection('affiliate_prospects'),preparationJobs:db.collection('growth_preparation_jobs'),preparationReceipts:db.collection('growth_preparation_receipts'),connectionAlerts:db.collection('growth_connection_alerts'),
     runs: db.collection('isolated_run_claims'), workstreams: db.collection('isolated_workstream_runs'),
     jobs: db.collection('unattended_jobs'), drafts: db.collection('growth_drafts'), prospects: db.collection('growth_prospects'),
     deliveries: db.collection('growth_delivery_claims'), alerts: db.collection('growth_alerts'), reports: db.collection('growth_reports'),
@@ -234,7 +234,7 @@ function createGrowthRuntime({ db, config, secrets = {}, provider, fetchImpl = g
         // Preserve owner content and approval, while independently holding stale evidence.
         const rejected = feed.rejected.find(row => row.id === d.contestId);
         const heldReasons = !c ? (rejected?.reasons || (feed.complete ? ['contest_no_longer_open_or_verified'] : ['registry_check_incomplete'])) : c.fingerprint !== d.contestFingerprint ? ['fight_details_changed_review_required'] : [];
-        await col.drafts.updateOne({id:d.id,status:d.status,contestFingerprint:d.contestFingerprint},{$set:{marketingEligibility:{state:heldReasons.length?'held':'eligible',reasons:heldReasons,checkedAt:now.toISOString()},sendPermitted:false}});
+        await col.marketingEligibility.updateOne({_id:d.id},{$set:{contestId:d.contestId,fingerprint:d.contestFingerprint,state:heldReasons.length?'held':'eligible',reasons:heldReasons,checkedAt:now.toISOString()}},{upsert:true});
         if(d.status==='approved'){refinement.preservedApproved++;continue;}
         if(d.editedBy||d.editedAt||d.editCount>0){refinement.preservedOwnerWork++;continue;}
         if(c&&d.copyVersion!==2){const k=await marketingCopy(c,now);const regenerated=await col.drafts.updateOne({id:d.id,status:'needs_owner_review',editCount:{$not:{$gt:0}},editedBy:{$exists:false}},{$set:{...k,channels:['facebook','x'],contest:c,copyRegeneratedAt:now.toISOString()},$push:{contentHistory:{at:now.toISOString(),reason:'platform_and_timing_refinement',previous:{text:d.text,posts:d.posts,headline:d.headline,link:d.link}}}});refinement.regenerated+=regenerated.modifiedCount;continue;}

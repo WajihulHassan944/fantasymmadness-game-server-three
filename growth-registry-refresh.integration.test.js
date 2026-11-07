@@ -38,10 +38,12 @@ test('registry refresh retains campaigns on partial outage, deduplicates retries
     const chosen=await rt.collections.drafts.findOne({kind:'marketing',genre:'boxing',status:'needs_owner_review'});
     const version=require('./growth-production-review').contentVersion(chosen);
     await rt.collections.drafts.updateOne({id:chosen.id},{$set:{status:'approved',ownerApproved:true,contentApproval:{action:'approve',version,owner:'a'.repeat(24)},ownerReviewHistory:[{action:'approve',version}]}});
+    const approvedSnapshot=await rt.collections.drafts.findOne({id:chosen.id});
     expiredId=chosen.contestId;
     await rt.refreshMarketing(now);
     const held=await rt.collections.drafts.findOne({id:chosen.id});
-    assert.equal(held.status,'approved');assert.equal(held.ownerApproved,true);assert.equal(held.marketingEligibility.state,'held');assert.ok(held.marketingEligibility.reasons.includes('event_date_in_past'));assert.equal(held.sendPermitted,false);
+    const eligibility=await rt.collections.marketingEligibility.findOne({_id:chosen.id});
+    assert.deepEqual(held,approvedSnapshot);assert.equal(eligibility.state,'held');assert.ok(eligibility.reasons.includes('event_date_in_past'));assert.equal(held.sendPermitted,false);
     assert.equal(require('./growth-production-review').contentVersion(held),version);
     assert.equal(held.ownerReviewHistory.length,1);
     assert.ok((await rt.preparation.quality(held,now)).includes('event_date_in_past'));

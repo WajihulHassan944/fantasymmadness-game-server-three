@@ -27,3 +27,5 @@ Production currently still reports two pending Marketing drafts, zero approved M
 - Record per-source scan coverage and expose the configured horizon and per-sport campaign cap in the existing coverage description.
 
 Validation: 38 production-composition, browser, security, preparation and refresh checks passed without skips. A subsequent 21-check filter/display run passed, including the nickname regression. The approved-expiry regression preserves the approved content hash and history while holding expired source evidence. These repairs are not deployed; production queue holds are not claimed.
+
+Final preservation correction: eligibility evidence lives in its own Growth collection, never on an approved or owner-edited campaign record. The full-document immutability regression and 40 combined integration/security/browser checks passed with zero skips on November 7. The morning read-only rescan returned the same 137 source records and the same two entry-state conflicts.
