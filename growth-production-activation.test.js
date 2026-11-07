@@ -11,3 +11,11 @@ test('platform Cron handover requires the exact release, healthy enabled source 
   try{const response=await fetch('http://127.0.0.1:'+server.address().port+'/api/growth/internal/preparation/posters',{headers:scenario==='unauthenticated'?{}:{Authorization:'Bearer '+e.CRON_SECRET}});assert.equal(response.status,['unauthenticated','preview'].includes(scenario)?401:scenario==='wrong-source'?503:200,scenario);assert.equal(calls.length,scenario==='valid'?1:0,scenario);}finally{await new Promise(r=>server.close(r));}
  }
 });
+const uri=process.env.GROWTH_TEST_MONGO_URI;
+test('release bootstrap discovers immediately even when the previous worker completed the generic bucket',{skip:!/^mongodb:\/\/(127\.0\.0\.1|localhost)/.test(uri||''),timeout:30000},async()=>{
+ const {MongoClient}=require('mongodb'),{createProductionPreparation}=require('./growth-production-preparation'),{resolveProductionPreparationConfig,DATABASE,PREFIX}=require('./growth-production-preparation-config');
+ const client=await new MongoClient(uri).connect(),raw=client.db(DATABASE),prefix='bootstrap_'+crypto.randomBytes(6).toString('hex')+'_',db={databaseName:DATABASE,collection:n=>raw.collection(prefix+n)},r=resolveProductionPreparationConfig(env());let now=new Date(),discoveries=0,captures=0;
+ try{const settings=db.collection(PREFIX+'growth_settings'),alerts=db.collection(PREFIX+'growth_alerts'),p=await createProductionPreparation({rawDb:db,...r,verifiedOwnerIds:r.config.autonomy.owners,clock:()=>now,runtimeFactory:()=>({collections:{settings,alerts},init:async()=>{},refreshMarketing:async()=>{discoveries++;},tick:async()=>({skipped:'duplicate_invocation',jobs:[],errors:[]}),preparation:{capture:async d=>{assert.equal(d,'marketing');captures++;},run:async()=>({jobs:[]}),summary:async()=>({departments:{}}),quality:async()=>[]}})});
+ await p.activate({deploymentId:'dpl_new',confirmation:'ACTIVATE PRODUCTION PREPARATION ONLY'});const generation=(await p.status()).scheduler.generation;await p.cycle({generation,ordinal:0,deploymentId:'dpl_new'});assert.equal(discoveries,1);assert.equal(captures,1);now=new Date(+now+16*60000);await p.cycle({generation,ordinal:1,deploymentId:'dpl_new'});assert.equal(discoveries,1);
+ }finally{for(const row of await raw.listCollections({name:{$regex:'^'+prefix}}).toArray())await raw.collection(row.name).drop();await client.close();}
+});

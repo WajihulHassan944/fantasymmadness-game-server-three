@@ -26,6 +26,8 @@ async function createProductionPreparation({rawDb,config,secrets,fetchImpl,verif
   try{
    if(await stopped())return{stop:true};
    // No dispatch/autonomy/publisher/affiliate mutation methods are exposed.
+   // Release bootstrap must not inherit a completed preparation bucket from the old worker.
+   if(ordinal===0&&typeof runtime.refreshMarketing==='function'){await runtime.refreshMarketing(now,{trigger:'verified_production_release'});await runtime.preparation.capture('marketing',now);}
    const report=await runtime.tick({now,preparationOnly:true});
    if(await stopped())return{stop:true};
    const preparation=await runtime.preparation.run(now),operations=await runtime.preparation.summary();
@@ -88,6 +90,7 @@ async function createProductionPreparation({rawDb,config,secrets,fetchImpl,verif
   finally{await settings.updateOne({_id:'poster-preparation-lease',token},{$unset:{token:'',until:''}});}
  }
  const review=require('./growth-production-review').createProductionReview({col:runtime.collections,quality:runtime.preparation.quality,clock});
+ async function reviewDraft(id,decision){const result=await review.decide(id,decision);if(result.ok){const d=await runtime.collections.drafts.findOne({id});if(d)try{await runtime.preparation.capture(d.kind,clock());}catch{result.evidenceRefreshPending=true;}}return result;}
  async function ownerAction(route,body={},owner){
   if(!owners.includes(owner))return{ok:false,reason:'verified_production_owner_required'};
   let match;
@@ -98,6 +101,6 @@ async function createProductionPreparation({rawDb,config,secrets,fetchImpl,verif
   if(route==='suppressions'){const address=String(body.address||'').trim();if(address.length>254||!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(address))return{ok:false,reason:'valid_email_required'};await runtime.suppression.suppress(address,{source:'operator',reason:body.reason,now:clock()});await runtime.collections.audit.insertOne({action:'suppress',admin:owner,at:clock().toISOString()});return{ok:true};}
   return{ok:false,reason:'owner_action_not_available'};
  }
- return{verifiedOwnerIds:owners,cycle,status,activate,handover,stop,read,recordOwnerAcceptance,workerReceipts,posterImage,preparePosterAssets,ownerAction,reviewDraft:review.decide,sessionCollections:{nonces:runtime.collections.ssoNonces,revocations:runtime.collections.sessionRevocations,audit:runtime.collections.audit}};
+ return{verifiedOwnerIds:owners,cycle,status,activate,handover,stop,read,recordOwnerAcceptance,workerReceipts,posterImage,preparePosterAssets,ownerAction,reviewDraft,sessionCollections:{nonces:runtime.collections.ssoNonces,revocations:runtime.collections.sessionRevocations,audit:runtime.collections.audit}};
 }
 module.exports={createProductionPreparation};
