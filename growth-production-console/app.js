@@ -31,6 +31,15 @@
   // navigation, so the console hides its own sidebar and reports the current section.
   var EMBEDDED = /[?&]embed=1(&|$)/.test(location.search) && window.parent !== window;
   if (EMBEDDED) document.documentElement.classList.add('embedded');
+  // A standalone tab has no authenticated parent to supply a Growth-only token.
+  // Re-enter the existing first-party administrator route; never transport a token in a URL.
+  if (PRODUCTION && !ISOLATED_PREVIEW && !EMBEDDED) {
+    var requestedSection = location.hash.replace(/^#\//, '').split('?')[0];
+    var knownSection = NAV.some(function (item) { return item[0] === requestedSection; }) ? requestedSection : 'overview';
+    location.replace('https://www.fantasymmadness.com/administration/growth-engine' + (knownSection === 'overview' ? '' : '/' + knownSection));
+    return;
+  }
+
   // Messages to the back office: { type:'fmm-growth-console', section, signedIn, event?, reason?, expiresAt? }
   // event: 'session-ready' (session accepted; expiresAt in ms), 'session-expired' (ended/revoked; reason),
   // 'signed-out' (signed out here or at the back office's request).
