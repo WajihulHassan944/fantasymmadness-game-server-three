@@ -165,8 +165,15 @@ function createPosterStudio({ col, fetchImpl = globalThis.fetch, publicOrigin, i
     const art = provenance(sel);
     const poster = { portrait: { id: out.portrait.id, url: out.portrait.url, width: out.portrait.width, height: out.portrait.height }, story: { id: out.story.id, url: out.story.url, width: out.story.width, height: out.story.height },
       art, qrUrl, qr, status: holds.length ? 'hold' : 'ready', holdReasons: holds, needsArtwork: art.needsArtwork, generatedAt: now.toISOString(), renderVersion: RENDER_VERSION, sourceSig: sourceSig(c) };
-    await col.drafts.updateOne({ id: draft.id }, { $set: { poster } });
-    await col.posters.updateMany({ draftId: draft.id, id: { $nin: [out.portrait.id, out.story.id] }, withdrawnAt: { $exists: false } }, { $set: { withdrawnAt: now.toISOString() } });
+    // A render may outlive an owner review or edit. Never replace the version
+    // that the owner approved while image processing was in progress.
+    const unchanged = { id: draft.id, contestFingerprint: draft.contestFingerprint,
+      ...(draft.status ? { status: draft.status } : {}),
+      editedAt: draft.editedAt === undefined ? { $exists: false } : { $eq: draft.editedAt },
+      poster: draft.poster === undefined ? { $exists: false } : { $eq: draft.poster } };
+    const attached = await col.drafts.updateOne(unchanged, { $set: { poster } });
+    if (attached.matchedCount === 0 && await col.drafts.findOne({ id: draft.id })) return { ok: false, reason: 'campaign_changed_during_poster_render' };
+    if (attached.matchedCount !== 0) await col.posters.updateMany({ draftId: draft.id, id: { $nin: [out.portrait.id, out.story.id] }, withdrawnAt: { $exists: false } }, { $set: { withdrawnAt: now.toISOString() } });
     return { ok: true, poster };
   }
   async function getImage(id) {

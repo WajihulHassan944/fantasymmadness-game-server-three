@@ -63,7 +63,24 @@ async function createProductionPreparation({rawDb,config,secrets,fetchImpl,verif
   if(!draft||draft.poster?.status!=='ready'||draft.poster?.needsArtwork||draft.poster?.qr?.decodedMatches!==true||draft.poster?.qr?.destination?.ok!==true||![draft.poster?.portrait?.id,draft.poster?.story?.id].includes(id))return null;
   return runtime.posters.getImage(id);
  }
+ async function preparePosterAssets(){
+  if(environment!=='production'||await stopped()||!config.posters?.enabled)return{ok:true,skipped:'poster_preparation_not_active',publishingEnabled:false};
+  const now=clock(),key='poster-assets:'+Math.floor(+now/900000),receipts=db.collection('poster_preparation_cycles');
+  if(await receipts.findOne({_id:key,completedAt:{$exists:true}}))return{ok:true,duplicate:true,publishingEnabled:false};
+  const token=crypto.randomUUID();await settings.updateOne({_id:'poster-preparation-lease'},{$setOnInsert:{createdAt:now.toISOString()}},{upsert:true});
+  const lease=await settings.findOneAndUpdate({_id:'poster-preparation-lease',$or:[{until:{$exists:false}},{until:{$lte:now.toISOString()}}]},{$set:{token,until:new Date(+now+10*60000).toISOString()}},{returnDocument:'after'});if(!lease)return{ok:true,busy:true,publishingEnabled:false};
+  try{
+   if(await stopped())return{ok:true,skipped:'emergency_stop',publishingEnabled:false};
+   const candidates=await runtime.collections.drafts.find({kind:'marketing',status:'needs_owner_review',editedBy:{$exists:false},editedAt:{$exists:false},editCount:{$not:{$gt:0}}}).limit(20).toArray(),ids=[];
+   for(const d of candidates)if(await runtime.collections.contestVerifications.findOne({_id:d.contestId,fingerprint:d.contestFingerprint,eligible:true,verifiedAt:{$gte:new Date(+now-35*60000).toISOString()}}))ids.push(d.id);
+   const result=ids.length?await runtime.ensurePosters(now,{ids,limit:2}):{generated:0,failed:[],waiting:0};
+   await runtime.preparation.capture('marketing',clock());
+   await receipts.updateOne({_id:key},{$setOnInsert:{completedAt:clock().toISOString(),environment,receiptType:'poster_preparation_only',result,publishingEnabled:false,outboundEnabled:false,ownerApprovalRequired:true}},{upsert:true});
+   return{ok:true,...result,publishingEnabled:false,outboundEnabled:false};
+  }catch{await runtime.collections.alerts.updateOne({alertKey:'production-poster-preparation'},{$set:{state:'open',error:'production_poster_preparation_failed',at:clock().toISOString()}},{upsert:true});throw Error('production_poster_preparation_failed');}
+  finally{await settings.updateOne({_id:'poster-preparation-lease',token},{$unset:{token:'',until:''}});}
+ }
  const review=require('./growth-production-review').createProductionReview({col:runtime.collections,quality:runtime.preparation.quality,clock});
- return{verifiedOwnerIds:owners,cycle,status,activate,handover,stop,read,workerReceipts,posterImage,reviewDraft:review.decide,sessionCollections:{nonces:runtime.collections.ssoNonces,revocations:runtime.collections.sessionRevocations,audit:runtime.collections.audit}};
+ return{verifiedOwnerIds:owners,cycle,status,activate,handover,stop,read,workerReceipts,posterImage,preparePosterAssets,reviewDraft:review.decide,sessionCollections:{nonces:runtime.collections.ssoNonces,revocations:runtime.collections.sessionRevocations,audit:runtime.collections.audit}};
 }
 module.exports={createProductionPreparation};

@@ -233,6 +233,20 @@ test('fight posters and platform campaigns, sandbox only', { skip, timeout: 1800
       assert.equal((await call('POST', `/admin/social/${encodeURIComponent(id)}/retry`, { confirmNotPublished: true })).status, 200);
     });
 
+    await t.test('a render cannot overwrite an owner decision or withdraw approved artwork', async () => {
+      const stale = await drafts.findOne({ kind: 'marketing', 'poster.status': 'ready' });
+      assert.ok(stale);
+      const ownerStatus = stale.status === 'approved' ? 'needs_owner_review' : 'approved';
+      await drafts.updateOne({ id: stale.id }, { $set: { status: ownerStatus, ownerApproved: ownerStatus === 'approved' } });
+      const result = await rt.posters.ensureForDraft(stale);
+      assert.equal(result.ok, false);
+      assert.equal(result.reason, 'campaign_changed_during_poster_render');
+      const preserved = await drafts.findOne({ id: stale.id });
+      assert.equal(preserved.status, ownerStatus);
+      assert.deepEqual(preserved.poster, stale.poster);
+      for (const format of ['portrait', 'story']) assert.equal((await db.collection('growth_posters').findOne({ id: stale.poster[format].id })).withdrawnAt, undefined);
+    });
+
     await t.test('nothing real: no live posts, no posts outside the sandbox', async () => {
       assert.equal(await db.collection('growth_social_posts').countDocuments({ status: 'published', sandbox: { $ne: true } }), 0);
     });
