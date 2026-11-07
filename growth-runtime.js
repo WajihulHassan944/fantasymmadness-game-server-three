@@ -231,6 +231,10 @@ function createGrowthRuntime({ db, config, secrets = {}, provider, fetchImpl = g
       const open = await col.drafts.find({ kind: 'marketing', contestId: { $exists: true }, status: { $in: ['needs_owner_review', 'approved'] } }).toArray();
       for (const d of open) {
         const c = live.get(d.contestId);
+        // Preserve owner content and approval, while independently holding stale evidence.
+        const rejected = feed.rejected.find(row => row.id === d.contestId);
+        const heldReasons = !c ? (rejected?.reasons || (feed.complete ? ['contest_no_longer_open_or_verified'] : ['registry_check_incomplete'])) : c.fingerprint !== d.contestFingerprint ? ['fight_details_changed_review_required'] : [];
+        await col.drafts.updateOne({id:d.id,status:d.status,contestFingerprint:d.contestFingerprint},{$set:{marketingEligibility:{state:heldReasons.length?'held':'eligible',reasons:heldReasons,checkedAt:now.toISOString()},sendPermitted:false}});
         if(d.status==='approved'){refinement.preservedApproved++;continue;}
         if(d.editedBy||d.editedAt||d.editCount>0){refinement.preservedOwnerWork++;continue;}
         if(c&&d.copyVersion!==2){const k=await marketingCopy(c,now);const regenerated=await col.drafts.updateOne({id:d.id,status:'needs_owner_review',editCount:{$not:{$gt:0}},editedBy:{$exists:false}},{$set:{...k,channels:['facebook','x'],contest:c,copyRegeneratedAt:now.toISOString()},$push:{contentHistory:{at:now.toISOString(),reason:'platform_and_timing_refinement',previous:{text:d.text,posts:d.posts,headline:d.headline,link:d.link}}}});refinement.regenerated+=regenerated.modifiedCount;continue;}
@@ -281,7 +285,7 @@ function createGrowthRuntime({ db, config, secrets = {}, provider, fetchImpl = g
     } else {
       await alert(`contest-source:${dayKey(now)}`, 'marketing', 'contest feed', `could not reach the FANTASY MMADNESS contest feed: ${feed.errors.join('; ')}`, now);
     }
-    const doc = { day: dayKey(now), checkedAt: now.toISOString(), trigger, sourceReachable: feed.sourceReachable, complete: feed.complete, sourceErrors: feed.errors, contestsChecked: feed.checked, verifiedContests: feed.contests.length, created: created.length, withdrawn, blocked, sports: coverage };
+    const doc = { day: dayKey(now), checkedAt: now.toISOString(), trigger, sourceReachable: feed.sourceReachable, complete: feed.complete, sourceErrors: feed.errors, sources: feed.sources, horizonDays: config.marketingHorizonDays, maxCampaignsPerSport:config.maxCampaignsPerSport, contestsChecked: feed.checked, verifiedContests: feed.contests.length, created: created.length, withdrawn, blocked, sports: coverage };
     await col.coverage.updateOne({ day: doc.day }, { $set: doc }, { upsert: true });
     if (withdrawn || created.length) await audit('refresh_marketing', { trigger, created: created.length, withdrawn, blocked: blocked.length, admin: 'system' });
     const posters = await ensurePosters(now).catch((e) => ({ error: clean(e.message) }));

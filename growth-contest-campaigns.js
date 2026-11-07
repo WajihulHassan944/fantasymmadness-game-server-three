@@ -59,7 +59,7 @@ function verifyContest(item, { now = new Date(), horizonDays = 21, mediaNames = 
   const b = clean(wrestling ? (item.competitorB?.displayName || item.competitorB?.name) : (item.matchFighterB || item.fighterB?.name || item.fighterBId?.name), 60);
   for (const [n, label] of [[a, 'a'], [b, 'b']]) {
     if (!n || n.length < 2 || PLACEHOLDER.test(n) || !/[a-z]/i.test(n)) reasons.push(`fighter_${label}_name_missing_or_placeholder`);
-    else if (MEDIA_WORDS.test(n) || mediaNames.has(norm(n))) reasons.push(`fighter_${label}_looks_like_media_not_a_fighter`);
+    else if (MEDIA_WORDS.test(n.replace(/["“][^"”]*["”]/g, ' ')) || mediaNames.has(norm(n))) reasons.push(`fighter_${label}_looks_like_media_not_a_fighter`);
     else if (!wrestling && /\s(and|&|\+)\s/i.test(n)) reasons.push(`fighter_${label}_names_two_people_or_a_show`);
   }
   if (a && b && norm(a) === norm(b)) reasons.push('same_fighter_twice');
@@ -74,6 +74,9 @@ function verifyContest(item, { now = new Date(), horizonDays = 21, mediaNames = 
   // canSubmitPrediction describes the requesting player's prediction state,
   // not whether this public contest accepts entries. Use the registry entry flag.
   if (item.entryOpen === false) reasons.push('registry_entries_unavailable');
+  // The anonymous Registry feed supplies this global bucket, separate from
+  // a particular player's prediction state. Conflicting public signals need review.
+  if (item.entryOpen === true && ['completed', 'closed', 'draft'].includes(String(item.fightStatusBucket || '').toLowerCase())) reasons.push('registry_public_entry_state_conflict');
   const status = clean(wrestling ? item.status : item.matchStatus, 20).toLowerCase();
   if (wrestling ? status !== 'open' : !OPEN_MATCH_STATUSES.has(status || 'ongoing')) reasons.push(`contest_not_open (${status || 'none'})`);
   // The live player-entry helper ignores legacy shadow flags on published LIVE
@@ -145,13 +148,37 @@ function sourceBase(env = {}) {
 }
 
 async function fetchVerifiedContests({ fetchImpl = globalThis.fetch, baseUrl = DEFAULT_SOURCE, now = new Date(), horizonDays = 21, mediaNames = new Set() } = {}) {
-  const errors = []; const raw = [];
-  try { const j = await getJson(fetchImpl, `${baseUrl}/api/public/prediction-fights?limit=100`); for (const it of (j.items || [])) raw.push({ ...it, __feed: 'prediction' }); }
-  catch (e) { errors.push(clean(e.message, 200)); }
-  try { const j = await getJson(fetchImpl, `${baseUrl}/api/public/pro-wrestling/matches?status=OPEN&limit=50`); for (const it of (j.items || [])) raw.push({ ...it, __feed: 'pro-wrestling' }); }
-  catch (e) { errors.push(clean(e.message, 200)); }
+  const errors = [], raw = [], sources = []; let successfulSources = 0;
+  // A mixed-sport top-100 listing can starve a sport behind another sport's rows.
+  // Query the Registry's supported category filter; never infer additional fights.
+  for (const category of ['boxing', 'mma', 'bare-knuckle', 'kickboxing']) {
+    const url = `${baseUrl}/api/public/prediction-fights?limit=100&category=${encodeURIComponent(category)}`;
+    try {
+      const j = await getJson(fetchImpl, url); successfulSources++;
+      const saturated = j.items.length >= 100;
+      sources.push({ sport: category === 'mma' ? 'mma-ufc' : category, url, records: j.items.length, complete: !saturated });
+      for (const it of j.items) raw.push({ ...it, __feed: 'prediction' });
+      // This endpoint has no pagination. Do not falsely declare a capped response complete.
+      if (saturated) errors.push(`prediction category ${category} reached the 100-record cap; Registry coverage is incomplete`);
+    } catch (e) { errors.push(clean(e.message, 200) + ` [category=${category}]`); sources.push({sport:category === 'mma' ? 'mma-ufc' : category,url,records:0,complete:false}); }
+  }
+  let page = 1, wrestlingRecords = 0, wrestlingComplete = false;
+  try {
+    for (; page <= 20; page++) {
+      const url = `${baseUrl}/api/public/pro-wrestling/matches?status=OPEN&limit=50&page=${page}`;
+      const j = await getJson(fetchImpl, url); successfulSources++;
+      for (const it of j.items) raw.push({ ...it, __feed: 'pro-wrestling' });
+      wrestlingRecords += j.items.length;
+      if (j.pagination?.hasNextPage === true) continue;
+      if (j.pagination?.hasNextPage === false || j.items.length < 50) { wrestlingComplete = true; break; }
+      errors.push('pro-wrestling feed reached its page limit without pagination evidence'); break;
+    }
+    if (page > 20) errors.push('pro-wrestling feed exceeded the bounded 20-page scan');
+  } catch (e) { errors.push(clean(e.message, 200)); }
+  sources.push({sport:'pro-wrestling',url:`${baseUrl}/api/public/pro-wrestling/matches?status=OPEN&limit=50`,records:wrestlingRecords,complete:wrestlingComplete});
+  const uniqueRaw = [...new Map(raw.map(it => [it.__feed+':'+String(it._id || it.id), it])).values()];
   const contests = []; const rejected = []; const seen = new Set(); const events = new Set();
-  for (const it of raw) {
+  for (const it of uniqueRaw) {
     const v = verifyContest(it, { now, horizonDays, mediaNames });
     if (!v.ok) { rejected.push({ id: v.id, sport: v.sport, label: v.label, reasons: v.reasons }); continue; }
     if (seen.has(v.contest.id)) continue; seen.add(v.contest.id); contests.push(v.contest);
@@ -161,7 +188,7 @@ async function fetchVerifiedContests({ fetchImpl = globalThis.fetch, baseUrl = D
     else events.add(eventKey);
   }
   contests.sort((x, y) => x.dateKey.localeCompare(y.dateKey));
-  return { contests, rejected, errors, checked: raw.length, sourceReachable: errors.length < 2, complete: errors.length === 0 };
+  return { contests, rejected, errors, checked: uniqueRaw.length, sources, sourceReachable: successfulSources > 0, complete: errors.length === 0 };
 }
 
 // ---- copy ----------------------------------------------------------------------
