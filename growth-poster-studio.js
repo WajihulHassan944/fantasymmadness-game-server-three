@@ -107,7 +107,7 @@ async function verifyDestination(fetchImpl, url, contest) {
 }
 
 // ---- studio: generate, verify, store, serve ----------------------------------------------------------
-function createPosterStudio({ col, fetchImpl = globalThis.fetch, publicOrigin, env = {}, logoUrl = LOGO_URL, artwork = null }) {
+function createPosterStudio({ col, fetchImpl = globalThis.fetch, publicOrigin, imagePath = '/api/growth/posters', env = {}, logoUrl = LOGO_URL, artwork = null }) {
   const policy = artPolicy(env);
   const origin = String(publicOrigin || '').replace(/\/+$/, '');
   const library = artwork || require('./growth-fighter-artwork').createArtworkLibrary({ col, fetchImpl, env });
@@ -117,7 +117,8 @@ function createPosterStudio({ col, fetchImpl = globalThis.fetch, publicOrigin, e
     const r = await fetchImage(fetchImpl, logoUrl, { maxBytes: 4 * 1024 * 1024 }).catch(() => ({ ok: false }));
     logoCache = { at: Date.now(), buffer: r.ok ? r.buffer : null }; return logoCache.buffer;
   }
-  const urlFor = (id) => `${origin}/api/growth/posters/${id}.jpg`;
+  if (!['/api/growth/posters', '/api/growth/production-posters'].includes(imagePath)) throw Error('invalid_poster_image_path');
+  const urlFor = (id) => `${origin}${imagePath}/${id}.jpg`;
   const provenance = (sel) => ({
     mode: sel.mode, needsArtwork: sel.needsArtwork, missing: sel.missing, problems: sel.problems.slice(0, 10),
     used: sel.mode !== 'text',
@@ -164,8 +165,15 @@ function createPosterStudio({ col, fetchImpl = globalThis.fetch, publicOrigin, e
     const art = provenance(sel);
     const poster = { portrait: { id: out.portrait.id, url: out.portrait.url, width: out.portrait.width, height: out.portrait.height }, story: { id: out.story.id, url: out.story.url, width: out.story.width, height: out.story.height },
       art, qrUrl, qr, status: holds.length ? 'hold' : 'ready', holdReasons: holds, needsArtwork: art.needsArtwork, generatedAt: now.toISOString(), renderVersion: RENDER_VERSION, sourceSig: sourceSig(c) };
-    await col.drafts.updateOne({ id: draft.id }, { $set: { poster } });
-    await col.posters.updateMany({ draftId: draft.id, id: { $nin: [out.portrait.id, out.story.id] }, withdrawnAt: { $exists: false } }, { $set: { withdrawnAt: now.toISOString() } });
+    // A render may outlive an owner review or edit. Never replace the version
+    // that the owner approved while image processing was in progress.
+    const unchanged = { id: draft.id, contestFingerprint: draft.contestFingerprint,
+      ...(draft.status ? { status: draft.status } : {}),
+      editedAt: draft.editedAt === undefined ? { $exists: false } : { $eq: draft.editedAt },
+      poster: draft.poster === undefined ? { $exists: false } : { $eq: draft.poster } };
+    const attached = await col.drafts.updateOne(unchanged, { $set: { poster } });
+    if (attached.matchedCount === 0 && await col.drafts.findOne({ id: draft.id })) return { ok: false, reason: 'campaign_changed_during_poster_render' };
+    if (attached.matchedCount !== 0) await col.posters.updateMany({ draftId: draft.id, id: { $nin: [out.portrait.id, out.story.id] }, withdrawnAt: { $exists: false } }, { $set: { withdrawnAt: now.toISOString() } });
     return { ok: true, poster };
   }
   async function getImage(id) {

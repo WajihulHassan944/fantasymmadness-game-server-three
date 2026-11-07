@@ -34,7 +34,7 @@ const hash = (s) => crypto.createHash('sha256').update(String(s).toLowerCase()).
 
 function createGrowthRuntime({ db, config, secrets = {}, provider, fetchImpl = globalThis.fetch, alertSender = null, metaConnection = null } = {}) {
   if (!db || typeof db.collection !== 'function') throw Error('Dedicated fmgrowthtest database handle required');
-  if (config?.mode === 'production_preparation') require('./growth-production-preparation-config').assertProductionDatabase(db, config);
+  if (['production_preparation','isolated_preparation_preview'].includes(config?.mode)) require('./growth-production-preparation-config').assertProductionDatabase(db, config);
   else if (db.databaseName && db.databaseName !== 'fmgrowthtest') throw Error('Growth runtime only uses the fmgrowthtest database');
   if (!provider || typeof provider.send !== 'function') throw Error('Delivery provider required');
   const col = {
@@ -175,7 +175,7 @@ function createGrowthRuntime({ db, config, secrets = {}, provider, fetchImpl = g
     return r.modifiedCount || 0;
   }
   const posterCfg = config.posters || { enabled: false };
-  const posterStudio = createPosterStudio({ col, fetchImpl, publicOrigin: posterCfg.publicOrigin, env: posterCfg.artEnv || {} });
+  const posterStudio = createPosterStudio({ col, fetchImpl, publicOrigin: posterCfg.publicOrigin, imagePath: posterCfg.imagePath, env: posterCfg.artEnv || {} });
   // Posters for open fight campaigns: generated once per campaign version (a few per run).
   async function affiliatePoster(draft, affiliate, channel, now) {
     const link = require('./growth-affiliate-program').playerLink(affiliate, draft.contest);
