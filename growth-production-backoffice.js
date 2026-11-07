@@ -34,7 +34,8 @@ function createProductionBackoffice({runtime,config,status,clock=()=>new Date()}
    return{ok:true,drafts:await Promise.all(drafts.map(async d=>{
     let blockers;try{blockers=[...await runtime.preparation.quality(d,clock()),...(d.reviewSafety?.state==='hold'&&Array.isArray(d.reviewSafety.reasons)?d.reviewSafety.reasons:[])];}catch{blockers=['draft_assessment_unavailable'];}
     if(d.kind==='affiliate')blockers.push('current_recipient_suitability_requires_owner_verification');
-    return{...d,review:{state:blockers.length?'held':'eligible',version:contentVersion(d),blockers:[...new Set(blockers)],ownerApprovalRequired:true,liveDeliveryAuthorized:false,checkedAt:clock().toISOString()}};
+    const ownerHold=await col.ownerCampaignHolds?.findOne({_id:d.id,active:true});
+    return{...d,ownerHold:ownerHold?{active:true,reason:ownerHold.reason,at:ownerHold.at}:null,review:{state:blockers.length?'held':'eligible',version:contentVersion(d),blockers:[...new Set(blockers)],ownerApprovalRequired:true,liveDeliveryAuthorized:false,checkedAt:clock().toISOString()}};
    }))};
   }
   if(section==='marketing/coverage')return{ok:true,coverage:await bo.marketingCoverage()};
@@ -58,7 +59,7 @@ function createProductionBackoffice({runtime,config,status,clock=()=>new Date()}
   if(section==='connections'){
    const original=s.connections||{},platforms={};for(const name of ['facebook','instagram']){const x=original.meta?.[name]||{};platforms[name]={verified:x.verified===true,name:x.verified?'Existing authorized '+name+' connection':'',id:'Not exposed in status view',reason:x.reason||x.state||'Verification unavailable'};}
    const channels={};for(const name of ['x','tiktok']){const x=(original.oauth||[]).find(x=>x.provider===name);channels[name]=productionChannelStatus(original)[name];}
-   return{ok:true,connections:{meta:{readOnlyExisting:true,platforms,source:original.source||'existing_authorized_connection_service',health:{checkedAt:original.checkedAt},permissions:original.metaPermissions||{verified:false}},social:{provider:'none',approved:false,paused:{paused:true},channels},email:{provider:'none',realDelivery:false,sender:require('./growth-runtime-config').BUSINESS_SENDER},contestFeed:{url:config.contestSourceUrl,readOnly:true},liveRegistrationReport:{configured:false,latest:null},verifiedEventIngest:{configured:false,previewBlocked:true,path:'/api/growth/events'}}};
+   return{ok:true,connections:{meta:{readOnlyExisting:true,platforms:original.metaIdentity?.platforms||platforms,selected:original.metaIdentity?.selected||null,source:original.source||'existing_authorized_connection_service',health:{checkedAt:original.checkedAt},permissions:original.metaPermissions||{verified:false}},social:{provider:'none',approved:false,paused:{paused:true},channels},email:{provider:'none',realDelivery:false,sender:require('./growth-runtime-config').BUSINESS_SENDER},contestFeed:{url:config.contestSourceUrl,readOnly:true},liveRegistrationReport:{configured:false,latest:null},verifiedEventIngest:{configured:false,previewBlocked:true,path:'/api/growth/events'}}};
   }
   return null;
  }

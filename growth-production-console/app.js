@@ -144,7 +144,7 @@
   function token() { if(PRODUCTION)return productionToken; try { return sessionStorage.getItem(TOKEN_KEY) || ''; } catch (e) { return ''; } }
   function setToken(t) { if(PRODUCTION){productionToken=t||'';return;} try { if (t) sessionStorage.setItem(TOKEN_KEY, t); else sessionStorage.removeItem(TOKEN_KEY); } catch (e) { /* ignore */ } }
   function api(method, path, body) {
-    if (PRODUCTION && method !== 'GET' && ['/admin/logout','/admin/autonomy/stop','/admin/autonomy/resume'].indexOf(path) === -1 && !/^\/admin\/drafts\/[^/]+\/(approve|reject|edit)$/.test(path) && !/^\/admin\/(alerts\/[^/]+\/ack|jobs\/[^/]+\/requeue|preparation\/jobs\/[^/]+\/requeue|suppressions)$/.test(path)) return Promise.reject(new Error('Production preparation only. Campaign release, delivery and credential changes require separate authorization.'));
+    if (PRODUCTION && method !== 'GET' && ['/admin/logout','/admin/autonomy/stop','/admin/autonomy/resume','/admin/acceptance/check'].indexOf(path) === -1 && !/^\/admin\/drafts\/[^/]+\/(approve|reject|edit|hold|resume-review)$/.test(path) && !/^\/admin\/(alerts\/[^/]+\/ack|jobs\/[^/]+\/requeue|preparation\/jobs\/[^/]+\/requeue|suppressions)$/.test(path)) return Promise.reject(new Error('Production preparation only. Campaign release, delivery and credential changes require separate authorization.'));
     var headers = { Accept: 'application/json' };
     if (token()) headers.Authorization = 'Bearer ' + token();
     if (body !== undefined) headers['Content-Type'] = 'application/json';
@@ -418,6 +418,7 @@
       actions.appendChild(h('button', { class: 'btn danger small', testid: 'btn-withdraw', text: 'Withdraw approval', onclick: function () { reject(d, reload, true); } }));
     }
         /* BEGIN authorized 2026-11-06 emergency hold presentation. */
+    if(PRODUCTION&&['needs_owner_review','approved'].indexOf(d.status)!==-1)actions.appendChild(h('button',{class:'btn small',testid:'btn-owner-hold',text:d.ownerHold?.active?'Resume review':'Hold',onclick:function(){var reason=h('input',{type:'text',maxlength:'300',testid:'owner-hold-reason'});modal({title:d.ownerHold?.active?'Resume this review?':'Hold this campaign?',confirmLabel:d.ownerHold?.active?'Resume review':'Hold',body:h('div',null,h('p',{text:'This changes only the owner review hold. It does not approve, schedule or send anything. Source safeguards remain enforced.'}),h('label',null,'Reason',reason)),onConfirm:function(){return api('POST','/admin/drafts/'+encodeURIComponent(d.id)+(d.ownerHold?.active?'/resume-review':'/hold'),{version:d.review?.version,reason:reason.value});}}).then(reload).catch(fail);}}));
     var held = d.review ? d.review.state === 'held' : d.reviewSafety?.state === 'hold' || (d.approvalBlockers || []).length > 0;
     if (held) {
       var blockedApproval = actions.querySelector('[data-testid=btn-approve]');
@@ -1308,10 +1309,13 @@
         /* END authorized 2026-11-06 publishing QA separation. */
         liveTestCard(r),
         h('section', { class: 'card' }, h('h2', { text: 'Queue' }), rows.length ? h('div', { class: 'table-wrap' }, h('table', { class: 'data', testid: 'posts-table' }, h('thead', null, h('tr', null, h('th', { text: 'Channel' }), h('th', { text: 'Post' }), h('th', { text: 'When' }), h('th', { text: 'Status' }), h('th', { text: '' }))), h('tbody', null, rows)))
-          : h('div', { class: 'empty', testid: 'posts-empty', text: 'Nothing scheduled. Approve a fight campaign, then press “Schedule posts”.' })),
+          : h('div', { class: 'empty', testid: 'posts-empty', text: PRODUCTION ? 'No authorized delivery schedule. Approved content remains held for a separate verified distribution release.' : 'Nothing scheduled. Approve a fight campaign, then press “Schedule posts”.' })),
       ]);
     });
   };
+
+  var originalPublishingPage=pages.publishing;
+  pages.publishing=function(main){return originalPublishingPage(main).then(function(){if(!PRODUCTION)return;var list=h('div',{testid:'approved-distribution-queue'}),card=h('section',{class:'card'},h('h2',{text:'Approved content awaiting distribution authorization'}),h('p',{text:'Content approval is preserved. Scheduling, provider publication and recipient delivery remain separate gated actions.'}),list);main.appendChild(card);return draftList(list,{status:'approved',limit:100},'No content approvals are awaiting distribution.');});};
 
   // Sandbox outbox: approved emails built exactly as they would be sent, never sent.
   function sandboxOutbox(sb) {
@@ -1433,7 +1437,7 @@
   pages.posters = posterDepartment;
   function boot() {
     if (!token()) return renderLogin();
-    api('GET', '/admin/session').then(function (s) { state.sessionExpMs = s && s.exp ? s.exp * 1000 : null; scheduleExpiry(state.sessionExpMs); route(); }).catch(function (e) { if (!e.silent) renderLogin(); });
+    api('GET', '/admin/session').then(function (s) { state.sessionExpMs = s && s.exp ? s.exp * 1000 : null; scheduleExpiry(state.sessionExpMs); if(PRODUCTION&&!ISOLATED_PREVIEW)api('POST','/admin/acceptance/check',{}).catch(function(){}); route(); }).catch(function (e) { if (!e.silent) renderLogin(); });
   }
   window.addEventListener('hashchange', route);
   boot();

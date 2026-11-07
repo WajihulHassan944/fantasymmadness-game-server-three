@@ -6,7 +6,7 @@ export async function productionPreparationLoop(generation:string,ordinal=0){
  for(let i=0;i<96;i++){
   let result;try{result=await executeProductionPreparation(generation,ordinal+i);}catch{result={stop:false};}
   if(result.stop)return;
-  await sleep('15m');
+  if(ordinal+i===0)await sleep('1m');else await sleep('15m');
  }
  await start(productionPreparationLoop,[generation,ordinal+96],{experimental_hook:{token:`production-preparation:${generation}:${ordinal+96}`}});
 }
