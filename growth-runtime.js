@@ -38,7 +38,7 @@ function createGrowthRuntime({ db, config, secrets = {}, provider, fetchImpl = g
   else if (db.databaseName && db.databaseName !== 'fmgrowthtest') throw Error('Growth runtime only uses the fmgrowthtest database');
   if (!provider || typeof provider.send !== 'function') throw Error('Delivery provider required');
   const col = {
-    marketingEligibility:db.collection('growth_marketing_eligibility'),contestVerifications:db.collection('growth_contest_verifications'),recruitment:db.collection('affiliate_prospects'),preparationJobs:db.collection('growth_preparation_jobs'),preparationReceipts:db.collection('growth_preparation_receipts'),connectionAlerts:db.collection('growth_connection_alerts'),
+    ownerCampaignHolds:db.collection('growth_owner_campaign_holds'),marketingEligibility:db.collection('growth_marketing_eligibility'),contestVerifications:db.collection('growth_contest_verifications'),recruitment:db.collection('affiliate_prospects'),preparationJobs:db.collection('growth_preparation_jobs'),preparationReceipts:db.collection('growth_preparation_receipts'),connectionAlerts:db.collection('growth_connection_alerts'),
     runs: db.collection('isolated_run_claims'), workstreams: db.collection('isolated_workstream_runs'),
     jobs: db.collection('unattended_jobs'), drafts: db.collection('growth_drafts'), prospects: db.collection('growth_prospects'),
     deliveries: db.collection('growth_delivery_claims'), alerts: db.collection('growth_alerts'), reports: db.collection('growth_reports'),
@@ -217,7 +217,7 @@ function createGrowthRuntime({ db, config, secrets = {}, provider, fetchImpl = g
     if(feed.complete)await col.contestVerifications.updateMany({_id:{$nin:feed.contests.map(c=>c.id)}},{$set:{eligible:false,verifiedAt:now.toISOString()}});
     // Safeguard 1: campaigns not tied to a verified contest leave the queue
     // (this removes the old podcast/media-based "fight" posts).
-    let withdrawn = await withdraw({ contestId: { $exists: false } }, 'Withdrawn automatically: not based on a verified FANTASY MMADNESS fight contest', now);
+    let withdrawn = config.mode==='production_preparation'?0:await withdraw({ contestId: { $exists: false } }, 'Withdrawn automatically: not based on a verified FANTASY MMADNESS fight contest', now);
     const created = []; const blocked = [];
     const refinement={regenerated:0,preservedOwnerWork:0,preservedApproved:0};
     const coverage = {};
@@ -245,7 +245,7 @@ function createGrowthRuntime({ db, config, secrets = {}, provider, fetchImpl = g
         const why = !c && feed.complete !== false ? 'Withdrawn automatically: the contest is no longer open, upcoming and verified'
           : !c ? null
           : c.fingerprint !== d.contestFingerprint ? 'Withdrawn automatically: fight details changed (a corrected campaign was prepared)' : null;
-        if (why) { withdrawn += await withdraw({ id: d.id }, why, now); continue; }
+        if (why) { if(config.mode!=='production_preparation')withdrawn += await withdraw({ id: d.id }, why, now); continue; }
         if (!c) continue; // A failed feed is not evidence that its fights were removed.
         if(d.copyVersion===2){if(!d.contest?.urlSource)await col.drafts.updateOne({id:d.id,status:'needs_owner_review'},{$set:{contest:c}});if(d.contest?.contestUrl!==c.contestUrl||JSON.stringify(d.contest?.timing)!==JSON.stringify(c.timing)){const k=await marketingCopy(c,now);await col.drafts.updateOne({id:d.id,status:'needs_owner_review',editedBy:{$exists:false}},{$set:{...k,contest:c,channels:['facebook','x']},$push:{contentHistory:{at:now.toISOString(),reason:'verified_address_changed',previous:{text:d.text,posts:d.posts}}}});}continue;}
         // The website's address for this fight changed (e.g. a fighter-name address appeared, or

@@ -99,6 +99,7 @@ jobs:
           node growth-affiliate-acceptance-http.test.js
           node growth-affiliate-hold-review.test.js
           node growth-production-preparation.test.js
+          node growth-production-activation.test.js
           node growth-production-channel-status.test.js
           node growth-production-review.test.js
           node growth-production-poster-job.test.js

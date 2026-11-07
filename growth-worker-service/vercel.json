@@ -3,5 +3,10 @@
   "buildCommand": "npm run build",
   "installCommand": "npm ci",
   "framework": null,
-  "crons": [{"path":"/api/growth/internal/preparation/posters","schedule":"*/15 * * * *"}]
+  "crons": [
+    {
+      "path": "/api/growth/internal/preparation/posters",
+      "schedule": "* * * * *"
+    }
+  ]
 }

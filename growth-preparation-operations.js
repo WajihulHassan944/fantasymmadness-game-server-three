@@ -12,6 +12,8 @@ function createPreparationOperations({col,actions={},isPaused=async()=>false,isS
   const ownerTerms=d.kind==='affiliate'?await col.settings.findOne({_id:'affiliate-terms-review',status:'approved',scope:'staging_recruitment_review',approvedByKind:'owner_session'}):null;
   const termsReviewed=Boolean(ownerTerms?.sourceHash&&ownerTerms.version);
   const held=(d.approvalBlockers||[]).filter(reason=>!(reason==='affiliate_terms_require_owner_review'&&termsReviewed));
+  const ownerHold=col.ownerCampaignHolds?await col.ownerCampaignHolds.findOne({_id:d.id,active:true}):null;
+  if(ownerHold)held.push('owner_campaign_hold'+(ownerHold.reason?': '+ownerHold.reason:''));
   if(d.kind==='marketing'){
    const eligibility=col.marketingEligibility?await col.marketingEligibility.findOne({_id:d.id}):null;
    if(eligibility?.state==='held')held.push(...(eligibility.reasons||['registry_campaign_on_hold']));
