@@ -99,6 +99,10 @@ jobs:
           node growth-affiliate-acceptance-http.test.js
           node growth-affiliate-hold-review.test.js
           node growth-production-preparation.test.js
+          node growth-production-channel-status.test.js
+          node growth-production-review.test.js
+          node growth-production-poster-job.test.js
+          node growth-isolated-preparation-preview.test.js
           node growth-production-launch-audit.test.js
           node growth-production-routing.test.js
       - name: Platform copy, PR quality, independent affiliate recruitment and connection persistence
