@@ -38,6 +38,8 @@ function createProductionBackoffice({runtime,config,status,clock=()=>new Date()}
    }))};
   }
   if(section==='marketing/coverage')return{ok:true,coverage:await bo.marketingCoverage()};
+  if(section==='alerts')return{ok:true,alerts:await runtime.listAlerts({state:q.state==='all'?'':q.state||'open'})};
+  if(section==='fighter-assets')return{ok:true,assets:await runtime.posters.library.list()};
   if(section==='analytics')return{ok:true,analytics:await bo.analytics()};
   if(section==='funnel')return{ok:true,funnel:await bo.funnel()};
   if(section==='attribution')return{ok:true,attribution:await bo.attribution()};
@@ -55,11 +57,11 @@ function createProductionBackoffice({runtime,config,status,clock=()=>new Date()}
   }
   if(section==='connections'){
    const original=s.connections||{},platforms={};for(const name of ['facebook','instagram']){const x=original.meta?.[name]||{};platforms[name]={verified:x.verified===true,name:x.verified?'Existing authorized '+name+' connection':'',id:'Not exposed in status view',reason:x.reason||x.state||'Verification unavailable'};}
-   const channels={};for(const name of ['x','tiktok']){const x=(original.oauth||[]).find(x=>x.provider===name);channels[name]={mode:'off',blockers:['Publishing authorization has not been granted'],note:x?'Connection: '+x.status+'; access: '+x.accessStatus:'Connection verification unavailable'};}
-   return{ok:true,connections:{meta:{readOnlyExisting:true,platforms,source:original.source||'existing_authorized_connection_service',health:{checkedAt:original.checkedAt}},social:{provider:'none',approved:false,paused:{paused:true},channels},email:{provider:'none',realDelivery:false,sender:require('./growth-runtime-config').BUSINESS_SENDER},contestFeed:{url:config.contestSourceUrl,readOnly:true},liveRegistrationReport:{configured:false,latest:null},verifiedEventIngest:{configured:false,previewBlocked:true,path:'/api/growth/events'}}};
+   const channels={};for(const name of ['x','tiktok']){const x=(original.oauth||[]).find(x=>x.provider===name);channels[name]=productionChannelStatus(original)[name];}
+   return{ok:true,connections:{meta:{readOnlyExisting:true,platforms,source:original.source||'existing_authorized_connection_service',health:{checkedAt:original.checkedAt},permissions:original.metaPermissions||{verified:false}},social:{provider:'none',approved:false,paused:{paused:true},channels},email:{provider:'none',realDelivery:false,sender:require('./growth-runtime-config').BUSINESS_SENDER},contestFeed:{url:config.contestSourceUrl,readOnly:true},liveRegistrationReport:{configured:false,latest:null},verifiedEventIngest:{configured:false,previewBlocked:true,path:'/api/growth/events'}}};
   }
   return null;
  }
- return{read};
+ return{read,editDraft:bo.editDraft};
 }
 module.exports={createProductionBackoffice};

@@ -27,3 +27,11 @@ test('stale, missing and expired credentials never appear connected or ready', (
     }
   }
 });
+
+test('read-only OAuth grants never imply publishing permission, and verified grants still require production release', () => {
+  const connection={verificationStale:false,oauth:[{provider:'x',username:'FMmadness2024',status:'connected',accessStatus:'valid',grantedScopes:['tweet.read','users.read'],scopesVerifiedAt:'2026-11-06T20:00:00Z'}]};
+  let channel=productionChannelStatus(connection).x;
+  assert.equal(channel.connected,true);assert.equal(channel.username,'FMmadness2024');assert.deepEqual(channel.missingPublishingScopes,['tweet.write']);assert.equal(channel.publishingScopesVerified,false);
+  connection.oauth[0].grantedScopes.push('tweet.write');channel=productionChannelStatus(connection).x;
+  assert.equal(channel.publishingScopesVerified,true);assert.equal(channel.publishingAuthorized,false);assert.equal(channel.ready,false);assert.equal(channel.mode,'off');
+});
