@@ -98,7 +98,7 @@ test('safeguard blocks wrong, invented or media-based campaigns', () => {
 
 test('feed fetch: unreachable feeds are reported, nothing is invented', async () => {
   const down = await fetchVerifiedContests({ fetchImpl: async () => ({ ok: false, status: 503 }), now: NOW });
-  assert.equal(down.contests.length, 0); assert.equal(down.sourceReachable, false); assert.equal(down.errors.length, 2);
+  assert.equal(down.contests.length, 0); assert.equal(down.sourceReachable, false); assert.equal(down.errors.length, 5);
   const up = await fetchVerifiedContests({ now: NOW, fetchImpl: async (u) => ({ ok: true, json: async () => (u.includes('pro-wrestling') ? { items: [] } : { items: [fight(), fight({ _id: 'zzz999yyy888', matchFighterA: 'Budocast', matchFighterB: 'Someone Real' })] }) }), mediaNames: media });
   assert.equal(up.contests.length, 1); assert.equal(up.rejected.length, 1);
 });
@@ -148,4 +148,33 @@ test('a campaign version changes when registry promoter, entry terms, venue or t
     const updated=verifyContest(fight(patch),{now:NOW}).contest;
     assert.notEqual(updated.fingerprint,original.fingerprint);
   }
+});
+
+
+test('conflicting global entry state is held, without confusing a player prediction with closure', () => {
+ const base=fight({matchType:'LIVE',entryOpen:true,canSubmitPrediction:false});
+ assert.equal(verifyContest(base,{now:NOW}).ok,true);
+ const result=verifyContest({...base,fightStatusBucket:'completed'},{now:NOW});
+ assert.equal(result.ok,false);assert.ok(result.reasons.includes('registry_public_entry_state_conflict'));
+});
+
+test('category scans find contests hidden behind another sport and follow wrestling pagination', async () => {
+ const calls=[];const result=await fetchVerifiedContests({now:NOW,fetchImpl:async raw=>{const u=new URL(raw);calls.push(u);const category=u.searchParams.get('category');let items=[];let pagination;
+ if(category==='boxing')items=[fight()];if(category==='mma')items=[fight({_id:'mma001234567',matchCategory:'mma'})];
+ if(u.pathname.includes('pro-wrestling')){const page=Number(u.searchParams.get('page'));items=[{id:'wrestling00'+page,status:'OPEN',matchDate:day(3+page),competitorA:{displayName:'Roman Reigns'},competitorB:{displayName:'LA Knight'}}];pagination={hasNextPage:page===1};}
+ return{ok:true,json:async()=>({items,pagination})};}});
+ assert.equal(result.complete,true);assert.equal(result.contests.length,4);assert.equal(result.checked,4);
+ assert.deepEqual(calls.filter(u=>u.pathname.includes('prediction-fights')).map(u=>u.searchParams.get('category')),['boxing','mma','bare-knuckle','kickboxing']);
+ assert.equal(result.sources.length,5);
+});
+
+test('saturated category cannot authorize withdrawal based on an incomplete Registry scan', async () => {
+ const result=await fetchVerifiedContests({now:NOW,fetchImpl:async raw=>({ok:true,json:async()=>({items:new URL(raw).searchParams.get('category')==='boxing'?Array.from({length:100},(_,i)=>fight({_id:'capped'+String(i).padStart(8,'0')})):[]})})});
+ assert.equal(result.sourceReachable,true);assert.equal(result.complete,false);assert.match(result.errors.join(' '),/100-record cap/);
+});
+
+test('a quoted fighter nickname is not a media source and the Registry name stays unchanged', () => {
+ const original=fight({matchFighterB:'JOE "THE SHOW " CRONIN'}),before=JSON.stringify(original);
+ const result=verifyContest(original,{now:NOW});assert.equal(result.ok,true);assert.equal(result.contest.fighterB,original.matchFighterB);assert.equal(JSON.stringify(original),before);
+ assert.equal(verifyContest(fight({matchFighterB:'Fight Podcast Show'}),{now:NOW}).ok,false);
 });

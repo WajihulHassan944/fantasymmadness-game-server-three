@@ -34,11 +34,11 @@ const hash = (s) => crypto.createHash('sha256').update(String(s).toLowerCase()).
 
 function createGrowthRuntime({ db, config, secrets = {}, provider, fetchImpl = globalThis.fetch, alertSender = null, metaConnection = null } = {}) {
   if (!db || typeof db.collection !== 'function') throw Error('Dedicated fmgrowthtest database handle required');
-  if (config?.mode === 'production_preparation') require('./growth-production-preparation-config').assertProductionDatabase(db, config);
+  if (['production_preparation','isolated_preparation_preview'].includes(config?.mode)) require('./growth-production-preparation-config').assertProductionDatabase(db, config);
   else if (db.databaseName && db.databaseName !== 'fmgrowthtest') throw Error('Growth runtime only uses the fmgrowthtest database');
   if (!provider || typeof provider.send !== 'function') throw Error('Delivery provider required');
   const col = {
-    contestVerifications:db.collection('growth_contest_verifications'),recruitment:db.collection('affiliate_prospects'),preparationJobs:db.collection('growth_preparation_jobs'),preparationReceipts:db.collection('growth_preparation_receipts'),connectionAlerts:db.collection('growth_connection_alerts'),
+    ownerCampaignHolds:db.collection('growth_owner_campaign_holds'),marketingEligibility:db.collection('growth_marketing_eligibility'),contestVerifications:db.collection('growth_contest_verifications'),recruitment:db.collection('affiliate_prospects'),preparationJobs:db.collection('growth_preparation_jobs'),preparationReceipts:db.collection('growth_preparation_receipts'),connectionAlerts:db.collection('growth_connection_alerts'),
     runs: db.collection('isolated_run_claims'), workstreams: db.collection('isolated_workstream_runs'),
     jobs: db.collection('unattended_jobs'), drafts: db.collection('growth_drafts'), prospects: db.collection('growth_prospects'),
     deliveries: db.collection('growth_delivery_claims'), alerts: db.collection('growth_alerts'), reports: db.collection('growth_reports'),
@@ -175,7 +175,7 @@ function createGrowthRuntime({ db, config, secrets = {}, provider, fetchImpl = g
     return r.modifiedCount || 0;
   }
   const posterCfg = config.posters || { enabled: false };
-  const posterStudio = createPosterStudio({ col, fetchImpl, publicOrigin: posterCfg.publicOrigin, env: posterCfg.artEnv || {} });
+  const posterStudio = createPosterStudio({ col, fetchImpl, publicOrigin: posterCfg.publicOrigin, imagePath: posterCfg.imagePath, env: posterCfg.artEnv || {} });
   // Posters for open fight campaigns: generated once per campaign version (a few per run).
   async function affiliatePoster(draft, affiliate, channel, now) {
     const link = require('./growth-affiliate-program').playerLink(affiliate, draft.contest);
@@ -217,7 +217,7 @@ function createGrowthRuntime({ db, config, secrets = {}, provider, fetchImpl = g
     if(feed.complete)await col.contestVerifications.updateMany({_id:{$nin:feed.contests.map(c=>c.id)}},{$set:{eligible:false,verifiedAt:now.toISOString()}});
     // Safeguard 1: campaigns not tied to a verified contest leave the queue
     // (this removes the old podcast/media-based "fight" posts).
-    let withdrawn = await withdraw({ contestId: { $exists: false } }, 'Withdrawn automatically: not based on a verified FANTASY MMADNESS fight contest', now);
+    let withdrawn = config.mode==='production_preparation'?0:await withdraw({ contestId: { $exists: false } }, 'Withdrawn automatically: not based on a verified FANTASY MMADNESS fight contest', now);
     const created = []; const blocked = [];
     const refinement={regenerated:0,preservedOwnerWork:0,preservedApproved:0};
     const coverage = {};
@@ -231,6 +231,10 @@ function createGrowthRuntime({ db, config, secrets = {}, provider, fetchImpl = g
       const open = await col.drafts.find({ kind: 'marketing', contestId: { $exists: true }, status: { $in: ['needs_owner_review', 'approved'] } }).toArray();
       for (const d of open) {
         const c = live.get(d.contestId);
+        // Preserve owner content and approval, while independently holding stale evidence.
+        const rejected = feed.rejected.find(row => row.id === d.contestId);
+        const heldReasons = !c ? (rejected?.reasons || (feed.complete ? ['contest_no_longer_open_or_verified'] : ['registry_check_incomplete'])) : c.fingerprint !== d.contestFingerprint ? ['fight_details_changed_review_required'] : [];
+        await col.marketingEligibility.updateOne({_id:d.id},{$set:{contestId:d.contestId,fingerprint:d.contestFingerprint,state:heldReasons.length?'held':'eligible',reasons:heldReasons,checkedAt:now.toISOString()}},{upsert:true});
         if(d.status==='approved'){refinement.preservedApproved++;continue;}
         if(d.editedBy||d.editedAt||d.editCount>0){refinement.preservedOwnerWork++;continue;}
         if(c&&d.copyVersion!==2){const k=await marketingCopy(c,now);const regenerated=await col.drafts.updateOne({id:d.id,status:'needs_owner_review',editCount:{$not:{$gt:0}},editedBy:{$exists:false}},{$set:{...k,channels:['facebook','x'],contest:c,copyRegeneratedAt:now.toISOString()},$push:{contentHistory:{at:now.toISOString(),reason:'platform_and_timing_refinement',previous:{text:d.text,posts:d.posts,headline:d.headline,link:d.link}}}});refinement.regenerated+=regenerated.modifiedCount;continue;}
@@ -241,7 +245,7 @@ function createGrowthRuntime({ db, config, secrets = {}, provider, fetchImpl = g
         const why = !c && feed.complete !== false ? 'Withdrawn automatically: the contest is no longer open, upcoming and verified'
           : !c ? null
           : c.fingerprint !== d.contestFingerprint ? 'Withdrawn automatically: fight details changed (a corrected campaign was prepared)' : null;
-        if (why) { withdrawn += await withdraw({ id: d.id }, why, now); continue; }
+        if (why) { if(config.mode!=='production_preparation')withdrawn += await withdraw({ id: d.id }, why, now); continue; }
         if (!c) continue; // A failed feed is not evidence that its fights were removed.
         if(d.copyVersion===2){if(!d.contest?.urlSource)await col.drafts.updateOne({id:d.id,status:'needs_owner_review'},{$set:{contest:c}});if(d.contest?.contestUrl!==c.contestUrl||JSON.stringify(d.contest?.timing)!==JSON.stringify(c.timing)){const k=await marketingCopy(c,now);await col.drafts.updateOne({id:d.id,status:'needs_owner_review',editedBy:{$exists:false}},{$set:{...k,contest:c,channels:['facebook','x']},$push:{contentHistory:{at:now.toISOString(),reason:'verified_address_changed',previous:{text:d.text,posts:d.posts}}}});}continue;}
         // The website's address for this fight changed (e.g. a fighter-name address appeared, or
@@ -281,7 +285,7 @@ function createGrowthRuntime({ db, config, secrets = {}, provider, fetchImpl = g
     } else {
       await alert(`contest-source:${dayKey(now)}`, 'marketing', 'contest feed', `could not reach the FANTASY MMADNESS contest feed: ${feed.errors.join('; ')}`, now);
     }
-    const doc = { day: dayKey(now), checkedAt: now.toISOString(), trigger, sourceReachable: feed.sourceReachable, complete: feed.complete, sourceErrors: feed.errors, contestsChecked: feed.checked, verifiedContests: feed.contests.length, created: created.length, withdrawn, blocked, sports: coverage };
+    const doc = { day: dayKey(now), checkedAt: now.toISOString(), trigger, sourceReachable: feed.sourceReachable, complete: feed.complete, sourceErrors: feed.errors, sources: feed.sources, horizonDays: config.marketingHorizonDays, maxCampaignsPerSport:config.maxCampaignsPerSport, contestsChecked: feed.checked, verifiedContests: feed.contests.length, created: created.length, withdrawn, blocked, sports: coverage };
     await col.coverage.updateOne({ day: doc.day }, { $set: doc }, { upsert: true });
     if (withdrawn || created.length) await audit('refresh_marketing', { trigger, created: created.length, withdrawn, blocked: blocked.length, admin: 'system' });
     const posters = await ensurePosters(now).catch((e) => ({ error: clean(e.message) }));

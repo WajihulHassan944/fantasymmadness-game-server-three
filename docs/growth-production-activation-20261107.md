@@ -1,0 +1,15 @@
+# Scoped Growth production activation
+
+PR #119 was merged into the existing Growth release branch as e30340c0839f8d30d6399c1f725f702e3530b3e1. The game backend production branch is not this release target.
+
+This follow-up adds persistent owner Hold / Resume Review decisions in a separate Growth collection, visible approved content awaiting distribution, an authenticated owner read-model acceptance receipt, safe original Meta identity metadata, and public discovery execution evidence. Conflicting production Marketing campaigns remain stored unchanged and held; approved campaign records, existing posters and QR destinations are preserved. Publishing, messages, payments and automatic approvals remain disabled.
+
+The existing platform Cron credential protects worker rollout. A handover is possible only when GROWTH_PREPARATION_ROLLOUT_SHA equals the exact verified production commit and GROWTH_PREPARATION_ROLLOUT_FROM_DEPLOYMENT_ID equals the healthy enabled active worker. The rollout never resumes an emergency-stopped worker. The existing handover workflow verifies the deployed production HTTP surface, atomically fences the previous generation and starts the new durable preparation loop. Native Cron checks every minute; business preparation stays at 15-minute intervals after one initial one-minute confirmation tick. Poster work remains bucket-deduplicated. Handover requests use bounded five-minute deduplication windows so a failed lease contention attempt can recover without stopping the current worker.
+
+Before traffic promotion, verify exact project, commit, production database/prefix, disabled delivery flags, owner authentication gates, CI and isolated tests. Preserve the two-rule production routing arrangement, including the unchanged legacy callback/tracking/artwork fallback.
+
+Rollback checkpoint: previous API deployment dpl_CxkRfySgMxGNTEEnSpZRZwhszqzV, commit b8d216dcb786cb86a7847d9bdd8c49f474daf9ac; immutable origin https://fantasymmadness-growth-isolated-test-mifs0eeoy.vercel.app. Prior routing version a927196e-326a-4796-90e1-329298774b5f restores previous API routing without destructive data rollback. All new stores are additive and restricted to the Growth namespace. Inspect worker ownership independently of API routing; do not blindly restart, cancel or stop a healthy generation during rollback.
+
+Owner production acceptance: after a real first-party owner session is accepted, the existing console requests authenticated read-model checks for all eleven sections. A sanitized release-specific receipt is exposed in health; this is distinct from the isolated real-browser render tests. Never claim owner authentication from an anonymous route response or a fixture token.
+
+Controlled live publication is not authorized by this release. Meta permission evidence is separate from production publishing acceptance. X and TikTok keep their actual grant limitations; no social credentials are replaced or copied. Affiliate QR generation requires an existing verified live affiliate mapping and must not invent an attribution identity.

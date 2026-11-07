@@ -12,7 +12,11 @@ function createPreparationOperations({col,actions={},isPaused=async()=>false,isS
   const ownerTerms=d.kind==='affiliate'?await col.settings.findOne({_id:'affiliate-terms-review',status:'approved',scope:'staging_recruitment_review',approvedByKind:'owner_session'}):null;
   const termsReviewed=Boolean(ownerTerms?.sourceHash&&ownerTerms.version);
   const held=(d.approvalBlockers||[]).filter(reason=>!(reason==='affiliate_terms_require_owner_review'&&termsReviewed));
+  const ownerHold=col.ownerCampaignHolds?await col.ownerCampaignHolds.findOne({_id:d.id,active:true}):null;
+  if(ownerHold)held.push('owner_campaign_hold'+(ownerHold.reason?': '+ownerHold.reason:''));
   if(d.kind==='marketing'){
+   const eligibility=col.marketingEligibility?await col.marketingEligibility.findOne({_id:d.id}):null;
+   if(eligibility?.state==='held')held.push(...(eligibility.reasons||['registry_campaign_on_hold']));
    if(!await col.contestVerifications.findOne({_id:d.contestId,fingerprint:d.contestFingerprint,eligible:true,verifiedAt:{$gte:new Date(+now-35*60000).toISOString()}}))held.push('fresh_published_contest_verification_required');
    held.push(...require('./growth-contest-campaigns').checkCampaign(d,d.contest,{now}));
    if(d.poster?.status!=='ready'||d.poster?.needsArtwork||!d.poster?.qr?.decodedMatches||!d.poster?.qr?.destination?.ok)held.push('verified_original_artwork_and_qr_required');

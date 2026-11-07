@@ -5,6 +5,7 @@
 (function () {
   'use strict';
   var API = '/api/growth';
+  var ISOLATED_PREVIEW = document.documentElement.getAttribute('data-isolated-preparation-preview') === 'true';
   var PRODUCTION = document.documentElement.getAttribute('data-production-preparation') === 'true';
   var INTEGRATED = document.documentElement.getAttribute('data-integrated-preview') === 'true';
   var TOKEN_KEY = PRODUCTION ? 'fmmGrowthProductionPreparationToken' : INTEGRATED ? 'fmmGrowthSocialOAuthPreviewToken' : 'fmmGrowthConsoleToken';
@@ -23,7 +24,7 @@
   };
   var NAV = [
     ['overview', 'Overview', '⌂'], ['approvals', 'Campaign Approvals', '✓'], ['marketing', 'Marketing', '📣'], ['pr', 'Public Relations', '📰'],
-    ['affiliates', 'Affiliate Recruitment', '🤝'], ['publishing', 'Publishing', '📅'], ['automation', 'Automation', '⚙'], ['analytics', 'Analytics', '📊'], ['revenue', 'Revenue Attribution', '$'], ['connections', 'Connections', '🔌'],
+    ['affiliates', 'Affiliate Recruitment', '🤝'], ['publishing', 'Publishing', '📅'], ['posters','Posters','▧'], ['automation', 'Automation', '⚙'], ['analytics', 'Analytics', '📊'], ['revenue', 'Revenue Attribution', '$'], ['connections', 'Connections', '🔌'],
   ];
   var state = { pendingCount: null, alertCount: null }; var renders = 0;
   // Embedded in the FANTASY MMADNESS admin back office: the admin site provides the
@@ -143,7 +144,7 @@
   function token() { if(PRODUCTION)return productionToken; try { return sessionStorage.getItem(TOKEN_KEY) || ''; } catch (e) { return ''; } }
   function setToken(t) { if(PRODUCTION){productionToken=t||'';return;} try { if (t) sessionStorage.setItem(TOKEN_KEY, t); else sessionStorage.removeItem(TOKEN_KEY); } catch (e) { /* ignore */ } }
   function api(method, path, body) {
-    if (PRODUCTION && method !== 'GET' && ['/admin/logout','/admin/autonomy/stop'].indexOf(path) === -1) return Promise.reject(new Error('Production preparation only. Campaign release, delivery and credential changes require separate authorization.'));
+    if (PRODUCTION && method !== 'GET' && ['/admin/logout','/admin/autonomy/stop','/admin/autonomy/resume','/admin/acceptance/check'].indexOf(path) === -1 && !/^\/admin\/drafts\/[^/]+\/(approve|reject|edit|hold|resume-review)$/.test(path) && !/^\/admin\/(alerts\/[^/]+\/ack|jobs\/[^/]+\/requeue|preparation\/jobs\/[^/]+\/requeue|suppressions)$/.test(path)) return Promise.reject(new Error('Production preparation only. Campaign release, delivery and credential changes require separate authorization.'));
     var headers = { Accept: 'application/json' };
     if (token()) headers.Authorization = 'Bearer ' + token();
     if (body !== undefined) headers['Content-Type'] = 'application/json';
@@ -404,9 +405,9 @@
       if (previewSlot.firstChild) { clear(previewSlot); e.target.textContent = 'Preview email'; } else { previewSlot.appendChild(emailPreview(d.html)); e.target.textContent = 'Hide preview'; }
     } }));
     if (d.status === 'needs_owner_review') {
-      actions.appendChild(h('button', { class: 'btn approve small', testid: 'btn-approve', text: '✓ Approve', onclick: function () { approve(d, reload); } }));
+      actions.appendChild(h('button', { class: 'btn approve small', testid: 'btn-approve', 'data-content-review':'true', text: '✓ Approve content', onclick: function () { approve(d, reload); } }));
       actions.appendChild(h('button', { class: 'btn small', testid: 'btn-edit', text: 'Edit', onclick: function () { edit(d, reload); } }));
-      actions.appendChild(h('button', { class: 'btn danger small', testid: 'btn-reject', text: 'Reject', onclick: function () { reject(d, reload); } }));
+      actions.appendChild(h('button', { class: 'btn danger small', testid: 'btn-reject', 'data-content-review':'true', text: 'Reject', onclick: function () { reject(d, reload); } }));
     }
     if (d.status === 'approved') {
       if (d.kind === 'marketing') {
@@ -417,6 +418,7 @@
       actions.appendChild(h('button', { class: 'btn danger small', testid: 'btn-withdraw', text: 'Withdraw approval', onclick: function () { reject(d, reload, true); } }));
     }
         /* BEGIN authorized 2026-11-06 emergency hold presentation. */
+    if(PRODUCTION&&['needs_owner_review','approved'].indexOf(d.status)!==-1)actions.appendChild(h('button',{class:'btn small',testid:'btn-owner-hold',text:d.ownerHold?.active?'Resume review':'Hold',onclick:function(){var reason=h('input',{type:'text',maxlength:'300',testid:'owner-hold-reason'});modal({title:d.ownerHold?.active?'Resume this review?':'Hold this campaign?',confirmLabel:d.ownerHold?.active?'Resume review':'Hold',body:h('div',null,h('p',{text:'This changes only the owner review hold. It does not approve, schedule or send anything. Source safeguards remain enforced.'}),h('label',null,'Reason',reason)),onConfirm:function(){return api('POST','/admin/drafts/'+encodeURIComponent(d.id)+(d.ownerHold?.active?'/resume-review':'/hold'),{version:d.review?.version,reason:reason.value});}}).then(reload).catch(fail);}}));
     var held = d.review ? d.review.state === 'held' : d.reviewSafety?.state === 'hold' || (d.approvalBlockers || []).length > 0;
     if (held) {
       var blockedApproval = actions.querySelector('[data-testid=btn-approve]');
@@ -446,7 +448,7 @@
       ? h('button', { class: 'btn small danger', testid: 'btn-block-art', text: 'Block this artwork', onclick: function () { artRights(d, 'blocked', reload); } })
       : (art.reason === 'artwork_blocked_by_owner' ? h('button', { class: 'btn small', testid: 'btn-allow-art', text: 'Allow artwork again', onclick: function () { artRights(d, 'allowed', reload); } })
         : h('a', { class: 'btn small', href: '#/marketing', testid: 'btn-add-photos', text: 'Add approved fighter photos' }))) : null;
-    return h('div', { class: 'posters', testid: 'posters', 'data-mode': mode, 'data-status': p.status || '' }, h('div', { class: 'poster-row' }, thumb('portrait', 'Feed 4:5'), thumb('story', 'TikTok 9:16')),
+    return h('div', { class: 'posters', testid: 'posters', 'data-mode': mode, 'data-status': p.status || '' }, h('div', { class: 'poster-row' }, thumb('portrait', 'Feed 4:5'), thumb('story', 'TikTok 9:16')), h('div',{class:'actions'},['portrait','story'].map(function(format){var image=p[format];return image?h('a',{class:'btn small',testid:'download-'+format,href:image.url+'?download=1',download:image.id+'.jpg',text:'Download '+format}):null;}),h('button',{class:'btn small',text:'Copy QR destination',testid:'copy-qr-destination',onclick:function(){copyText(p.qrUrl);}}),h('button',{class:'btn small',text:'Share campaign link',testid:'share-campaign',onclick:function(){if(navigator.share)navigator.share({title:d.headline||'FANTASY MMADNESS',url:p.qrUrl}).catch(function(e){if(e.name!=='AbortError')fail(e);});else copyText(p.qrUrl);}})),
       h('div', { class: 'meta' }, artChip, status, qrLine, rights), prov.length ? h('ul', { class: 'small provenance' }, prov) : null);
   }
   function artRights(d, status, reload) {
@@ -485,12 +487,12 @@
     return modal({
       title: 'Approve this ' + (KIND_NAMES[d.kind] || 'item').toLowerCase() + '?', confirmLabel: 'Approve', confirmClass: 'approve',
       body: (function () {
-        var p = h('p', { text: isEmail ? 'Approving queues this email. Real email delivery is OFF in staging, so it will NOT be sent until you switch delivery on.' : 'Approving marks this post ready to publish. Nothing is posted automatically.' });
+        var p = h('p', { text: PRODUCTION ? 'Approve only the exact content shown below. Scheduling, publishing and recipient delivery remain disabled.' : isEmail ? 'Approving queues this email. Real email delivery is OFF in staging, so it will NOT be sent until you switch delivery on.' : 'Approving marks this post ready to publish. Nothing is posted automatically.' });
         /* BEGIN authorized 2026-11-06 final review details. */
         var review = h('section', { testid: 'campaign-final-review' },
           h('h3', { text: d.headline || d.subject || d.id }),
           h('p', { text: 'Draft ID: ' + d.id + ' · Schedule: not authorized by this review.' }),
-          h('p', { text: 'Technical staging approval only. Publishing and recipient delivery require separate explicit owner authorization and server-side gates.' }),
+          h('p', { text: 'Content approval only. Scheduling and delivery require separate explicit owner authorization and verified server-side gates.' }),
           isEmail ? h('p', { text: 'Recipient: ' + (d.recipient || 'Not verified') + ' · Sender: contact@fantasymmadnesscom.com' }) : h('p', { text: 'Channels: ' + (d.channels || Object.keys(d.posts || {})).join(', ') + ' · Destination accounts must be verified in Connections before release.' }),
           isEmail ? h('pre', { class: 'preview-text', text: d.text || 'No message body: do not authorize delivery.' }) : (d.posts ? channelPosts(d) : h('pre', {class:'preview-text',text:d.text || 'No caption: do not authorize publishing.'})),
           d.contest ? h('p', { text: 'Event: ' + (d.contest.eventName || 'Unverified') + ' · Date: ' + (d.contest.dateKey || 'Unverified') + ' · Event start: ' + (d.contest.timeTba ? 'Unconfirmed; contest cutoff is not the event start.' : 'Verify against the published event source before release.') }) : null,
@@ -514,7 +516,7 @@
         return h('div', null, p, h('div', { class: 'banner warn' }, h('div', null, h('strong', { text: 'This fight has no approved photos yet.' }), ' The poster shows the names only. Add approved photos on the Marketing page to get the photo poster, or approve with the text poster.')),
           h('label', { class: 'check-row' }, approve.textBox, ' Approve with the text poster'));
       })(),
-      onConfirm: function () { return api('POST', '/admin/drafts/' + encodeURIComponent(d.id) + '/approve', d.poster && d.poster.needsArtwork ? { acceptTextPoster: Boolean(approve.textBox && approve.textBox.checked) } : undefined); },
+      onConfirm: function () { return api('POST', '/admin/drafts/' + encodeURIComponent(d.id) + '/approve', PRODUCTION ? {version:d.review?.version} : d.poster && d.poster.needsArtwork ? { acceptTextPoster: Boolean(approve.textBox && approve.textBox.checked) } : undefined); },
     }).then(function (ok) { if (ok) { toast('Approved.', 'good'); reload(); refreshCounts(); } }).catch(fail);
   }
   function reject(d, reload, withdraw) {
@@ -522,7 +524,7 @@
     return modal({
       title: withdraw ? 'Withdraw your approval?' : 'Reject this item?', confirmLabel: withdraw ? 'Withdraw approval' : 'Reject', confirmClass: 'danger',
       body: h('label', { class: 'field' }, h('span', { text: 'Reason (optional)' }), reason, h('small', { text: 'Rejected items are kept for your records and never sent.' })),
-      onConfirm: function () { return api('POST', '/admin/drafts/' + encodeURIComponent(d.id) + '/reject', { reason: reason.value }); },
+      onConfirm: function () { return api('POST', '/admin/drafts/' + encodeURIComponent(d.id) + '/reject', { reason: reason.value, ...(PRODUCTION?{version:d.review?.version}:{}) }); },
     }).then(function (ok) { if (ok) { toast(withdraw ? 'Approval withdrawn.' : 'Rejected.', 'good'); reload(); refreshCounts(); } }).catch(function (e) { fail(e); reload(); });
   }
   function edit(d, reload) {
@@ -982,7 +984,7 @@
       h('div',{class:'grid tiles'},Object.keys(names).map(function(k){var d=p.departments[k];return h('div',{class:'tile','data-department':k},h('h3',{text:names[k]}),h('p',{text:d.awaitingOwnerReview+' awaiting owner review · '+d.ready+' ready · '+d.held+' held · '+d.awaitingReceipt+' not yet checked'}),h('p',{class:'small',text:d.receipts+' preparation receipts (content versions); '+d.approvedDrafts+' owner-approved drafts'}));})),
       h('p',{text:'Preparation queue: '+(p.jobs.pending||0)+' pending · '+(p.jobs.retry||0)+' retrying · '+(p.jobs.running||0)+' running · '+(p.jobs.failed||0)+' historical failures · '+(p.jobs.completed||0)+' completed. These are distinct from scheduled runs and deliveries.'}),
       h('p',{text:'Observed real deliveries: '+p.realDeliveriesObserved+' · observed live social posts: '+p.liveSocialPostsObserved+' · paying conversion attribution: not connected in staging.'}),
-      (p.recentJobs||[]).length?h('details',null,h('summary',{text:'Preparation job history and recovery'}),p.recentJobs.slice(0,12).map(function(j){return h('div',{class:'notice'},h('strong',{text:j.payload.department+' · '+j.state}),h('span',{text:' · '+j.attempts+' attempts · due '+expiryWhen(j.dueAt)}),j.lastError?h('p',{text:j.lastError}):null,j.state==='failed'?h('button',{class:'btn small',text:'Retry preparation job',onclick:function(){api('POST','/admin/preparation/jobs/'+encodeURIComponent(j.id)+'/requeue').then(route).catch(fail);}}):null);})):null);
+      (p.recentJobs||[]).length?h('details',null,h('summary',{text:'Preparation job history and recovery'}),p.recentJobs.slice(0,12).map(function(j){return h('div',{class:'notice'},h('strong',{text:j.payload.department+' · '+j.state}),h('span',{text:' · '+j.attempts+' attempts · due '+expiryWhen(j.dueAt)}),j.lastError?h('p',{text:j.lastError}):null,j.state==='failed'?h('button',{class:'btn small',testid:'btn-preparation-requeue',text:'Retry preparation job',onclick:function(){api('POST','/admin/preparation/jobs/'+encodeURIComponent(j.id)+'/requeue').then(route).catch(fail);}}):null);})):null);
   }
   pages.automation = function (main, params) {
     var alertState = params.alerts === 'all' ? 'all' : 'open';
@@ -1008,6 +1010,7 @@
       } }, supEmail, supReason, h('button', { class: 'btn', type: 'submit', testid: 'btn-add-optout', text: 'Add to do-not-contact list' }));
       add(main, [
         head('Automation', 'The scheduler, background jobs, alerts and safety lists.', runNow),
+        PRODUCTION ? h('section',{class:'card',testid:'worker-receipts'},h('h2',{text:'Durable unattended preparation receipts'}),h('p',{text:'Loading stored timer receipts…'})) : null,
         preparationPanel(st.preparation),
         h('div', { class: 'grid tiles' },
           h('div', { class: 'tile', testid: 'sched-tile' }, h('div', { class: 'label', text: 'Scheduler' }), h('div', { class: 'value text', text: sc.healthy ? 'Running' : 'Check' }), h('div', { class: 'hint', text: sc.schedule + ' · last run ' + when(sc.lastRunAt) })),
@@ -1046,6 +1049,9 @@
       ]);
     });
   };
+
+  var automationPage=pages.automation;
+  pages.automation=function(main,params){return automationPage(main,params).then(function(){if(!PRODUCTION)return;var slot=main.querySelector('[data-testid=worker-receipts]');return api('GET','/admin/worker-receipts?limit=20').then(function(r){clear(slot).appendChild(h('h2',{text:'Durable unattended preparation receipts'}));slot.appendChild(h('p',{text:'Stored preparation evidence only; these receipts are not public posts or outbound deliveries.'}));if(!r.receipts.length)slot.appendChild(h('p',{text:'No completed timer receipts recorded.'}));r.receipts.forEach(function(x){slot.appendChild(h('article',{class:'notice',testid:'worker-receipt'},h('strong',{text:x._id}),h('p',{text:'Completed '+expiryWhen(x.completedAt)+' · workflow '+(x.workflowRunId||'not recorded')+' · ordinal '+x.ordinal+' · errors '+x.errors})));});}).catch(function(){clear(slot).appendChild(h('p',{text:'Durable receipts unavailable. Do not infer execution from a health counter.'}));});});};
 
   function bars(rows, testid) {
     var max = Math.max.apply(null, rows.map(function (r) { return r[1]; }).concat([1]));
@@ -1276,6 +1282,7 @@
           body: h('p', { text: paused ? 'Scheduled posts that are due will go out on the next run (every 15 minutes), after their fight is checked again.' : 'Nothing will be posted to any channel until you resume. Scheduled posts stay in the queue.' }),
           onConfirm: function () { return api('POST', '/admin/social/pause', { paused: !paused }); } }).then(function (ok) { if (ok) { toast(paused ? 'Publishing resumed.' : 'Publishing paused.', 'good'); route(); } }).catch(fail);
       } });
+      if (PRODUCTION) { toggle.disabled = true; toggle.title = 'Publishing infrastructure requires a verified delivery release.'; }
       var rows = r.posts.map(function (p) {
         var acts = h('td', { class: 'nowrap' });
         if (['scheduled', 'held', 'failed'].indexOf(p.status) >= 0) acts.appendChild(h('button', { class: 'btn small danger', testid: 'btn-cancel-post', text: 'Cancel', onclick: function () { api('POST', '/admin/social/' + encodeURIComponent(p.id) + '/cancel').then(function () { toast('Post cancelled.', 'good'); route(); }).catch(fail); } }));
@@ -1296,16 +1303,19 @@
         head('Publishing', 'Scheduled social posts for approved fight campaigns. Nothing posts without your approval, and every fight is checked again just before posting.', toggle),
         paused ? h('div', { class: 'banner warn', testid: 'paused-banner' }, h('span', { class: 'ico', text: '⏸' }), h('div', null, h('strong', { text: 'Publishing is paused.' }), 'Nothing will be posted until you resume.' + (r.paused.by ? ' Paused by ' + r.paused.by + '.' : ''))) : null,
         h('section', { class: 'card' }, h('h2', { text: 'Channels' }), h('p', { class: 'sub', text: 'Mode: ' + (r.provider === 'none' ? 'off (posts are held)' : r.provider === 'sandbox' ? 'sandbox: posting is simulated, nothing reaches the real accounts' : 'live') }),
-          h('div', { class: 'grid tiles' }, Object.keys(names).map(function (ch) { var c = r.channels[ch] || {}; return h('div', { class: 'tile', testid: 'channel-tile-' + ch }, h('div', { class: 'label', text: names[ch] }), h('div', { class: 'value text', text: c.mode === 'live' ? 'Live' : c.mode === 'sandbox' ? 'Sandbox' : 'Off' }), h('div', { class: 'hint', text: c.ready ? (c.note || (c.mode === 'sandbox' ? 'Simulated: nothing reaches the account' : 'Ready')) : 'Authorization needed: see Connections' })); }))),
+          h('div', { class: 'grid tiles' }, Object.keys(names).map(function (ch) { var c = r.channels[ch] || {}; return h('div', { class: 'tile', testid: 'channel-tile-' + ch }, h('div', { class: 'label', text: names[ch] }), h('div', { class: 'value text', text: PRODUCTION ? (c.connected ? 'Connected' : 'Verification needed') : c.mode === 'live' ? 'Live' : c.mode === 'sandbox' ? 'Sandbox' : 'Off' }), h('div', { class: 'hint', text: PRODUCTION ? (c.note || 'Publishing disabled. Connection verification unavailable.') : c.ready ? (c.note || (c.mode === 'sandbox' ? 'Simulated: nothing reaches the account' : 'Ready')) : 'Authorization needed: see Connections' })); }))),
         /* BEGIN authorized 2026-11-06 publishing QA separation. */
         false &&
         /* END authorized 2026-11-06 publishing QA separation. */
         liveTestCard(r),
         h('section', { class: 'card' }, h('h2', { text: 'Queue' }), rows.length ? h('div', { class: 'table-wrap' }, h('table', { class: 'data', testid: 'posts-table' }, h('thead', null, h('tr', null, h('th', { text: 'Channel' }), h('th', { text: 'Post' }), h('th', { text: 'When' }), h('th', { text: 'Status' }), h('th', { text: '' }))), h('tbody', null, rows)))
-          : h('div', { class: 'empty', testid: 'posts-empty', text: 'Nothing scheduled. Approve a fight campaign, then press “Schedule posts”.' })),
+          : h('div', { class: 'empty', testid: 'posts-empty', text: PRODUCTION ? 'No authorized delivery schedule. Approved content remains held for a separate verified distribution release.' : 'Nothing scheduled. Approve a fight campaign, then press “Schedule posts”.' })),
       ]);
     });
   };
+
+  var originalPublishingPage=pages.publishing;
+  pages.publishing=function(main){return originalPublishingPage(main).then(function(){if(!PRODUCTION)return;var list=h('div',{testid:'approved-distribution-queue'}),card=h('section',{class:'card'},h('h2',{text:'Approved content awaiting distribution authorization'}),h('p',{text:'Content approval is preserved. Scheduling, provider publication and recipient delivery remain separate gated actions.'}),list);main.appendChild(card);return draftList(list,{status:'approved',limit:100},'No content approvals are awaiting distribution.');});};
 
   // Sandbox outbox: approved emails built exactly as they would be sent, never sent.
   function sandboxOutbox(sb) {
@@ -1367,8 +1377,9 @@
     document.title = (NAV.filter(function (n) { return n[0] === r.name; })[0] || ['', 'Growth Engine'])[1] + ' · Growth Engine (production preparation)';
     Promise.resolve(pages[r.name](main, r.params)).then(function () {
       if(PRODUCTION){
-        main.prepend(h('div',{class:'banner info',testid:'production-preparation-banner'},h('strong',{text:'Production Growth preparation'}),h('span',{text:'Discovery, research and drafts only. Owner approval required; publishing, outreach and payment changes are disabled.'}),h('button',{class:'btn danger',testid:'production-emergency-stop',text:'Emergency stop preparation',onclick:function(){modal({title:'Stop production preparation?',body:h('p',{text:'This pauses scheduled preparation. Existing records and connections remain unchanged.'}),onConfirm:function(){return api('POST','/admin/autonomy/stop',{});}}).then(route).catch(fail);}})));
-        main.querySelectorAll('button').forEach(function(b){if(/approve|publish|send|connect|disconnect|refresh.*token|generate|record correction|reject prospect|opt out|run now|check for new|check now|verify existing|add to do-not|invitation|onboard|mark|retry|requeue/i.test(b.textContent)){b.disabled=true;b.title='Requires a separately authorized operation; production preparation remains active.';}});
+        main.prepend(h('div',{class:'banner info',testid:'production-preparation-banner'},h('strong',{text:ISOLATED_PREVIEW?'Isolated Growth Preview':'Production Growth preparation'}),h('span',{text:'Discovery, research and drafts only. Owner approval required; publishing, outreach and payment changes are disabled.'}),h('button',{class:'btn danger',testid:'production-emergency-stop',text:'Emergency stop preparation',onclick:function(){modal({title:'Stop production preparation?',body:h('p',{text:'This pauses scheduled preparation. Existing records and connections remain unchanged.'}),onConfirm:function(){return api('POST','/admin/autonomy/stop',{});}}).then(route).catch(fail);}})));
+        var resume=h('button',{class:'btn',testid:'production-resume-preparation',text:'Resume preparation',disabled:true,onclick:function(){modal({title:'Resume autonomous preparation?',body:h('p',{text:'Resume research and draft preparation only. Publishing, outreach and automatic approvals remain disabled.'}),onConfirm:function(){return api('POST','/admin/autonomy/resume',{confirmation:'ACTIVATE PRODUCTION PREPARATION ONLY'});}}).then(route).catch(fail);}});main.querySelector('[data-testid=production-preparation-banner]').appendChild(resume);api('GET','/health').then(function(s){resume.disabled=s.scheduler?.enabled!==false;resume.title=s.scheduler?.enabled?'Preparation is already running.':'Resume the stopped preparation worker.';}).catch(function(){resume.title='Current worker status could not be verified.';});
+        main.querySelectorAll('button').forEach(function(b){if(!b.hasAttribute('data-content-review') && ['btn-ack','btn-requeue','btn-add-optout','btn-preparation-requeue'].indexOf(b.getAttribute('data-testid'))===-1 && /approve|publish|send|schedule|connect|disconnect|refresh.*token|generate|block.*artwork|allow.*artwork|record correction|reject prospect|opt out|run now|check for new|check now|verify existing|add to do-not|invitation|onboard|mark|retry|requeue/i.test(b.textContent)){b.disabled=true;b.title='Requires a separately authorized operation; production preparation remains active.';}});
       }
  if (state.pendingCount === null) refreshCounts(); else paintBadges(); })
       .catch(function (e) { if (e && e.silent) return; clear(main).appendChild(h('div', { class: 'banner bad', testid: 'page-error' }, h('span', { class: 'ico', text: '!' }), h('div', null, h('strong', { text: 'Could not load this page.' }), (e && e.message) || 'Request failed', ' ', h('button', { class: 'btn small', text: 'Try again', onclick: route })))); });
@@ -1423,9 +1434,10 @@
     });
   }
         /* END authorized 2026-11-06 original poster workflow. */
+  pages.posters = posterDepartment;
   function boot() {
     if (!token()) return renderLogin();
-    api('GET', '/admin/session').then(function (s) { state.sessionExpMs = s && s.exp ? s.exp * 1000 : null; scheduleExpiry(state.sessionExpMs); route(); }).catch(function (e) { if (!e.silent) renderLogin(); });
+    api('GET', '/admin/session').then(function (s) { state.sessionExpMs = s && s.exp ? s.exp * 1000 : null; scheduleExpiry(state.sessionExpMs); if(PRODUCTION&&!ISOLATED_PREVIEW)api('POST','/admin/acceptance/check',{}).catch(function(){}); route(); }).catch(function (e) { if (!e.silent) renderLogin(); });
   }
   window.addEventListener('hashchange', route);
   boot();
