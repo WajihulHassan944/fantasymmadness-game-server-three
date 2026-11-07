@@ -308,7 +308,7 @@ function createBackoffice({ runtime, manualOnly = false }) {
   async function marketingCoverage() {
     const latest = await col.coverage.find({}).sort({ day: -1 }).limit(1).next();
     const blocked = (await col.gateRejections.find({}).sort({ at: -1 }).limit(20).toArray()).map(strip);
-    return { latest: latest ? strip(latest) : null, recentlyBlocked: blocked, sports: contestCampaigns.SPORTS, horizonNote: 'Campaigns are prepared only for published, open FANTASY MMADNESS contests in the next few weeks.' };
+    return { latest: latest ? strip(latest) : null, recentlyBlocked: blocked, sports: contestCampaigns.SPORTS, horizonNote: `Campaigns require published, open FANTASY MMADNESS contests within ${latest?.horizonDays || 21} days. Each scan considers up to ${latest?.maxCampaignsPerSport || 3} preparation candidates per sport; incomplete source scans are reported separately.` };
   }
 
   async function reports({ limit } = {}) { return (await col.reports.find({}).sort({ day: -1 }).limit(lim(limit, 30, 365)).toArray()).map(strip); }
