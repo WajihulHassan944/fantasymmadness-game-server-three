@@ -6,8 +6,8 @@ function createSmtpRelayService({env=process.env,verifyToken,transportFactory,cl
  const verify=verifyToken||((token)=>require('@vercel/oidc').verifyVercelOidcToken(token,{issuer:'https://oidc.vercel.com/kelly-davis-projects-6c108d0b',audience:'https://vercel.com/kelly-davis-projects-6c108d0b',ownerId:'team_YE6Qw7cYL85CvuigfUXsH1lq',projectId:'prj_Hpe9UjGrBBJOm3boxHsL9lHesWLl',environment:'production'}));
  const make=()=> (transportFactory||require('nodemailer').createTransport)({host:'smtp.gmail.com',port:465,secure:true,auth:{user:SENDER,pass:String(env.SMTP_PASS||env.GMAIL_APP_PASSWORD||'').replace(/\s+/g,'')},connectionTimeout:10000,greetingTimeout:10000,socketTimeout:20000,tls:{rejectUnauthorized:true}});
  return async function(req,res){
-  res.setHeader('Cache-Control','no-store');res.setHeader('Content-Type','application/json');
-  try{const token=String(req.headers.authorization||'').replace(/^Bearer /,'');if(!token)throw Error('missing');await verify(token);}catch{res.statusCode=401;return res.end(JSON.stringify({ok:false,reason:'verified_production_growth_workload_required'}));}
+  res.setHeader('X-Fmm-Mail-Service','signed-workload-v1');res.setHeader('Cache-Control','no-store');res.setHeader('Content-Type','application/json');
+  try{const token=String(req.headers['x-fmm-mail-workload']||req.headers.authorization||'').replace(/^Bearer /,'');if(!token)throw Error('missing');await verify(token);}catch(e){res.statusCode=401;return res.end(JSON.stringify({ok:false,reason:'verified_production_growth_workload_required',validationCode:String(e.code||'MISSING_WORKLOAD_TOKEN').replace(/[^A-Z0-9_]/g,'').slice(0,80),failedClaim:typeof e.claim==='string'?e.claim:null}));}
   const path=req.url.split('?')[0],isVerify=path==='/api/mail/verify'&&req.method==='GET',isSend=path==='/api/mail/send'&&req.method==='POST';
   if(!isVerify&&!isSend){res.statusCode=404;return res.end(JSON.stringify({ok:false}));}
   if(!String(env.SMTP_PASS||env.GMAIL_APP_PASSWORD||'')){res.statusCode=409;return res.end(JSON.stringify({ok:false,reason:'existing_smtp_authorization_missing'}));}
