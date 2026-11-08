@@ -7,7 +7,7 @@ function createProductionDistribution({col,queue,quality,email,meta,owners,clock
  const now=()=>clock().toISOString();
  async function init(){await queue.createIndex({key:1},{unique:true});await queue.createIndex({status:1,scheduledAt:1});}
  async function policy(){const p=await col.settings.findOne({_id:'distribution-policy'});const emergency=await col.settings.findOne({_id:'autonomy:policy'});return{paused:!enabled||p?.paused!==false||emergency?.paused===true,emergencyStopped:emergency?.paused===true,enabled,version:p?.version||0};}
- async function readiness(){const channels=meta?await meta.readiness():{};const counts=Object.fromEntries(await Promise.all(['scheduled','held','accepted','published','needs_check','failed','cancelled'].map(async status=>[status,await queue.countDocuments({status})])));return{enabled,counts,policy:await policy(),email:email?await email.readiness():{ready:false,provider:'none',blockers:['gmail_app_oauth_credentials_required']},channels,receiptMeaning:'Provider acceptance and publication IDs are recorded separately from delivery confirmation.'};}
+ async function readiness(){const channels=meta?await meta.readiness():{};const counts=Object.fromEntries(await Promise.all(['scheduled','held','accepted','published','needs_check','failed','cancelled'].map(async status=>[status,await queue.countDocuments({status})])));return{enabled,counts,lastRun:await col.settings.findOne({_id:'distribution-last-run'},{projection:{_id:0}}),policy:await policy(),email:email?await email.readiness():{ready:false,provider:'none',blockers:['gmail_app_oauth_credentials_required']},channels,receiptMeaning:'Provider acceptance and publication IDs are recorded separately from delivery confirmation.'};}
  async function pause(paused,owner){if(!owners.includes(owner)||typeof paused!=='boolean')return{ok:false,reason:'verified_owner_and_explicit_pause_required'};if(!paused){const r=await readiness();if(!enabled||r.policy.emergencyStopped)return{ok:false,reason:'emergency_stop_or_distribution_disabled'};if(!r.email.ready&&!Object.values(r.channels).some(c=>c.ready))return{ok:false,reason:'provider_verification_required'};}
  await col.audit.insertOne({action:paused?'distribution_pause':'distribution_resume',owner,at:now()});await col.settings.updateOne({_id:'distribution-policy'},{$set:{paused,by:owner,at:now()},$inc:{version:1}},{upsert:true});return{ok:true,...await policy()};}
  async function activateVerifiedRelease(release,verified){
@@ -40,9 +40,11 @@ function createProductionDistribution({col,queue,quality,email,meta,owners,clock
   try{await queue.insertOne(entry);}catch(e){if(e.code!==11000)throw e;return{ok:false,reason:'duplicate_delivery'};}
   return{ok:true,key,status:'scheduled',scheduledAt:entry.scheduledAt};
  }
- async function dispatch(){
+ async function dispatch({trigger='manual',deploymentId=null,commit=null}={}){
+  const startedAt=now(),runId=crypto.randomUUID();
+  async function record(result){const receipt={runId,trigger,deploymentId,commit,startedAt,completedAt:now(),...result,automaticApprovals:0,paymentMutations:0};await col.audit.insertOne({action:'distribution_scheduled_run',...receipt});await col.settings.updateOne({_id:'distribution-last-run'},{$set:receipt},{upsert:true});return result;}
   const stale=new Date(+clock()-10*60000).toISOString();await queue.updateMany({status:'sending',claimedAt:{$lt:stale}},{$set:{status:'needs_check',reason:'interrupted_provider_request_never_auto_retry'}});
-  if((await policy()).paused)return{paused:true};const out={accepted:0,held:0,failed:0};
+  if((await policy()).paused)return record({paused:true});const out={accepted:0,held:0,failed:0};
   for(const job of await queue.find({status:'scheduled',scheduledAt:{$lte:now()}}).sort({scheduledAt:1}).limit(10).toArray()){
    if((await policy()).paused)break;
    const d=await col.drafts.findOne({id:job.draftId});let blockers=[];
@@ -59,7 +61,7 @@ function createProductionDistribution({col,queue,quality,email,meta,owners,clock
    const status=result.ok?(job.payload.channel==='email'?'accepted':'published'):result.uncertain?'needs_check':result.retryable&&claimed.attempts<3?'scheduled':'failed';
    const changes={status,receipt:result.receipt||null,lastError:result.reason||null,updatedAt:now()};if(status==='scheduled')changes.scheduledAt=new Date(+clock()+Math.pow(2,claimed.attempts)*60000).toISOString();
    await queue.updateOne({key:job.key,status:'sending',claim},{$set:changes});await col.audit.insertOne({action:'distribution_provider_result',key:job.key,...changes});out[result.ok?'accepted':'failed']++;
-  }return out;
+  }return record(out);
  }
  async function cancel(key,owner){if(!owners.includes(owner))return{ok:false};await col.audit.insertOne({action:'distribution_cancel',key,owner,at:now()});const r=await queue.updateOne({key,status:{$in:['scheduled','held','failed']}},{$set:{status:'cancelled',cancelledAt:now(),cancelledBy:owner}});return{ok:r.modifiedCount===1};}
  return{init,readiness,preview,pause,activateVerifiedRelease,authorize,dispatch,cancel,list:async()=>queue.find({},{projection:{_id:0,claim:0}}).sort({scheduledAt:-1}).limit(100).toArray()};
