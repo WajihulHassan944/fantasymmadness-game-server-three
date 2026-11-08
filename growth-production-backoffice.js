@@ -4,11 +4,12 @@
 const {createBackoffice}=require('./growth-backoffice');
 const {productionChannelStatus}=require('./growth-production-channel-status');
 const {contentVersion}=require('./growth-production-review');
-function createProductionBackoffice({runtime,config,status,clock=()=>new Date()}){
+function createProductionBackoffice({runtime,config,status,distribution=null,clock=()=>new Date()}){
  const bo=createBackoffice({runtime,manualOnly:true}),col=runtime.collections;
  async function read(section,q={}){
   const s=await status();
-  if(section==='status')return{ok:true,...s,database:{name:s.database,kind:'atlas',hostPinned:true},scheduler:{...s.scheduler,schedulerEnabled:s.scheduler.enabled,preparationPaused:!s.scheduler.enabled,schedule:'every 15 minutes',lastRunAt:s.scheduler.lastCompletedAt,runsLast24h:(await bo.schedulerStatus()).runsLast24h},preparation:await runtime.preparation.summary({details:true}),delivery:{provider:'none',realDelivery:false,blockers:['owner_delivery_approval_not_granted']}};
+  if(section==='email/readiness'&&distribution){const r=(await distribution.readiness()).email;return{ok:true,readiness:{...r,dns:{error:null},steps:[{done:r.ready,text:r.ready?'Authenticated existing business mailbox verified':(r.blockers||[]).join('; ')},{done:false,text:'Every recipient, message and schedule requires owner approval. Acceptance is not recipient delivery.'}]}};}
+  if(section==='status')return{ok:true,...s,database:{name:s.database,kind:'atlas',hostPinned:true},scheduler:{...s.scheduler,schedulerEnabled:s.scheduler.enabled,preparationPaused:!s.scheduler.enabled,schedule:'every 15 minutes',lastRunAt:s.scheduler.lastCompletedAt,runsLast24h:(await bo.schedulerStatus()).runsLast24h},preparation:await runtime.preparation.summary({details:true}),delivery:s.distribution?{...s.distribution.email,realDelivery:s.outboundEnabled}: {provider:'none',realDelivery:false,blockers:['provider_authentication_required']}};
   if(section==='research'){
     const track = q.track === 'affiliate' ? 'affiliate' : 'pr';
     const focus = track === 'pr' ? 'partners' : 'fans';
@@ -34,7 +35,7 @@ function createProductionBackoffice({runtime,config,status,clock=()=>new Date()}
    return{ok:true,drafts:await Promise.all(drafts.map(async d=>{
     let blockers;try{blockers=[...await runtime.preparation.quality(d,clock()),...(d.reviewSafety?.state==='hold'&&Array.isArray(d.reviewSafety.reasons)?d.reviewSafety.reasons:[])];}catch{blockers=['draft_assessment_unavailable'];}
     if(d.kind==='affiliate')blockers.push('current_recipient_suitability_requires_owner_verification');
-    const ownerHold=await col.ownerCampaignHolds?.findOne({_id:d.id,active:true});
+    const ownerHold=await col.ownerCampaignHolds?.findOne({_id:d.id,active:true});if(ownerHold)blockers.push('owner_campaign_hold');
     return{...d,ownerHold:ownerHold?{active:true,reason:ownerHold.reason,at:ownerHold.at}:null,review:{state:blockers.length?'held':'eligible',version:contentVersion(d),blockers:[...new Set(blockers)],ownerApprovalRequired:true,liveDeliveryAuthorized:false,checkedAt:clock().toISOString()}};
    }))};
   }
@@ -50,6 +51,7 @@ function createProductionBackoffice({runtime,config,status,clock=()=>new Date()}
   if(section==='audit')return{ok:true,entries:await bo.auditLog(q)};
   if(section==='suppressions')return{ok:true,suppressions:await bo.suppressions(q)};
   if(section==='workstreams')return{ok:true,...await bo.workstreams(q)};
+  if(section==='social'&&distribution){const r=await distribution.readiness();return{ok:true,posts:[],paused:r.policy,provider:r.enabled?'live':'none',channels:{...productionChannelStatus(s.connections),...r.channels},liveTestApproved:false};}
   if(section==='social')return{ok:true,posts:await runtime.social.list({status:q.status}),paused:{paused:true,reason:'production_preparation_only'},provider:'none',channels:productionChannelStatus(s.connections),liveTestApproved:false};
   if(section==='posters')return{ok:true,posters:await col.posters.find({withdrawnAt:{$exists:false}},{projection:{bytes:0,_id:0}}).limit(100).toArray(),enabled:config.posters?.enabled===true};
   if(section==='recruitment'){
@@ -59,7 +61,7 @@ function createProductionBackoffice({runtime,config,status,clock=()=>new Date()}
   if(section==='connections'){
    const original=s.connections||{},platforms={};for(const name of ['facebook','instagram']){const x=original.meta?.[name]||{};platforms[name]={verified:x.verified===true,name:x.verified?'Existing authorized '+name+' connection':'',id:'Not exposed in status view',reason:x.reason||x.state||'Verification unavailable'};}
    const channels={};for(const name of ['x','tiktok']){const x=(original.oauth||[]).find(x=>x.provider===name);channels[name]=productionChannelStatus(original)[name];}
-   return{ok:true,connections:{meta:{readOnlyExisting:true,platforms:original.metaIdentity?.platforms||platforms,selected:original.metaIdentity?.selected||null,source:original.source||'existing_authorized_connection_service',health:{checkedAt:original.checkedAt},permissions:original.metaPermissions||{verified:false}},social:{provider:'none',approved:false,paused:{paused:true},channels},email:{provider:'none',realDelivery:false,sender:require('./growth-runtime-config').BUSINESS_SENDER},contestFeed:{url:config.contestSourceUrl,readOnly:true},liveRegistrationReport:{configured:false,latest:null},verifiedEventIngest:{configured:false,previewBlocked:true,path:'/api/growth/events'}}};
+   return{ok:true,connections:{meta:{readOnlyExisting:true,platforms:original.metaIdentity?.platforms||platforms,selected:original.metaIdentity?.selected||null,source:original.source||'existing_authorized_connection_service',health:{checkedAt:original.checkedAt},permissions:original.metaPermissions||{verified:false}},social:{provider:'none',approved:false,paused:{paused:true},channels},email:s.distribution?{...s.distribution.email,realDelivery:s.outboundEnabled}:{provider:'none',realDelivery:false,sender:require('./growth-runtime-config').BUSINESS_SENDER},contestFeed:{url:config.contestSourceUrl,readOnly:true},liveRegistrationReport:{configured:false,latest:null},verifiedEventIngest:{configured:false,previewBlocked:true,path:'/api/growth/events'}}};
   }
   return null;
  }

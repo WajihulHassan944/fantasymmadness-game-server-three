@@ -7,6 +7,10 @@
     {
       "path": "/api/growth/internal/preparation/posters",
       "schedule": "* * * * *"
+    },
+    {
+      "path": "/api/growth/internal/distribution",
+      "schedule": "*/15 * * * *"
     }
   ]
 }

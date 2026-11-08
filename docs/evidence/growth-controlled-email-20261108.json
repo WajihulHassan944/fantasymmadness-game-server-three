@@ -1,0 +1,23 @@
+{
+  "provider": "gmail",
+  "path": "authorized_ChatGPT_Gmail_connector",
+  "productionAdapterTest": false,
+  "ownerAuthorizedTestCount": 1,
+  "sender": "CONTACT@fantasymmadnesscom.com",
+  "recipient": "facester1@gmail.com",
+  "subject": "FANTASY MMADNESS Delivery Verification",
+  "sentMessageId": "1a1bb5da8a7f8025",
+  "receivedMessageId": "1a1bb5db10ce276b",
+  "receivedLabels": [
+    "UNREAD",
+    "IMPORTANT",
+    "CATEGORY_PERSONAL",
+    "INBOX"
+  ],
+  "deliveredTo": "facester1@gmail.com",
+  "messageId": "<CAHZZKaz2FnC3HnVqW1t92Ry20+MuXNQYhGkWqjwJ9Ry_bUUtJQ@mail.gmail.com>",
+  "authenticationResults": "mx.google.com;       dkim=pass header.i=@fantasymmadnesscom.com header.s=google header.b=\"ki8tvD/L\";       arc=pass (i=1);       spf=pass (google.com: domain of contact@fantasymmadnesscom.com designates 209.85.220.41 as permitted sender) smtp.mailfrom=contact@fantasymmadnesscom.com;       dara=pass header.i=@gmail.com",
+  "receivedAt": "2026-11-08T13:34:00.000Z",
+  "status": "recipient_inbox_delivery_confirmed",
+  "scope": "One explicitly authorized non-campaign verification only. No approval for any other recipient, message or campaign."
+}
