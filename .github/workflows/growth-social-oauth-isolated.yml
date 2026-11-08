@@ -2,7 +2,7 @@ name: Isolated social OAuth security tests
 on:
   pull_request:
     paths:
-      - 'growth-gmail-provider*'
+      - 'growth-gmail*'
       - 'growth-social-oauth*'
       - 'growth-social-connection-*'
       - 'growth-affiliate-*'
