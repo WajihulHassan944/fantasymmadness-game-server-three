@@ -1,0 +1,18 @@
+'use strict';
+const test=require('node:test'),assert=require('node:assert/strict'),crypto=require('crypto');
+const {createProductionMetaProvider}=require('./growth-production-meta-provider'),{createTokenVault}=require('./growth-token-vault');
+function fixture(){const key=crypto.randomBytes(32).toString('base64'),vault=createTokenVault(key),page='128043637053328',ig='17841400000000000',record={key:'meta',selected:{pageId:page,igUserId:ig},pages:[{id:page,tokenSealed:vault.seal('private-fixture-token','meta:page:'+page)}],userTokenSealed:vault.seal('private-user-token','meta:user')},calls=[];let grants=['pages_manage_posts','instagram_content_publish'],wrong=false,fail=false;
+ const db={databaseName:'fmgrowthtest',collection:name=>({findOne:async()=>name==='growth_connections'?record:null,updateOne:async()=>({})})};
+ const fetchImpl=async(url,options={})=>{calls.push({url,method:options.method||'GET'});const u=new URL(url);let data;
+ if(options.method==='POST'){if(fail)throw Error('secret provider token');data=u.pathname.endsWith('/media')?{id:'container-1'}:u.pathname.endsWith('/media_publish')?{id:'instagram-post-1'}:{post_id:'facebook-post-1'};}
+ else if(u.pathname.endsWith('/me/permissions'))data={data:grants.map(permission=>({permission,status:'granted'}))};else if(u.pathname.endsWith('/me'))data={id:wrong?'999999999':page,name:'Fantasy MMAdness'};else if(u.pathname.endsWith('/'+ig))data={id:ig,username:'fantasymmadness'};else data={id:page,instagram_business_account:{id:ig}};
+ return{ok:true,status:200,json:async()=>data,headers:new Headers({'content-type':'image/jpeg','content-length':'5000'}),arrayBuffer:async()=>new ArrayBuffer(10)};};
+ return{calls,page,ig,setGrants:x=>grants=x,setWrong:()=>wrong=true,setFail:()=>fail=true,provider:createProductionMetaProvider({withSource:async fn=>fn(db),env:{GROWTH_TOKEN_ENCRYPTION_KEY:key},fetchImpl})};}
+test('Meta requires provider-verified exact identity/scope and preserves credentials; pause is checked between container and publish',async()=>{
+ const f=fixture(),s=await f.provider.readiness();assert.equal(s.facebook.ready,true);assert.equal(s.instagram.ready,true);
+ const fb=await f.provider.publish({channel:'facebook',destinationId:f.page,text:'Exact owner caption',imageUrl:'https://example.invalid/poster.jpg'});assert.equal(fb.receipt.providerPostId,'facebook-post-1');
+ let allowed=true;const ig=await f.provider.publish({channel:'instagram',destinationId:f.ig,text:'Approved caption',imageUrl:'https://res.cloudinary.com/fixture/image/upload/poster.jpg'},{canSend:async()=>{const old=allowed;allowed=false;return old;}});assert.equal(ig.ok,false);assert.equal(f.calls.some(c=>c.method==='POST'&&c.url.endsWith('/media_publish')),false);
+ f.setGrants([]);assert.equal((await f.provider.readiness()).facebook.ready,false);assert.equal((await f.provider.publish({channel:'facebook',destinationId:f.page})).ok,false);
+ const w=fixture();w.setWrong();assert.equal((await w.provider.readiness()).facebook.ready,false);
+ const unknown=fixture();unknown.setFail();const r=await unknown.provider.publish({channel:'facebook',destinationId:unknown.page,text:'Exact owner caption',imageUrl:'https://example.invalid/poster.jpg'});assert.equal(r.uncertain,true);assert.doesNotMatch(JSON.stringify(r),/private|secret provider/);
+});
