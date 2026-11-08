@@ -1,0 +1,220 @@
+{
+  "verifiedAt": "2026-11-08T14:09:46.907086+00:00",
+  "applicationCommit": "f923b06a027c2e3d2a1c6c623e157cb04d64aa6f",
+  "deploymentId": "dpl_4BZK9Zo9XV2Be4dwXCAEHNYziBxH",
+  "productionRouteVersion": "bbaee532-889e-49aa-bebe-70cbab28685e",
+  "database": "fmgrowthproduction",
+  "collectionPrefix": "production_preparation_",
+  "scheduler": {
+    "enabled": true,
+    "activeDeploymentId": "dpl_4BZK9Zo9XV2Be4dwXCAEHNYziBxH",
+    "servedCommit": "f923b06a027c2e3d2a1c6c623e157cb04d64aa6f",
+    "lastScheduledReceipts": [
+      {
+        "_id": "production-preparation-e99e7392-75fe-4899-9ebe-0586e8f93c39:1993496",
+        "automaticApprovals": 0,
+        "collectionPrefix": "production_preparation_",
+        "commit": "f923b06a027c2e3d2a1c6c623e157cb04d64aa6f",
+        "completedAt": "2026-11-08T14:08:39.734Z",
+        "cyclePurpose": "scheduled_preparation",
+        "database": "fmgrowthproduction",
+        "deploymentId": "dpl_4BZK9Zo9XV2Be4dwXCAEHNYziBxH",
+        "environment": "production",
+        "errors": 0,
+        "generation": "production-preparation-e99e7392-75fe-4899-9ebe-0586e8f93c39",
+        "jobsProcessed": 0,
+        "ordinal": 2,
+        "outboundEnabled": false,
+        "ownerApprovalRequired": true,
+        "paymentMutations": 0,
+        "preparationJobsProcessed": 3,
+        "publishingEnabled": false,
+        "trigger": "workflow_timer",
+        "websiteSessionUsed": false,
+        "workflowRunId": "wrun_41M6XPWVVH0GNJM8WC87DA16JZ"
+      },
+      {
+        "_id": "production-preparation-e99e7392-75fe-4899-9ebe-0586e8f93c39:1993495:confirmation",
+        "automaticApprovals": 0,
+        "collectionPrefix": "production_preparation_",
+        "commit": "f923b06a027c2e3d2a1c6c623e157cb04d64aa6f",
+        "completedAt": "2026-11-08T13:53:22.263Z",
+        "cyclePurpose": "release_confirmation",
+        "database": "fmgrowthproduction",
+        "deploymentId": "dpl_4BZK9Zo9XV2Be4dwXCAEHNYziBxH",
+        "environment": "production",
+        "errors": 0,
+        "generation": "production-preparation-e99e7392-75fe-4899-9ebe-0586e8f93c39",
+        "jobsProcessed": 0,
+        "ordinal": 1,
+        "outboundEnabled": false,
+        "ownerApprovalRequired": true,
+        "paymentMutations": 0,
+        "preparationJobsProcessed": 0,
+        "publishingEnabled": false,
+        "trigger": "workflow_timer",
+        "websiteSessionUsed": false,
+        "workflowRunId": "wrun_41M6XPWVVH0GNJM8WC87DA16JZ"
+      }
+    ],
+    "generation": "production-preparation-e99e7392-75fe-4899-9ebe-0586e8f93c39",
+    "lastCompletedAt": "2026-11-08T14:08:39.734Z",
+    "completedCycles": 253,
+    "scheduledCycles": 248,
+    "healthy": true,
+    "lastError": null
+  },
+  "distribution": {
+    "enabled": true,
+    "counts": {
+      "scheduled": 0,
+      "held": 0,
+      "accepted": 0,
+      "published": 0,
+      "needs_check": 0,
+      "failed": 0,
+      "cancelled": 0
+    },
+    "lastRun": {
+      "accepted": 0,
+      "automaticApprovals": 0,
+      "commit": "f923b06a027c2e3d2a1c6c623e157cb04d64aa6f",
+      "completedAt": "2026-11-08T14:00:28.870Z",
+      "deploymentId": "dpl_4BZK9Zo9XV2Be4dwXCAEHNYziBxH",
+      "failed": 0,
+      "held": 0,
+      "paymentMutations": 0,
+      "runId": "806b779c-ed39-4a68-9cdc-dd22c79bb63d",
+      "startedAt": "2026-11-08T14:00:28.821Z",
+      "trigger": "platform_cron"
+    },
+    "policy": {
+      "paused": false,
+      "emergencyStopped": false,
+      "enabled": true,
+      "version": 1
+    },
+    "email": {
+      "ready": false,
+      "provider": "gmail",
+      "sender": "contact@fantasymmadnesscom.com",
+      "blockers": [
+        "gmail_app_oauth_credentials_required"
+      ]
+    },
+    "channels": {
+      "facebook": {
+        "ready": true,
+        "destinationId": "128043637053328",
+        "name": "Fantasy MMAdness ",
+        "checkedAt": "2026-11-08T14:09:05.285Z",
+        "blockers": []
+      },
+      "instagram": {
+        "ready": true,
+        "destinationId": "17841447949460050",
+        "name": "fantasymmadness",
+        "checkedAt": "2026-11-08T14:09:05.285Z",
+        "blockers": []
+      }
+    },
+    "receiptMeaning": "Provider acceptance and publication IDs are recorded separately from delivery confirmation."
+  },
+  "marketingAndAffiliateHolds": {
+    "marketing": {
+      "awaitingOwnerReview": 2,
+      "receipts": 4,
+      "ready": 0,
+      "held": 2,
+      "awaitingReceipt": 0,
+      "sourceHolds": 0,
+      "approvedDrafts": 0
+    },
+    "pr": {
+      "awaitingOwnerReview": 21,
+      "receipts": 23,
+      "ready": 21,
+      "held": 0,
+      "awaitingReceipt": 0,
+      "sourceHolds": 0,
+      "approvedDrafts": 2
+    },
+    "affiliate": {
+      "awaitingOwnerReview": 9,
+      "receipts": 9,
+      "ready": 0,
+      "held": 9,
+      "awaitingReceipt": 0,
+      "sourceHolds": 30,
+      "approvedDrafts": 0
+    }
+  },
+  "ownerAcceptance": {
+    "allReadModelsPassed": true,
+    "at": "2026-11-08T13:48:00.812Z",
+    "checks": [
+      {
+        "page": "overview",
+        "ok": true
+      },
+      {
+        "page": "approvals",
+        "ok": true
+      },
+      {
+        "page": "marketing",
+        "ok": true
+      },
+      {
+        "page": "pr",
+        "ok": true
+      },
+      {
+        "page": "affiliates",
+        "ok": true
+      },
+      {
+        "page": "publishing",
+        "ok": true
+      },
+      {
+        "page": "posters",
+        "ok": true
+      },
+      {
+        "page": "automation",
+        "ok": true
+      },
+      {
+        "page": "analytics",
+        "ok": true
+      },
+      {
+        "page": "revenue",
+        "ok": true
+      },
+      {
+        "page": "connections",
+        "ok": true
+      }
+    ],
+    "outboundEnabled": false,
+    "publishingEnabled": false,
+    "releaseCommit": "6ab1de168aaf7267a3e8eb9361a59e34a57f5edd",
+    "verifiedOwnerSession": true
+  },
+  "anonymousProtectedRoutesReturn401": [
+    "/api/growth/admin/distribution",
+    "/api/growth/admin/distribution/fixture/preview?channel=email",
+    "/api/growth/internal/distribution",
+    "/api/growth/admin/status"
+  ],
+  "consoleSha256": "3c3e15b626c2f809c87c4dff9f8bf7002de4634438ae4f2f4ccc7e8e94287c54",
+  "frontEndDeploymentUnchanged": "dpl_83uZtGnXtNcWTNeQ8p6AKr4p31Ld",
+  "mailboxTestEvidence": "growth-controlled-email-20261108.json",
+  "productionApplicationEmailReceipt": null,
+  "productionPostReceipt": null,
+  "fullActivationComplete": false,
+  "runtimeLogHistoryCoverage": false,
+  "existingSmtpMailboxIdentityVerified": false
+}
