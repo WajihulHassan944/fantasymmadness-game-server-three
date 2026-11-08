@@ -1286,7 +1286,7 @@
       var r=all[0],delivery=all[1];
       r.paused=delivery.policy;r.provider=delivery.enabled?'live':'none';
       Object.keys(delivery.channels||{}).forEach(function(ch){r.channels[ch]=Object.assign({},r.channels[ch],delivery.channels[ch],{connected:delivery.channels[ch].ready,note:delivery.channels[ch].ready?'Provider identity and publishing scope verified. Exact campaign and schedule approval required.':(delivery.channels[ch].blockers||[]).join('; ')});});
-      r.posts=(delivery.deliveries||[]).map(function(x){return Object.assign({},x.payload,{id:x.key,status:x.status,scheduledAt:x.scheduledAt,text:x.payload.text,heldReason:(x.blockers||[]).join('; '),lastError:x.lastError,providerPostId:x.receipt?.providerPostId||x.receipt?.providerMessageId});});
+      r.posts=(delivery.deliveries||[]).map(function(x){return Object.assign({},x.payload,{id:x.key,status:x.status,scheduledAt:x.scheduledAt,text:x.payload.text,heldReason:(x.blockers||[]).join('; '),lastError:x.lastError,providerPostId:x.receipt?.providerPostId||x.receipt?.providerMessageId||x.receipt?.providerAcceptanceResponse});});
       clear(main);
       var names = { email:'Business email', facebook: 'Facebook', instagram: 'Instagram', x: 'X', tiktok: 'TikTok',youtube_shorts:'YouTube Shorts (draft)' };
       var paused = r.paused.paused;
