@@ -144,7 +144,7 @@
   function token() { if(PRODUCTION)return productionToken; try { return sessionStorage.getItem(TOKEN_KEY) || ''; } catch (e) { return ''; } }
   function setToken(t) { if(PRODUCTION){productionToken=t||'';return;} try { if (t) sessionStorage.setItem(TOKEN_KEY, t); else sessionStorage.removeItem(TOKEN_KEY); } catch (e) { /* ignore */ } }
   function api(method, path, body) {
-    if (PRODUCTION && method !== 'GET' && ['/admin/logout','/admin/autonomy/stop','/admin/autonomy/resume','/admin/acceptance/check'].indexOf(path) === -1 && !/^\/admin\/drafts\/[^/]+\/(approve|reject|edit|hold|resume-review)$/.test(path) && !/^\/admin\/distribution\/(?:pause|[^/]+\/(?:authorize|cancel))$/.test(path) && !/^\/admin\/(alerts\/[^/]+\/ack|jobs\/[^/]+\/requeue|preparation\/jobs\/[^/]+\/requeue|suppressions)$/.test(path)) return Promise.reject(new Error('Production preparation only. Campaign release, delivery and credential changes require separate authorization.'));
+    if (PRODUCTION && method !== 'GET' && ['/admin/logout','/admin/autonomy/stop','/admin/autonomy/resume','/admin/acceptance/check'].indexOf(path) === -1 && !/^\/admin\/drafts\/[^/]+\/(approve|reject|edit|hold|resume-review)$/.test(path) && !/^\/admin\/distribution\/(?:pause|[^/]+\/(?:authorize|cancel))$/.test(path) && !/^\/admin\/bulk\/(?:preview|batch-[a-f0-9-]{36}\/confirm)$/.test(path) && !/^\/admin\/autonomous\/(?:policy|enabled|emergency-stop|rollback)$/.test(path) && !(ISOLATED_PREVIEW && path === '/admin/sandbox/run-worker') && !/^\/admin\/(alerts\/[^/]+\/ack|jobs\/[^/]+\/requeue|preparation\/jobs\/[^/]+\/requeue|suppressions)$/.test(path)) return Promise.reject(new Error('Production preparation only. Campaign release, delivery and credential changes require separate authorization.'));
     var headers = { Accept: 'application/json' };
     if (token()) headers.Authorization = 'Bearer ' + token();
     if (body !== undefined) headers['Content-Type'] = 'application/json';
@@ -1347,6 +1347,181 @@
     });
   };
 
+  /* BEGIN owner-requested 2026-11-09: APPROVE ALL & SEND and Autonomous Mode. */
+  var CH_NAMES = { email: 'Email', facebook: 'Facebook', instagram: 'Instagram', x: 'X', tiktok: 'TikTok' };
+  function reasonList(reasons) { return (reasons || []).filter(Boolean).map(function (r) { return friendly(r); }).join(' · '); }
+  function owned(attrs) { attrs['data-content-review'] = 'true'; return attrs; }
+
+  function bulkItem(i) {
+    return h('article', { class: 'card', testid: 'bulk-item' },
+      h('div', null, kindChip(i.kind), ' ', h('strong', { text: i.title }), ' ', h('span', { class: 'chip info', text: CH_NAMES[i.channel] || i.channel })),
+      h('p', { class: 'small' }, h('strong', { text: i.channel === 'email' ? 'To: ' : 'Account: ' }), i.destination || '—', ' · ', h('strong', { text: 'Sends: ' }), when(i.scheduledAt),
+        i.needsContentApproval ? ' · content will be approved by this confirmation' : ' · content already approved'),
+      i.subject ? h('p', { class: 'small' }, h('strong', { text: 'Subject: ' }), i.subject) : null,
+      h('pre', { class: 'small', testid: 'bulk-exact-text', text: i.text }),
+      i.imageUrl ? h('p', { class: 'small' }, h('strong', { text: 'Image: ' }), h('a', { href: i.imageUrl, target: '_blank', rel: 'noopener noreferrer', text: 'open the exact image' })) : null);
+  }
+  function excludedList(rows, title) {
+    if (!rows.length) return null;
+    return h('details', { testid: 'bulk-excluded' }, h('summary', { text: title + ' (' + rows.length + ')' }),
+      rows.map(function (x) { return h('p', { class: 'small' }, kindChip(x.kind), ' ', h('strong', { text: x.title || x.draftId }), x.channel ? ' · ' + (CH_NAMES[x.channel] || x.channel) : '', ' — ', reasonList(x.reasons)); }));
+  }
+
+  function approveAllAndSend(reloadResults) {
+    toast('Checking every campaign. This can take up to a minute…', 'good');
+    return api('POST', '/admin/bulk/preview', {}).then(function (p) {
+      var t = p.totals;
+      var summary = h('div', { class: 'banner warn', testid: 'bulk-summary' }, h('div', null,
+        h('strong', { text: t.deliveries ? t.campaigns + ' campaigns · ' + t.deliveries + ' deliveries' : 'Nothing is eligible to send right now' }),
+        h('span', { text: 'Marketing ' + t.byKind.marketing + ' · PR ' + t.byKind.pr + ' · Affiliate ' + t.byKind.affiliate + ' — Email ' + t.byChannel.email + ' · Facebook ' + t.byChannel.facebook + ' · Instagram ' + t.byChannel.instagram + '. ' + t.excluded + ' item(s) are held and will NOT be sent.' })));
+      var body = h('div', null, summary,
+        t.deliveries ? h('p', { text: 'Read everything below. Each message, post, recipient, account and time is exactly what will be approved and queued. Items are spaced out to respect platform limits. A queued item only counts as successful once the platform returns a receipt.' }) : null,
+        p.truncated ? h('p', { class: 'small muted', text: p.truncated + ' more campaign(s) will be offered in the next batch.' }) : null,
+        h('div', { testid: 'bulk-items' }, p.items.map(bulkItem)),
+        excludedList(p.excluded, 'Held — not included'));
+      if (!t.deliveries) return modal({ title: 'APPROVE ALL & SEND', body: body, confirmLabel: 'Close', hideCancel: true }).then(function () { return null; });
+      return modal({ title: 'APPROVE ALL & SEND — final check', body: body, confirmClass: 'bulk-send', confirmLabel: 'Yes, approve and send these ' + t.deliveries,
+        onConfirm: function () { return api('POST', '/admin/bulk/' + encodeURIComponent(p.batchId) + '/confirm', { digest: p.digest, confirmation: p.confirmation }); } });
+    }).then(function (r) {
+      if (!r || r === true) return;
+      var g = r.groups;
+      toast(g.queued.length + ' queued for delivery, ' + g.held.length + ' held. Results update as the platforms respond.', 'good');
+      reloadResults(r.batchId);
+    }).catch(fail);
+  }
+
+  function bulkResults(slot, batchId) {
+    clear(slot).appendChild(h('p', { class: 'muted', text: 'Loading results…' }));
+    var load = batchId ? api('GET', '/admin/bulk/' + encodeURIComponent(batchId)) : api('GET', '/admin/bulk').then(function (l) {
+      var last = l.batches.filter(function (b) { return b.state !== 'previewed'; })[0];
+      return last ? api('GET', '/admin/bulk/' + encodeURIComponent(last.batchId)) : null;
+    });
+    return load.then(function (r) {
+      clear(slot);
+      slot.appendChild(h('h2', { text: 'APPROVE ALL & SEND — results' }));
+      if (!r) { slot.appendChild(h('p', { class: 'muted', text: 'No batch has been sent yet.' })); return; }
+      slot.appendChild(h('p', { class: 'small muted', text: 'Batch confirmed ' + when(r.confirmedAt) + '. Successful means the platform returned a receipt; queued items are not counted as published.' }));
+      function group(key, title, cls, describe) {
+        var rows = r.groups[key] || [];
+        return h('section', { class: 'card', testid: 'bulk-group-' + key }, h('h3', null, h('span', { class: 'chip ' + cls, text: title + ' · ' + rows.length })),
+          rows.length ? rows.map(function (x) { return h('p', { class: 'small' }, kindChip(x.kind), ' ', h('strong', { text: x.title || x.draftId }), ' · ' + (CH_NAMES[x.channel] || x.channel || '') + (x.destination ? ' → ' + x.destination : '') + ' — ', describe(x)); }) : h('p', { class: 'small muted', text: 'None.' }));
+      }
+      add(slot, [
+        group('succeeded', 'Successful', 'good', function (x) { var rc = x.receipt || {}; return (x.note || '') + ' ID ' + (rc.providerPostId || rc.providerMessageId || '—') + (rc.publicPermalink ? ' · ' + rc.publicPermalink : '') + (rc.sandbox ? ' (SANDBOX — nothing was really sent)' : ''); }),
+        group('failed', 'Failed', 'bad', function (x) { return x.status === 'needs_check' ? 'Outcome unknown — check the channel before retrying. ' + (x.lastError || '') : friendly(x.lastError || 'failed'); }),
+        group('held', 'Held', 'warn', function (x) { return reasonList(x.reasons) || friendly(x.status); }),
+        group('queued', 'Queued — not yet published', 'info', function (x) { return 'Scheduled for ' + when(x.scheduledAt); }),
+        h('button', owned({ class: 'btn small', testid: 'bulk-refresh', text: '↻ Refresh results', onclick: function () { bulkResults(slot, r.batchId); } })),
+      ]);
+    }).catch(function (e) { clear(slot).appendChild(h('p', { role: 'alert', text: 'Results unavailable: ' + e.message })); });
+  }
+
+  var approvalsPageBase = pages.approvals;
+  pages.approvals = function (main, params) {
+    return Promise.resolve(approvalsPageBase(main, params)).then(function () {
+      if (!PRODUCTION) return;
+      var results = h('section', { class: 'card', testid: 'bulk-results' });
+      var btn = h('button', owned({ class: 'btn bulk-send', testid: 'btn-approve-all-send', text: 'APPROVE ALL & SEND', onclick: function () { approveAllAndSend(function (id) { bulkResults(results, id); }); } }));
+      var headEl = main.querySelector('.page-head');
+      var holder = headEl.querySelector('.actions') || headEl.appendChild(h('div', { class: 'actions' }));
+      holder.appendChild(btn);
+      headEl.after(results);
+      bulkResults(results);
+    });
+  };
+
+  function autonomousCard(card) {
+    clear(card).appendChild(h('p', { class: 'muted', text: 'Loading Autonomous Mode…' }));
+    return api('GET', '/admin/autonomous').then(function (s) {
+      var p = s.policy || s.defaults;
+      clear(card);
+      var on = s.enabled === true;
+      var toggle = on ? h('button', owned({ class: 'btn', testid: 'autonomous-off', text: 'Turn Autonomous Mode OFF', onclick: function () { api('POST', '/admin/autonomous/enabled', { enabled: false }).then(function () { toast('Autonomous Mode is off. Already-queued items still follow the Publishing pause control.', 'good'); autonomousCard(card); }).catch(fail); } }))
+          : h('button', owned({ class: 'btn approve', testid: 'autonomous-on', text: 'Turn Autonomous Mode ON', disabled: !s.policy || !s.releaseApproved, title: !s.policy ? 'Save a policy first.' : !s.releaseApproved ? 'Approve this release first.' : '', onclick: function () {
+            modal({ title: 'Turn Autonomous Mode ON?', confirmLabel: 'Turn ON', body: h('div', null, h('p', { text: 'Policy version ' + s.version + ' will be used. From now on the worker approves and sends only new campaigns that match it, within its limits. Older campaigns are not swept up' + (p.includePreviouslyApproved ? ', except ones you already approved.' : '.') }), h('p', { text: 'You can switch it off or use EMERGENCY STOP at any time.' })),
+              onConfirm: function () { return api('POST', '/admin/autonomous/enabled', { enabled: true, version: s.version, confirmation: 'ENABLE AUTONOMOUS MODE' }); } }).then(function (r) { if (r) { toast('Autonomous Mode is on.', 'good'); autonomousCard(card); } }).catch(fail);
+          } }));
+      add(card, [
+        h('div', { class: 'page-head' }, h('div', null, h('h2', { text: 'Autonomous Mode' }), h('p', { text: 'When on, the worker approves and sends only campaigns that match the policy you save below. Everything else is held for you.' })),
+          h('div', { class: 'actions' },
+            h('span', { class: 'chip ' + (on ? 'good' : ''), testid: 'autonomous-state', text: on ? 'ON · policy v' + s.version : 'OFF' }),
+            toggle,
+            h('button', owned({ class: 'btn danger', testid: 'autonomous-emergency-stop', text: 'EMERGENCY STOP sending', onclick: function () {
+              modal({ title: 'Emergency stop?', confirmClass: 'bulk-send', confirmLabel: 'Stop now', body: h('p', { text: 'Turns Autonomous Mode off and pauses ALL publishing and sending, including anything already queued. Campaign preparation keeps running. Resume publishing later from the Publishing page.' }),
+                onConfirm: function () { return api('POST', '/admin/autonomous/emergency-stop', {}); } }).then(function (r) { if (r) { toast('Stopped. Autonomous Mode is off and distribution is paused.', 'good'); autonomousCard(card); } }).catch(fail);
+            } })))),
+        !s.releaseApproved ? h('div', { class: 'banner warn', testid: 'autonomous-release-pending' }, h('div', null, h('strong', { text: 'Waiting for release approval' }), h('span', { text: 'You can prepare and save the policy now. Autonomous Mode can only be switched on after you approve this release for production.' }))) : null,
+        s.emergencyStoppedAt ? h('p', { class: 'small', text: 'Last emergency stop: ' + when(s.emergencyStoppedAt) + '.' }) : null,
+        s.distribution && s.distribution.paused ? h('p', { class: 'small', text: 'Publishing is currently paused' + (s.distribution.emergencyStopped ? ' by the emergency stop' : '') + '. Nothing is sent until it is resumed on the Publishing page.' }) : null,
+        h('p', { class: 'small', text: 'Not available yet: X (needs tweet.write permission) and TikTok (needs video.publish approval). These are never used automatically.' }),
+        s.lastRun ? h('p', { class: 'small muted', text: 'Last worker check ' + when(s.lastRun.completedAt) + ': ' + (s.lastRun.skipped ? friendly(s.lastRun.skipped) : (s.lastRun.approved || 0) + ' approved, ' + (s.lastRun.queued || 0) + ' queued, ' + (s.lastRun.held || 0) + ' held') + '. Last 24 hours: ' + s.last24h.distributed + ' sent to the queue, ' + s.last24h.held + ' held.' }) : null,
+      ]);
+      // ---- policy editor ----
+      var form = h('div', { testid: 'autonomous-policy' });
+      var inputs = {};
+      ['marketing', 'pr', 'affiliate'].forEach(function (kind) {
+        var k = p.kinds[kind];
+        var en = h('input', { type: 'checkbox', testid: 'policy-' + kind + '-enabled' }); en.checked = k.enabled;
+        var chans = (kind === 'marketing' ? ['facebook', 'instagram'] : ['email']).map(function (c) { var b = h('input', { type: 'checkbox', value: c, testid: 'policy-' + kind + '-ch-' + c }); b.checked = k.channels.indexOf(c) >= 0; return b; });
+        var known = s.templates.filter(function (t) { return t.kind === kind; });
+        k.templates.forEach(function (id) { if (!known.some(function (t) { return t.id === id; })) known.push({ id: id, campaigns: 0, example: '' }); });
+        var temps = known.map(function (t) { var b = h('input', { type: 'checkbox', value: t.id, testid: 'policy-template-' + t.id }); b.checked = k.templates.indexOf(t.id) >= 0; return { box: b, t: t }; });
+        var recontact = kind === 'marketing' ? null : h('input', { type: 'number', min: 14, max: 365, value: k.recontactDays, 'aria-label': 'Days before contacting the same person again' });
+        inputs[kind] = { en: en, chans: chans, temps: temps, recontact: recontact };
+        form.appendChild(h('fieldset', { class: 'card' }, h('legend', { text: KIND_NAMES[kind] + 's' }),
+          h('label', null, en, ' Approve and send automatically when they match'),
+          h('p', { class: 'small' }, 'Channels: ', chans.map(function (b) { return h('label', null, b, ' ' + CH_NAMES[b.value] + ' '); })),
+          h('p', { class: 'small', text: 'Approved content templates (a campaign you edited by hand always waits for you):' }),
+          temps.length ? temps.map(function (x) { return h('label', { class: 'small block' }, x.box, ' ' + x.t.id + (x.t.campaigns ? ' — ' + x.t.campaigns + ' recent campaigns, e.g. “' + x.t.example + '”' : '')); }) : h('p', { class: 'small muted', text: 'No templates prepared yet.' }),
+          kind === 'affiliate' ? h('p', { class: 'small muted', text: 'Affiliate invitations stay held until each recipient, the terms and attribution are verified. A policy cannot skip that check.' }) : null,
+          recontact ? h('label', { class: 'small' }, 'Never contact the same person again within ', recontact, ' days') : null));
+      });
+      var lim = {};
+      var limits = h('fieldset', { class: 'card' }, h('legend', { text: 'Limits (protect accounts from over-posting)' }),
+        ['email', 'facebook', 'instagram'].map(function (c) {
+          lim[c] = { max: h('input', { type: 'number', min: 0, max: s.hardLimits[c].maxPerDay, value: p.limits[c].maxPerDay, 'aria-label': CH_NAMES[c] + ' per day' }), gap: h('input', { type: 'number', min: s.hardLimits[c].minSpacingMinutes, value: p.limits[c].minSpacingMinutes, 'aria-label': CH_NAMES[c] + ' minutes apart' }) };
+          return h('p', { class: 'small' }, h('strong', { text: CH_NAMES[c] + ': ' }), 'at most ', lim[c].max, ' per 24 hours (hard cap ' + s.hardLimits[c].maxPerDay + '), at least ', lim[c].gap, ' minutes apart');
+        }));
+      var startH = h('input', { type: 'number', min: 0, max: 23, value: p.sendWindow.startHour, 'aria-label': 'Start hour' });
+      var endH = h('input', { type: 'number', min: 1, max: 24, value: p.sendWindow.endHour, 'aria-label': 'End hour' });
+      var perRun = h('input', { type: 'number', min: 1, max: 25, value: p.maxAutoApprovalsPerRun, 'aria-label': 'Approvals per check' });
+      var backlog = h('input', { type: 'checkbox', testid: 'policy-include-backlog' }); backlog.checked = p.includePreviouslyApproved === true;
+      add(form, [limits, h('fieldset', { class: 'card' }, h('legend', { text: 'Schedule' }),
+        h('p', { class: 'small' }, 'Only send between ', startH, ':00 and ', endH, ':00 Eastern time.'),
+        h('p', { class: 'small' }, 'Approve at most ', perRun, ' new campaigns per 15-minute check.'),
+        h('label', { class: 'small' }, backlog, ' Also send campaigns I approved before Autonomous Mode was switched on (off = only new work)'))]);
+      function collect() {
+        var kinds = {};
+        Object.keys(inputs).forEach(function (kind) { var x = inputs[kind]; kinds[kind] = { enabled: x.en.checked, channels: x.chans.filter(function (b) { return b.checked; }).map(function (b) { return b.value; }), templates: x.temps.filter(function (t) { return t.box.checked; }).map(function (t) { return t.t.id; }), recontactDays: x.recontact ? Number(x.recontact.value) : undefined }; });
+        var limitsOut = {}; Object.keys(lim).forEach(function (c) { limitsOut[c] = { maxPerDay: Number(lim[c].max.value), minSpacingMinutes: Number(lim[c].gap.value) }; });
+        return { kinds: kinds, limits: limitsOut, sendWindow: { startHour: Number(startH.value), endHour: Number(endH.value) }, maxAutoApprovalsPerRun: Number(perRun.value), includePreviouslyApproved: backlog.checked };
+      }
+      form.appendChild(h('div', { class: 'actions' },
+        h('button', owned({ class: 'btn primary', testid: 'autonomous-save-policy', text: 'Save policy as version ' + (s.version + 1), onclick: function () {
+          modal({ title: 'Save Autonomous Mode policy?', body: h('p', { text: 'This becomes policy version ' + (s.version + 1) + '. Every earlier version is kept and can be restored.' }), confirmLabel: 'Save policy',
+            onConfirm: function () { return api('POST', '/admin/autonomous/policy', { policy: collect(), confirmation: 'SAVE AUTONOMOUS POLICY' }); } }).then(function (r) { if (r) { toast('Policy saved.', 'good'); autonomousCard(card); } }).catch(fail);
+        } })),
+        ISOLATED_PREVIEW ? h('button', owned({ class: 'btn', testid: 'sandbox-run-worker', text: 'Run worker check (sandbox)', onclick: function () { api('POST', '/admin/sandbox/run-worker', {}).then(function (r) { toast('Sandbox worker check done: ' + JSON.stringify(r.distribution), 'good'); autonomousCard(card); }).catch(fail); } })) : null));
+      card.appendChild(h('details', { open: !s.policy }, h('summary', { text: 'Policy (version ' + s.version + ')' }), form));
+      // ---- history ----
+      card.appendChild(h('details', { testid: 'autonomous-versions' }, h('summary', { text: 'Policy history and rollback (' + s.versions.length + ')' }),
+        s.versions.map(function (v) { return h('p', { class: 'small' }, h('strong', { text: 'v' + v.version }), ' · saved ' + when(v.savedAt) + ' · ' + friendly(v.source) + ' ',
+          v.version !== s.version ? h('button', owned({ class: 'btn small', testid: 'rollback-v' + v.version, text: 'Restore v' + v.version, onclick: function () { modal({ title: 'Restore policy v' + v.version + '?', body: h('p', { text: 'Its settings are saved again as a new version. Nothing is deleted.' }), onConfirm: function () { return api('POST', '/admin/autonomous/rollback', { version: v.version }); } }).then(function (r) { if (r) { toast('Policy restored.', 'good'); autonomousCard(card); } }).catch(fail); } })) : h('span', { class: 'chip good', text: 'current' })); })));
+      card.appendChild(h('details', { testid: 'autonomous-decisions' }, h('summary', { text: 'Recent automatic decisions (' + s.recent.length + ')' }),
+        s.recent.length ? s.recent.map(function (d) { return h('p', { class: 'small' }, h('span', { class: 'chip ' + (d.state === 'distributed' ? 'good' : 'warn'), text: d.state === 'distributed' ? (d.autoApproved ? 'Auto-approved & queued' : 'Queued') : 'Held' }), ' ', kindChip(d.kind), ' ', h('strong', { text: d.title }), ' · ' + when(d.at) + (d.reasons && d.reasons.length ? ' — ' + reasonList(d.reasons) : '')); }) : h('p', { class: 'small muted', text: 'No automatic decisions yet.' })));
+    }).catch(function (e) { clear(card).appendChild(h('p', { role: 'alert', text: 'Autonomous Mode unavailable: ' + e.message })); });
+  }
+  var automationPageBulk = pages.automation;
+  pages.automation = function (main, params) {
+    return Promise.resolve(automationPageBulk(main, params)).then(function () {
+      if (!PRODUCTION) return;
+      var card = h('section', { class: 'card', testid: 'autonomous-mode' });
+      var headEl = main.querySelector('.page-head');
+      if (headEl) headEl.after(card); else main.prepend(card);
+      return autonomousCard(card);
+    });
+  };
+  /* END owner-requested 2026-11-09: APPROVE ALL & SEND and Autonomous Mode. */
   var originalPublishingPage=pages.publishing;
   pages.publishing=function(main){return originalPublishingPage(main).then(function(){if(!PRODUCTION)return;var list=h('div',{testid:'approved-distribution-queue'}),card=h('section',{class:'card'},h('h2',{text:'Approved content awaiting distribution authorization'}),h('p',{text:'Content approval is preserved. Scheduling, provider publication and recipient delivery remain separate gated actions.'}),list);main.appendChild(card);return draftList(list,{status:'approved',limit:100},'No content approvals are awaiting distribution.');});};
 
@@ -1410,7 +1585,7 @@
     document.title = (NAV.filter(function (n) { return n[0] === r.name; })[0] || ['', 'Growth Engine'])[1] + ' · Growth Engine (production preparation)';
     Promise.resolve(pages[r.name](main, r.params)).then(function () {
       if(PRODUCTION){
-        main.prepend(h('div',{class:'banner info',testid:'production-preparation-banner'},h('strong',{text:ISOLATED_PREVIEW?'Isolated Growth Preview':'Production Growth preparation'}),h('span',{text:'Preparation runs unattended. Distribution requires verified providers and exact owner approval. Payment changes and automatic approvals are disabled.'}),h('button',{class:'btn danger',testid:'production-emergency-stop',text:'Emergency stop Growth',onclick:function(){modal({title:'Stop preparation and distribution?',body:h('p',{text:'This stops preparation and blocks new distribution attempts. An in-flight provider request may still complete. Existing records and connections remain unchanged.'}),onConfirm:function(){return api('POST','/admin/autonomy/stop',{});}}).then(route).catch(fail);}})));
+        main.prepend(h('div',{class:'banner info',testid:'production-preparation-banner'},h('strong',{text:ISOLATED_PREVIEW?'Isolated Growth Preview':'Production Growth preparation'}),h('span',{text:'Preparation runs unattended. Distribution requires verified providers and exact owner approval. Payment changes are disabled. Automatic approvals happen only under your saved Autonomous Mode policy.'}),h('button',{class:'btn danger',testid:'production-emergency-stop',text:'Emergency stop Growth',onclick:function(){modal({title:'Stop preparation and distribution?',body:h('p',{text:'This stops preparation and blocks new distribution attempts. An in-flight provider request may still complete. Existing records and connections remain unchanged.'}),onConfirm:function(){return api('POST','/admin/autonomy/stop',{});}}).then(route).catch(fail);}})));
         var resume=h('button',{class:'btn',testid:'production-resume-preparation',text:'Resume preparation',disabled:true,onclick:function(){modal({title:'Resume autonomous preparation?',body:h('p',{text:'Resume research and draft preparation only. Distribution retains its separate provider, approval and emergency-stop controls. Automatic approvals remain disabled.'}),onConfirm:function(){return api('POST','/admin/autonomy/resume',{confirmation:'ACTIVATE PRODUCTION PREPARATION ONLY'});}}).then(route).catch(fail);}});main.querySelector('[data-testid=production-preparation-banner]').appendChild(resume);api('GET','/health').then(function(s){resume.disabled=s.scheduler?.enabled!==false;resume.title=s.scheduler?.enabled?'Preparation is already running.':'Resume the stopped preparation worker.';}).catch(function(){resume.title='Current worker status could not be verified.';});
         main.querySelectorAll('button').forEach(function(b){if(!b.hasAttribute('data-content-review') && ['btn-ack','btn-requeue','btn-add-optout','btn-preparation-requeue'].indexOf(b.getAttribute('data-testid'))===-1 && /approve|publish|send|schedule|connect|disconnect|refresh.*token|generate|block.*artwork|allow.*artwork|record correction|reject prospect|opt out|run now|check for new|check now|verify existing|add to do-not|invitation|onboard|mark|retry|requeue/i.test(b.textContent)){b.disabled=true;b.title='Requires a separately authorized operation; production preparation remains active.';}});
       }
