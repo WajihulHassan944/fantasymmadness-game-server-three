@@ -8,6 +8,18 @@ const PROVIDERS = {
   tiktok: { authorize: 'https://www.tiktok.com/v2/auth/authorize/', token: 'https://open.tiktokapis.com/v2/oauth/token/', me: 'https://open.tiktokapis.com/v2/user/info/?fields=open_id,display_name', scopes: 'user.info.basic' },
   x: { authorize: 'https://x.com/i/oauth2/authorize', token: 'https://api.x.com/2/oauth2/token', me: 'https://api.x.com/2/users/me?user.fields=id,name,username', scopes: 'tweet.read users.read offline.access' },
 };
+const PUBLISHING_SCOPE = Object.freeze({x:'tweet.write',tiktok:'video.publish'});
+function requestedScopes(provider, env = {}) {
+  const base = PROVIDERS[provider]?.scopes;
+  if (!base) throw Error('unknown_provider');
+  return base + (env.GROWTH_SOCIAL_PUBLISHING_SCOPE_REQUEST_ENABLED === 'true' ? ' ' + PUBLISHING_SCOPE[provider] : '');
+}
+function publishingAuthorization(env) {
+  return Object.fromEntries(Object.keys(PROVIDERS).map(provider => [provider, {
+    requiredScope: PUBLISHING_SCOPE[provider], requestedScopes: requestedScopes(provider, env).split(' '),
+    requiresProviderConsent: true,
+  }]));
+}
 const hash = s => crypto.createHash('sha256').update(String(s)).digest('base64url');
 const random = () => crypto.randomBytes(32).toString('base64url');
 const validIdentity = s => typeof s === 'string' && /^[A-Za-z0-9_-]{8,128}$/.test(s);
@@ -96,7 +108,7 @@ function installGrowthSocialOAuth({ router, env, db, fetchImpl = globalThis.fetc
   router.get('/social/admin/sign-in', (req, res) => {
     let url = null;
     try { const u = new URL(env.GROWTH_SOCIAL_ADMIN_SITE_ORIGIN); if (u.protocol === 'https:' && ssoConfig.siteOrigins.includes(u.origin) && u.href === u.origin + '/') url = u.origin + '/administration/growth-connections'; } catch {}
-    res.set('Cache-Control', 'no-store').json({ ok: true, method: 'website_admin', configured: Boolean(url && ssoConfig.enabled), keyId: ssoConfig.keyId, url: ssoConfig.enabled ? url : null });
+    res.set('Cache-Control', 'no-store').json({ ok: true, method: 'website_admin', configured: Boolean(url && ssoConfig.enabled), keyId: ssoConfig.keyId, url: ssoConfig.enabled ? url : null, publishingAuthorization: publishingAuthorization(env) });
   });
   router.post('/social/admin/login', sameOrigin, wrap(async (req, res) => {
     if (env.GROWTH_SOCIAL_PASSWORD_LOGIN !== 'true') return res.status(403).json({ ok: false, error: 'use_website_administrator_sign_in' });
@@ -133,7 +145,7 @@ function installGrowthSocialOAuth({ router, env, db, fetchImpl = globalThis.fetc
     const url = new URL(PROVIDERS[p].authorize);
     url.searchParams.set(p === 'tiktok' ? 'client_key' : 'client_id', configs[p].clientId);
     if (p === 'x') { url.searchParams.set('code_challenge', hash(verifier)); url.searchParams.set('code_challenge_method', 'S256'); }
-    url.searchParams.set('response_type', 'code'); url.searchParams.set('scope', PROVIDERS[p].scopes); url.searchParams.set('redirect_uri', callback(p)); url.searchParams.set('state', state);
+    url.searchParams.set('response_type', 'code'); url.searchParams.set('scope', requestedScopes(p, env)); url.searchParams.set('redirect_uri', callback(p)); url.searchParams.set('state', state);
     res.json({ ok: true, authorizationUrl: url.toString(), callbackUrl: callback(p), publishingEnabled: false });
   }));
   router.get('/social/:provider/callback', wrap(async (req, res) => {
@@ -156,6 +168,7 @@ function installGrowthSocialOAuth({ router, env, db, fetchImpl = globalThis.fetc
       const response = await remote(PROVIDERS[p].token, { method: 'POST', headers, body: body.toString() });
       if (!response.ok) throw Error('exchange failed'); tokens = await response.json();
       if (tokens.error || typeof tokens.access_token !== 'string' || !/^[^\s]{8,4096}$/.test(tokens.access_token) || String(tokens.token_type).toLowerCase() !== 'bearer' || !Number.isFinite(tokens.expires_in) || tokens.expires_in <= 0 || tokens.expires_in > 2678400 || (tokens.refresh_token !== undefined && (typeof tokens.refresh_token !== 'string' || !/^[^\s]{8,4096}$/.test(tokens.refresh_token))) || !String(tokens.scope || '').split(/[ ,]+/).includes(p === 'tiktok' ? 'user.info.basic' : 'users.read')) throw Error('invalid token response');
+      if (env.GROWTH_SOCIAL_PUBLISHING_SCOPE_REQUEST_ENABLED === 'true' && !String(tokens.scope || '').split(/[ ,]+/).includes(PUBLISHING_SCOPE[p])) return res.status(403).send(p === 'x' ? 'X did not grant tweet.write. Enable Read and Write access for the existing X application, then reconnect and approve the requested permissions. The existing connection was preserved.' : 'TikTok did not grant video.publish. Enable approved Content Posting API Direct Post access for the existing TikTok application, then reconnect and approve the requested permissions. The existing connection was preserved.');
       const me = await remote(PROVIDERS[p].me, { headers: { Authorization: 'Bearer ' + tokens.access_token, Accept: 'application/json' } });
       if (!me.ok) throw Error('profile failed'); profile = await me.json();
     } catch { return res.status(400).send('Authorization exchange or account verification failed'); }
@@ -222,4 +235,4 @@ function installGrowthSocialOAuth({ router, env, db, fetchImpl = globalThis.fetc
   router.get('/social/console.js', (req, res) => res.set('Cache-Control', 'no-store').type('application/javascript').send(ui.script));
   return { auth, callback, config: { origin: config.origin, publishingEnabled: false } };
 }
-module.exports = { installGrowthSocialOAuth, resolveOAuthConfig, encrypt, decrypt };
+module.exports = { installGrowthSocialOAuth, resolveOAuthConfig, encrypt, decrypt, requestedScopes, publishingAuthorization };
