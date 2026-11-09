@@ -28,6 +28,9 @@ test('content decisions require owner evidence, reject stale content and never a
     const stored = await collection.findOne({ id: draft.id });
     assert.equal(stored.ownerApproved, true); assert.equal(stored.sendPermitted, false);
     assert.equal(stored.ownerReviewHistory.length, 1); assert.equal(stored.ownerReviewHistory[0].owner, owner);
+    const repeated = await review.decide(draft.id, { action: 'approve', owner, version: contentVersion(stored) });
+    assert.equal(repeated.unchanged, true);
+    assert.equal((await collection.findOne({ id: draft.id })).ownerReviewHistory.length, 1);
     const reject = await review.decide(draft.id, { action: 'reject', owner, version: contentVersion(stored), reason: 'Owner withdrawal' });
     assert.equal(reject.ok, true);
     assert.equal((await collection.findOne({ id: draft.id })).ownerReviewHistory.length, 2);

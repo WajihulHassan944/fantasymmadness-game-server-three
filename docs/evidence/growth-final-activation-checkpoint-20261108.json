@@ -1,0 +1,193 @@
+{
+  "observedAt": "2026-11-09T00:00:21.345269+00:00",
+  "source": "https://fantasymmadness-growth-isolated-tes.vercel.app/api/growth/health",
+  "productionChangesThisSession": false,
+  "servedCommit": "7f2748960bc368cab06545d388e698952fd94a11",
+  "scheduler": {
+    "enabled": true,
+    "activeDeploymentId": "dpl_4BZK9Zo9XV2Be4dwXCAEHNYziBxH",
+    "servedCommit": "7f2748960bc368cab06545d388e698952fd94a11",
+    "lastScheduledReceipts": [
+      {
+        "_id": "production-preparation-e99e7392-75fe-4899-9ebe-0586e8f93c39:1993535",
+        "automaticApprovals": 0,
+        "collectionPrefix": "production_preparation_",
+        "commit": "f923b06a027c2e3d2a1c6c623e157cb04d64aa6f",
+        "completedAt": "2026-11-08T23:47:50.549Z",
+        "cyclePurpose": "scheduled_preparation",
+        "database": "fmgrowthproduction",
+        "deploymentId": "dpl_4BZK9Zo9XV2Be4dwXCAEHNYziBxH",
+        "environment": "production",
+        "errors": 0,
+        "generation": "production-preparation-e99e7392-75fe-4899-9ebe-0586e8f93c39",
+        "jobsProcessed": 0,
+        "ordinal": 40,
+        "outboundEnabled": false,
+        "ownerApprovalRequired": true,
+        "paymentMutations": 0,
+        "preparationJobsProcessed": 3,
+        "publishingEnabled": false,
+        "trigger": "workflow_timer",
+        "websiteSessionUsed": false,
+        "workflowRunId": "wrun_41M6XPWVVH0GNJM8WC87DA16JZ"
+      },
+      {
+        "_id": "production-preparation-e99e7392-75fe-4899-9ebe-0586e8f93c39:1993534",
+        "automaticApprovals": 0,
+        "collectionPrefix": "production_preparation_",
+        "commit": "f923b06a027c2e3d2a1c6c623e157cb04d64aa6f",
+        "completedAt": "2026-11-08T23:32:40.211Z",
+        "cyclePurpose": "scheduled_preparation",
+        "database": "fmgrowthproduction",
+        "deploymentId": "dpl_4BZK9Zo9XV2Be4dwXCAEHNYziBxH",
+        "environment": "production",
+        "errors": 0,
+        "generation": "production-preparation-e99e7392-75fe-4899-9ebe-0586e8f93c39",
+        "jobsProcessed": 0,
+        "ordinal": 39,
+        "outboundEnabled": false,
+        "ownerApprovalRequired": true,
+        "paymentMutations": 0,
+        "preparationJobsProcessed": 3,
+        "publishingEnabled": false,
+        "trigger": "workflow_timer",
+        "websiteSessionUsed": false,
+        "workflowRunId": "wrun_41M6XPWVVH0GNJM8WC87DA16JZ"
+      }
+    ],
+    "generation": "production-preparation-e99e7392-75fe-4899-9ebe-0586e8f93c39",
+    "lastCompletedAt": "2026-11-08T23:47:50.549Z",
+    "completedCycles": 291,
+    "scheduledCycles": 286,
+    "healthy": true,
+    "lastError": null
+  },
+  "distribution": {
+    "enabled": true,
+    "counts": {
+      "scheduled": 0,
+      "held": 0,
+      "accepted": 0,
+      "published": 0,
+      "needs_check": 0,
+      "failed": 0,
+      "cancelled": 0
+    },
+    "controlledVerification": null,
+    "lastRun": {
+      "accepted": 0,
+      "automaticApprovals": 0,
+      "commit": "7f2748960bc368cab06545d388e698952fd94a11",
+      "completedAt": "2026-11-08T23:45:28.384Z",
+      "deploymentId": "dpl_34Q9jeuS2wbsb9qB9HP4CQR59axD",
+      "failed": 0,
+      "held": 0,
+      "paymentMutations": 0,
+      "runId": "83058bd1-dfc5-40e8-9a88-d3f77da75554",
+      "startedAt": "2026-11-08T23:45:28.338Z",
+      "trigger": "platform_cron"
+    },
+    "policy": {
+      "paused": false,
+      "emergencyStopped": false,
+      "enabled": true,
+      "version": 1
+    },
+    "email": {
+      "provider": "gmail-smtp",
+      "sender": "contact@fantasymmadnesscom.com",
+      "ready": false,
+      "blockers": [
+        "mail_service_access_401"
+      ],
+      "credentialLocation": "existing_backend_only",
+      "credentialTransferred": false,
+      "checkedAt": null
+    },
+    "channels": {
+      "facebook": {
+        "ready": false,
+        "destinationId": "128043637053328",
+        "name": "Fantasy MMAdness ",
+        "checkedAt": "2026-11-09T00:00:21.168Z",
+        "blockers": [
+          "provider_scope_required:pages_manage_posts"
+        ]
+      },
+      "instagram": {
+        "ready": false,
+        "destinationId": "17841447949460050",
+        "name": "fantasymmadness",
+        "checkedAt": "2026-11-09T00:00:21.168Z",
+        "blockers": [
+          "provider_scope_required:instagram_content_publish"
+        ]
+      }
+    },
+    "receiptMeaning": "Provider acceptance and publication IDs are recorded separately from delivery confirmation."
+  },
+  "oauth": [
+    {
+      "provider": "tiktok",
+      "username": null,
+      "displayName": "FANTASY MMADNESS",
+      "grantedScopes": [
+        "user.info.basic"
+      ],
+      "scopesVerifiedAt": "2026-11-08T11:21:15.813Z",
+      "identityVerifiedAt": "2026-11-08T23:33:10.892Z",
+      "status": "connected",
+      "accessStatus": "valid",
+      "renewalStatus": "available"
+    },
+    {
+      "provider": "x",
+      "username": "FMmadness2024",
+      "displayName": "FANTASY MMADNESS",
+      "grantedScopes": [
+        "offline.access",
+        "tweet.read",
+        "users.read"
+      ],
+      "scopesVerifiedAt": "2026-11-08T23:02:26.578Z",
+      "identityVerifiedAt": "2026-11-08T23:33:11.843Z",
+      "status": "connected",
+      "accessStatus": "valid",
+      "renewalStatus": "expiry-unknown"
+    }
+  ],
+  "metaPermissions": {
+    "verified": false,
+    "reason": "provider_rate_limited",
+    "granted": [
+      "pages_show_list",
+      "business_management",
+      "instagram_basic",
+      "instagram_content_publish",
+      "pages_read_engagement",
+      "pages_manage_posts",
+      "public_profile"
+    ],
+    "expiresAt": "2027-01-01T14:38:21.329Z",
+    "refreshSupported": false
+  },
+  "browserVerification": {
+    "authenticated": false,
+    "redirect": "https://www.fantasymmadness.com/administration/login"
+  },
+  "releaseAccess": {
+    "projectId": "prj_Hpe9UjGrBBJOm3boxHsL9lHesWLl",
+    "teamId": "team_YE6Qw7cYL85CvuigfUXsH1lq",
+    "projectReadStatus": 404,
+    "deploymentListStatus": 403,
+    "cliCredentialsAvailable": false
+  },
+  "localValidation": {
+    "growthTests": 24,
+    "failed": 0,
+    "skipped": 0,
+    "backendNpmTest": "passed",
+    "workerBuild": "passed"
+  },
+  "providerReceiptsCreatedThisSession": []
+}

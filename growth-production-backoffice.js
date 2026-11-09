@@ -32,11 +32,14 @@ function createProductionBackoffice({runtime,config,status,distribution=null,clo
   }
   if(section==='drafts'){
    const drafts=await runtime.listDrafts({kind:q.kind,status:q.status,contestId:q.contestId,limit:Math.min(100,Number(q.limit)||30)});
+   const deliveries=distribution?await distribution.listForDrafts(drafts.map(d=>d.id)):[];
    return{ok:true,drafts:await Promise.all(drafts.map(async d=>{
     let blockers;try{blockers=[...await runtime.preparation.quality(d,clock()),...(d.reviewSafety?.state==='hold'&&Array.isArray(d.reviewSafety.reasons)?d.reviewSafety.reasons:[])];}catch{blockers=['draft_assessment_unavailable'];}
     if(d.kind==='affiliate')blockers.push('current_recipient_suitability_requires_owner_verification');
     const ownerHold=await col.ownerCampaignHolds?.findOne({_id:d.id,active:true});if(ownerHold)blockers.push('owner_campaign_hold');
-    return{...d,ownerHold:ownerHold?{active:true,reason:ownerHold.reason,at:ownerHold.at}:null,review:{state:blockers.length?'held':'eligible',version:contentVersion(d),blockers:[...new Set(blockers)],ownerApprovalRequired:true,liveDeliveryAuthorized:false,checkedAt:clock().toISOString()}};
+    const version=contentVersion(d),results=deliveries.filter(j=>j.draftId===d.id);
+    const liveDeliveryAuthorized=results.some(j=>j.version===version&&['scheduled','sending','accepted','published','needs_check'].includes(j.status));
+    return{...d,deliveries:results.map(j=>({key:j.key,channel:j.payload.channel,destinationId:j.payload.destinationId,recipient:j.payload.recipient,status:j.status,scheduledAt:j.scheduledAt,updatedAt:j.updatedAt,receipt:j.receipt||null,lastError:j.lastError||null,blockers:j.blockers||[]})),ownerHold:ownerHold?{active:true,reason:ownerHold.reason,at:ownerHold.at}:null,review:{state:blockers.length?'held':'eligible',version,blockers:[...new Set(blockers)],ownerApprovalRequired:true,liveDeliveryAuthorized,checkedAt:clock().toISOString()}};
    }))};
   }
   if(section==='marketing/coverage')return{ok:true,coverage:await bo.marketingCoverage()};

@@ -22,6 +22,15 @@ test('real Mongo distribution persists exact approvals, fences concurrent sends,
   reply={ok:false,uncertain:true,reason:'timeout'};await api.dispatch();assert.equal((await queue.findOne({key:stopped.key})).status,'needs_check');await engine().dispatch();assert.equal(sent,2);
   reply={ok:false,retryable:true,reason:'rate_limit'};const retry=await approve(5);for(let i=0;i<3;i++){time=new Date(+time+60*60000);await api.dispatch();}assert.equal((await queue.findOne({key:retry.key})).attempts,3);assert.equal((await queue.findOne({key:retry.key})).status,'failed');assert.equal(sent,5);
   blocked=['registry_public_entry_state_conflict'];assert.equal((await approve(6)).reason,'campaign_held');
+  const {createProductionBackoffice}=require('./growth-production-backoffice');
+  const backoffice=createProductionBackoffice({runtime:{collections:col,listDrafts:async()=>[await col.drafts.findOne({id:'draft1'})],preparation:{quality:async()=>[]}},status:async()=>({}),distribution:api,clock:()=>time});
+  const view=await backoffice.read('drafts');
+  assert.equal(view.drafts[0].review.liveDeliveryAuthorized,true);
+  assert.equal(view.drafts[0].deliveries[0].status,'accepted');
+  assert.equal(view.drafts[0].deliveries[0].receipt.delivered,false);
+  assert.equal(JSON.stringify(view).includes('providerAttemptClaim'),false);
+  await col.drafts.updateOne({id:'draft1'},{$set:{text:'Changed after acceptance'}});
+  assert.equal((await backoffice.read('drafts')).drafts[0].review.liveDeliveryAuthorized,false);
   assert.ok(await col.audit.countDocuments({action:'distribution_provider_result'})>=5);
  }finally{for(const n of names)await db.collection(n).drop().catch(()=>{});await client.close();}
 });

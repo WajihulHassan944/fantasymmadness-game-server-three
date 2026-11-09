@@ -12,6 +12,7 @@ function createProductionReview({ col, quality, clock = () => new Date() }) {
     const draft = await col.drafts.findOne({ id });
     if (!draft || !['needs_owner_review', 'approved'].includes(draft.status)) return { ok: false, reason: 'draft_not_awaiting_owner_decision' };
     if (contentVersion(draft) !== version) return { ok: false, reason: 'campaign_changed_review_again' };
+    if (action === 'approve' && draft.status === 'approved' && draft.ownerApproved === true && draft.contentApproval?.version === version) return { ok:true, id, status:'approved', version, contentApproved:true, deliveryAuthorized:false, unchanged:true };
     if (action === 'hold' || action === 'resume-review') {
       if (!col.ownerCampaignHolds) return {ok:false,reason:'owner_hold_store_unavailable'};
       const decision={action,owner,version,at:clock().toISOString(),reason:String(reason).replace(/[\x00-\x1f]/g,' ').slice(0,300),deliveryAuthorized:false};
