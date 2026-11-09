@@ -13,6 +13,16 @@ test('mail service denies unsigned callers, never exports credentials, and requi
  assert.equal((await provider.send(draft,{canSend:async()=>false})).ok,false);assert.equal(sent,0);
  const first=await provider.send(draft,{canSend:async()=>true,deliveryClaim:'claim-fixture'});assert.equal(first.ok,true);assert.equal(first.receipt.delivered,false);assert.match(first.receipt.providerAcceptanceResponse,/fixture-provider-id/);assert.equal(sent,1);
  const duplicate=await provider.send(draft,{canSend:async()=>true,deliveryClaim:'claim-fixture'});assert.equal(duplicate.ok,false);assert.equal(duplicate.uncertain,true);assert.equal(sent,1);
- assert.ok(calls.every(u=>u.startsWith('https://fantasymmadness-game-server-three-taupe.vercel.app/api/growth-mail-relay/')));
+ assert.ok(calls.every(u=>u.startsWith('https://fantasymmadness-game-server-three-khx99a42p.vercel.app/api/mail/')));
  }finally{server.closeAllConnections();await new Promise(r=>server.close(r));}
+});
+
+test('mail client targets only the approved backend Preview and retains signed workload headers',async()=>{
+ const {createSmtpRelayProvider}=require('./growth-smtp-relay-provider');const calls=[];
+ const provider=createSmtpRelayProvider({getToken:async()=>'fixture-workload',fetchImpl:async(url,options)=>{calls.push({url,options});return{ok:true,json:async()=>({ok:true,ready:true,sender:'contact@fantasymmadnesscom.com'}),headers:new Headers()};}});
+ assert.equal((await provider.readiness()).ready,true);
+ assert.equal(calls[0].url,'https://fantasymmadness-game-server-three-khx99a42p.vercel.app/api/mail/verify');
+ assert.equal(calls[0].options.headers['x-vercel-trusted-oidc-idp-token'],'fixture-workload');
+ assert.equal(calls[0].options.headers['x-fmm-mail-workload'],'fixture-workload');
+ assert.equal(calls[0].options.redirect,'error');assert.equal(calls[0].options.method,'GET');
 });

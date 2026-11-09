@@ -19,7 +19,7 @@
     delivery_failed: ['Delivery failed', 'bad', '!'], completed: ['Completed', 'good', '✓'], failed: ['Failed', 'bad', '!'],
     stale: ['Interrupted', 'warn', '!'], claimed: ['Running', 'info', '◔'], running: ['Running', 'info', '◔'], pending: ['Waiting', 'info', '◔'],
     retry: ['Will retry', 'warn', '↻'], open: ['Open', 'bad', '!'], acknowledged: ['Acknowledged', 'good', '✓'],
-    scheduled: ['Scheduled', 'info', '◔'], publishing: ['Publishing…', 'info', '◔'], held: ['Held: channel not connected', 'warn', '⏸'], cancelled: ['Cancelled', '', '✕'],
+    scheduled: ['Scheduled', 'info', '◔'], sending: ['Sending', 'info', '◔'], publishing: ['Publishing…', 'info', '◔'], held: ['Held: review required', 'warn', '⏸'], cancelled: ['Cancelled', '', '✕'],
     needs_check: ['Check the channel', 'bad', '!'], invite_prepared: ['Invitation approved', 'info', '✉'], invited: ['Invited', 'info', '✉'], active: ['Active affiliate', 'good', '✓'], paused: ['Paused', 'warn', '⏸'], declined: ['Declined', '', '✕'],
   };
   var NAV = [
@@ -148,15 +148,21 @@
     var headers = { Accept: 'application/json' };
     if (token()) headers.Authorization = 'Bearer ' + token();
     if (body !== undefined) headers['Content-Type'] = 'application/json';
-    return fetch(API + path, { method: method, headers: headers, body: body !== undefined ? JSON.stringify(body) : undefined, cache: 'no-store', credentials: 'same-origin' })
+    var controller = new AbortController();
+    var timeout = setTimeout(function () { controller.abort(); }, 25000);
+    return fetch(API + path, { method: method, headers: headers, body: body !== undefined ? JSON.stringify(body) : undefined, cache: 'no-store', credentials: 'same-origin', signal: controller.signal })
       .then(function (r) {
         return r.text().then(function (t) {
           var j = null; try { j = JSON.parse(t); } catch (e) { /* not json */ }
           if (r.status === 401 && path !== '/admin/login') { setToken(''); renderLogin('Your session ended. Please sign in again.', { event: 'session-expired', reason: (j && j.reason) || 'session_invalid' }); throw Object.assign(new Error('signed_out'), { silent: true }); }
           if (!r.ok) { var err = new Error((j && (j.message || j.reason)) || ('Request failed (' + r.status + ')')); err.status = r.status; err.reason = j && j.reason; err.body = j; throw err; }
-          return j || {};
+          if (!j) throw new Error('The Growth API returned an unexpected response. Try again or check service access.');
+          return j;
         });
-      });
+      }).catch(function (e) {
+        if (e.name === 'AbortError') throw new Error('The Growth API did not respond within 25 seconds. Try again or check service access.');
+        throw e;
+      }).finally(function () { clearTimeout(timeout); });
   }
   function explain(e) { var d = e && e.body && Array.isArray(e.body.details) && e.body.details.length ? ' (' + e.body.details.map(function (x) { return String(x).replace(/_/g, ' '); }).join('; ') + ')' : ''; return (e && e.reason ? friendly(e.reason) : (e && e.message) || 'Request failed') + d; }
   function fail(e) { if (e && e.silent) return; toast(explain(e), 'bad'); }
@@ -382,14 +388,16 @@
   // ---------- draft card (shared by Approvals / Marketing / PR / Affiliate) ----------
   function draftCard(d, reload) {
     var card = h('article', { class: 'draft', testid: 'draft', 'data-draft-id': d.id, 'data-status': d.status });
-    var actions = h('div', { class: 'row-actions' });
+    var actions = h('div', { class: 'row-actions', role: 'group', 'aria-label': 'Campaign approval controls', testid: 'campaign-actions' });
+    var held = d.review ? d.review.state === 'held' : d.reviewSafety?.state === 'hold' || (d.approvalBlockers || []).length > 0;
     var isEmail = d.kind === 'pr' || d.kind === 'affiliate';
     var previewSlot = h('div');
     add(card, [
       h('div', { class: 'draft-top' }, kindChip(d.kind), h('span', { class: 'chip', text: sport(d.genre) }), (d.sandbox === true && d.realDelivery === false ? h('span', { class: 'chip info', text: 'Sandbox receipt — not sent' }) : chip(d.status)), d.editCount ? h('span', { class: 'chip info', text: 'Edited' }) : null, h('span', { class: 'when', text: 'Created ' + when(d.createdAt) })),
       h('h3', { testid: 'draft-title', text: isEmail ? (d.subject || '(no subject)') : (d.headline || '(no headline)') }),
+      actions,
       isEmail ? h('div', { class: 'meta' }, h('span', null, 'To: ', h('strong', { text: d.recipient || '—' })), d.relevanceSource ? h('a', { href: d.relevanceSource, target: '_blank', rel: 'noopener noreferrer', text: 'Why this contact' }) : null) : null,
-      d.kind === 'marketing' && d.contest ? fightFacts(d.contest) : null,
+      d.kind === 'marketing' && d.contest ? fightFacts(d.contest, held) : null,
       d.kind === 'marketing' && d.poster ? posterPanel(d, reload) : null,
       d.kind === 'marketing' && d.posts ? channelPosts(d) : h('div', { class: 'body', testid: 'draft-text', text: d.text || '' }),
       h('div', { class: 'meta' },
@@ -399,7 +407,7 @@
         d.rejectedAt ? h('span', { text: 'Rejected ' + when(d.rejectedAt) + (d.rejectReason ? ' — “' + d.rejectReason + '”' : '') }) : null,
         d.publishedAt ? h('span', null, 'Published ' + when(d.publishedAt), d.postUrl ? [' — ', h('a', { href: d.postUrl, target: '_blank', rel: 'noopener noreferrer', text: 'view post' })] : null) : null,
         d.deliveredAt ? h('span', { text: 'Delivered ' + when(d.deliveredAt) + (d.sandbox ? ' (sandbox)' : '') }) : null),
-      previewSlot, actions,
+      previewSlot,
     ]);
     if (isEmail && d.html) actions.appendChild(h('button', { class: 'btn small', testid: 'btn-preview', text: 'Preview email', onclick: function (e) {
       if (previewSlot.firstChild) { clear(previewSlot); e.target.textContent = 'Preview email'; } else { previewSlot.appendChild(emailPreview(d.html)); e.target.textContent = 'Hide preview'; }
@@ -415,11 +423,10 @@
         if (d.contestId) actions.appendChild(h('button', { class: 'btn primary small', testid: 'btn-schedule', text: '📅 Schedule posts', onclick: function () { schedulePosts(d, reload); } }));
         actions.appendChild(h('button', { class: 'btn approve small', testid: 'btn-mark-published', text: 'Mark as published', onclick: function () { markPublished(d, reload); } }));
       } else actions.appendChild(h('span', { class: 'muted small', text: 'Will be sent only when real email delivery is switched on (currently off).' }));
-      actions.appendChild(h('button', { class: 'btn danger small', testid: 'btn-withdraw', text: 'Withdraw approval', onclick: function () { reject(d, reload, true); } }));
+      actions.appendChild(h('button', { class: 'btn danger small', testid: 'btn-withdraw', 'data-content-review':'true', text: 'Withdraw approval', onclick: function () { reject(d, reload, true); } }));
     }
         /* BEGIN authorized 2026-11-06 emergency hold presentation. */
     if(PRODUCTION&&['needs_owner_review','approved'].indexOf(d.status)!==-1)actions.appendChild(h('button',{class:'btn small',testid:'btn-owner-hold',text:d.ownerHold?.active?'Resume review':'Hold',onclick:function(){var reason=h('input',{type:'text',maxlength:'300',testid:'owner-hold-reason'});modal({title:d.ownerHold?.active?'Resume this review?':'Hold this campaign?',confirmLabel:d.ownerHold?.active?'Resume review':'Hold',body:h('div',null,h('p',{text:'This changes only the owner review hold. It does not approve, schedule or send anything. Source safeguards remain enforced.'}),h('label',null,'Reason',reason)),onConfirm:function(){return api('POST','/admin/drafts/'+encodeURIComponent(d.id)+(d.ownerHold?.active?'/resume-review':'/hold'),{version:d.review?.version,reason:reason.value});}}).then(reload).catch(fail);}}));
-    var held = d.review ? d.review.state === 'held' : d.reviewSafety?.state === 'hold' || (d.approvalBlockers || []).length > 0;
     if (held) {
       var blockedApproval = actions.querySelector('[data-testid=btn-approve]');
       if (blockedApproval) { blockedApproval.disabled = true; blockedApproval.title = 'Resolve evidence holds before approval'; }
@@ -437,6 +444,19 @@
         return modal({title:'Authorize this exact delivery',confirmLabel:'Authorize delivery',body:h('div',null,h('p',{text:'This is approval to send the exact campaign shown on this card. Review its complete message and artwork before confirming. Holds and emergency stop remain enforced.'}),channel,destination,copy,h('label',null,'Schedule (your local time)',time),h('label',null,confirm,' I approve this content, recipient or account, artwork and schedule.')),onConfirm:function(){if(!confirm.checked||!time.value||!exactPreview)throw Error('Specific approval and schedule required');var ch=channel.value,c=ch==='email'?r.email:r.channels[ch];return api('POST','/admin/distribution/'+encodeURIComponent(d.id)+'/authorize',{confirmation:'AUTHORIZE THIS EXACT DELIVERY',version:exactPreview.version,payloadHash:exactPreview.payloadHash,channel:ch,recipient:ch==='email'?d.recipient:undefined,destinationId:c?.destinationId,scheduledAt:new Date(time.value).toISOString()});}});
       }).then(function(ok){if(ok){toast('Exact delivery authorized and queued. Provider receipts will confirm the result.','good');reload();}}).catch(fail);
     }}));
+    if (PRODUCTION && Array.isArray(d.deliveries)) {
+      var results = h('div', { testid: 'campaign-deliveries', class: 'meta' });
+      d.deliveries.forEach(function (job) {
+        var row = h('div', null, h('strong', { text: job.channel + ': ' }), chip(job.status),
+          h('span', { text: ' · ' + (job.destinationId || job.recipient || '') + ' · ' + when(job.updatedAt || job.scheduledAt) }));
+        if (job.receipt) row.appendChild(h('pre', { class: 'small', text: JSON.stringify(job.receipt, null, 2) }));
+        if (/^https:\/\/(www\.)?(facebook|instagram)\.com\//.test(job.receipt?.publicPermalink || '')) row.appendChild(h('a', { href: job.receipt.publicPermalink, target: '_blank', rel: 'noopener noreferrer', text: 'View public post' }));
+        if (job.lastError || job.blockers?.length) row.appendChild(h('span', { class: 'small', text: ' · ' + (job.lastError || job.blockers.join('; ')) }));
+        results.appendChild(row);
+      });
+      if (!d.deliveries.length) results.appendChild(h('span', { text: 'No delivery has been authorized for this campaign.' }));
+      card.insertBefore(results, actions.nextSibling);
+    }
     return card;
   }
   // Generated FANTASY MMADNESS posters: feed (4:5) and TikTok (9:16), with the artwork source.
@@ -469,10 +489,10 @@
       onConfirm: function () { return api('POST', '/admin/art-rights/' + encodeURIComponent(d.contestId), { status: status, note: note.value }); },
     }).then(function (ok) { if (ok) { toast(status === 'blocked' ? 'Artwork blocked; poster rebuilt.' : 'Artwork allowed; poster rebuilt.', 'good'); reload(); } }).catch(fail);
   }
-  function fightFacts(c) {
+  function fightFacts(c, held) {
     var when = c.dateKey + (c.timing?.eventTimeVerified ? ' · Verified event start: '+String(c.timing.eventStartAt) : ' · Event start time unconfirmed');
     return h('div', { class: 'facts', testid: 'fight-facts' },
-      h('span', { class: 'chip good', text: '✓ Verified contest' }),
+      h('span', { class: 'chip ' + (held ? 'warn' : 'good'), text: held ? 'HOLD — contest eligibility unresolved' : '✓ Verified contest' }),
       h('span', null, h('strong', { text: c.fighterA + ' vs ' + c.fighterB })),
       h('span', { text: sport(c.sport) }), h('span', { text: when }),c.timing?.entryCutoffAt?h('span',{text:'Registry entry cutoff (UTC): '+c.timing.entryCutoffAt}):null,c.timing?.errors?.length?h('span',{class:'chip warn',text:'Approval blocked: '+c.timing.errors.join('; ')}):null,
       c.eventName ? h('span', { text: c.eventName }) : null, c.venue ? h('span', { text: [c.venue, c.city].filter(Boolean).join(', ') }) : null,
@@ -599,7 +619,7 @@
         var rows = r.drafts.filter(function (d) { return !query._genre || d.genre === query._genre; });
         /* BEGIN authorized 2026-11-06 queue eligibility filters. */
         var heldCount = rows.filter(function(d){return d.review?.state === 'held' || !d.review && ((d.approvalBlockers || []).length || d.reviewSafety?.state === 'hold');}).length;
-        if (query._review) container.appendChild(h('p',{class:'small muted',testid:'queue-review-counts',text:rows.length + ' pending owner review · ' + (rows.length-heldCount) + ' technically eligible · ' + heldCount + ' on HOLD · 0 authorized live deliveries'}));
+        if (query._review) container.appendChild(h('p',{class:'small muted',testid:'queue-review-counts',text:rows.length + ' pending owner review · ' + (rows.length-heldCount) + ' technically eligible · ' + heldCount + ' on HOLD · ' + rows.filter(function(d){return d.review?.liveDeliveryAuthorized;}).length + ' campaigns with authorized deliveries'}));
         if (query._review === 'eligible') rows = rows.filter(function(d){return d.review?.state === 'eligible';});
         if (query._review === 'held') rows = rows.filter(function(d){return d.review?.state === 'held' || !d.review && ((d.approvalBlockers || []).length || d.reviewSafety?.state === 'hold');});
         /* END authorized 2026-11-06 queue eligibility filters. */
@@ -678,7 +698,7 @@
         sc.preparationPaused ? h('div', { class: 'banner warn', testid: 'scheduler-banner' }, h('strong', { text: 'Emergency stop active. ' }), 'Scheduled preparation is paused; no new work is authorized.') : INTEGRATED && !sc.schedulerEnabled ? h('div', { class: 'banner info', testid: 'scheduler-banner' }, h('strong', { text: 'Manual sandbox operation. ' }), 'No unattended worker is enabled. Last recorded cycle: ' + when(sc.lastRunAt)) : sc.healthy
           ? h('div', { class: 'banner good', testid: 'scheduler-banner' }, h('span', { class: 'ico', 'aria-hidden': 'true', text: '✓' }), h('div', null, h('strong', { text: 'The Growth Engine is running automatically.' }), 'Last automatic run ' + when(sc.lastRunAt) + ' · ' + fmtNum(sc.runsLast24h) + ' runs in the last 24 hours · schedule: ' + sc.schedule + '.'))
           : h('div', { class: 'banner warn', testid: 'scheduler-banner' }, h('span', { class: 'ico', 'aria-hidden': 'true', text: '!' }), h('div', null, h('strong', { text: 'No automatic run in the last 35 minutes.' }), 'Last run: ' + when(sc.lastRunAt) + '. Check the Automation page.')),
-        h('div', { class: 'banner info' }, h('span', { class: 'ico', 'aria-hidden': 'true', text: 'ℹ' }), h('div', null, h('strong', { text: 'Real outreach is OFF.' }), 'Email delivery provider: “' + st.delivery.provider + '”. Approved emails wait here; marketing posts are only published when you post them yourself.')),
+        h('div', { class: 'banner info' }, h('span', { class: 'ico', 'aria-hidden': 'true', text: 'ℹ' }), h('div', null, h('strong', { text: st.delivery.realDelivery ? 'Approved outreach is enabled.' : 'Real outreach is OFF.' }), 'Email delivery provider: “' + st.delivery.provider + '”. Only campaigns with approved content, destinations and schedules may be dispatched. Provider results appear on each campaign.')),
         h('div', { class: 'grid tiles' },
           tile('Awaiting your approval', o.draftsAwaitingReview, 'Open Campaign Approvals', '#/approvals', 'tile-pending'),
           tile('Approved', o.approvedAwaitingDelivery, 'Ready to publish / send', '#/approvals?status=approved', 'tile-approved'),

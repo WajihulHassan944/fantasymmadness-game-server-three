@@ -1,5 +1,8 @@
 'use strict';
-const ORIGIN='https://fantasymmadness-game-server-three-taupe.vercel.app/api/growth-mail-relay';
+// The approved Trusted Sources destination is backend Preview. The production
+// alias is protected before its rewrite to Preview, so it requires a different
+// environment grant. Call the verified immutable private Preview directly.
+const ORIGIN='https://fantasymmadness-game-server-three-khx99a42p.vercel.app/api/mail';
 const TEST_ID='owner-contact-delivery-verification-20261108';
 const TEST={id:TEST_ID,kind:'owner_delivery_verification',ownerApproved:true,sendPermitted:true,recipient:'facester1@gmail.com',subject:'FANTASY MMADNESS Delivery Verification',text:'Owner-authorized FANTASY MMADNESS Growth Engine email delivery verification. This is a test only. No campaign or invitation is included.'};
 function createSmtpRelayProvider({fetchImpl=globalThis.fetch,getToken=()=>require('@vercel/oidc').getVercelOidcToken()}={}){

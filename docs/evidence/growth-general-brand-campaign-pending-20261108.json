@@ -1,0 +1,20 @@
+{
+  "state": "pending_exact_owner_approval_and_artwork_verification",
+  "productionRecordCreated": false,
+  "text": "FIGHT FANS, IT'S TIME!\n\nThink you know who's going to win the next big fight?\n\nPut your fight knowledge to the test with FANTASY MMADNESS!\n\nBOXING • MMA • BARE-KNUCKLE • KICKBOXING • PRO WRESTLING\n\nMake your predictions. Compete against other fans. Climb the leaderboard!\n\nJOIN THE ACTION NOW!\n\nFANTASYMMADNESS.COM\n\n#FantasyMMadness #Boxing #MMA #UFC #BKFC #CombatSports",
+  "destinations": [
+    {
+      "channel": "facebook",
+      "account": "Fantasy MMAdness",
+      "expectedAccountId": "128043637053328"
+    },
+    {
+      "channel": "instagram",
+      "account": "@fantasymmadness",
+      "expectedAccountId": "17841447949460050"
+    }
+  ],
+  "artwork": null,
+  "approval": null,
+  "providerReceipts": []
+}
