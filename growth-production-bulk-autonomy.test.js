@@ -265,3 +265,59 @@ test('emergency stop before any policy exists, then the first policy save still 
     assert.throws(() => createBulkAutonomy({ db: { collection: () => null }, col, queue, distribution: null, review: {}, owners: [owner] }));
   } finally { await store.close(); }
 });
+
+// HTTP surface: owner-only routes, single-use confirmation over HTTP, and the worker route
+// running the Autonomous Mode check before dispatch. Needs the server packages (CI).
+let httpDeps = true; try { require.resolve('express'); require.resolve('jsonwebtoken'); } catch { httpDeps = false; }
+test('HTTP: owner-only bulk and autonomous routes; worker cron runs the autonomous check, then dispatch', { skip: !httpDeps && 'server packages not installed', timeout: 30000 }, async () => {
+  const { createProductionPreparationApp } = require('./growth-production-preparation-http');
+  const { resolvePreparationConfig, PROJECT } = require('./growth-production-preparation-config');
+  const { signProductionSession } = require('./growth-production-session');
+  const owner = 'a'.repeat(24), stranger = 'f'.repeat(24);
+  const { publicKey } = crypto.generateKeyPairSync('ed25519');
+  const env = { VERCEL_ENV: 'production', VERCEL_GIT_COMMIT_SHA: 'a'.repeat(40), GROWTH_PREPARATION_VERIFIED_SHA: 'a'.repeat(40), VERCEL_PROJECT_ID: PROJECT, VERCEL_DEPLOYMENT_ID: 'dpl_new', GROWTH_PREPARATION_MODE: 'production_preparation', GROWTH_PREPARATION_APPROVED: 'true', GROWTH_PREPARATION_MONGODB_URI: 'mongodb+srv://fixture@production.example.invalid/fmgrowthproduction', GROWTH_PREPARATION_ATLAS_HOST: 'production.example.invalid', GROWTH_PREPARATION_OWNER_IDS: owner, GROWTH_OUTBOUND_ENABLED: 'false', GROWTH_SOCIAL_PUBLISHING_APPROVED: 'false', GROWTH_AUTOMATION_LIVE_APPROVED: 'false', GROWTH_AUTOMATIC_APPROVAL_ENABLED: 'false', GROWTH_PAYMENT_MUTATIONS_ENABLED: 'false', GROWTH_DELIVERY_PROVIDER: 'none', GROWTH_SOCIAL_PROVIDER: 'none', JWT_SECRET_ADMIN: crypto.randomBytes(40).toString('hex'), GROWTH_UNSUBSCRIBE_SECRET: crypto.randomBytes(40).toString('hex'), CRON_SECRET: crypto.randomBytes(40).toString('hex'), GROWTH_SSO_SITE_PUBLIC_KEY: publicKey.export({ type: 'spki', format: 'pem' }), GROWTH_SSO_SITE_ORIGINS: 'https://fantasymmadness.com,https://www.fantasymmadness.com' };
+  const resolved = resolvePreparationConfig(env);
+  assert.equal(resolved.ok, true, JSON.stringify(resolved.errors));
+  const token = adminId => signProductionSession(resolved.secrets.adminJwtSecret, { email: 'owner@example.test', adminId, sid: crypto.randomUUID(), iatMs: Date.now(), ttl: 600 }, resolved.config.sessionAudience);
+  const store = await database();
+  let time = new Date('2026-11-10T15:00:00Z'); const clock = () => time;
+  const col = { drafts: store.collection('d3'), settings: store.collection('s3'), audit: store.collection('a3'), ownerCampaignHolds: store.collection('h3') }, queue = store.collection('q3');
+  const sent = [];
+  const distribution = createProductionDistribution({ col, queue, quality: async () => [], owners: [owner], clock, enabled: true, email: { readiness: async () => ({ ready: true, provider: 'gmail-smtp' }), send: async m => { sent.push(m.recipient); return { ok: true, receipt: { providerMessageId: 'm' + sent.length, status: 'accepted' } }; } }, meta: { readiness: async () => ({}) } });
+  await distribution.init();
+  const bulk = createBulkAutonomy({ db: { collection: n => store.collection('b3_' + n) }, col, queue, distribution, review: createProductionReview({ col, quality: async () => [], clock }), owners: [owner], clock, autoApprovalReleased: true });
+  await bulk.init();
+  let ticks = 0; const realTick = bulk.tick; bulk.tick = async o => { ticks++; return realTick(o); };
+  const sessionCollections = { nonces: store.collection('n3'), revocations: store.collection('r3'), audit: store.collection('sa3') };
+  const app = createProductionPreparationApp({ env, context: async () => ({ bulk, distribution, verifiedOwnerIds: [owner], sessionCollections, status: async () => ({ scheduler: { enabled: true, healthy: true, activeDeploymentId: 'dpl_new' } }), preparePosterAssets: async () => ({ ok: true }) }) });
+  const server = app.listen(0, '127.0.0.1'); await new Promise(r => server.once('listening', r));
+  const base = 'http://127.0.0.1:' + server.address().port + '/api/growth';
+  const call = async (method, p, who, body) => { const r = await fetch(base + p, { method, headers: { 'Content-Type': 'application/json', ...(who ? { Authorization: 'Bearer ' + token(who) } : {}) }, body: body ? JSON.stringify(body) : undefined }); return { status: r.status, body: await r.json() }; };
+  try {
+    await col.drafts.insertOne({ id: 'h1', kind: 'pr', genre: 'mma-ufc', recipient: 'h1@show.example', subject: 'Story idea', text: 'Hello', html: '<p>Hello</p>', contactSource: 'https://show.example/feed', consentBasis: 'published_business_contact', emailQualityVersion: 2, listUnsubscribe: 'https://u.example/x', status: 'needs_owner_review', ownerApproved: false, sendPermitted: false, createdAt: time.toISOString() });
+    for (const [m, p] of [['POST', '/admin/bulk/preview'], ['POST', '/admin/autonomous/emergency-stop'], ['POST', '/admin/autonomous/policy'], ['GET', '/admin/autonomous'], ['GET', '/admin/bulk']]) {
+      assert.equal((await call(m, p, null, {})).status, 401, 'no session ' + p);
+      assert.equal((await call(m, p, stranger, {})).status, 401, 'non-owner ' + p);
+    }
+    const prev = await call('POST', '/admin/bulk/preview', owner, {});
+    assert.equal(prev.status, 200); assert.equal(prev.body.totals.deliveries, 1);
+    assert.equal((await call('POST', '/admin/bulk/' + prev.body.batchId + '/confirm', owner, { digest: prev.body.digest })).status, 409);
+    const ok = await call('POST', '/admin/bulk/' + prev.body.batchId + '/confirm', owner, { digest: prev.body.digest, confirmation: 'APPROVE ALL AND SEND' });
+    assert.equal(ok.status, 200); assert.equal(ok.body.groups.queued.length, 1);
+    assert.equal((await call('POST', '/admin/bulk/' + prev.body.batchId + '/confirm', owner, { digest: prev.body.digest, confirmation: 'APPROVE ALL AND SEND' })).body.reason, 'batch_already_confirmed');
+    assert.equal((await call('GET', '/admin/bulk/' + prev.body.batchId, owner)).body.groups.queued.length, 1);
+    assert.equal((await call('GET', '/admin/autonomous', owner)).body.enabled, false);
+    // Worker route: cron secret required; runs the autonomous check, then dispatch.
+    await distribution.pause(false, owner);
+    time = new Date(+time + 3 * 3600000);
+    assert.equal((await fetch(base + '/internal/distribution')).status, 401);
+    const cron = await fetch(base + '/internal/distribution', { headers: { Authorization: 'Bearer ' + env.CRON_SECRET } });
+    const cronBody = await cron.json();
+    assert.equal(cron.status, 200, JSON.stringify(cronBody));
+    assert.equal(ticks, 1); assert.equal(cronBody.autonomous.skipped, 'autonomous_mode_off');
+    assert.deepEqual(sent, ['h1@show.example']);
+    assert.equal((await call('GET', '/admin/bulk/' + prev.body.batchId, owner)).body.groups.succeeded.length, 1);
+    // Preview-only sandbox route does not exist in production.
+    assert.equal((await call('POST', '/admin/sandbox/run-worker', owner, {})).status, 404);
+  } finally { server.close(); await store.close(); }
+});
