@@ -1,0 +1,14 @@
+name: Growth production status probe (read-only)
+on:
+  push:
+    branches: [test/growth-production-status-20261110]
+permissions:
+  contents: read
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: '22' }
+      - run: node scripts/growth-production-status-probe.js
