@@ -38,6 +38,21 @@ function createProductionMetaProvider({withSource,env,fetchImpl=globalThis.fetch
    return result.data.id?await publicationReceipt(String(result.data.id),{id:result.data.id},{containerId:String(container.data.id)}):{ok:false,reason:'instagram_publication_receipt_missing',uncertain:true};
   });
  }
- return{readiness,publish};
+ // Read-only verification summary (identity + granted permissions). No token renewal, no credential
+ // write, nothing published. Cached for 5 minutes; force=true performs a fresh provider check.
+ let lastVerify=null,lastVerifyAt=0;
+ async function verify({force=false}={}){
+  if(!force&&lastVerify&&Date.now()-lastVerifyAt<300000)return lastVerify;
+  try{return await withSource(async db=>{
+   const reader=createExistingMetaReadOnly({db,env,fetchImpl});const [s,p]=await Promise.all([reader.status({force}),reader.permissions()]);
+   const pick=(x,extra)=>({verified:x?.verified===true,state:x?.state||null,reason:x?.verified===true?null:x?.reason||null,id:x?.verified===true?String(x.id):null,...extra});
+   const out={checkedAt:s.health?.checkedAt||new Date().toISOString(),selected:s.selected?{pageId:s.selected.pageId||null,pageName:s.selected.pageName||null,igUserId:s.selected.igUserId||null,igUsername:s.selected.igUsername||null}:null,
+    facebook:pick(s.platforms?.facebook,{name:s.platforms?.facebook?.verified?s.platforms.facebook.name||null:null}),
+    instagram:pick(s.platforms?.instagram,{username:s.platforms?.instagram?.verified?s.platforms.instagram.username||null:null}),
+    permissions:p?.verified===true?{verified:true,granted:p.granted||[],checkedAt:p.checkedAt||null}:{verified:false,reason:p?.reason||'permission_evidence_unavailable'}};
+   lastVerify=out;lastVerifyAt=Date.now();return out;
+  });}catch{return{checkedAt:new Date().toISOString(),facebook:{verified:false,reason:'existing_meta_verification_unavailable'},instagram:{verified:false,reason:'existing_meta_verification_unavailable'},permissions:{verified:false,reason:'existing_meta_verification_unavailable'}};}
+ }
+ return{readiness,publish,verify};
 }
 module.exports={createProductionMetaProvider};

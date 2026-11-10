@@ -86,3 +86,20 @@ test('release handover preserves enabled scheduler and records, fences old worke
   await p.stop();await assert.rejects(()=>p.handover({fromDeploymentId:'dpl_newA',deploymentId:'dpl_final',confirmation:'HANDOVER PRODUCTION PREPARATION ONLY'}),/source_not_active/);
  }finally{for(const c of await raw.listCollections({name:{$regex:'^'+prefix}}).toArray())await raw.collection(c.name).drop();await client.close();}
 });
+test('owner-only read-only Facebook/Instagram verification (real MongoDB): audited, credentials unchanged, others refused',{skip,timeout:60000},async()=>{
+ const client=await new MongoClient(uri).connect(),raw=client.db(DATABASE),prefix='meta_check_'+crypto.randomBytes(8).toString('hex')+'_',db={databaseName:DATABASE,collection:name=>raw.collection(prefix+name)},r=resolveProductionPreparationConfig(env());
+ let forced=0;const metaVerifier={verify:async({force}={})=>{if(force)forced++;return{checkedAt:new Date().toISOString(),facebook:{verified:true,id:'128043637053328',name:'Fantasy MMAdness'},instagram:{verified:false,reason:'existing_authorization_expired_or_revoked'},permissions:{verified:true,granted:['pages_manage_posts']}};}};
+ try{
+  const p=await createProductionPreparation({rawDb:db,...r,verifiedOwnerIds:r.config.autonomy.owners,metaVerifier,fetchImpl:async()=>{throw Error('no external access');}});
+  const owner=r.config.autonomy.owners[0];
+  assert.equal((await p.ownerAction('meta/check',{},'0'.repeat(24))).reason,'verified_production_owner_required');
+  assert.equal(forced,0);
+  const out=await p.ownerAction('meta/check',{},owner);
+  assert.equal(out.ok,true);assert.equal(out.check.ok,false);assert.equal(out.check.readOnly,true);assert.equal(out.check.credentialsChanged,false);
+  assert.deepEqual(out.check.problems,['Instagram: existing_authorization_expired_or_revoked']);assert.equal(forced,1);
+  const audit=await raw.collection(prefix+'audit').findOne({action:'meta_verification_owner_check'});
+  assert.equal(audit.admin,owner);assert.equal(audit.facebookVerified,true);assert.equal(audit.instagramVerified,false);assert.equal(audit.credentialsChanged,false);
+  const none=await createProductionPreparation({rawDb:db,...r,verifiedOwnerIds:r.config.autonomy.owners,fetchImpl:async()=>{throw Error('no external access');}});
+  assert.equal((await none.ownerAction('meta/check',{},owner)).reason,'meta_verification_not_configured');
+ }finally{for(const c of await raw.listCollections({},{nameOnly:true}).toArray())if(c.name.startsWith(prefix))await raw.collection(c.name).drop();await client.close();}
+});

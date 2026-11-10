@@ -3,10 +3,13 @@
 // Connection health is evidence, never permission to publish.
 function productionChannelStatus(connections = {}) {
   const stale = connections.verificationStale !== false;
+  // Facebook/Instagram have their own live provider check (growth-production-meta-verification.js)
+  const metaStale = typeof connections.metaVerificationStale === 'boolean' ? connections.metaVerificationStale : stale;
   return Object.fromEntries(['facebook', 'instagram', 'tiktok', 'x'].map(provider => {
     const oauth = (connections.oauth || []).find(account => account.provider === provider);
     const meta = connections.meta?.[provider];
-    const connected = !stale && (meta ? meta.verified === true : oauth?.status === 'connected' && oauth?.accessStatus === 'valid');
+    const providerStale = meta ? metaStale : stale;
+    const connected = !providerStale && (meta ? meta.verified === true : oauth?.status === 'connected' && oauth?.accessStatus === 'valid');
     const required = { facebook: ['pages_manage_posts'], instagram: ['instagram_content_publish'], tiktok: ['video.publish'], x: ['tweet.write'] }[provider];
     const granted = meta ? connections.metaPermissions?.granted || [] : oauth?.grantedScopes || [];
     const permissionEvidenceVerified = meta ? connections.metaPermissions?.verified === true : Boolean(oauth?.scopesVerifiedAt);
@@ -14,8 +17,8 @@ function productionChannelStatus(connections = {}) {
     const publishingScopesVerified = connected && permissionEvidenceVerified && !missingPublishingScopes.length;
     return [provider, {
       mode: 'off', ready: false, connected,
-      connectionStatus: stale ? 'verification-needed' : connected ? 'connected' : oauth?.status || meta?.state || 'unverified',
-      checkedAt: connections.checkedAt || null,
+      connectionStatus: providerStale ? 'verification-needed' : connected ? 'connected' : oauth?.status || meta?.state || 'unverified',
+      checkedAt: (meta ? connections.metaCheckedAt : null) || connections.checkedAt || null,
       publishingAuthorized: false,
       username: oauth?.username || null, identity: oauth?.identity || null,
       grantedScopes: granted, missingPublishingScopes, publishingScopesVerified,
