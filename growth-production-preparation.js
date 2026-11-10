@@ -3,7 +3,7 @@ const crypto=require('node:crypto');
 const {assertProductionDatabase,productionReadOnlyFetch,preparationCollectionName}=require('./growth-production-preparation-config');
 // Only this validated composition root can open the new production namespace.
 // No staging copy, affiliate signup, OAuth exchange, payment or send API exists.
-async function createProductionPreparation({rawDb,config,secrets,fetchImpl,verifiedOwnerIds,originalConnections=null,clock=()=>new Date(),runtimeFactory,distributionFactory}={}){
+async function createProductionPreparation({rawDb,config,secrets,fetchImpl,verifiedOwnerIds,originalConnections=null,metaVerifier=null,clock=()=>new Date(),runtimeFactory,distributionFactory}={}){
  assertProductionDatabase(rawDb,config);
  const PREFIX=config.collectionPrefix,environment=config.environment||'production';
  const owners=config.autonomy.owners;
@@ -100,6 +100,14 @@ async function createProductionPreparation({rawDb,config,secrets,fetchImpl,verif
   if((match=/^alerts\/([^/]+)\/ack$/.exec(route)))return runtime.ackAlert(match[1],{admin:owner});
   if((match=/^jobs\/([^/]+)\/requeue$/.exec(route)))return runtime.requeueJob(match[1],{admin:owner,now:clock()});
   if((match=/^preparation\/jobs\/([^/]+)\/requeue$/.exec(route))){const result=await runtime.preparation.requeue(match[1]);if(result.ok)await runtime.collections.audit.insertOne({action:'preparation_job_owner_requeue',id:match[1],admin:owner,at:clock().toISOString()});return result;}
+  // Owner-requested read-only Facebook/Instagram verification: provider identity + permission check only.
+  if(route==='meta/check'){
+   if(!metaVerifier)return{ok:false,reason:'meta_verification_not_configured'};
+   const v=await metaVerifier.verify({force:true});
+   await runtime.collections.audit.insertOne({action:'meta_verification_owner_check',admin:owner,facebookVerified:v.facebook?.verified===true,instagramVerified:v.instagram?.verified===true,permissionsVerified:v.permissions?.verified===true,credentialsChanged:false,at:clock().toISOString()});
+   const problems=[!v.facebook?.verified&&'Facebook: '+(v.facebook?.reason||'not verified'),!v.instagram?.verified&&'Instagram: '+(v.instagram?.reason||'not verified'),!v.permissions?.verified&&'Permissions: '+(v.permissions?.reason||'not verified')].filter(Boolean);
+   return{ok:true,check:{ok:!problems.length,problems,checkedAt:v.checkedAt,readOnly:true,credentialsChanged:false}};
+  }
   if(route==='suppressions'){const address=String(body.address||'').trim();if(address.length>254||!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(address))return{ok:false,reason:'valid_email_required'};await runtime.suppression.suppress(address,{source:'operator',reason:body.reason,now:clock()});await runtime.collections.audit.insertOne({action:'suppress',admin:owner,at:clock().toISOString()});return{ok:true};}
   return{ok:false,reason:'owner_action_not_available'};
  }

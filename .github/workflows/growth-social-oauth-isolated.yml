@@ -107,6 +107,7 @@ jobs:
           node growth-gmail-smtp-provider.test.js
           node growth-smtp-relay.test.js
           node growth-production-meta-provider.test.js
+          node --test growth-production-meta-verification.test.js
           node growth-production-distribution.test.js
           node growth-production-distribution.browser.test.js
           node growth-production-approval-ui.browser.test.js
