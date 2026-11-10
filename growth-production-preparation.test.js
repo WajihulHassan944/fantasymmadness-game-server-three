@@ -97,7 +97,7 @@ test('owner-only read-only Facebook/Instagram verification (real MongoDB): audit
   const out=await p.ownerAction('meta/check',{},owner);
   assert.equal(out.ok,true);assert.equal(out.check.ok,false);assert.equal(out.check.readOnly,true);assert.equal(out.check.credentialsChanged,false);
   assert.deepEqual(out.check.problems,['Instagram: existing_authorization_expired_or_revoked']);assert.equal(forced,1);
-  const audit=await raw.collection(prefix+'audit').findOne({action:'meta_verification_owner_check'});
+  let audit=null;for(const c of await raw.listCollections({},{nameOnly:true}).toArray())if(c.name.startsWith(prefix)&&!audit)audit=await raw.collection(c.name).findOne({action:'meta_verification_owner_check'});
   assert.equal(audit.admin,owner);assert.equal(audit.facebookVerified,true);assert.equal(audit.instagramVerified,false);assert.equal(audit.credentialsChanged,false);
   const none=await createProductionPreparation({rawDb:db,...r,verifiedOwnerIds:r.config.autonomy.owners,fetchImpl:async()=>{throw Error('no external access');}});
   assert.equal((await none.ownerAction('meta/check',{},owner)).reason,'meta_verification_not_configured');
