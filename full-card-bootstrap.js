@@ -71,8 +71,10 @@ const expressCapture = (...args) => {
 };
 Object.assign(expressCapture, expressOriginal);
 require.cache[expressPath].exports = expressCapture;
-require('./server');
+const serverApp = require('./server');
 require.cache[expressPath].exports = expressOriginal;
+// Prefer the explicitly exported app when bundling bypasses the Express capture hook.
+if (!capturedApp && serverApp && typeof serverApp.use === 'function' && typeof serverApp.get === 'function') capturedApp = serverApp;
 
 if (!capturedApp) throw new Error('Full Card bootstrap could not locate the Express application.');
 

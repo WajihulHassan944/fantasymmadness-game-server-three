@@ -18,6 +18,12 @@ function affiliateFightEmail({ affiliate, fight, fightId, appUrl, message, poste
   const qrLink = `${base}/api/fight-qr?fightId=${encodeURIComponent(fightId)}&affiliateId=${encodeURIComponent(id)}`;
   const prize = Math.max(0, Math.round(Number(fight.pot) || 0));
   const entry = Math.max(0, Math.round(Number(fight.matchTokens) || 0));
+  // Display USD only from explicit fight values, or this owner-confirmed fight configuration.
+  const confirmedPair = entry === 6266 && prize === 125313;
+  const usd = (value) => value !== undefined && value !== null && value !== '' && Number.isFinite(Number(value)) && Number(value) >= 0
+    ? '$' + Number(value).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : null;
+  const entryUsd = usd(fight.entryFeeDollars ?? fight.entryFeeUsd ?? (confirmedPair ? 5 : null));
+  const prizeUsd = usd(fight.prizePoolDollars ?? fight.prizePoolUsd ?? (confirmedPair ? 100 : null));
   const fighterA = escapeHtml(fight.matchFighterA || 'FIGHTER A');
   const fighterB = escapeHtml(fight.matchFighterB || 'FIGHTER B');
   const photoA = safeImage(fight.fighterAImage);
@@ -29,7 +35,7 @@ function affiliateFightEmail({ affiliate, fight, fightId, appUrl, message, poste
   const poster = posterCid ? `cid:${escapeHtml(posterCid)}` : safeImage(emailPoster);
   const name = escapeHtml(affiliate.firstName || 'Fight fan');
   const sport = escapeHtml(fight.matchCategoryTwo || fight.matchCategory || 'FIGHT NIGHT');
-  const details = prize ? `PRIZE: ${prize.toLocaleString()} FM COINS` : 'PREDICT • SCORE • CLIMB';
+  const details = prize ? `PRIZE: ${prizeUsd ? prizeUsd + ' (' : ''}${prize.toLocaleString()} FM COINS${prizeUsd ? ')' : ''}` : 'PREDICT • SCORE • CLIMB';
   return `<!doctype html><html><body style="margin:0;background:#0a0c16;font-family:Arial,sans-serif;color:#fff">
 <div style="display:none;font-size:1px;color:#0a0c16">Your personal fight poster and tracked QR are ready to share.</div>
 <table role="presentation" cellpadding="0" cellspacing="0" width="100%" style="background:#0a0c16"><tr><td align="center" style="padding:18px">
@@ -42,7 +48,7 @@ ${poster ? `<tr><td align="center" style="padding:10px 14px"><img src="${poster}
 <td align="center" width="45%" style="background:#461923;padding:12px">${photoB ? `<img src="${photoB}" alt="${fighterB}" width="220" height="180" style="display:block;max-width:100%;object-fit:contain">` : ''}<strong style="font-size:22px">${fighterB}</strong></td>
 </tr></table></td></tr>`}
 <tr><td align="center" style="padding:15px 20px 0;color:#ffcf62;font-size:21px;font-weight:900">${escapeHtml(details)}</td></tr>
-<tr><td align="center" style="padding:8px 20px 12px;color:#dce1ed;font-size:15px">${entry ? `Entry: ${entry.toLocaleString()} FM coins` : 'The fight is ready to share'}</td></tr>
+<tr><td align="center" style="padding:8px 20px 12px;color:#dce1ed;font-size:15px">${entry ? `Entry: ${entryUsd ? entryUsd + ' (' : ''}${entry.toLocaleString()} FM COINS${entryUsd ? ')' : ''}` : 'The fight is ready to share'}</td></tr>
 <tr><td align="center" style="padding:4px 22px 12px;color:#ff394e;font-size:32px;font-weight:900">PREDICT THE FIGHT</td></tr>
 <tr><td align="center" style="padding:6px 22px 14px"><a href="${escapeHtml(kitLink)}" style="display:inline-block;padding:16px 25px;background:#f5ad2e;color:#101018;font-size:17px;font-weight:bold;text-decoration:none;border-radius:8px">OPEN MY POSTER + CAPTIONS</a></td></tr>
 <tr><td align="center" style="padding:5px 28px;color:#dce1ed;font-size:15px;line-height:1.5">Hi ${name}, the owner has set up this fight. Open your kit to download a social poster with <strong>your personal QR</strong>, then share it with the ready-made caption.</td></tr>
