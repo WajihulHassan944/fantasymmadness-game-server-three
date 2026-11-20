@@ -22,7 +22,10 @@ function affiliateFightEmail({ affiliate, fight, fightId, appUrl, message, poste
   // Coin package purchase prices are not a reliable contest entry/prize conversion.
   const confirmedPair = entry === 6266 && prize === 125313;
   const usd = (value) => Number.isFinite(Number(value)) && Number(value) >= 0 && value !== undefined && value !== null && value !== ''
-    ? '(fight.matchFighterA || 'FIGHTER A');
+    ? '$' + Number(value).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : null;
+  const entryUsd = usd(fight.entryFeeDollars ?? fight.entryFeeUsd ?? (confirmedPair ? 5 : null));
+  const prizeUsd = usd(fight.prizePoolDollars ?? fight.prizePoolUsd ?? (confirmedPair ? 100 : null));
+  const fighterA = escapeHtml(fight.matchFighterA || 'FIGHTER A');
   const fighterB = escapeHtml(fight.matchFighterB || 'FIGHTER B');
   const photoA = safeImage(fight.fighterAImage);
   const photoB = safeImage(fight.fighterBImage);
