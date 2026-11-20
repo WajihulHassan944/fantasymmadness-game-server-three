@@ -18,14 +18,10 @@ function affiliateFightEmail({ affiliate, fight, fightId, appUrl, message, poste
   const qrLink = `${base}/api/fight-qr?fightId=${encodeURIComponent(fightId)}&affiliateId=${encodeURIComponent(id)}`;
   const prize = Math.max(0, Math.round(Number(fight.pot) || 0));
   const entry = Math.max(0, Math.round(Number(fight.matchTokens) || 0));
-  // Display USD only when the fight supplies an explicit value, or for the owner-confirmed configuration.
-  // Coin package purchase prices are not a reliable contest entry/prize conversion.
+  // Never derive contest dollars from a general FM COINS exchange rate.
   const confirmedPair = entry === 6266 && prize === 125313;
-  const usd = (value) => Number.isFinite(Number(value)) && Number(value) >= 0 && value !== undefined && value !== null && value !== ''
-    ? '$' + Number(value).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : null;
-  const entryUsd = usd(fight.entryFeeDollars ?? fight.entryFeeUsd ?? (confirmedPair ? 5 : null));
-  const prizeUsd = usd(fight.prizePoolDollars ?? fight.prizePoolUsd ?? (confirmedPair ? 100 : null));
-  const fighterA = escapeHtml(fight.matchFighterA || 'FIGHTER A');
+  const usd = (value) => value !== undefined && value !== null && value !== '' && Number.isFinite(Number(value)) && Number(value) >= 0
+    ? 'fight.matchFighterA || 'FIGHTER A');
   const fighterB = escapeHtml(fight.matchFighterB || 'FIGHTER B');
   const photoA = safeImage(fight.fighterAImage);
   const photoB = safeImage(fight.fighterBImage);
