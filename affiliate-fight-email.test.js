@@ -8,10 +8,10 @@ assert.match(alice, /ref=aaa/);
 assert.doesNotMatch(alice, /ref=bbb/);
 assert.match(bob, /ref=bbb/);
 assert.match(alice, /affiliateId=aaa/);
-assert.match(alice, /\\$100\\.00 \\(125,313 FM COINS\\)/);
-assert.match(alice, /\\$5\\.00 \\(6,266 FM COINS\\)/);
+assert.match(alice, /\$100\.00 \(125,313 FM COINS\)/);
+assert.match(alice, /\$5\.00 \(6,266 FM COINS\)/);
 assert.match(alice, /&lt;Kelly&gt;/);
 assert.doesNotMatch(alice, /<Kelly>/);
 
 const other = affiliateFightEmail({ affiliate: { _id: 'ccc' }, fight: { ...fight, pot: 90000, matchTokens: 4000 }, fightId: '123' });
-assert.doesNotMatch(other, /\\$100\\.00|\\$5\\.00/);
+assert.doesNotMatch(other, /\$100\.00|\$5\.00/);
