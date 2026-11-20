@@ -27137,3 +27137,6 @@ app.use((req, _res, next) => {
 const server = app.listen(PORT, () => {
   console.log(`Server started on port ${PORT}`);
 });
+
+// Expose the existing Express instance for the Full Card bootstrap in bundled deployments.
+module.exports = app;
