@@ -152,20 +152,46 @@ function registerRevenueAnalyticsRoutes({ app, mongoose, verifyAdminToken }) {
       // Include current registry fights even before the first tracked page view.
       // Keep this read-only and bounded; do not alter fight status or wallet records.
       const registrySince = new Date(Date.now() - 30 * 86400000);
-      const registry = [];
-      for (const modelName of ['Match', 'Shadow']) {
+      const registryById = new Map();
+      const candidateIds = [...new Set([
+        ...rows.map(row => String(row._id || '')),
+        ...((await RevenueEvent.distinct('fightId', { createdAt: { $gte: since }, fightId: { $ne: '' } })) || []).map(String)
+      ])];
+      const objectIds = candidateIds.filter(id => mongoose.Types.ObjectId.isValid(id))
+        .map(id => new mongoose.Types.ObjectId(id));
+      const projection = '_id matchName title matchFighterA matchFighterB fighterAName fighterBName matchCategory category matchDate date';
+      for (const modelName of ['Match', 'Shadow', 'ShadowFight', 'ShadowMatch']) {
         const Model = mongoose.models[modelName];
         if (!Model) continue;
-        const items = await Model.find({ matchDate: { $gte: registrySince } })
-          .select('_id matchName matchFighterA matchFighterB matchCategory matchDate')
-          .sort({ matchDate: 1 }).limit(200).lean();
-        for (const item of items) registry.push({
-          fightId: String(item._id),
-          fightName: item.matchName || [item.matchFighterA, item.matchFighterB].filter(Boolean).join(' vs ') || 'Fight',
-          category: item.matchCategory || '',
-          matchDate: item.matchDate || null
-        });
+        const [current, referenced] = await Promise.all([
+          Model.find({ matchDate: { $gte: registrySince } }).select(projection).sort({ matchDate: 1 }).limit(200).lean(),
+          objectIds.length ? Model.find({ _id: { $in: objectIds } }).select(projection).limit(500).lean() : []
+        ]);
+        for (const item of [...current, ...referenced]) {
+          const id = String(item._id);
+          const a = String(item.matchFighterA || item.fighterAName || '').trim();
+          const b = String(item.matchFighterB || item.fighterBName || '').trim();
+          const name = String(item.matchName || item.title || '').trim() || (a && b ? a + ' vs ' + b : '');
+          const prior = registryById.get(id);
+          if (!prior || (!prior.fightName && name)) registryById.set(id, {
+            fightId: id, fightName: name, category: item.matchCategory || item.category || '',
+            matchDate: item.matchDate || item.date || null
+          });
+        }
       }
+      // Historical tracking events can retain a human-readable fight name after a
+      // registry entry has been archived. Never substitute a truncated ID for a name.
+      const namedEvents = await RevenueEvent.find({
+        createdAt: { $gte: since }, fightId: { $in: candidateIds },
+        'metadata.fightName': { $exists: true, $ne: '' }
+      }).select('fightId metadata.fightName').sort({ createdAt: -1 }).limit(500).lean();
+      for (const event of namedEvents) {
+        const id = String(event.fightId);
+        if (!registryById.has(id) || !registryById.get(id).fightName) {
+          registryById.set(id, { ...(registryById.get(id) || { fightId: id }), fightName: String(event.metadata?.fightName || '') });
+        }
+      }
+      const registry = [...registryById.values()];
       res.setHeader('Cache-Control', 'private, no-store');
       return res.json({ ok: true, source: 'fight_entry_ledger', days, registry,
         fights: rows.map(row => ({ fightId: String(row._id || ''), paidEntries: row.paidEntries,
