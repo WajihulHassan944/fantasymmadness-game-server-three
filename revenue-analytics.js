@@ -149,8 +149,25 @@ function registerRevenueAnalyticsRoutes({ app, mongoose, verifyAdminToken }) {
         } },
         { $limit: 500 }
       ]);
+      // Include current registry fights even before the first tracked page view.
+      // Keep this read-only and bounded; do not alter fight status or wallet records.
+      const registrySince = new Date(Date.now() - 30 * 86400000);
+      const registry = [];
+      for (const modelName of ['Match', 'Shadow']) {
+        const Model = mongoose.models[modelName];
+        if (!Model) continue;
+        const items = await Model.find({ matchDate: { $gte: registrySince } })
+          .select('_id matchName matchFighterA matchFighterB matchCategory matchDate')
+          .sort({ matchDate: 1 }).limit(200).lean();
+        for (const item of items) registry.push({
+          fightId: String(item._id),
+          fightName: item.matchName || [item.matchFighterA, item.matchFighterB].filter(Boolean).join(' vs ') || 'Fight',
+          category: item.matchCategory || '',
+          matchDate: item.matchDate || null
+        });
+      }
       res.setHeader('Cache-Control', 'private, no-store');
-      return res.json({ ok: true, source: 'fight_entry_ledger', days,
+      return res.json({ ok: true, source: 'fight_entry_ledger', days, registry,
         fights: rows.map(row => ({ fightId: String(row._id || ''), paidEntries: row.paidEntries,
           refundedEntries: row.refundedEntries, netFmCoins: row.netFmCoins })) });
     } catch (error) {
