@@ -133,6 +133,32 @@ function registerRevenueAnalyticsRoutes({ app, mongoose, verifyAdminToken }) {
     }
   });
 
+  // Authoritative wallet-debit ledger for paid fight entries; NOT card cash receipts.
+  app.get('/api/admin/revenue/fight-ledger', verifyAdminToken, async (req, res) => {
+    try {
+      const days = Math.min(365, Math.max(1, Number(req.query.days || 30)));
+      const since = new Date(Date.now() - days * 86400000);
+      const Ledger = mongoose.models.FightEntryLedger;
+      if (!Ledger) return res.status(503).json({ ok: false, message: 'Fight entry ledger model unavailable.' });
+      const rows = await Ledger.aggregate([
+        { $match: { createdAt: { $gte: since }, type: { $in: ['FIGHT_ENTRY', 'FIGHT_ENTRY_REFUND'] } } },
+        { $group: { _id: '$matchId',
+          paidEntries: { $sum: { $cond: [{ $and: [{ $eq: ['$type', 'FIGHT_ENTRY'] }, { $lt: ['$amount', 0] }] }, 1, 0] } },
+          refundedEntries: { $sum: { $cond: [{ $eq: ['$type', 'FIGHT_ENTRY_REFUND'] }, 1, 0] } },
+          netFmCoins: { $sum: { $multiply: [-1, '$amount'] } }
+        } },
+        { $limit: 500 }
+      ]);
+      res.setHeader('Cache-Control', 'private, no-store');
+      return res.json({ ok: true, source: 'fight_entry_ledger', days,
+        fights: rows.map(row => ({ fightId: String(row._id || ''), paidEntries: row.paidEntries,
+          refundedEntries: row.refundedEntries, netFmCoins: row.netFmCoins })) });
+    } catch (error) {
+      console.error('Fight ledger revenue report failed:', error);
+      return res.status(500).json({ ok: false, message: 'Fight ledger report unavailable.' });
+    }
+  });
+
   require('./merchant-statement-routes').registerMerchantStatementRoutes({ app, mongoose, verifyAdminToken });
   return { RevenueEvent };
 }
