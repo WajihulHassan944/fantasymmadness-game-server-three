@@ -27133,6 +27133,9 @@ app.use((req, _res, next) => {
 });
 
 
+// Register protected, read-only revenue reports after models are initialized.
+require('./revenue-analytics').registerRevenueAnalyticsRoutes({ app, mongoose, verifyAdminToken });
+
 // Start server
 const server = app.listen(PORT, () => {
   console.log(`Server started on port ${PORT}`);

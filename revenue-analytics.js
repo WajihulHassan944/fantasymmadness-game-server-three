@@ -133,6 +133,75 @@ function registerRevenueAnalyticsRoutes({ app, mongoose, verifyAdminToken }) {
     }
   });
 
+  // Authoritative wallet-debit ledger for paid fight entries; NOT card cash receipts.
+  app.get('/api/admin/revenue/fight-ledger', verifyAdminToken, async (req, res) => {
+    try {
+      const days = Math.min(365, Math.max(1, Number(req.query.days || 30)));
+      const since = new Date(Date.now() - days * 86400000);
+      const Ledger = mongoose.models.FightEntryLedger;
+      if (!Ledger) return res.status(503).json({ ok: false, message: 'Fight entry ledger model unavailable.' });
+      const rows = await Ledger.aggregate([
+        { $match: { createdAt: { $gte: since }, type: { $in: ['FIGHT_ENTRY', 'FIGHT_ENTRY_REFUND'] } } },
+        { $group: { _id: '$matchId',
+          paidEntries: { $sum: { $cond: [{ $and: [{ $eq: ['$type', 'FIGHT_ENTRY'] }, { $lt: ['$amount', 0] }] }, 1, 0] } },
+          refundedEntries: { $sum: { $cond: [{ $eq: ['$type', 'FIGHT_ENTRY_REFUND'] }, 1, 0] } },
+          netFmCoins: { $sum: { $multiply: [-1, '$amount'] } }
+        } },
+        { $limit: 500 }
+      ]);
+      // Include current registry fights even before the first tracked page view.
+      // Keep this read-only and bounded; do not alter fight status or wallet records.
+      const registrySince = new Date(Date.now() - 30 * 86400000);
+      const registryById = new Map();
+      const candidateIds = [...new Set([
+        ...rows.map(row => String(row._id || '')),
+        ...((await RevenueEvent.distinct('fightId', { createdAt: { $gte: since }, fightId: { $ne: '' } })) || []).map(String)
+      ])];
+      const objectIds = candidateIds.filter(id => mongoose.Types.ObjectId.isValid(id))
+        .map(id => new mongoose.Types.ObjectId(id));
+      const projection = '_id matchName title matchFighterA matchFighterB fighterAName fighterBName matchCategory category matchDate date';
+      for (const modelName of ['Match', 'Shadow', 'ShadowFight', 'ShadowMatch']) {
+        const Model = mongoose.models[modelName];
+        if (!Model) continue;
+        const [current, referenced] = await Promise.all([
+          Model.find({ matchDate: { $gte: registrySince } }).select(projection).sort({ matchDate: 1 }).limit(200).lean(),
+          objectIds.length ? Model.find({ _id: { $in: objectIds } }).select(projection).limit(500).lean() : []
+        ]);
+        for (const item of [...current, ...referenced]) {
+          const id = String(item._id);
+          const a = String(item.matchFighterA || item.fighterAName || '').trim();
+          const b = String(item.matchFighterB || item.fighterBName || '').trim();
+          const name = String(item.matchName || item.title || '').trim() || (a && b ? a + ' vs ' + b : '');
+          const prior = registryById.get(id);
+          if (!prior || (!prior.fightName && name)) registryById.set(id, {
+            fightId: id, fightName: name, category: item.matchCategory || item.category || '',
+            matchDate: item.matchDate || item.date || null
+          });
+        }
+      }
+      // Historical tracking events can retain a human-readable fight name after a
+      // registry entry has been archived. Never substitute a truncated ID for a name.
+      const namedEvents = await RevenueEvent.find({
+        createdAt: { $gte: since }, fightId: { $in: candidateIds },
+        'metadata.fightName': { $exists: true, $ne: '' }
+      }).select('fightId metadata.fightName').sort({ createdAt: -1 }).limit(500).lean();
+      for (const event of namedEvents) {
+        const id = String(event.fightId);
+        if (!registryById.has(id) || !registryById.get(id).fightName) {
+          registryById.set(id, { ...(registryById.get(id) || { fightId: id }), fightName: String(event.metadata?.fightName || '') });
+        }
+      }
+      const registry = [...registryById.values()];
+      res.setHeader('Cache-Control', 'private, no-store');
+      return res.json({ ok: true, source: 'fight_entry_ledger', days, registry,
+        fights: rows.map(row => ({ fightId: String(row._id || ''), paidEntries: row.paidEntries,
+          refundedEntries: row.refundedEntries, netFmCoins: row.netFmCoins })) });
+    } catch (error) {
+      console.error('Fight ledger revenue report failed:', error);
+      return res.status(500).json({ ok: false, message: 'Fight ledger report unavailable.' });
+    }
+  });
+
   require('./merchant-statement-routes').registerMerchantStatementRoutes({ app, mongoose, verifyAdminToken });
   return { RevenueEvent };
 }
