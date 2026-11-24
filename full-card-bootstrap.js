@@ -90,6 +90,35 @@ const Score = mongoose.models.Score;
 const User = mongoose.models.User;
 if (!Affiliate || !Match || !Score || !User) throw new Error('Full Card bootstrap requires Affiliate, Match, Score and User models.');
 
+// One-time production correction for the specific campaign created during
+// Roy's preview walkthrough. Preserve the record as a draft and leave the
+// homepage fight, affiliate profile, artwork and wallet records untouched.
+if (process.env.VERCEL_ENV === 'production') {
+  const restorePreviewCampaign = async () => {
+    const campaignId = '6b05d69cfe8009b8e0828d2d';
+    try {
+      if (await Score.exists({ matchId: campaignId })) return;
+      await Match.updateOne({
+        _id: campaignId,
+        affiliateId: '6b05a819300553f508dfea74',
+        sourceLiveMatchId: '6afb3191f83664dc166a2c22',
+        matchStatus: 'Ongoing',
+        'userPredictions.0': { $exists: false },
+        collectedFees: { $in: [null, 0] },
+        prizesSettledAt: null,
+      }, {
+        $set: { matchStatus: 'Draft', homepagePromoted: false, homepageSlot: 0, featuredThisWeek: false, featuredFight: false },
+      });
+    } catch (error) {
+      console.error('Could not restore the affiliate preview campaign:', error.message);
+    }
+  };
+
+  if (mongoose.connection.readyState === 1) restorePreviewCampaign();
+  else mongoose.connection.once('open', restorePreviewCampaign);
+}
+
+
 Affiliate.schema.add({
   promoterRole: { type: String, enum: ['STANDARD', 'PROMOTER', 'PARTNER'], default: 'STANDARD', index: true },
   canCreateFullCards: { type: Boolean, default: false, index: true },
