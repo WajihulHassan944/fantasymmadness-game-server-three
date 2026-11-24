@@ -102,11 +102,35 @@ Match.schema.add({
   fullCardBoutOrder: Number,
 });
 
+const affiliateCommandReadPaths = new Set([
+  '/api/affiliates/me/full-cards',
+  '/api/affiliates/me/league-members',
+]);
+
 const verifyToken = (req, res, next) => {
+  if (req.method === 'GET' && affiliateCommandReadPaths.has(req.path) && Object.hasOwn(req.query, 'affiliateCommandId')) {
+    const id = req.query.affiliateCommandId;
+    if (typeof id !== 'string' || !mongoose.isValidObjectId(id)) {
+      return res.status(400).json({ message: 'Choose a valid affiliate account.' });
+    }
+    return verifyAdminToken(req, res, () => {
+      res.set('Cache-Control', 'private, no-store');
+      req.user = { id, scope: 'affiliate' };
+      return next();
+    });
+  }
+
   const token = String(req.headers.authorization || '').replace(/^Bearer\s+/i, '');
   if (!token) return res.status(401).json({ message: 'Authentication is required.' });
-  try { req.user = jwt.verify(token, process.env.JWT_SECRET); return next(); }
-  catch (_error) { return res.status(403).json({ message: 'Invalid or expired session.' }); }
+  try {
+    req.user = jwt.verify(token, process.env.JWT_SECRET);
+  } catch {
+    return res.status(403).json({ message: 'Invalid or expired session.' });
+  }
+  if (req.user?.scope === 'owner-preview' && req.method !== 'GET') {
+    return res.status(403).json({ message: 'This is a read-only preview session.', code: 'PREVIEW_READ_ONLY' });
+  }
+  return next();
 };
 const verifyAdminToken = (req, res, next) => {
   const token = String(req.headers.authorization || '').replace(/^Bearer\s+/i, '');
