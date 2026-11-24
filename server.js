@@ -301,7 +301,29 @@ const SESSION_COOKIE_MAX_AGE = Number(process.env.SESSION_COOKIE_MAX_AGE || 30 *
 // Defined here (not further down) because routes above the old definition
 // now use it; `const` is not hoisted, so a later definition would throw
 // "Cannot access 'verifyToken' before initialization" at boot.
+const affiliateCommandReadPaths = new Set([
+  '/api/affiliates/me/money',
+  '/api/affiliates/me/fight-referrals',
+  '/api/affiliates/me/league-members',
+  '/api/affiliates/me/full-cards',
+]);
+
 const verifyToken = (req, res, next) => {
+  // The owner workspace can read the selected affiliate's account tools
+  // using its existing admin session. Ordinary affiliate routes still derive
+  // their identities from their own token, and all writes keep their guards.
+  if (req.method === 'GET' && affiliateCommandReadPaths.has(req.path) && Object.hasOwn(req.query, 'affiliateCommandId')) {
+    const id = req.query.affiliateCommandId;
+    if (typeof id !== 'string' || !mongoose.isValidObjectId(id)) {
+      return res.status(400).json({ message: 'Choose a valid affiliate account.' });
+    }
+    return verifyAdminToken(req, res, () => {
+      res.set('Cache-Control', 'private, no-store');
+      req.user = { id, scope: TOKEN_SCOPES.AFFILIATE };
+      return next();
+    });
+  }
+
   // NEVER log req.headers here. It printed a live bearer token on every
   // authenticated request, so anyone with log access could resume a player's
   // session straight out of the log stream.
@@ -3664,11 +3686,13 @@ app.post(
       // real photos. The name string is now kept as a permanent fallback;
       // attachCombatFighterReadFallbacks still prefers the live fighter-library
       // name whenever population succeeds.
-      Object.assign(matchData, buildAutoHomepagePromotionFields({
-        body: req.body,
-        admin: req.admin,
-        actor: matchBy || effectiveAffiliateId || 'addMatch',
-      }));
+      if (!matchData.sourceLiveMatchId || !effectiveAffiliateId) {
+        Object.assign(matchData, buildAutoHomepagePromotionFields({
+          body: req.body,
+          admin: req.admin,
+          actor: matchBy || effectiveAffiliateId || 'addMatch',
+        }));
+      }
 
       // Conditionally append BoxingMatch and MMAMatch only if they have values
       if (BoxingMatch) {
