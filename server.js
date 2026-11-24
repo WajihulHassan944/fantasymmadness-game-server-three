@@ -150,6 +150,21 @@ app.use(cors({
   credentials: true, // Allow credentials (cookies, headers, etc.)
 }));
 
+// Preview deployments can read live inventory for review. Campaign changes
+// must come from the live site, including requests from older preview builds.
+app.use((req, res, next) => {
+  const isCampaignWrite = (req.method === 'POST' &&
+    /^(?:\/addMatch|\/activate-match\/[^/]+|\/update-match-status-shadow\/[^/]+|\/api\/matches\/[^/]+\/promotional-video|\/api\/affiliates\/me\/promotions\/[^/]+\/announce|\/api\/admin\/affiliates\/[^/]+\/campaigns\/[^/]+\/unpublish)\/?$/i.test(req.path))
+    || (req.method === 'DELETE' && /^\/api\/matches\/[^/]+\/?$/i.test(req.path));
+  if (isCampaignWrite && /^https:\/\/fmm-ver2-[a-z0-9-]+\.vercel\.app$/i.test(req.get('Origin') || '')) {
+    return res.status(403).json({
+      code: 'PREVIEW_READ_ONLY',
+      message: 'Preview cannot change live campaigns. Open the live back office to make changes.',
+    });
+  }
+  return next();
+});
+
 // --------------------------------------------------------------------------
 // BOOT CONFIGURATION GUARD
 // Every auth check in this file rests on these secrets. Missing or placeholder
@@ -3353,6 +3368,44 @@ function normalizeFightDeleteItems(payload = {}) {
     })
     .filter((item) => item && isValidMongoObjectId(item.id));
 }
+
+// Remove an unused affiliate campaign from public view without deleting the
+// campaign, its source fight, or any artwork shared between the two records.
+app.post('/api/admin/affiliates/:affiliateId/campaigns/:fightId/unpublish', verifyAdminToken, async (req, res) => {
+  const { affiliateId, fightId } = req.params;
+  if (!isValidMongoObjectId(affiliateId) || !isValidMongoObjectId(fightId)) {
+    return res.status(400).json({ message: 'Choose a valid affiliate and campaign.' });
+  }
+
+  try {
+    const filter = { _id: fightId, affiliateId };
+    if (!(await Match.exists(filter))) {
+      return res.status(404).json({ message: 'This campaign does not belong to the selected affiliate.' });
+    }
+    if (await Score.exists({ matchId: fightId })) {
+      return res.status(409).json({ message: 'This campaign has player entries. Use the standard cancellation and refund workflow.' });
+    }
+    const hidden = await Match.findOneAndUpdate(
+      {
+        ...filter,
+        'userPredictions.0': { $exists: false },
+        collectedFees: { $in: [null, 0] },
+        prizesSettledAt: null,
+      },
+      { $set: { matchStatus: 'Draft', homepagePromoted: false, homepageSlot: 0, featuredThisWeek: false, featuredFight: false } },
+      { new: true },
+    ).select('_id').lean();
+    if (!hidden) {
+      return res.status(409).json({ message: 'This campaign already has activity. Use the standard cancellation and refund workflow.' });
+    }
+
+    clearPublicResponseCache();
+    return res.json({ message: 'Campaign unpublished and retained as a draft.' });
+  } catch (error) {
+    console.error('Could not unpublish affiliate campaign:', error);
+    return res.status(500).json({ message: 'The campaign could not be unpublished.' });
+  }
+});
 
 async function deleteFightAcrossCollections(id, options = {}) {
   const { sourceType, affiliateId, updateWallet } = options;
