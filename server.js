@@ -2166,6 +2166,45 @@ app.get('/api/admin/matches/:id', verifyAdminToken, async (req, res) => {
   }
 });
 
+// Save a template-specific photo without modifying the linked fighter or its assets.
+app.post('/api/admin/shadow/:id/photos/:side', verifyAdminToken, upload.single('image'), async (req, res) => {
+  const { id, side } = req.params;
+  if (!mongoose.isValidObjectId(id) || !['A', 'B'].includes(side) || !req.file) {
+    return res.status(400).json({ message: 'A Shadow Fight, fighter slot, and photo are required.' });
+  }
+
+  try {
+    if (!await Shadow.exists({ _id: id })) {
+      return res.status(404).json({ message: 'Shadow Fight not found.' });
+    }
+
+    const photo = await new Promise((resolve, reject) => {
+      cloudinary.uploader.upload_stream(
+        { folder: `shadow/fighter${side}`, overwrite: false },
+        (error, result) => error ? reject(error) : resolve(result)
+      ).end(req.file.buffer);
+    });
+
+    const field = `fighter${side}Image`;
+    const result = await Shadow.updateOne({ _id: id }, {
+      $set: {
+        [field]: photo.secure_url,
+        [`${field}DeleteUrl`]: photo.public_id,
+        [`${field}Override`]: true,
+      },
+    });
+    if (!result.matchedCount) {
+      return res.status(404).json({ message: 'Shadow Fight not found.' });
+    }
+
+    clearPublicResponseCache();
+    return res.json({ imageUrl: photo.secure_url });
+  } catch (error) {
+    console.error('Could not save Shadow Fight photo:', error);
+    return res.status(500).json({ message: 'Could not save the Shadow Fight photo.' });
+  }
+});
+
 app.post(
   '/editShadow',
   verifyAdminToken,
