@@ -2270,10 +2270,6 @@ app.post(
         fighterAImage = resultA.secure_url;
         fighterAImageDeleteUrl = resultA.public_id;
 
-        // Delete the old image
-        if (existingMatch.fighterAImageDeleteUrl) {
-          await cloudinary.uploader.destroy(existingMatch.fighterAImageDeleteUrl);
-        }
       }
 
       if (fighterBImageUrl) {
@@ -2293,10 +2289,6 @@ app.post(
         fighterBImage = resultB.secure_url;
         fighterBImageDeleteUrl = resultB.public_id;
 
-        // Delete the old image
-        if (existingMatch.fighterBImageDeleteUrl) {
-          await cloudinary.uploader.destroy(existingMatch.fighterBImageDeleteUrl);
-        }
       }
 
       if (promotionBackgroundUrl) {
@@ -2489,41 +2481,13 @@ app.post('/updateShadowVideo', verifyAdminToken, async (req, res) => {
 });
 
 app.delete('/shadowfighttodelete/:id', verifyAdminToken, async (req, res) => {
-  const { id } = req.params;
-  console.log('Received DELETE request for Shadow ID:', id);
-
   try {
-    // Fetch the shadow fight by ID
-    const shadowFight = await Shadow.findById(id);
-    
-    if (!shadowFight) {
-      return res.status(404).json({ message: 'Shadow fight not found' });
-    }
-
- const notification = new Notification({
-      title: `Shadow Fight Deleted: ${shadowFight.matchName}`,
-    });
-    await notification.save();
-
-    const deleteFromCloudinary = async (publicId) => {
-      if (publicId) {
-        await cloudinary.uploader.destroy(publicId);
-      }
-    };
-
-    await Promise.all([
-      deleteFromCloudinary(shadowFight.fighterAImageDeleteUrl),
-      deleteFromCloudinary(shadowFight.fighterBImageDeleteUrl),
-      deleteFromCloudinary(shadowFight.promotionBackgroundDeleteUrl),
-    ]);
-
-    // Delete the shadow fight from the database
-    await Shadow.findByIdAndDelete(id);
-
-    res.status(200).json({ message: 'Shadow fight and associated images deleted successfully' });
+    const result = await deleteFightAcrossCollections(req.params.id, { sourceType: 'shadow', strictSource: true });
+    if (!result.ok) return res.status(fightDeleteErrorStatus(result.code)).json(result);
+    return res.json({ message: 'Shadow fight deleted.', result });
   } catch (error) {
     console.error('Error deleting shadow fight:', error);
-    res.status(500).json({ message: 'Internal server error' });
+    return res.status(500).json({ message: 'Internal server error' });
   }
 });
 
@@ -3301,49 +3265,9 @@ app.post('/api/admin/shadow/:id/scoring', verifyAdminToken, async (req, res) => 
   }
 });
 
-async function safelyDeleteFightImages(fight) {
-  const deleteFromCloudinary = async (publicId) => {
-    if (!publicId) return;
-    try {
-      await cloudinary.uploader.destroy(publicId);
-    } catch (imageError) {
-      console.warn('Fight image delete skipped:', imageError.message);
-    }
-  };
-
-  await Promise.all([
-    deleteFromCloudinary(fight?.fighterAImageDeleteUrl),
-    deleteFromCloudinary(fight?.fighterBImageDeleteUrl),
-    deleteFromCloudinary(fight?.promotionBackgroundDeleteUrl),
-  ]);
-}
-
-async function refundMatchScoresIfRequested(match, matchId, updateWallet) {
-  if (updateWallet !== 'true') return { refundedUsers: 0 };
-
-  const scores = await Score.find({ matchId });
-  const matchTokens = Number(match?.matchTokens || 0);
-  let refundedUsers = 0;
-
-  await Promise.all(scores.map(async (score) => {
-    const user = await User.findById(score.playerId);
-    if (user) {
-      const balanceBefore = Number.parseInt(String(user.tokens || '0'), 10) || 0;
-      user.tokens = addWalletTokens(user.tokens, matchTokens);
-      await user.save();
-      await recordWalletMove({
-        userId: user._id,
-        amount: matchTokens,
-        balanceBefore,
-        balanceAfter: Number.parseInt(String(user.tokens || '0'), 10) || 0,
-        reason: 'fight_removed_refund',
-        reference: String(score.matchId || ''),
-      });
-      refundedUsers += 1;
-    }
-  }));
-
-  return { refundedUsers };
+function fightDeleteErrorStatus(code) {
+  if (code === 'FIGHT_DELETE_BLOCKED') return 409;
+  return code === 'INVALID_ID' ? 400 : 404;
 }
 
 function isValidMongoObjectId(id) {
@@ -3408,7 +3332,7 @@ app.post('/api/admin/affiliates/:affiliateId/campaigns/:fightId/unpublish', veri
 });
 
 async function deleteFightAcrossCollections(id, options = {}) {
-  const { sourceType, affiliateId, updateWallet } = options;
+  const { sourceType, affiliateId, strictSource } = options;
   // Public reads are cached, so a delete that does not invalidate leaves the
   // fight on the website and in the app until the cache ages out. That is the
   // "I deleted it and nothing happened" report — cleared at every exit below.
@@ -3425,7 +3349,7 @@ async function deleteFightAcrossCollections(id, options = {}) {
     : [{ model: Match, sourceType: 'match' }, { model: Shadow, sourceType: 'shadow' }];
 
   let found = null;
-  for (const candidate of lookupOrder) {
+  for (const candidate of strictSource ? lookupOrder.slice(0, 1) : lookupOrder) {
     const fight = await candidate.model.findById(id);
     if (fight) {
       found = { ...candidate, fight };
@@ -3438,15 +3362,33 @@ async function deleteFightAcrossCollections(id, options = {}) {
   }
 
   const { fight, model, sourceType: resolvedSourceType } = found;
-  await safelyDeleteFightImages(fight);
+  const blocked = {
+    ok: false,
+    id,
+    code: 'FIGHT_DELETE_BLOCKED',
+    message: 'Only unused drafts can be permanently deleted. Keep used fights for history.',
+  };
+  if (!isDraftFightRecord(fight) || await Score.exists({ matchId: id })) return blocked;
 
-  let refundResult = { refundedUsers: 0 };
-  if (resolvedSourceType === 'match') {
-    refundResult = await refundMatchScoresIfRequested(fight, id, updateWallet);
-  }
+  if (resolvedSourceType === 'shadow' && await Match.exists({
+    $or: [{ sourceShadowId: id }, { promotedShadowFightId: id }, { shadowFightId: id }],
+  })) return blocked;
 
-  await model.findByIdAndDelete(id);
-  const scoreDeleteResult = await Score.deleteMany({ matchId: id });
+  // Preserve artwork because fight records and fighter profiles can share its public ID.
+  const deleted = await model.findOneAndDelete({
+    _id: id,
+    matchStatus: FIGHT_DRAFT_STATUS_REGEX,
+    prizesSettledAt: null,
+    collectedFees: { $in: [null, 0] },
+    shadowLastUsedAt: null,
+    'AffiliateIds.0': { $exists: false },
+    'userPredictions.0': { $exists: false },
+    'BoxingMatch.fighterOneStats.0': { $exists: false },
+    'BoxingMatch.fighterTwoStats.0': { $exists: false },
+    'MMAMatch.fighterOneStats.0': { $exists: false },
+    'MMAMatch.fighterTwoStats.0': { $exists: false },
+  });
+  if (!deleted) return blocked;
 
   await Shadow.updateMany(
     { 'AffiliateIds.matchId': id },
@@ -3470,8 +3412,8 @@ async function deleteFightAcrossCollections(id, options = {}) {
     id,
     sourceType: resolvedSourceType,
     title: fight.matchName,
-    deletedScores: scoreDeleteResult?.deletedCount || 0,
-    refundedUsers: refundResult.refundedUsers || 0,
+    deletedScores: 0,
+    refundedUsers: 0,
   });
 }
 
@@ -3491,7 +3433,6 @@ async function handleBulkFightDelete(req, res) {
       const result = await deleteFightAcrossCollections(item.id, {
         sourceType: item.sourceType,
         affiliateId: req.query.affiliateId || req.body.affiliateId,
-        updateWallet: String(req.query.updateWallet || req.body.updateWallet || 'false'),
       });
       results.push(result);
     }
@@ -3499,7 +3440,7 @@ async function handleBulkFightDelete(req, res) {
     const deletedCount = results.filter((item) => item.ok).length;
     const failedCount = results.length - deletedCount;
 
-    return res.status(failedCount && !deletedCount ? 404 : 200).json({
+    return res.status(failedCount && !deletedCount ? fightDeleteErrorStatus(results.find(item => item.code === 'FIGHT_DELETE_BLOCKED')?.code || results[0].code) : 200).json({
       ok: failedCount === 0,
       message: `${deletedCount} fight(s) deleted${failedCount ? `, ${failedCount} failed` : ''}.`,
       deletedCount,
@@ -3512,7 +3453,7 @@ async function handleBulkFightDelete(req, res) {
   }
 }
 
-// SECURITY: admin-only. Deleting fights destroys the entries attached to them.
+// Bulk deletion is limited to unused drafts.
 app.post('/api/admin/fights/bulk-delete', verifyAdminToken, handleBulkFightDelete);
 app.delete('/api/admin/fights/bulk-delete', verifyAdminToken, handleBulkFightDelete);
 app.post('/api/matches/bulk-delete', verifyAdminToken, handleBulkFightDelete);
@@ -3523,11 +3464,10 @@ app.delete('/api/matches/:id', verifyAdminOrAffiliateToken, requireAdminOrFightO
     const result = await deleteFightAcrossCollections(req.params.id, {
       sourceType: req.query.sourceType || req.query.source,
       affiliateId: req.query.affiliateId,
-      updateWallet: String(req.query.updateWallet || 'false'),
     });
 
     if (!result.ok) {
-      return res.status(result.code === 'INVALID_ID' ? 400 : 404).json({
+      return res.status(fightDeleteErrorStatus(result.code)).json({
         message: result.message,
         code: result.code,
         id: result.id,
@@ -18152,6 +18092,7 @@ registerFightDataQualityRoutes({
   verifyAdminToken,
   Match,
   Score,
+  deleteFightAcrossCollections,
   Shadow,
 });
 
