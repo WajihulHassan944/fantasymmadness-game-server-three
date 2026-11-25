@@ -2321,8 +2321,6 @@ app.post(
       existingMatch.matchFighterB = matchFighterB || existingMatch.matchFighterB;
       assignIfProvided(existingMatch, 'matchCategory', matchCategory);
       assignIfProvided(existingMatch, 'matchName', matchName);
-      assignIfProvided(existingMatch, 'matchFighterA', selectedFighterPatch.matchFighterA || matchFighterA);
-      assignIfProvided(existingMatch, 'matchFighterB', selectedFighterPatch.matchFighterB || matchFighterB);
       assignIfProvided(existingMatch, 'matchDescription', matchDescription);
       assignIfProvided(existingMatch, 'maxRounds', maxRounds);
       assignIfProvided(existingMatch, 'matchCategoryTwo', matchCategoryTwo);
