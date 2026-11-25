@@ -31,7 +31,7 @@ const DEFAULT_SCORING_CONFIG = Object.freeze({
 });
 
 function registerFightDataQualityRoutes(options) {
-  const { app, mongoose, verifyAdminToken, Match, Shadow, axios, upload, cloudinary } = options || {};
+  const { app, mongoose, verifyAdminToken, Match, Shadow, axios, upload, cloudinary, deleteFightAcrossCollections } = options || {};
   if (!app || !mongoose || !verifyAdminToken || !Match) {
     throw new Error('registerFightDataQualityRoutes requires app, mongoose, verifyAdminToken, and Match.');
   }
@@ -179,8 +179,15 @@ function registerFightDataQualityRoutes(options) {
       return res.json({ ok: true, dryRun: true, deleteCount: matches.length, matches });
     }
 
-    const result = await Match.deleteMany({ _id: { $in: matches.map((match) => match._id) } });
-    res.json({ ok: true, dryRun: false, deletedCount: result.deletedCount || 0, deletedMatches: matches });
+    if (!deleteFightAcrossCollections) return res.status(503).json({ ok: false, message: 'Fight deletion is unavailable.' });
+    const results = [];
+    for (const match of matches) {
+      results.push(await deleteFightAcrossCollections(String(match._id), { sourceType: 'match', strictSource: true }));
+    }
+    const deletedMatches = matches.filter((_, index) => results[index].ok);
+    const blocked = results.filter((result) => !result.ok);
+    res.status(blocked.length && !deletedMatches.length ? 409 : 200)
+      .json({ ok: blocked.length === 0, dryRun: false, deletedCount: deletedMatches.length, deletedMatches, blocked });
   }));
 
   app.get('/api/admin/fights/data-quality/image-health', verifyAdminToken, asyncHandler(async (req, res) => {
@@ -496,7 +503,7 @@ function registerFightDataQualityRoutes(options) {
     const fighter = await CombatFighter.findById(req.params.id);
     if (!fighter) return res.status(404).json({ ok: false, code: 'COMBAT_FIGHTER_NOT_FOUND', message: 'Combat fighter not found.' });
     const patch = normalizeCombatFighterPatch(req.body || {}, req.admin);
-    await applyUploadedCombatFighterImage(patch, req, cloudinary, fighter);
+    await applyUploadedCombatFighterImage(patch, req, cloudinary);
     Object.assign(fighter, patch);
     await fighter.save();
     res.json({ ok: true, fighter: serializeCombatFighter(fighter) });
@@ -617,7 +624,7 @@ function getUploadedCombatFighterImage(req) {
   return null;
 }
 
-async function applyUploadedCombatFighterImage(target, req, cloudinary, existingFighter = null) {
+async function applyUploadedCombatFighterImage(target, req, cloudinary) {
   const file = getUploadedCombatFighterImage(req);
   if (!file) return target;
   if (!cloudinary || !cloudinary.uploader || typeof cloudinary.uploader.upload_stream !== 'function') {
@@ -633,15 +640,7 @@ async function applyUploadedCombatFighterImage(target, req, cloudinary, existing
     resourceType: 'image',
   });
 
-  const previousPublicId = cleanString(existingFighter?.imagePublicId);
-  if (previousPublicId && previousPublicId !== result.public_id && typeof cloudinary.uploader.destroy === 'function') {
-    try {
-      await cloudinary.uploader.destroy(previousPublicId);
-    } catch (destroyError) {
-      // Do not fail the admin update if an old Cloudinary asset cannot be removed.
-    }
-  }
-
+  // Existing fights may still use the previous portrait.
   target.primaryImage = result.secure_url || result.url;
   target.imagePublicId = result.public_id;
   target.imageHealth = {
