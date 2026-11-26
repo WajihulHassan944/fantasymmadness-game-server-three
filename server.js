@@ -1097,6 +1097,10 @@ function hasFutureFightDate(match = {}, now = new Date()) {
 
 function getFightTimelineBucket(match = {}, now = new Date()) {
   if (isDraftFightRecord(match)) return 'draft';
+  // A retired auto-published mystery fight keeps the future date it was given
+  // when published; treat it as past so it leaves Upcoming once closed.
+  if (isShadowFightRecord(match) && match.shadowAutoPublished === true
+    && ['closed', 'finished', 'completed', 'complete', 'cancelled', 'canceled'].includes(String(match.matchShadowOpenStatus || match.matchStatus || '').trim().toLowerCase())) return 'past';
   if (isShadowFightRecord(match)) return hasFutureFightDate(match, now) ? 'upcoming' : 'past';
   const status = String(match.matchStatus || match.status || '').trim().toLowerCase();
   const openStatus = String(match.matchShadowOpenStatus || '').trim().toLowerCase();
@@ -11944,6 +11948,14 @@ async function getRealFightCalendarState(now = new Date()) {
   };
 }
 
+// Auto-publishing a hidden-identity "MYSTERY RED/BLUE CORNER" Shadow Fight in
+// dead weeks is OFF unless DEAD_WEEK_MYSTERY_FIGHT_ENABLED=true. It ran on every
+// /api/public/home-summary request, so retiring one just re-published the next
+// library fight. When off, any still-open auto-published one is retired below.
+function isDeadWeekMysteryFightEnabled() {
+  return String(process.env.DEAD_WEEK_MYSTERY_FIGHT_ENABLED || '').trim().toLowerCase() === 'true';
+}
+
 async function ensureDeadWeekShadowFight(now = new Date()) {
   const calendar = await getRealFightCalendarState(now);
   await Shadow.updateMany(
@@ -11957,7 +11969,7 @@ async function ensureDeadWeekShadowFight(now = new Date()) {
     { shadowAutoPublished: true, homepagePromoted: true },
     { $set: { homepagePromoted: false } },
   ).catch(() => null);
-  if (!calendar.deadWeek) {
+  if (!calendar.deadWeek || !isDeadWeekMysteryFightEnabled()) {
     // Was: only expired shadow fights got closed above; an active one from a
     // PRIOR dead week kept running (and showing "MYSTERY RED/BLUE CORNER")
     // for up to its full 7-day window even after a real fight was published —

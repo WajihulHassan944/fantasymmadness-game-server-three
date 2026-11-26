@@ -490,6 +490,10 @@ function getFightTimelineBucket(fight = {}, now = new Date()) {
   const fightDate = parseFightDateTime(fight);
   const hasFutureDate = Boolean(fightDate && fightDate.getTime() >= now.getTime());
   const type = cleanString(fight.matchType || fight.type).toLowerCase();
+  // A retired auto-published mystery fight keeps the future date it was given
+  // when published; treat it as past so it leaves Upcoming once closed.
+  if (isShadowFightRecord(fight) && fight.shadowAutoPublished === true
+    && ['closed', 'finished', 'completed', 'complete', 'cancelled', 'canceled'].includes(cleanString(fight.matchShadowOpenStatus || fight.matchStatus).toLowerCase())) return 'past';
   if (isShadowFightRecord(fight)) return hasFutureDate ? 'upcoming' : 'past';
   if (type === 'live') return 'upcoming';
   const status = cleanString(fight.matchStatus || fight.status || fight.matchShadowOpenStatus).toLowerCase();
