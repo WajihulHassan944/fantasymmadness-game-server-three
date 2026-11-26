@@ -11905,6 +11905,8 @@ async function loadPublicFightCards({ limit = 6, category } = {}) {
     ...shadows.map((item) => ({ ...pickPublicFightFields(item, 'shadow'), __raw: item })),
   ].filter((item) => {
     const raw = item.__raw || item;
+    // Hidden-identity mystery cards must not occupy public homepage slots.
+    if (item.sourceType === 'shadow' && raw.shadowIdentityHidden === true) return false;
     return isPublicHomeActiveFightRecord(raw);
   });
 
