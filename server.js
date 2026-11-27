@@ -4363,7 +4363,7 @@ app.get('/api/public/prediction-fights', async (req, res) => {
       let items = [
         ...matches.map((item) => ({ ...item, sourceType: 'match' })),
         ...shadows.map((item) => ({ ...item, sourceType: 'shadow' })),
-      ].filter((item) => !isDraftFightRecord(item));
+      ].filter((item) => !isDraftFightRecord(item) && !(item.sourceType === 'shadow' && item.shadowIdentityHidden === true));
 
       if (!isAllFilterValue(req.query.category)) {
         items = items.filter((item) => isFightRecordInEffectiveCategory(item, req.query.category));
